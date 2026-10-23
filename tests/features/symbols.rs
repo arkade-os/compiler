@@ -14,7 +14,7 @@ contract Vault(Point p, pubkey owner) {
     function spend(signature sig, int[2] xs) {
         let total = xs[0] + LIMIT;
         for (i, x) in xs {
-            int doubled = x * 2;
+            int doubled = x * 2; doubled = doubled + i;
             require(doubled + i >= Fees.calculate(x) + Fees.DELAY);
         }
         require(checkSig(sig, owner));
@@ -22,6 +22,10 @@ contract Vault(Point p, pubkey owner) {
         require(tx.outputs[0].scriptPubKey == new Vault(p, owner));
     }
     private function helper(int amount) int { return amount + Vault.LIMIT; }
+    function unilateral(signature ownerSig) tapscript {
+        require(older(blocks(144)));
+        require(checkSig(ownerSig, owner));
+    }
 }";
 
 fn project(main: &str) -> BTreeMap<String, String> {
@@ -73,7 +77,11 @@ fn references(files: &BTreeMap<String, String>, symbols: &Symbols) -> Vec<String
 fn symbols_resolve_bindings_calls_and_constants_across_files() {
     let files = project(MAIN);
     let analysis = analyze("main.ark", &files);
-    assert!(analysis.diagnostics().is_empty());
+    assert!(
+        analysis.diagnostics().is_empty(),
+        "{:?}",
+        analysis.diagnostics()
+    );
     let symbols = analysis.symbols();
     let definitions: Vec<_> = symbols
         .definitions()
@@ -92,6 +100,7 @@ fn symbols_resolve_bindings_calls_and_constants_across_files() {
             "Constant LIMIT int main.ark:4:15",
             "Function spend main.ark:5:14",
             "Function helper int main.ark:15:22",
+            "Tapscript unilateral main.ark:16:14",
             "Parameter p Point main.ark:3:22",
             "Parameter owner pubkey main.ark:3:32",
             "Parameter sig signature main.ark:5:30",
@@ -115,6 +124,9 @@ fn symbols_resolve_bindings_calls_and_constants_across_files() {
             "main.ark:6:21 xs -> Parameter xs int[2] main.ark:5:42",
             "main.ark:7:23 xs -> Parameter xs int[2] main.ark:5:42",
             "main.ark:8:27 x -> Variable x int main.ark:7:17",
+            "main.ark:8:34 doubled -> Variable doubled int main.ark:8:17",
+            "main.ark:8:44 doubled -> Variable doubled int main.ark:8:17",
+            "main.ark:8:54 i -> Variable i int main.ark:7:14",
             "main.ark:9:21 doubled -> Variable doubled int main.ark:8:17",
             "main.ark:9:31 i -> Variable i int main.ark:7:14",
             "main.ark:9:36 Fees -> Library Fees fees.ark:1:9",

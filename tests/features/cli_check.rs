@@ -50,7 +50,7 @@ fn check_reports_every_error_with_its_location_and_fails() {
 }
 
 #[test]
-fn check_json_lists_diagnostics_and_a_clean_file_passes() {
+fn check_json_lists_diagnostics_and_only_errors_fail() {
     let (status, stdout) = check(
         &["main.ark", "--check", "--json"],
         &[("main.ark", TWO_ERRORS)],
@@ -69,6 +69,14 @@ fn check_json_lists_diagnostics_and_a_clean_file_passes() {
     let clean = "contract C(pubkey k) { function f(signature s) { require(checkSig(s, k)); } }";
     let (status, stdout) = check(&["main.ark", "--check", "--json"], &[("main.ark", clean)]);
     assert_eq!((status, stdout.trim()), (0, "[]"));
+
+    let warned = "contract C(int unused) { function f() { require(true); } }";
+    let (status, stdout) = check(&["main.ark", "--check", "--json"], &[("main.ark", warned)]);
+    let diagnostics: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(
+        (status, &diagnostics[0]["severity"]),
+        (0, &"warning".into())
+    );
 }
 
 #[test]

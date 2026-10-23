@@ -17,7 +17,7 @@ fn located(main: &str, others: &[(&str, &str)]) -> (String, String, String) {
 }
 
 #[test]
-fn errors_before_validation_are_located() {
+fn errors_outside_the_validator_are_located() {
     for (main, others, expected_text, expected_message) in [
         (
             "contract C() { private function require() { require(true); } function f() { require(true); } }",
@@ -27,6 +27,12 @@ fn errors_before_validation_are_located() {
         ),
         (
             "contract C() { function f(bytes d) { sha256(d); } }",
+            &[],
+            "sha256(d);",
+            "cannot be a statement",
+        ),
+        (
+            "contract C() { function f(bytes d) { if (true) { sha256(d); } } }",
             &[],
             "sha256(d);",
             "cannot be a statement",
@@ -74,6 +80,12 @@ fn errors_before_validation_are_located() {
             "circular import",
         ),
         (
+            "import \"../a.ark\"; contract C() { function f() { require(true); } }",
+            &[],
+            "import \"../a.ark\";",
+            "escapes the source root",
+        ),
+        (
             "import \"a.ark\"; struct A { int y; } contract C() { function f() { require(true); } }",
             &[("a.ark", "struct A { int x; }")],
             "A",
@@ -84,6 +96,12 @@ fn errors_before_validation_are_located() {
             &[],
             "tx",
             "contract name 'tx' is reserved",
+        ),
+        (
+            "contract C(pubkey owner) { function weird(signature serverSig, signature emulatorSig) tapscript { require(checkMultisig([server, emulator], [serverSig, emulatorSig], 2)); } }",
+            &[],
+            "weird",
+            "standalone",
         ),
     ] {
         let (_, text, message) = located(main, others);
