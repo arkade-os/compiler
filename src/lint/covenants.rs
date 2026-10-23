@@ -66,6 +66,16 @@ struct Facts {
     /// Multisig thresholds that are a witness parameter as given.
     witness_thresholds: Vec<(String, Span)>,
     preimage: Option<Span>,
+    /// While inside imported helpers, the outermost call to one and the depth of nesting:
+    /// their spans index another file, so their findings sit at the call.
+    import_call: Option<(Span, usize)>,
+}
+
+impl Facts {
+    /// Where a finding at `span` belongs in the walked file.
+    fn at(&self, span: Span) -> Span {
+        self.import_call.map_or(span, |(call, _)| call)
+    }
 }
 
 pub(super) fn check(contract: &Contract, findings: &mut Vec<Finding>) {
@@ -86,7 +96,15 @@ pub(super) fn check(contract: &Contract, findings: &mut Vec<Finding>) {
         .iter()
         .filter(|f| !f.is_private && !f.is_imported())
     {
-        let mut facts = Facts::default();
+        // A disabled branch leaves the rest of the function spendable, so only a top-level
+        // requirement that never passes disables the function.
+        let mut facts = Facts {
+            never_passes: function
+                .statements
+                .iter()
+                .any(|s| matches!(&s.statement, Statement::Require(r) if never_passes(r))),
+            ..Facts::default()
+        };
         let witness: HashSet<&str> = function
             .parameters
             .iter()
@@ -208,16 +226,27 @@ fn report(function: &Function, facts: &Facts, findings: &mut Vec<Finding>) {
 
 impl<'a> Visitor<'a> for Facts {
     fn statement(&mut self, statement: &'a LocatedStatement) {
-        let Statement::Require(requirement) = &statement.statement else {
-            return;
-        };
-        self.never_passes |= never_passes(requirement);
-        if let Requirement::Comparison { left, op, right } = requirement {
+        if let Statement::Require(Requirement::Comparison { left, op, right }) =
+            &statement.statement
+        {
             self.bounds_inputs |= [left, right].iter().any(|side| is_active_input(side));
             if *op == BinaryOperator::Eq && [left, right].iter().any(|side| hashes_name(side)) {
-                self.preimage.get_or_insert(statement.span);
+                let at = self.at(statement.span);
+                self.preimage.get_or_insert(at);
             }
         }
+    }
+
+    fn enter_import(&mut self, call: Span) {
+        let (call, depth) = self.import_call.unwrap_or((call, 0));
+        self.import_call = Some((call, depth + 1));
+    }
+
+    fn exit_import(&mut self) {
+        self.import_call = match self.import_call {
+            Some((call, depth)) if depth > 1 => Some((call, depth - 1)),
+            _ => None,
+        };
     }
 
     fn expression(&mut self, expression: &'a Expression) {
@@ -234,11 +263,12 @@ impl<'a> Visitor<'a> for Facts {
                 let Some(index) = OutputIndex::of(index) else {
                     return;
                 };
+                let at = facts.at(expression.span);
                 let checks = facts.outputs.entry(index).or_default();
                 match property {
-                    OutputProperty::Value => checks.value = Some(expression.span),
+                    OutputProperty::Value => checks.value = Some(at),
                     OutputProperty::ScriptPubKey | OutputProperty::Script => {
-                        checks.script = Some(expression.span)
+                        checks.script = Some(at)
                     }
                     OutputProperty::WitnessVersion => {}
                 }
@@ -300,7 +330,7 @@ impl<'a> Visitor<'a> for Facts {
             }
             ExprKind::TxIntrospection {
                 property: TxProperty::Locktime,
-            } => facts.locktime.push(expression.span),
+            } => facts.locktime.push(facts.at(expression.span)),
             _ => {}
         }
     }
@@ -367,7 +397,8 @@ fn find_witness_choices(
         chosen,
     } = walked;
     for (choice, name, span) in choices {
-        if witness.contains(name) && uses[name] == chosen[name] {
+        let count = |counts: &HashMap<&str, usize>| counts.get(name).copied().unwrap_or(0);
+        if witness.contains(name) && count(&uses) == count(&chosen) {
             let found = match choice {
                 Choice::Key => &mut facts.witness_signers,
                 Choice::Threshold => &mut facts.witness_thresholds,

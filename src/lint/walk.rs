@@ -12,6 +12,10 @@ pub(super) trait Visitor<'a> {
     /// Around the statements of the `then` or else arm of the `if` numbered `id` in the walk.
     fn enter_arm(&mut self, _id: usize, _then: bool) {}
     fn exit_arm(&mut self) {}
+    /// Around the body of an imported helper, whose spans index another file, entered from
+    /// the call at `call` in the walked file.
+    fn enter_import(&mut self, _call: crate::diagnostics::Span) {}
+    fn exit_import(&mut self) {}
 }
 
 #[derive(Default)]
@@ -69,7 +73,14 @@ impl<'a> Walk<'a> {
         if let (Some(contract), ExprKind::Call { name, .. }) = (self.helpers, &expression.kind) {
             let helper = contract.functions.iter().position(|f| f.name == *name);
             if let Some(index) = helper.filter(|&index| self.walked.insert(index)) {
-                self.statements(&contract.functions[index].statements, visitor);
+                let helper = &contract.functions[index];
+                if helper.is_imported() {
+                    visitor.enter_import(expression.span);
+                }
+                self.statements(&helper.statements, visitor);
+                if helper.is_imported() {
+                    visitor.exit_import();
+                }
             }
         }
         for child in child_exprs(expression) {
