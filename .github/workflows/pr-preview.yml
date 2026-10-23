@@ -50,6 +50,11 @@ jobs:
       - name: Build WASM package
         run: wasm-pack build --target web --out-dir playground/pkg -- --features wasm
 
+      - name: Test playground
+        run: |
+          node playground/imports.test.mjs
+          node playground/completions.test.mjs
+
       - name: Clean up WASM package artifacts
         run: |
           rm -f playground/pkg/.gitignore
