@@ -154,7 +154,8 @@ impl Symbols {
         }
         collector.scopes.push(names.globals);
         for (path, span) in constants {
-            collector.qualified(span.start, &path.key());
+            let start = collector.token(span.start);
+            collector.qualified(start, &path.key());
         }
         for function in functions {
             collector.scopes.push(HashMap::new());
@@ -288,6 +289,21 @@ impl Collector<'_> {
         }
     }
 
+    /// The first token at or after `start`, past the `(`, whitespace and comments that can open
+    /// an expression's span.
+    // ponytail: recovers name positions from source text; syntax that puts anything else before
+    // a name needs the parser to record the name's span.
+    fn token(&self, start: usize) -> usize {
+        let mut rest = self.source.get(start..).unwrap_or_default();
+        loop {
+            rest = rest.trim_start_matches(['(', ' ', '\t', '\r', '\n']);
+            match rest.strip_prefix("//") {
+                Some(comment) => rest = comment.find('\n').map_or("", |end| &comment[end..]),
+                None => return self.source.len() - rest.len(),
+            }
+        }
+    }
+
     /// The dotted identifier spelled at `start`, as a call's callee.
     fn spelled(&self, start: usize) -> &str {
         let rest = self.source.get(start..).unwrap_or_default();
@@ -374,7 +390,7 @@ impl Collector<'_> {
     }
 
     fn expression(&mut self, expression: &Expression) {
-        let start = expression.span.start;
+        let start = self.token(expression.span.start);
         match &expression.kind {
             ExprKind::Name(path) | ExprKind::ArrayIndex { array: path, .. } => {
                 self.refer(&path.root, start)
@@ -384,9 +400,7 @@ impl Collector<'_> {
                 self.qualified(start, &spelled);
             }
             ExprKind::ContractInstance { contract_name, .. } => {
-                let rest = self.source.get(start..).unwrap_or_default();
-                let after_new = rest.strip_prefix("new").unwrap_or(rest);
-                let name_start = start + rest.len() - after_new.trim_start().len();
+                let name_start = self.token(start + "new".len());
                 self.refer(contract_name, name_start);
             }
             _ => {}

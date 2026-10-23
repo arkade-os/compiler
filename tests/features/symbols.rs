@@ -194,6 +194,49 @@ fn symbols_survive_validation_errors() {
 }
 
 #[test]
+fn symbols_survive_constant_and_scope_errors() {
+    for source in [
+        "contract C() { function spend(int n, int[Q] xs) { require(n > 0); } }",
+        "contract C() { function spend(int n, Missing m) { require(n > 0); } }",
+    ] {
+        let files = BTreeMap::from([("main.ark".to_string(), source.to_string())]);
+        let analysis = analyze("main.ark", &files);
+        assert!(analysis.contract().is_none());
+        let n = analysis
+            .symbols()
+            .definition_at("main.ark", source.find("n > 0").unwrap());
+        assert_eq!(n.map(|n| n.kind), Some(SymbolKind::Parameter), "{source}");
+    }
+}
+
+#[test]
+fn references_in_parentheses_and_after_new_cover_the_name() {
+    let source = "contract C(int a) {
+    const int K = 1;
+    function spend(int n) {
+        require(( n ) + (h(a)) > (K));
+        require(tx.outputs[0].scriptPubKey == new // C
+            C(a));
+    }
+    private function h(int x) int { return x; }
+}";
+    let files = BTreeMap::from([("main.ark".to_string(), source.to_string())]);
+    let analysis = analyze("main.ark", &files);
+    let symbols = analysis.symbols();
+    let mut names: Vec<_> = symbols
+        .references()
+        .iter()
+        .map(|reference| {
+            let text = &source[reference.span.start..reference.span.end];
+            assert_eq!(text, symbols.definitions()[reference.definition].name);
+            text
+        })
+        .collect();
+    names.sort();
+    assert_eq!(names, ["C", "K", "a", "a", "h", "n", "x"]);
+}
+
+#[test]
 fn a_local_is_visible_to_the_end_of_its_branch() {
     let source = "contract C() { function spend(int n) { if (n > 0) { let a = n; require(a == 1); } else { let b = n; require(b == 0); } } }";
     let files = BTreeMap::from([("main.ark".to_string(), source.to_string())]);

@@ -566,9 +566,18 @@ fn load(
                 Ok(())
             })?;
         }
-        let constant_uses = compiler::fold_constants(&mut contract)?;
-        visible_contracts.insert(contract.name.clone(), &contract);
-        validate_scope(&contract, &visible_structs, &visible_contracts)?;
+        let checked = compiler::fold_constants(&mut contract).and_then(|uses| {
+            visible_contracts.insert(contract.name.clone(), &contract);
+            validate_scope(&contract, &visible_structs, &visible_contracts).map(|()| uses)
+        });
+        let constant_uses = match checked {
+            Ok(uses) => uses,
+            Err(error) => {
+                // Untyped, so a `let` without a declared type has no type.
+                symbols.collect(path, source, &contract, &own_structs, &dependencies, &[]);
+                return Err(error.into());
+            }
+        };
         let mut structs: BTreeMap<_, _> = contract
             .structs
             .iter()

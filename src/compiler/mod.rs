@@ -418,17 +418,17 @@ pub fn compile(source_code: &str) -> Result<ContractJson, String> {
     )
 }
 
-/// Runs semantic validation, including type checking, on `contract`. Returns every
-/// warning on success, every error (each its own diagnostic, not joined into
-/// one message) on failure. Diagnostic messages carry no location prefix —
-/// `Diagnostic::span` is the byte range; `diagnostics::render_errors` adds a
-/// `"line N, column M: "` prefix only when rendering the legacy joined string.
 /// A validated contract's warnings and its checked tapscript leaves, in declaration order.
 pub(crate) struct Prepared {
     pub warnings: Vec<Diagnostic>,
     pub leaves: Vec<tapscript::CheckedLeaf>,
 }
 
+/// Runs semantic validation, including type checking, on `contract`. Returns its
+/// warnings and checked leaves on success, every error (each its own diagnostic, not
+/// joined into one message) on failure. Diagnostic messages carry no location prefix —
+/// `Diagnostic::span` is the byte range; `diagnostics::render_errors` adds a
+/// `"line N, column M: "` prefix only when rendering the legacy joined string.
 pub(crate) fn prepare(
     contract: &mut Contract,
     require_entrypoint: bool,

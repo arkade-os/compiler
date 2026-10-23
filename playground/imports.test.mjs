@@ -268,6 +268,11 @@ assert.ok(innermost(4).every(line => line === 4) && innermost(4).length > 0);
 // An `if` maps to its condition alone, so its tokens are not chosen inside its body.
 assert.ok(runs.filter(range => range.start[0] === 4).every(range => range.end[0] === 4));
 assert.deepEqual(innermost(8), []);
+// The map locates source only while the editor shows the source it was compiled from.
+vm.runInContext("lastCompiledSource = 'compiled'; editor = { getValue: () => 'compiled' };", context);
+assert.equal(vm.runInContext('sourceRuns()', context), runs);
+vm.runInContext("editor = { getValue: () => 'edited' };", context);
+assert.equal(vm.runInContext('sourceRuns().length', context), 0);
 
 // Hover and go to definition read the compiler's symbol table.
 const symbolFiles = JSON.stringify({
