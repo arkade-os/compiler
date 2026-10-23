@@ -359,3 +359,58 @@ fn every_lint_is_documented_and_explained() {
     assert!(text.contains("checkTime"), "{text}");
     assert!(!explain("no-such-lint").status.success());
 }
+
+#[test]
+fn findings_from_an_imported_helper_sit_at_the_call() {
+    let main = |annotation: &str| {
+        format!("import \"fees.ark\";\ncontract C(int n) {{\n  function f(int amount) {{\n    {annotation}Fees.check(amount);\n    require(amount == n);\n  }}\n}}")
+    };
+    let library = "library Fees {\n  function check(int value) {\n    require(tx.outputs[0].value >= value);\n  }\n}";
+    let analyze_main = |main: String| {
+        let files = BTreeMap::from([
+            ("main.ark".to_string(), main.clone()),
+            ("fees.ark".to_string(), library.to_string()),
+        ]);
+        let diagnostics = analyze("main.ark", &files).diagnostics();
+        (main, diagnostics)
+    };
+    let (source, diagnostics) = analyze_main(main(""));
+    let finding = diagnostics
+        .iter()
+        .find(|d| d.lint == Some(Lint::OutputScriptUnchecked))
+        .expect("the helper's unpinned output is reported");
+    let span = finding.span.unwrap();
+    assert_eq!(finding.file, "main.ark");
+    assert_eq!(&source[span.start..span.end], "Fees.check(amount)");
+    let (_, allowed) = analyze_main(main(
+        r#"@allow(output-script-unchecked, "pinned by the caller") "#,
+    ));
+    assert!(!allowed
+        .iter()
+        .any(|d| d.lint == Some(Lint::OutputScriptUnchecked)));
+}
+
+#[test]
+fn a_disabled_branch_keeps_the_rest_of_the_function_linted() {
+    let source = "contract C(int n) { function f(bool b, int x) { if (b) { require(false); } else { require(x == n); } } }";
+    assert!(diagnostics_with(source, &Levels::default())
+        .iter()
+        .any(|d| d.lint == Some(Lint::AnyoneCanSpend)));
+}
+
+#[test]
+fn a_finding_fulfills_only_the_innermost_expectation() {
+    let source = r#"contract C(pubkey k) {
+        @expect(self-comparison, "outer")
+        function f(signature s, int x) {
+            require(checkSig(s, k));
+            @expect(self-comparison, "inner") require(x == x);
+        }
+    }"#;
+    let unfulfilled: Vec<_> = diagnostics_with(source, &Levels::default())
+        .into_iter()
+        .filter(|d| d.lint == Some(Lint::UnfulfilledExpectation))
+        .map(|d| d.span.unwrap().start)
+        .collect();
+    assert_eq!(unfulfilled, [source.find("self-comparison").unwrap()]);
+}
