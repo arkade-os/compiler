@@ -2,6 +2,13 @@
 /* eslint-disable */
 
 /**
+ * The diagnostics of a virtual project, in the form `compile_sources_with_diagnostics` gives
+ * them, without an artifact; a library entry gets its own diagnostics, not the error compiling
+ * it as an entry would give. For diagnosing sources while they are edited.
+ */
+export function check_sources(entry: string, files: string, optimize?: boolean | null): string;
+
+/**
  * Compile Arkade Script source code to JSON
  *
  * # Arguments
@@ -66,6 +73,7 @@ export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembl
 
 export interface InitOutput {
     readonly memory: WebAssembly.Memory;
+    readonly check_sources: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
     readonly compile: (a: number, b: number) => [number, number, number, number];
     readonly compile_sources: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
     readonly compile_sources_with_diagnostics: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];

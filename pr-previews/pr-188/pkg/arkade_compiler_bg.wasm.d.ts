@@ -1,6 +1,7 @@
 /* tslint:disable */
 /* eslint-disable */
 export const memory: WebAssembly.Memory;
+export const check_sources: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
 export const compile: (a: number, b: number) => [number, number, number, number];
 export const compile_sources: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
 export const compile_sources_with_diagnostics: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];

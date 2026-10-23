@@ -1,6 +1,6 @@
 // Arkade Playground - Main Application
 // Import default export for WASM initialization, plus the exported functions
-import initWasm, { compile_sources, compile_sources_with_diagnostics, symbol_at, symbols, version, init as initPanicHook } from './pkg/arkade_compiler.js';
+import initWasm, { check_sources, compile_sources, compile_sources_with_diagnostics, symbol_at, symbols, version, init as initPanicHook } from './pkg/arkade_compiler.js';
 import * as contracts from './contracts.js';
 import { generateBindings, AVAILABLE_TARGETS } from './codegen.js';
 
@@ -1714,7 +1714,7 @@ function lint() {
         try {
             const { entry, files } = sourceFiles();
             const optimize = document.getElementById('optimize-toggle').checked;
-            const { diagnostics } = JSON.parse(compile_sources_with_diagnostics(entry, JSON.stringify(files), optimize));
+            const diagnostics = JSON.parse(check_sources(entry, JSON.stringify(files), optimize));
             markDiagnostics(diagnostics, entry);
             renderDiagnostics(diagnostics, entry);
         } catch {}
