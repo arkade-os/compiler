@@ -1,6 +1,38 @@
 /* @ts-self-types="./arkade_compiler.d.ts" */
 
 /**
+ * The diagnostics of a virtual project, in the form `compile_sources_with_diagnostics` gives
+ * them, without an artifact; a library entry gets its own diagnostics, not the error compiling
+ * it as an entry would give. For diagnosing sources while they are edited.
+ * @param {string} entry
+ * @param {string} files
+ * @param {boolean | null} [optimize]
+ * @returns {string}
+ */
+export function check_sources(entry, files, optimize) {
+    let deferred4_0;
+    let deferred4_1;
+    try {
+        const ptr0 = passStringToWasm0(entry, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(files, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ret = wasm.check_sources(ptr0, len0, ptr1, len1, isLikeNone(optimize) ? 0xFFFFFF : optimize ? 1 : 0);
+        var ptr3 = ret[0];
+        var len3 = ret[1];
+        if (ret[3]) {
+            ptr3 = 0; len3 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred4_0 = ptr3;
+        deferred4_1 = len3;
+        return getStringFromWasm0(ptr3, len3);
+    } finally {
+        wasm.__wbindgen_free(deferred4_0, deferred4_1, 1);
+    }
+}
+
+/**
  * Compile Arkade Script source code to JSON
  *
  * # Arguments
@@ -64,7 +96,12 @@ export function compile_sources(entry, files, optimize) {
 }
 
 /**
- * Compile a virtual project with warnings alongside the artifact.
+ * Compile a virtual project and report every diagnostic with its position. Compilation
+ * errors are diagnostics, not a thrown error: the result is
+ * `{ artifact: string | null, debug: string | null, warnings: string[], diagnostics: Diagnostic[] }`,
+ * where `debug` is the debug file JSON (`ContractJson::debug_info`) and each
+ * diagnostic has `severity`, `code`, `message`, `file` and, when located, 1-based `start` and
+ * `end` `{ line, column }` with columns counted in UTF-16 units, as editors count them.
  * @param {string} entry
  * @param {string} files
  * @param {boolean | null} [optimize]
@@ -98,6 +135,39 @@ export function compile_sources_with_diagnostics(entry, files, optimize) {
  */
 export function init() {
     wasm.init();
+}
+
+/**
+ * The symbol at 1-based `line` and UTF-16 `column` of `entry`, for hover, go to definition
+ * and highlighting: `{ name, kind, type, at, definition, references }`, each location
+ * `{ file, start, end }`, or `null` when no name is there.
+ * @param {string} entry
+ * @param {string} files
+ * @param {number} line
+ * @param {number} column
+ * @returns {string}
+ */
+export function symbol_at(entry, files, line, column) {
+    let deferred4_0;
+    let deferred4_1;
+    try {
+        const ptr0 = passStringToWasm0(entry, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(files, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ret = wasm.symbol_at(ptr0, len0, ptr1, len1, line, column);
+        var ptr3 = ret[0];
+        var len3 = ret[1];
+        if (ret[3]) {
+            ptr3 = 0; len3 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred4_0 = ptr3;
+        deferred4_1 = len3;
+        return getStringFromWasm0(ptr3, len3);
+    } finally {
+        wasm.__wbindgen_free(deferred4_0, deferred4_1, 1);
+    }
 }
 
 /**
