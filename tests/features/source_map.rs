@@ -82,10 +82,10 @@ fn every_statement_maps_its_tokens_and_requires_carry_their_messages() {
             ("amount > 10", "OP_ENDIF", None),
             (
                 "require(parts[0] == amount, \"first part\");",
-                "OP_EQUAL",
+                "OP_NUMEQUAL",
                 Some("first part"),
             ),
-            ("require(parts[1] == amount);", "OP_EQUAL", None),
+            ("require(parts[1] == amount);", "OP_NUMEQUAL", None),
             (
                 "require(part > i, \"ordered\");",
                 "OP_GREATERTHAN",
@@ -93,7 +93,7 @@ fn every_statement_maps_its_tokens_and_requires_carry_their_messages() {
             ),
             ("Fees.check(amount);", "OP_GREATERTHAN", None),
             ("return x * 2;", "OP_MUL", None),
-            ("require(double(amount) == 4);", "OP_EQUAL", None),
+            ("require(double(amount) == 4);", "OP_NUMEQUAL", None),
         ] {
             assert!(
                 lines.iter().any(|(text, tokens, found)| text == statement
