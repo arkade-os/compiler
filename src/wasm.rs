@@ -118,6 +118,24 @@ fn located(
     crate::diagnostics::to_json(diagnostic, source)
 }
 
+/// The diagnostics of a virtual project, in the form `compile_sources_with_diagnostics` gives
+/// them, without an artifact; a library entry gets its own diagnostics, not the error compiling
+/// it as an entry would give. For diagnosing sources while they are edited.
+#[wasm_bindgen]
+pub fn check_sources(entry: &str, files: &str, optimize: Option<bool>) -> Result<String, String> {
+    let files: std::collections::BTreeMap<String, String> =
+        serde_json::from_str(files).map_err(|e| format!("Invalid source files: {e}"))?;
+    let options = crate::CompileOptions {
+        optimize: optimize.unwrap_or(true),
+    };
+    let diagnostics: Vec<_> = crate::analyze(entry, &files)
+        .check(options)
+        .iter()
+        .map(|diagnostic| located(diagnostic, &files))
+        .collect();
+    serde_json::to_string(&diagnostics).map_err(|e| format!("Serialization error: {e}"))
+}
+
 fn compile_project(
     entry: &str,
     files: &str,

@@ -4,11 +4,11 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import { deflateRawSync } from 'node:zlib';
 import * as contracts from './contracts.js';
-import { initSync, compile_sources, compile_sources_with_diagnostics, symbol_at } from './pkg/arkade_compiler.js';
+import { initSync, check_sources, compile_sources, compile_sources_with_diagnostics, symbol_at } from './pkg/arkade_compiler.js';
 
 initSync({ module: fs.readFileSync(new URL('./pkg/arkade_compiler_bg.wasm', import.meta.url)) });
 const context = vm.createContext({
-    contracts, compile_sources, compile_sources_with_diagnostics, symbol_at,
+    contracts, check_sources, compile_sources, compile_sources_with_diagnostics, symbol_at,
     document: { addEventListener() {} },
     localStorage: { setItem() {} },
     location: { hash: '' },
@@ -229,6 +229,11 @@ for (const error of errors) {
 }
 const undefinedName = errors.find(d => d.message.includes("'y'"));
 assert.equal(undefinedName.start.column, failingSource.split('\n')[1].indexOf('y == 1') + 1);
+// Diagnosing while typing reports what compiling does, except that a library is not an error.
+assert.deepEqual(JSON.parse(check_sources('main.ark', JSON.stringify({ './main.ark': failingSource }))), failed.diagnostics);
+const library = JSON.stringify({ 'fees.ark': 'library Fees { function fee(int a) int { return a + 1; } }' });
+assert.deepEqual(JSON.parse(check_sources('fees.ark', library)), []);
+assert.match(JSON.parse(compile_sources_with_diagnostics('fees.ark', library)).diagnostics[0].message, /not a library/);
 context.document.querySelectorAll = () => [];
 context.warningSource = failingSource;
 context.selected = null;
