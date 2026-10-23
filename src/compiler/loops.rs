@@ -7,6 +7,9 @@ use crate::models::*;
 /// Transforms:
 /// - `index_var` → `Literal(k)`
 /// - `value_var` and paths rooted at it → accesses on element `k` of `items`
+///
+/// Copies keep only the span and statement; names, branches and messages are read from the
+/// parsed body.
 pub(crate) fn substitute_loop_body(
     body: &[LocatedStatement],
     index_var: &str,
@@ -16,6 +19,9 @@ pub(crate) fn substitute_loop_body(
 ) -> Vec<LocatedStatement> {
     body.iter()
         .map(|stmt| LocatedStatement {
+            names: Vec::new(),
+            branches: Vec::new(),
+            message: None,
             span: stmt.span,
             statement: substitute_statement(&stmt.statement, index_var, value_var, k, items),
         })

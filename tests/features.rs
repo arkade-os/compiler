@@ -70,3 +70,14 @@ mod imports;
 
 #[path = "features/struct_arrays.rs"]
 mod struct_arrays;
+
+#[path = "features/cli_check.rs"]
+mod cli_check;
+#[path = "features/located_errors.rs"]
+mod located_errors;
+#[path = "features/source_map.rs"]
+mod source_map;
+#[path = "features/staged_api.rs"]
+mod staged_api;
+#[path = "features/symbols.rs"]
+mod symbols;

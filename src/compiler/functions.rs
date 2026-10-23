@@ -163,6 +163,7 @@ impl Generator {
             fields
                 .iter()
                 .map(|(name, ty)| Parameter {
+                    span: Default::default(),
                     name: name.to_string(),
                     param_type: TypeName::parse(ty),
                 })
@@ -303,15 +304,22 @@ impl Generator {
                 self.bind_local(leaf.access.clone())?;
             }
         }
-        self.lower(&function.statements)
-            .and_then(|body| emit_body(&body, self))
-            .map_err(|mut error| {
-                // An imported helper's spans index its own file; the call locates the error instead.
-                if function.is_imported() {
-                    error.span = None;
-                }
-                error
-            })?;
+        if function.is_imported() {
+            self.asm.pin();
+        }
+        let emitted = self
+            .lower(&function.statements)
+            .and_then(|body| emit_body(&body, self));
+        if function.is_imported() {
+            self.asm.unpin();
+        }
+        emitted.map_err(|mut error| {
+            // An imported helper's spans index its own file; the call locates the error instead.
+            if function.is_imported() {
+                error.span = None;
+            }
+            error
+        })?;
         if !direct_return {
             for leaf in results.iter().rev() {
                 self.read_static_binding(&leaf.access, true)?;

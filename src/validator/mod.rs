@@ -758,6 +758,9 @@ contract Demo() {
 
     fn located(statement: Statement) -> LocatedStatement {
         LocatedStatement {
+            message: None,
+            names: Vec::new(),
+            branches: Vec::new(),
             span: crate::diagnostics::Span { start: 0, end: 0 },
             statement,
         }
@@ -765,22 +768,27 @@ contract Demo() {
 
     fn make_contract(name: &str) -> Contract {
         Contract {
+            span: Default::default(),
             name: name.to_string(),
             is_library: false,
             structs: vec![],
             parameters: vec![Parameter {
+                span: Default::default(),
                 name: "owner".to_string(),
                 param_type: "pubkey".into(),
             }],
             functions: vec![Function {
+                declaration: Default::default(),
                 name: "spend".to_string(),
                 span: crate::diagnostics::Span { start: 0, end: 0 },
                 parameters: vec![
                     Parameter {
+                        span: Default::default(),
                         name: "ownerSig".to_string(),
                         param_type: "signature".into(),
                     },
                     Parameter {
+                        span: Default::default(),
                         name: "flag".to_string(),
                         param_type: "bool".into(),
                     },

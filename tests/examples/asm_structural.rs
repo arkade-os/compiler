@@ -465,6 +465,7 @@ fn placeholder_in_constructor_inputs_is_clean() {
         injected: false,
     }];
     let ctor = [Parameter {
+        span: Default::default(),
         name: "owner".to_string(),
         param_type: "pubkey".into(),
     }];

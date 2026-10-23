@@ -86,6 +86,8 @@ impl std::fmt::Display for Path {
 pub struct Contract {
     /// Contract or library name; empty for a source file containing only structs.
     pub name: String,
+    /// Byte range of the name.
+    pub span: crate::diagnostics::Span,
     /// Whether this declaration is a library rather than an instantiable contract.
     pub is_library: bool,
     /// Struct types available to this contract.
@@ -108,6 +110,7 @@ pub struct Constant {
     pub name: String,
     pub const_type: TypeName,
     pub value: Expression,
+    pub span: crate::diagnostics::Span,
 }
 
 /// Function AST
@@ -119,6 +122,8 @@ pub struct Function {
     pub parameters: Vec<Parameter>,
     /// Byte range of the function name.
     pub span: crate::diagnostics::Span,
+    /// Byte range of the whole declaration, through its closing brace.
+    pub declaration: crate::diagnostics::Span,
     /// Function body statements.
     pub statements: Vec<LocatedStatement>,
     /// Whether this is a callable helper rather than a transaction entrypoint.
@@ -142,6 +147,12 @@ impl Function {
 #[derive(Debug, Clone)]
 pub struct LocatedStatement {
     pub span: crate::diagnostics::Span,
+    /// Byte ranges of the names the statement binds, in binding order.
+    pub names: Vec<crate::diagnostics::Span>,
+    /// Byte ranges of an `if`'s then and else blocks.
+    pub branches: Vec<crate::diagnostics::Span>,
+    /// A `require`'s message.
+    pub message: Option<String>,
     pub statement: Statement,
 }
 
@@ -375,6 +386,7 @@ pub enum TimeUnit {
 pub struct NamedTapscript {
     /// Declared name (decides function-binding by exact match).
     pub name: String,
+    pub span: crate::diagnostics::Span,
     /// Declared witness inputs (signatures, preimages, …), in source order.
     pub inputs: Vec<Parameter>,
     /// Ordered closure components.
@@ -421,6 +433,11 @@ impl Expression {
     /// A node replacing this one, at the same source position.
     pub(crate) fn with_kind(&self, kind: ExprKind) -> Self {
         Self::new(kind, self.span)
+    }
+
+    /// The type analysis gave this expression; `Unknown` before analysis.
+    pub fn ty(&self) -> &crate::types::ArkType {
+        &self.ty
     }
 }
 

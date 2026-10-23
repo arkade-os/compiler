@@ -4,10 +4,61 @@
 //! renders them the same way it always has.
 
 /// A byte-offset range into one file's source text.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub struct Span {
     pub start: usize,
     pub end: usize,
+}
+
+/// The 1-based line and column of byte `offset` in `source`, counting columns in UTF-16 code
+/// units as editors do; `None` past the end or inside a character.
+pub fn position(source: &str, offset: usize) -> Option<(usize, usize)> {
+    let before = source.get(..offset)?;
+    let line_start = before.rfind('\n').map_or(0, |newline| newline + 1);
+    Some((
+        before.matches('\n').count() + 1,
+        before[line_start..].encode_utf16().count() + 1,
+    ))
+}
+
+/// The byte offset of 1-based `line` and UTF-16 `column` in `source`; `None` past its end.
+pub fn offset(source: &str, line: usize, column: usize) -> Option<usize> {
+    let start = match line {
+        0 => return None,
+        1 => 0,
+        _ => source.match_indices('\n').nth(line - 2)?.0 + 1,
+    };
+    let text = &source[start..];
+    let text = &text[..text.find('\n').unwrap_or(text.len())];
+    let mut units = 1;
+    for (index, character) in text.char_indices() {
+        if units >= column {
+            return Some(start + index);
+        }
+        units += character.len_utf16();
+    }
+    (units >= column).then_some(start + text.len())
+}
+
+/// `diagnostic` as JSON for tools: `severity`, `code`, `message`, `file`, and, when it is
+/// located and `source` is its file's text, `start` and `end` as `{ line, column }`.
+pub fn to_json(diagnostic: &Diagnostic, source: Option<&str>) -> serde_json::Value {
+    let at = |offset: usize| {
+        let (line, column) = position(source?, offset)?;
+        Some(serde_json::json!({ "line": line, "column": column }))
+    };
+    let span = diagnostic.span;
+    serde_json::json!({
+        "severity": match diagnostic.severity {
+            Severity::Error => "error",
+            Severity::Warning => "warning",
+        },
+        "code": diagnostic.code,
+        "message": diagnostic.message,
+        "file": diagnostic.file,
+        "start": span.and_then(|span| at(span.start)),
+        "end": span.and_then(|span| at(span.end)),
+    })
 }
 
 impl From<pest::Span<'_>> for Span {
@@ -31,7 +82,8 @@ pub enum Severity {
 pub struct Diagnostic {
     pub severity: Severity,
     /// Which pass raised this: `"validation"` (semantic checks), `"type"` (type checker),
-    /// `"emission"` (code generation) or `"internal"` (a compiler bug). `None` for parse errors.
+    /// `"emission"` (code generation) or `"internal"` (a compiler bug). `None` for parse, import
+    /// and file errors.
     pub code: Option<String>,
     pub message: String,
     pub file: String,
@@ -168,6 +220,18 @@ pub(crate) fn located(message: &str, span: Option<Span>, source: &str) -> String
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn offsets_and_positions_round_trip_in_utf16_columns() {
+        let source = "ab\né😀x\n\nend";
+        for (at, _) in source.char_indices().chain([(source.len(), ' ')]) {
+            let (line, column) = position(source, at).unwrap();
+            assert_eq!(offset(source, line, column), Some(at), "{line}:{column}");
+        }
+        assert_eq!(position(source, source.find('x').unwrap()), Some((2, 4)));
+        assert_eq!(offset(source, 2, 9), None);
+        assert_eq!(offset(source, 9, 1), None);
+    }
 
     #[test]
     fn compile_errors_keep_the_narrowest_span_and_mark_internal_ones() {

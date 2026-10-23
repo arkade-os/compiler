@@ -4,7 +4,7 @@ use crate::opcodes::Opcode::{self, *};
 use crate::operators::{BinaryOperator, UnaryOperator};
 use crate::types::{ArkType, Scope};
 
-use super::Op;
+use super::{Op, Spanned};
 
 const MAX_SCRIPT_ELEMENT_SIZE: usize = 520;
 
@@ -49,7 +49,7 @@ pub(super) fn fold_statement(statement: &mut Statement, scope: &Scope) -> Result
                     });
                     fold_expression(&mut access, scope)?;
                     let ExprKind::ArrayIndex { index: folded, .. } = access.kind else {
-                        unreachable!()
+                        unreachable!("folding never replaces an array read")
                     };
                     *index = folded;
                 }
@@ -265,22 +265,26 @@ fn matches(op: &Op, opcode: Opcode) -> bool {
 
 /// The optimized instructions, and how many items the rewrites can add to the unoptimized
 /// stack peak.
-pub(super) fn optimize(mut asm: Vec<Op>) -> (Vec<Op>, usize) {
+pub(super) fn optimize(mut asm: Vec<Spanned>) -> (Vec<Spanned>, usize) {
     // The NIPs clear every item below the final truthy value. The final clean-stack truth check
     // already enforces a trailing `Verify Int1`, so a failing last requirement reports a false
     // stack entry instead when the NIPs are kept.
-    let nips = asm.iter().rev().take_while(|op| matches(op, Nip)).count();
+    let nips = asm
+        .iter()
+        .rev()
+        .take_while(|(op, _)| matches(op, Nip))
+        .count();
     let body = asm.len() - nips;
     let mut kept = asm.clone();
-    if body >= 2 && matches(&kept[body - 2], Verify) && matches(&kept[body - 1], Int1) {
+    if body >= 2 && matches(&kept[body - 2].0, Verify) && matches(&kept[body - 1].0, Int1) {
         kept.drain(body - 2..body);
     }
     // Verifying the final value first lets the cleared items go in pairs with Drop2; a failing
     // last requirement then reports `Verify failed`.
     asm.truncate(body);
-    asm.push(Verify.into());
-    asm.extend(std::iter::repeat_n(Drop.into(), nips));
-    asm.push(Int1.into());
+    asm.push((Verify.into(), None));
+    asm.extend(std::iter::repeat_n((Drop.into(), None), nips));
+    asm.push((Int1.into(), None));
 
     let (kept, dropped) = (rewrite(kept), rewrite(asm));
     // A covenant that only leaves its witness for the final check would be empty.
@@ -291,8 +295,9 @@ pub(super) fn optimize(mut asm: Vec<Op>) -> (Vec<Op>, usize) {
     }
 }
 
-fn rewrite(asm: Vec<Op>) -> (Vec<Op>, usize) {
-    let mut optimized: Vec<Op> = Vec::with_capacity(asm.len());
+/// A replaced window's instructions take the span of its first instruction.
+fn rewrite(asm: Vec<Spanned>) -> (Vec<Spanned>, usize) {
+    let mut optimized: Vec<Spanned> = Vec::with_capacity(asm.len());
     let mut raise = 0;
     for op in asm {
         optimized.push(op);
@@ -300,10 +305,10 @@ fn rewrite(asm: Vec<Op>) -> (Vec<Op>, usize) {
         loop {
             let len = optimized.len();
             if len >= 2
-                && matches(&optimized[len - 1], NotEqual0)
+                && matches(&optimized[len - 1].0, NotEqual0)
                 && BOOLEAN_RESULTS
                     .iter()
-                    .any(|&opcode| matches(&optimized[len - 2], opcode))
+                    .any(|&opcode| matches(&optimized[len - 2].0, opcode))
             {
                 optimized.pop();
                 continue;
@@ -313,12 +318,13 @@ fn rewrite(asm: Vec<Op>) -> (Vec<Op>, usize) {
                     && optimized[len - from.len()..]
                         .iter()
                         .zip(*from)
-                        .all(|(op, &opcode)| matches(op, opcode))
+                        .all(|((op, _), &opcode)| matches(op, opcode))
             }) else {
                 break;
             };
+            let span = optimized[len - from.len()].1;
             optimized.truncate(len - from.len());
-            optimized.extend(to.iter().copied().map(Op::from));
+            optimized.extend(to.iter().map(|&opcode| (opcode.into(), span)));
             raise = raise.max(peak(to).saturating_sub(peak(from)));
         }
     }
@@ -353,7 +359,7 @@ mod tests {
     use crate::opcodes::*;
 
     /// Instructions for assembly tokens: opcodes, `<binding>` reads and constants.
-    fn ops(tokens: Vec<String>) -> Vec<Op> {
+    fn ops(tokens: Vec<String>) -> Vec<Spanned> {
         tokens
             .into_iter()
             .map(
@@ -365,6 +371,7 @@ mod tests {
                     None => Op::Push(token),
                 },
             )
+            .map(|op| (op, None))
             .collect()
     }
 
@@ -372,7 +379,7 @@ mod tests {
         super::optimize(ops(tokens))
             .0
             .iter()
-            .map(Op::spell)
+            .map(|(op, _)| op.spell())
             .collect()
     }
 
@@ -380,7 +387,7 @@ mod tests {
         super::rewrite(ops(tokens))
             .0
             .iter()
-            .map(Op::spell)
+            .map(|(op, _)| op.spell())
             .collect()
     }
 

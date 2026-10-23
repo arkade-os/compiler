@@ -4,11 +4,11 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import { deflateRawSync } from 'node:zlib';
 import * as contracts from './contracts.js';
-import { initSync, compile_sources, compile_sources_with_diagnostics } from './pkg/arkade_compiler.js';
+import { initSync, check_sources, compile_sources, compile_sources_with_diagnostics, symbol_at } from './pkg/arkade_compiler.js';
 
 initSync({ module: fs.readFileSync(new URL('./pkg/arkade_compiler_bg.wasm', import.meta.url)) });
 const context = vm.createContext({
-    contracts, compile_sources, compile_sources_with_diagnostics,
+    contracts, check_sources, compile_sources, compile_sources_with_diagnostics, symbol_at,
     document: { addEventListener() {} },
     localStorage: { setItem() {} },
     location: { hash: '' },
@@ -177,9 +177,12 @@ const elements = Object.fromEntries(['errors-output', 'error-count', 'compile-st
     const classes = new Set();
     return [id, {
         textContent: '',
+        innerHTML: '',
+        dataset: {},
         classList: {
             add: (...names) => names.forEach(name => classes.add(name)),
             remove: (...names) => names.forEach(name => classes.delete(name)),
+            toggle: (name, on) => (on ? classes.add(name) : classes.delete(name)),
             contains: name => classes.has(name),
         },
     }];
@@ -199,15 +202,109 @@ vm.runInContext(`
     doCompile();
 `, context);
 assert.equal(context.renderedArtifact.fingerprint, warningArtifact.fingerprint);
-assert.equal(elements['errors-output'].textContent, detailed.warnings.join('\n'));
+const warningDiagnostics = detailed.diagnostics.filter(d => d.severity === 'warning');
+assert.equal(warningDiagnostics.length, detailed.warnings.length);
+for (const warning of warningDiagnostics) {
+    assert.ok(elements['errors-output'].innerHTML.includes('class="diagnostic warning"'));
+    assert.ok(elements['errors-output'].innerHTML.includes(warning.message), warning.message);
+}
 assert(elements['error-count'].classList.contains('warning'));
 assert.equal(elements['error-count'].textContent, String(detailed.warnings.length));
 assert.equal(elements['compile-status'].className, 'compile-status warning');
 context.warningSource = 'contract Clean() { function spend() { require(true); } }';
 vm.runInContext('doCompile()', context);
-assert.equal(elements['errors-output'].textContent, '');
+assert.equal(elements['errors-output'].innerHTML, '');
 assert(!elements['error-count'].classList.contains('visible'));
 assert.equal(elements['compile-status'].className, 'compile-status success');
+
+// Every error is reported with its position, columns in UTF-16 units; nothing is thrown.
+const failingSource = 'contract Failing() {\n    function spend(int x) { require("é" == x); require(y == 1); }\n}';
+const failed = JSON.parse(compile_sources_with_diagnostics('main.ark', JSON.stringify({ './main.ark': failingSource })));
+assert.equal(failed.artifact, null);
+const errors = failed.diagnostics.filter(d => d.severity === 'error');
+assert(errors.length >= 2);
+for (const error of errors) {
+    assert.equal(error.file, 'main.ark');
+    assert.equal(error.start.line, 2);
+}
+const undefinedName = errors.find(d => d.message.includes("'y'"));
+assert.equal(undefinedName.start.column, failingSource.split('\n')[1].indexOf('y == 1') + 1);
+// Diagnosing while typing reports what compiling does, except that a library is not an error.
+assert.deepEqual(JSON.parse(check_sources('main.ark', JSON.stringify({ './main.ark': failingSource }))), failed.diagnostics);
+const library = JSON.stringify({ 'fees.ark': 'library Fees { function fee(int a) int { return a + 1; } }' });
+assert.deepEqual(JSON.parse(check_sources('fees.ark', library)), []);
+assert.match(JSON.parse(compile_sources_with_diagnostics('fees.ark', library)).diagnostics[0].message, /not a library/);
+context.document.querySelectorAll = () => [];
+context.warningSource = failingSource;
+context.selected = null;
+vm.runInContext(`
+    editor = { getValue: () => warningSource, revealLineInCenter() {}, setSelection: range => { selected = range; } };
+    doCompile();
+`, context);
+assert.equal(context.selected.startColumn, errors[0].start.column);
+assert.equal(elements['error-count'].textContent, String(errors.length));
+assert.equal(elements['compile-status'].className, 'compile-status error');
+assert.match(elements['errors-output'].innerHTML, /data-line="2" data-column="\d+">error\[/);
+assert.match(elements['errors-output'].innerHTML, /\(main\.ark:2:\d+\)/);
+
+// Assembly tokens link to the statement each comes from.
+const mapped = JSON.parse(compile_sources_with_diagnostics('main.ark', JSON.stringify({
+    'main.ark': 'contract M(pubkey k) {\n  function f(signature s, int n) {\n    require(n > 0);\n    if (n > 1) {\n      require(checkSig(s, k));\n    }\n  }\n}',
+})));
+const covenant = JSON.parse(mapped.artifact).functions[0].arkade;
+assert.equal(covenant.sourceMap, undefined);
+const sourceMap = JSON.parse(mapped.debug).functions.f.sourceMap;
+context.covenant = covenant;
+context.sourceMap = sourceMap;
+const html = vm.runInContext('asmRuns = []; covenantListing(covenant.asm, sourceMap)', context);
+assert.equal((html.match(/class="asm-line asm-run"/g) || []).length, sourceMap.length);
+assert.equal((html.match(/class="asm-line"/g) || []).length > 0, true);
+for (const token of covenant.asm) assert.ok(html.includes(token.replace(/</g, '&lt;').replace(/>/g, '&gt;')), token);
+const runs = vm.runInContext('asmRuns', context);
+const innermost = line => [...vm.runInContext(`innermostRuns(asmRuns, ${line}, 9)`, context)].map(run => runs[run].start[0]);
+assert.deepEqual(innermost(3), [3]);
+assert.deepEqual(innermost(5), [5]);
+assert.ok(innermost(4).every(line => line === 4) && innermost(4).length > 0);
+// An `if` maps to its condition alone, so its tokens are not chosen inside its body.
+assert.ok(runs.filter(range => range.start[0] === 4).every(range => range.end[0] === 4));
+assert.deepEqual(innermost(8), []);
+// The map locates source only while the editor shows the source it was compiled from.
+vm.runInContext("lastCompiledSource = 'compiled'; editor = { getValue: () => 'compiled' };", context);
+assert.equal(vm.runInContext('sourceRuns()', context), runs);
+vm.runInContext("editor = { getValue: () => 'edited' };", context);
+assert.equal(vm.runInContext('sourceRuns().length', context), 0);
+
+// Hover and go to definition read the compiler's symbol table.
+const symbolFiles = JSON.stringify({
+    'main.ark': 'import "fees.ark";\ncontract V(pubkey owner) {\n  function spend(signature sig, int amount) {\n    require(checkSig(sig, owner));\n    require(Fees.fee(amount) > amount);\n  }\n}',
+    'fees.ark': 'library Fees {\n  function fee(int amount) int { return amount + 1; }\n}',
+});
+const symbolAtPosition = (line, column) => JSON.parse(symbol_at('main.ark', symbolFiles, line, column));
+const owner = symbolAtPosition(4, 28);
+assert.deepEqual([owner.name, owner.kind, owner.type], ['owner', 'parameter', 'pubkey']);
+assert.deepEqual(owner.definition.start, { line: 2, column: 19 });
+assert.deepEqual(owner.at.start, { line: 4, column: 27 });
+assert.equal(owner.references.length, 1);
+context.symbol = owner;
+assert.deepEqual([...vm.runInContext('describeSymbol(symbol)', context)], ['parameter owner: pubkey', 'Defined at line 2 · 1 reference']);
+const fee = symbolAtPosition(5, 18);
+assert.deepEqual([fee.name, fee.kind, fee.type, fee.definition.file], ['fee', 'function', 'int', 'fees.ark']);
+context.symbol = fee;
+assert.equal(vm.runInContext('describeSymbol(symbol)[1]', context), 'Defined at fees.ark:2 · 1 reference');
+const amount = symbolAtPosition(3, 37);
+assert.deepEqual([amount.name, amount.references.length], ['amount', 2]);
+assert.equal(symbolAtPosition(4, 1), null);
+// The analysis symbol_at keeps for unchanged sources is redone after an edit to an imported file.
+context.lookupFiles = JSON.parse(symbolFiles);
+vm.runInContext(`
+    projects.lookup = { name: 'Lookup', files: lookupFiles };
+    [currentProject, currentFile] = ['lookup', 'main.ark'];
+    editor = { getModel: () => 'model', getValue: () => lookupFiles['main.ark'] };
+`, context);
+const feeDefinitionLine = () => vm.runInContext("symbolAt('model', { lineNumber: 5, column: 18 })", context).definition.start.line;
+assert.deepEqual([feeDefinitionLine(), feeDefinitionLine()], [2, 2]);
+context.lookupFiles['fees.ark'] = `\n${context.lookupFiles['fees.ark']}`;
+assert.equal(feeDefinitionLine(), 3);
 
 function loadStored(saved) {
     const store = { 'arkade-playground': JSON.stringify(saved) };

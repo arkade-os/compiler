@@ -184,7 +184,7 @@ impl Generator {
             self.bind_type(&name, &ty);
             let mut normalized = expression.clone();
             let ExprKind::Builtin { args, .. } = &mut normalized.kind else {
-                unreachable!()
+                unreachable!("checkMultisig is a builtin call")
             };
             args[0] = keys.with_kind(ExprKind::Name(Path::new(name)));
             args[0].ty = keys.ty.clone();

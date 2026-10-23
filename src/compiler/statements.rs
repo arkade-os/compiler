@@ -62,17 +62,17 @@ impl Generator {
             return Err(CompileError::internal("branch changed outer stack layout"));
         }
         self.stack = left;
-        self.asm.extend(left_asm);
+        self.asm.append(left_asm);
         self.join_stack(&target)?;
         let left_joined = self.asm.split_off(start);
         self.stack = right;
-        self.asm.extend(right_asm);
+        self.asm.append(right_asm);
         self.join_stack(&target)?;
         let right_joined = self.asm.split_off(start);
-        self.asm.extend(left_joined);
+        self.asm.append(left_joined);
         if else_body.is_some() || !right_joined.is_empty() {
             self.asm.push(Else.into());
-            self.asm.extend(right_joined);
+            self.asm.append(right_joined);
         }
         self.asm.push(EndIf.into());
         self.deferred = deferred.difference(&initialized).cloned().collect();
@@ -84,7 +84,15 @@ impl Generator {
 
 /// Emit `body` and report whether an emitted path falls through.
 pub(super) fn emit_body(body: &[Lowered], generator: &mut Generator) -> Result<bool> {
+    let outer = generator.asm.span();
+    let continues = emit_items(body, generator);
+    generator.asm.set_span(outer);
+    continues
+}
+
+fn emit_items(body: &[Lowered], generator: &mut Generator) -> Result<bool> {
     for (index, item) in body.iter().enumerate() {
+        generator.asm.set_span(Some(item.span()));
         let continues = emit_lowered(item, generator).map_err(|error| error.at(item.span()))?;
         // A return leaves its value for the caller.
         if item.is_return() {
@@ -110,6 +118,8 @@ fn emit_lowered(item: &Lowered, generator: &mut Generator) -> Result<bool> {
             else_body,
             ..
         } => {
+            // The branch opcodes map to the condition, not the whole statement.
+            generator.asm.set_span(Some(condition.span));
             generator.emit_expression(condition)?;
             generator.apply(If, 1, 0)?;
             generator.emit_branches(then_body, else_body.as_deref(), true)

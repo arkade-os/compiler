@@ -138,6 +138,7 @@ fn fields_from_ark_type(
 ) -> Result<Vec<Field>, String> {
     arkade_compiler::models::flatten_parameter(
         &arkade_compiler::Parameter {
+            span: Default::default(),
             name: name.to_string(),
             param_type: ark_type.into(),
         },

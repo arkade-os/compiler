@@ -1,8 +1,8 @@
-use crate::diagnostics::{CompileError, Diagnostic};
+use crate::diagnostics::{CompileError, Diagnostic, Span};
 use crate::models::{
     ArkadeCovenant, AssignmentTarget, CompilerInfo, Contract, ContractJson, ExprKind, Expression,
-    Function, FunctionInput, LocatedStatement, Parameter, Path, Requirement, Segment, Statement,
-    TypeName,
+    Function, FunctionInput, LocatedStatement, Parameter, Path, Requirement, Segment, SourceRange,
+    Statement, TypeName,
 };
 use crate::opcodes::Opcode::{
     self, Add, Bin2Num, BoolAnd, Cat, CheckSig, CheckSigAdd, Drop, Dup, EcPairing, Else, EndIf,
@@ -37,7 +37,7 @@ pub(crate) use constants::{fold as fold_constants, resolve as resolve_constants}
 mod expr;
 mod functions;
 mod ir;
-pub(crate) use ir::Op;
+pub(crate) use ir::{Op, Spanned};
 mod introspection;
 mod loops;
 mod lowering;
@@ -84,7 +84,7 @@ fn integer_op(value: usize) -> Op {
 
 struct Generator {
     optimize: bool,
-    asm: Vec<Op>,
+    asm: ir::Assembly,
     stack: Vec<StackItem>,
     /// The most items the stacks hold at once, data and alt together.
     max_depth: usize,
@@ -149,7 +149,7 @@ impl Generator {
                 constructor_expansions.push((parameter.name.clone(), placeholders));
             }
         }
-        let mut asm = Vec::new();
+        let mut asm = ir::Assembly::default();
         let mut inlined = std::collections::HashMap::new();
         for (placeholder, binding_name) in constructor_bindings.into_iter().rev() {
             if inlined_bindings.contains(&binding_name) {
@@ -379,11 +379,12 @@ impl Generator {
         Ok(())
     }
 
-    /// The covenant's instructions and its stack peak.
-    fn finish(mut self) -> Result<(Vec<Op>, usize)> {
+    /// The covenant's instructions, each with its statement's span, and its stack peak.
+    fn finish(mut self) -> Result<(Vec<Spanned>, usize)> {
         if !self.scopes.is_empty() {
             return Err(CompileError::internal("unbalanced generator scope"));
         }
+        self.asm.set_span(None);
         self.push_temporary(Int1);
         while self.stack.len() > 1 {
             self.nip()?;
@@ -391,7 +392,7 @@ impl Generator {
         if self.stack != vec![StackItem::Temporary] {
             return Err(CompileError::internal("covenant did not finish cleanly"));
         }
-        Ok((self.asm, self.max_depth))
+        Ok((self.asm.into_spanned(), self.max_depth))
     }
 }
 
@@ -417,16 +418,22 @@ pub fn compile(source_code: &str) -> Result<ContractJson, String> {
     )
 }
 
-/// Runs semantic validation, including type checking, on `contract`. Returns every
-/// warning on success, every error (each its own diagnostic, not joined into
-/// one message) on failure. Diagnostic messages carry no location prefix —
+/// A validated contract's warnings and its checked tapscript leaves, in declaration order.
+pub(crate) struct Prepared {
+    pub warnings: Vec<Diagnostic>,
+    pub leaves: Vec<tapscript::CheckedLeaf>,
+}
+
+/// Runs semantic validation, including type checking, on `contract`. Returns its
+/// warnings and checked leaves on success, every error (each its own diagnostic, not
+/// joined into one message) on failure. Diagnostic messages carry no location prefix —
 /// `Diagnostic::span` is the byte range; `diagnostics::render_errors` adds a
 /// `"line N, column M: "` prefix only when rendering the legacy joined string.
 pub(crate) fn prepare(
     contract: &mut Contract,
     require_entrypoint: bool,
     file: &str,
-) -> Result<Vec<Diagnostic>, Vec<Diagnostic>> {
+) -> std::result::Result<Prepared, Vec<Diagnostic>> {
     types::annotate(contract);
 
     // ── Semantic validation ────────────────────────────────────────────────
@@ -444,12 +451,18 @@ pub(crate) fn prepare(
             })
             .collect());
     }
-    let leaf_errors: Vec<_> = contract
-        .tapscripts
-        .iter()
-        .filter_map(|ts| tapscript::check_tapscript(contract, ts).err())
-        .map(|message| Diagnostic::error(file, message).with_code("validation"))
-        .collect();
+    let mut leaves = Vec::new();
+    let mut leaf_errors = Vec::new();
+    for ts in &contract.tapscripts {
+        match tapscript::check_tapscript(contract, ts) {
+            Ok(leaf) => leaves.push(leaf),
+            Err(message) => leaf_errors.push(
+                Diagnostic::error(file, message)
+                    .with_code("validation")
+                    .with_span(ts.span),
+            ),
+        }
+    }
     if !leaf_errors.is_empty() {
         return Err(leaf_errors);
     }
@@ -466,16 +479,22 @@ pub(crate) fn prepare(
         }
     }
 
-    Ok(warnings)
+    Ok(Prepared { warnings, leaves })
 }
 
 pub(crate) fn emit(
     contract: &Contract,
+    leaves: &[tapscript::CheckedLeaf],
     source: crate::models::SourceBundle,
     warnings: Vec<String>,
     options: crate::CompileOptions,
 ) -> Result<ContractJson> {
     let parameters = contract.parameters.clone();
+    let entry_source = source.files.get(&source.entry).cloned().unwrap_or_default();
+    let mut messages = std::collections::HashMap::new();
+    for function in contract.functions.iter().filter(|f| !f.is_imported()) {
+        require_messages(&function.statements, &mut messages);
+    }
 
     let mut json = ContractJson {
         format_version: Some(crate::models::ARTIFACT_FORMAT_VERSION),
@@ -507,11 +526,16 @@ pub(crate) fn emit(
                 &contract.functions,
                 options.optimize,
             )
+            .map(|(inputs, ops)| ArkadeCovenant {
+                inputs,
+                asm: ops.iter().map(|(op, _)| op.spell()).collect(),
+                source_map: source_map(&ops, &entry_source, &messages),
+            })
             .map_err(|error| error.at(function.span))?,
         );
     }
 
-    json.functions = tapscript::build_function_groups(contract, covenants)?;
+    json.functions = tapscript::build_function_groups(contract, leaves, covenants)?;
 
     // ── Output invariant check ─────────────────────────────────────────────
     // Self-check the emitted JSON for structural invariants.
@@ -549,7 +573,11 @@ pub(crate) fn expanded_placeholder_params(
     let mut result = Vec::new();
     for param in params {
         for_each_expanded_param(param, structs, |name, _, param_type| {
-            result.push(Parameter { name, param_type });
+            result.push(Parameter {
+                span: Default::default(),
+                name,
+                param_type,
+            });
         })?;
     }
     Ok(result)
@@ -562,7 +590,7 @@ fn covenant_for(
     structs: &[crate::models::StructDefinition],
     functions: &[Function],
     optimize: bool,
-) -> Result<ArkadeCovenant> {
+) -> Result<(Vec<FunctionInput>, Vec<Spanned>)> {
     let inputs = function_inputs(&function.parameters);
     let references =
         crate::validator::references::referenced_parameters(&function.statements, functions);
@@ -666,15 +694,73 @@ fn covenant_for(
     let width = |name: &str| widths.get(name).copied().unwrap_or(0);
     // A lower bound: a variable-width parameter counts as its shortest push, so an instance
     // with long values can still exceed the limit.
-    let size: usize = ops.iter().map(|op| op.min_size(&width)).sum();
+    let size: usize = ops.iter().map(|(op, _)| op.min_size(&width)).sum();
     if size > MAX_SCRIPT_SIZE {
         return Err(format!(
             "function '{}' assembles to at least {size} bytes, above the VM limit of {MAX_SCRIPT_SIZE}",
             function.name
         ).into());
     }
-    let asm = ops.iter().map(Op::spell).collect();
-    Ok(ArkadeCovenant { inputs, asm })
+    Ok((inputs, ops))
+}
+
+/// Runs of `ops` from one statement, located in `source`.
+fn source_map(
+    ops: &[Spanned],
+    source: &str,
+    messages: &std::collections::HashMap<Span, String>,
+) -> Vec<SourceRange> {
+    let mut ranges: Vec<(Span, SourceRange)> = Vec::new();
+    for (index, (_, span)) in ops.iter().enumerate() {
+        let Some(span) = *span else {
+            continue;
+        };
+        if let Some((last, range)) = ranges.last_mut() {
+            if *last == span && range.asm[1] == index {
+                range.asm[1] += 1;
+                continue;
+            }
+        }
+        let position =
+            |offset| crate::diagnostics::position(source, offset).map(<[usize; 2]>::from);
+        let (Some(start), Some(end)) = (position(span.start), position(span.end)) else {
+            continue;
+        };
+        let message = messages.get(&span).cloned();
+        let range = SourceRange {
+            asm: [index, index + 1],
+            start,
+            end,
+            message,
+        };
+        ranges.push((span, range));
+    }
+    ranges.into_iter().map(|(_, range)| range).collect()
+}
+
+fn require_messages(
+    statements: &[LocatedStatement],
+    messages: &mut std::collections::HashMap<Span, String>,
+) {
+    for statement in statements {
+        if let Some(message) = &statement.message {
+            messages.insert(statement.span, message.clone());
+        }
+        match &statement.statement {
+            Statement::IfElse {
+                then_body,
+                else_body,
+                ..
+            } => {
+                require_messages(then_body, messages);
+                require_messages(else_body.as_deref().unwrap_or_default(), messages);
+            }
+            Statement::ForIn { body, .. } | Statement::ForCount { body, .. } => {
+                require_messages(body, messages)
+            }
+            _ => {}
+        }
+    }
 }
 
 fn function_inputs(params: &[Parameter]) -> Vec<FunctionInput> {

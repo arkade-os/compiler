@@ -16,14 +16,14 @@ The language covers signature and multisig checks, absolute and relative timeloc
 
 **[arkade-os.github.io/compiler](https://arkade-os.github.io/compiler)**
 
-The playground runs the real compiler as WebAssembly. Nothing is installed and nothing leaves your browser. Pick a contract from the Explorer, edit it, and press **Ctrl+Enter** (or **Ctrl+S**). The right panel shows four tabs:
+The playground runs the real compiler as WebAssembly. Nothing is installed and nothing leaves your browser. Pick a contract from the Explorer and edit it; errors and warnings appear as you type. Hovering a name shows what it is, its type and where it is defined; F12 or Ctrl+click goes to its definition, and the cursor highlights every use of the name under it. Press **Ctrl+Enter** (or **Ctrl+S**) to compile. The right panel shows four tabs:
 
 | Tab | What you get |
 |---|---|
 | JSON Output | The full artifact, the same bytes `arkadec` writes to disk |
-| Assembly | Every spend group: the Arkade covenant ASM and each tapscript leaf, opcodes and `<placeholders>` highlighted |
+| Assembly | Every spend group: the Arkade covenant ASM, one source statement per line with its line number and `require` message, and each tapscript leaf. Hovering a covenant line highlights its statement in the editor, clicking it selects the statement, and moving the cursor highlights the cursor's statement |
 | Bindings | Generated TypeScript or Go client code for the artifact, switchable per target |
-| Diagnostics | Compiler warnings and errors; an offending line is selected in the editor when available |
+| Diagnostics | Every compiler error and warning with its location, updated as you type; they are underlined in the editor, and clicking one moves the cursor to it |
 
 The Explorer ships the single-file examples (SingleSig, HTLC, FujiSafe, StructVault, NonInteractiveSwap) and the multi-file projects (Stability, LayerZero / USDT0, Options, Bonds). You can add files and folders, rename, drag between folders, and everything persists in `localStorage`. The compiler resolves imports from the Explorer's files. The link button copies a URL containing the selected contract and its dependencies. Shared bundles support up to 1 MiB of encoded URL content and 4 MiB of decompressed source data.
 
@@ -196,9 +196,12 @@ cargo install --path . --locked          # installs arkadec from a checkout
 arkadec contract.ark                     # writes contract.json in the current directory
 arkadec contract.ark -o out.json
 arkadec contract.ark --no-optimize       # skips constant folding, static branch removal, and assembly optimization
+arkadec contract.ark --check             # every error and warning as file:line:column, no artifact
+arkadec contract.ark --check --json      # the same diagnostics as a JSON array
+arkadec contract.ark --debug             # also writes contract.debug.json with covenant source maps
 ```
 
-Warnings go to stderr; type and validation errors abort with a non-zero exit. From a checkout, `cargo run -- examples/htlc/htlc.ark -o /tmp/htlc.json` is the fastest way to inspect output.
+Warnings go to stderr; type and validation errors abort with a non-zero exit. `--check` exits with status 1 when any diagnostic is an error. From a checkout, `cargo run -- examples/htlc/htlc.ark -o /tmp/htlc.json` is the fastest way to inspect output.
 
 Generate client bindings from one artifact or a directory of them:
 
@@ -211,7 +214,7 @@ cargo run -p arkade-bindgen -- --list-targets
 
 The TypeScript SDK reads the artifact directly with `programFromArtifact`; generating bindings is optional.
 
-Use `arkade_compiler::compile(source)` for standalone source, `compile_file(path)` to load an entry file and its relative imports, or `compile_sources(entry, &files)` for an in-memory project (`BTreeMap<String, String>` mapping paths to source text). All return `Result<ContractJson, _>`. Standalone source uses `main.ark` as its filename. The `wasm` feature exposes `compile`, `compile_sources`, `compile_sources_with_diagnostics`, `validate`, and `version`; `compile_sources(entry, files)` returns the artifact JSON, while `compile_sources_with_diagnostics(entry, files)` returns `{ artifact: string, warnings: string[] }` for the playground.
+Use `arkade_compiler::compile(source)` for standalone source, `compile_file(path)` to load an entry file and its relative imports, or `compile_sources(entry, &files)` for an in-memory project (`BTreeMap<String, String>` mapping paths to source text). All return `Result<ContractJson, _>`. Standalone source uses `main.ark` as its filename. For editors and tools, `analyze(entry, &files)` runs parsing, import resolution, typing and validation once; the returned `Analysis` gives `diagnostics()`, the typed AST through `contract()` (each expression's `ty()`), and `compile(options)`, whose errors are `Diagnostic`s with spans. `Analysis::symbols()` lists every definition (with its type and, for locals, where it is visible) and every reference to one, by file and byte span, and `definition_at(file, offset)` resolves a name under a cursor; files that fail validation still get symbols. `Analysis::source(file)` returns the text of each file analysis read, to place those spans. `check(entry, &files)` and `Analysis::check(options)` return those diagnostics plus, for a contract, code generation's first error. `analyze_file(path)` analyzes an entry file and its imports from the filesystem, and `diagnostics::to_json` gives a diagnostic the JSON form the CLI and WASM use. The `wasm` feature exposes `compile`, `compile_sources`, `compile_sources_with_diagnostics`, `check_sources`, `symbol_at`, `validate`, and `version`; `symbol_at(entry, files, line, column)` returns the name at a position with its kind, type, definition and references; `compile_sources(entry, files)` returns the artifact JSON, while `compile_sources_with_diagnostics(entry, files)` returns `{ artifact: string | null, debug: string | null, warnings: string[], diagnostics }` for the playground, where each diagnostic has `severity`, `code`, `message`, `file` and 1-based `start`/`end` `{ line, column }` positions with UTF-16 columns; compilation errors are diagnostics with a `null` artifact, not a thrown error. `check_sources(entry, files)` returns those diagnostics alone, as `Analysis::check` does, so a library entry is not an error; the playground uses it to diagnose sources as you type.
 
 ### Run the playground locally
 
@@ -230,6 +233,7 @@ cargo test --workspace                                   # unit, feature, and ex
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --check
 node playground/imports.test.mjs                         # after the playground build
+node playground/completions.test.mjs
 ./scripts/e2e.sh -v                                      # builds arkadec, runs artifacts through the Arkade VM and btcd (Go)
 cp ./scripts/pre-commit .git/hooks                       # fmt + test before every commit
 ```
@@ -547,6 +551,22 @@ Covenant spend groups come first in function declaration order, followed by stan
 Witness `encoding` values: `schnorr-64`, `raw`, `raw-20`, `raw-32`, `scriptnum`. `updatedAt` changes on every compile; ignore it when diffing artifacts.
 
 The `source` bundle contains the entry file and every loaded dependency, preserving their text verbatim, including comments. Paths are normalized and relative; native compilation strips the common directory prefix. Recompile a bundle with the same compiler version using `compile_sources(&source.entry, &source.files)`. Standalone compilation produces a one-file bundle with entry `main.ark`.
+
+### Debug file
+
+`--debug` also writes a debug file next to the artifact, with the artifact's extension replaced (`-o out/htlc.json` writes `out/htlc.debug.json`). It is not part of the artifact, so the fingerprint does not cover it, and no consumer needs it to instantiate or spend a contract. The playground receives the same JSON as `debug` from `compile_sources_with_diagnostics`, and the Rust API keeps it on `ArkadeCovenant::source_map` (`ContractJson::debug_info` builds the file).
+
+```json
+{
+  "formatVersion": 1,
+  "artifactFingerprint": "sha256:...",
+  "functions": {
+    "claim": { "sourceMap": [{ "asm": [0, 5], "start": [11, 5], "end": [11, 56] }] }
+  }
+}
+```
+
+`artifactFingerprint` links the file to its artifact. `functions` is keyed by spend group name and lists only groups with an Arkade covenant. Each `sourceMap` entry gives a run of `arkade.asm` tokens and the entry-file statement it comes from, as `{ asm: [from, to), start: [line, column], end: [line, column], message? }`, 1-based with columns in UTF-16 code units; `message` is a `require`'s message. Code inlined from an imported helper maps to its call; the prologue's input checks and the final stack cleanup are not mapped. Positions point into the artifact's `source` bundle; the debug file holds no copy of the source.
 
 Type-check and validation warnings remain available on the Rust compilation result, are printed by the CLI, and appear in the playground's Diagnostics tab, but are not serialized into artifacts. They identify their source file relative to the bundle root, including warnings from dependencies.
 
