@@ -1,6 +1,6 @@
 // Arkade Playground - Main Application
 // Import default export for WASM initialization, plus the exported functions
-import initWasm, { compile_sources, compile_sources_with_diagnostics, symbol_at, symbols, version, init as initPanicHook } from './pkg/arkade_compiler.js';
+import initWasm, { check_sources, compile_sources, compile_sources_with_diagnostics, symbol_at, symbols, version, init as initPanicHook } from './pkg/arkade_compiler.js';
 import * as contracts from './contracts.js';
 import { generateBindings, AVAILABLE_TARGETS } from './codegen.js';
 
@@ -1272,7 +1272,7 @@ function initMonaco() {
         });
 
         editor.onDidChangeCursorPosition(({ position }) => {
-            markRuns(innermostRuns(asmRuns, position.lineNumber, position.column), 'cursor');
+            markRuns(innermostRuns(sourceRuns(), position.lineNumber, position.column), 'cursor');
         });
 
         // Mark dirty on change — no auto-compile
@@ -1423,7 +1423,7 @@ function doCompile() {
     try {
         const { entry, files } = compilationSources();
         const optimize = document.getElementById('optimize-toggle').checked;
-        const { artifact: result, warnings, diagnostics } = JSON.parse(compile_sources_with_diagnostics(entry, JSON.stringify(files), optimize));
+        const { artifact: result, debug, warnings, diagnostics } = JSON.parse(compile_sources_with_diagnostics(entry, JSON.stringify(files), optimize));
         markDiagnostics(diagnostics, entry);
         if (result === null) {
             showErrors(diagnostics, entry);
@@ -1431,7 +1431,7 @@ function doCompile() {
         }
         lastCompiledSource = source;
         displayJson(result);
-        displayAsm(result);
+        displayAsm(result, debug);
         displayBindings(result);
         showSuccess(result, warnings.length);
         renderDiagnostics(diagnostics, entry);
@@ -1477,12 +1477,13 @@ function syntaxHighlightJson(json) {
 }
 
 // Display Assembly output
-function displayAsm(jsonStr) {
+function displayAsm(jsonStr, debugStr) {
     const container = document.getElementById('asm-output');
     linkAsmToSource(container);
 
     try {
         const data = JSON.parse(jsonStr);
+        const debugFunctions = JSON.parse(debugStr).functions;
         let html = '';
         asmRuns = [];
 
@@ -1490,7 +1491,7 @@ function displayAsm(jsonStr) {
             for (const group of data.functions) {
                 if (group.arkade && group.arkade.asm && group.arkade.asm.length > 0) {
                     html += `<span class="asm-function">${group.name} <span class="asm-variant">(arkade covenant)</span></span>\n`;
-                    html += covenantListing(group.arkade.asm, group.arkade.sourceMap) + '\n';
+                    html += covenantListing(group.arkade.asm, debugFunctions[group.name]?.sourceMap) + '\n';
                 }
                 for (const leaf of (group.leaves || [])) {
                     const label = leaf.name === group.name ? group.name : `${group.name}/${leaf.name}`;
@@ -1562,6 +1563,8 @@ function escapeHtml(text) {
 
 // The covenant source map ranges shown in the assembly tab, indexed by their `data-run`.
 let asmRuns = [];
+// They locate source only while the editor shows the source they were compiled from.
+const sourceRuns = () => (editor?.getValue() === lastCompiledSource ? asmRuns : []);
 let sourceDecorations = [];
 
 // Highlight assembly code
@@ -1635,8 +1638,8 @@ function linkAsmToSource(container) {
     if (container.dataset.linked) return;
     container.dataset.linked = 'true';
     const hover = run => {
-        markRuns(run === undefined ? [] : [run], 'hover');
-        const range = asmRuns[run];
+        const range = sourceRuns()[run];
+        markRuns(range ? [run] : [], 'hover');
         if (typeof monaco === 'undefined' || !editor?.deltaDecorations) return;
         const decorations = range ? [{
             range: editorRange(range),
@@ -1650,7 +1653,7 @@ function linkAsmToSource(container) {
         hover(run === undefined ? undefined : Number(run));
     });
     container.addEventListener('click', event => {
-        const range = asmRuns[event.target.closest('.asm-run')?.dataset.run];
+        const range = sourceRuns()[event.target.closest('.asm-run')?.dataset.run];
         if (!range || typeof monaco === 'undefined' || !editor) return;
         const selection = editorRange(range);
         editor.setSelection(selection);
@@ -1713,7 +1716,7 @@ function lint() {
         try {
             const { entry, files } = sourceFiles();
             const optimize = document.getElementById('optimize-toggle').checked;
-            const { diagnostics } = JSON.parse(compile_sources_with_diagnostics(entry, JSON.stringify(files), optimize));
+            const diagnostics = JSON.parse(check_sources(entry, JSON.stringify(files), optimize));
             markDiagnostics(diagnostics, entry);
             renderDiagnostics(diagnostics, entry);
         } catch {}

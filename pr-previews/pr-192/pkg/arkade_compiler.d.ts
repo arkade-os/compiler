@@ -2,6 +2,13 @@
 /* eslint-disable */
 
 /**
+ * The diagnostics of a virtual project, in the form `compile_sources_with_diagnostics` gives
+ * them, without an artifact; a library entry gets its own diagnostics, not the error compiling
+ * it as an entry would give. For diagnosing sources while they are edited.
+ */
+export function check_sources(entry: string, files: string, optimize?: boolean | null): string;
+
+/**
  * Compile Arkade Script source code to JSON
  *
  * # Arguments
@@ -21,7 +28,8 @@ export function compile_sources(entry: string, files: string, optimize?: boolean
 /**
  * Compile a virtual project and report every diagnostic with its position. Compilation
  * errors are diagnostics, not a thrown error: the result is
- * `{ artifact: string | null, warnings: string[], diagnostics: Diagnostic[] }`, where each
+ * `{ artifact: string | null, debug: string | null, warnings: string[], diagnostics: Diagnostic[] }`,
+ * where `debug` is the debug file JSON (`ContractJson::debug_info`) and each
  * diagnostic has `severity`, `code`, `message`, `file` and, when located, 1-based `start` and
  * `end` `{ line, column }` with columns counted in UTF-16 units, as editors count them.
  */
@@ -65,6 +73,7 @@ export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembl
 
 export interface InitOutput {
     readonly memory: WebAssembly.Memory;
+    readonly check_sources: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
     readonly compile: (a: number, b: number) => [number, number, number, number];
     readonly compile_sources: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
     readonly compile_sources_with_diagnostics: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
