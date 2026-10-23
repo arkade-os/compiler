@@ -64,7 +64,7 @@ fn check_json_lists_diagnostics_and_only_errors_fail() {
         serde_json::json!({ "line": 3, "column": 17 })
     );
     assert_eq!(first["end"], serde_json::json!({ "line": 3, "column": 18 }));
-    assert!(first["file"].as_str().unwrap().ends_with("main.ark"));
+    assert_eq!(first["file"], "main.ark");
 
     let clean = "contract C(pubkey k) { function f(signature s) { require(checkSig(s, k)); } }";
     let (status, stdout) = check(&["main.ark", "--check", "--json"], &[("main.ark", clean)]);

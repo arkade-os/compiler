@@ -124,21 +124,28 @@ fn check(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let diagnostics = analyze_file(path).check(options);
     let source = |file: &str| fs::read_to_string(file).ok();
+    // Files show relative to the working directory, as text and as JSON.
+    let cwd = std::env::current_dir().unwrap_or_default();
+    let shown = |file: &str| {
+        let file = Path::new(file);
+        file.strip_prefix(&cwd)
+            .unwrap_or(file)
+            .display()
+            .to_string()
+    };
     if json {
         let diagnostics: Vec<_> = diagnostics
             .iter()
-            .map(|d| arkade_compiler::diagnostics::to_json(d, source(&d.file).as_deref()))
+            .map(|d| {
+                let mut json = arkade_compiler::diagnostics::to_json(d, source(&d.file).as_deref());
+                json["file"] = shown(&d.file).into();
+                json
+            })
             .collect();
         println!("{}", serde_json::to_string_pretty(&diagnostics)?);
     } else {
-        let cwd = std::env::current_dir().unwrap_or_default();
         for d in &diagnostics {
-            let file = Path::new(&d.file);
-            let mut location = file
-                .strip_prefix(&cwd)
-                .unwrap_or(file)
-                .display()
-                .to_string();
+            let mut location = shown(&d.file);
             let start = d.span.zip(source(&d.file));
             if let Some((line, column)) = start.and_then(|(span, source)| {
                 arkade_compiler::diagnostics::position(&source, span.start)
