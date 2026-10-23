@@ -1,10 +1,11 @@
-//! Warns when a function reads one multi-result inspection more than once, so the
+//! Reports a function that reads one multi-result inspection more than once, so the
 //! author can bind the whole result once instead of repeating the opcode.
 
-use super::{child_exprs, ValidationIssue};
+use super::walk::{Visitor, Walk};
+use super::{Finding, Lint};
 use crate::models::{
     AssetLookupSource, AssignmentTarget, Contract, ExprKind, Expression, LocatedStatement,
-    Requirement, Statement,
+    Statement,
 };
 use crate::properties::{InputProperty, OutputProperty, ThisProperty};
 use std::collections::HashSet;
@@ -19,16 +20,16 @@ struct Read {
     span: crate::diagnostics::Span,
 }
 
-pub(super) fn check_repeated_inspections(contract: &Contract, issues: &mut Vec<ValidationIssue>) {
+pub(super) fn check(contract: &Contract, findings: &mut Vec<Finding>) {
     for function in contract.functions.iter().filter(|f| !f.is_imported()) {
-        let mut assigned = HashSet::new();
-        collect_assigned(&function.statements, &mut assigned);
-        let mut walk = Walk {
-            assigned,
+        let mut assigned = Assigned::default();
+        Walk::default().statements(&function.statements, &mut assigned);
+        let mut walk = Reads {
+            assigned: assigned.0,
             reads: Vec::new(),
-            ifs: 0,
+            path: Vec::new(),
         };
-        walk.statements(&function.statements, &mut Vec::new());
+        Walk::default().statements(&function.statements, &mut walk);
         let mut warned = HashSet::new();
         for (i, read) in walk.reads.iter().enumerate() {
             if warned.contains(&read.whole) {
@@ -46,114 +47,65 @@ pub(super) fn check_repeated_inspections(contract: &Contract, issues: &mut Vec<V
             });
             if together {
                 warned.insert(read.whole.clone());
-                issues.push(
-                    ValidationIssue::warning(format!(
+                findings.push(
+                    Finding::new(Lint::RepeatedInspection, read.span, format!(
                         "`{}` is inspected more than once in function '{}'; bind `let x = {};` once and read {}",
                         read.whole,
                         function.name,
                         read.whole,
                         read.fields
-                    ))
-                    .at(read.span),
+                    )),
                 );
             }
         }
     }
 }
 
-fn collect_assigned(statements: &[LocatedStatement], assigned: &mut HashSet<String>) {
-    for statement in statements {
-        match &statement.statement {
-            Statement::VarAssign { target, .. } => {
-                let name = match target {
-                    AssignmentTarget::Binding(name) => Some(name.clone()),
-                    AssignmentTarget::ArrayIndex { array, .. } => Some(array.clone()),
-                    AssignmentTarget::Access(value) => value.binding_path(),
-                };
-                assigned.extend(name.map(|name| name.root));
-            }
-            Statement::IfElse {
-                then_body,
-                else_body,
-                ..
-            } => {
-                collect_assigned(then_body, assigned);
-                collect_assigned(else_body.as_deref().unwrap_or_default(), assigned);
-            }
-            Statement::ForIn { body, .. } | Statement::ForCount { body, .. } => {
-                collect_assigned(body, assigned)
-            }
-            _ => {}
+/// The roots of every binding the function assigns.
+#[derive(Default)]
+struct Assigned(HashSet<String>);
+
+impl<'a> Visitor<'a> for Assigned {
+    fn statement(&mut self, statement: &'a LocatedStatement) {
+        if let Statement::VarAssign { target, .. } = &statement.statement {
+            let name = match target {
+                AssignmentTarget::Binding(name) => Some(name.clone()),
+                AssignmentTarget::ArrayIndex { array, .. } => Some(array.clone()),
+                AssignmentTarget::Access(value) => value.binding_path(),
+            };
+            self.0.extend(name.map(|name| name.root));
         }
     }
 }
 
-struct Walk {
+struct Reads {
     assigned: HashSet<String>,
     reads: Vec<Read>,
-    ifs: usize,
+    path: Path,
 }
 
-impl Walk {
-    fn statements(&mut self, statements: &[LocatedStatement], path: &mut Path) {
-        for statement in statements {
-            match &statement.statement {
-                Statement::Call(value) | Statement::Return(Some(value)) => {
-                    self.expression(value, path)
-                }
-                Statement::Return(None) | Statement::Declaration { .. } => {}
-                Statement::Require(Requirement::Expression(value)) => self.expression(value, path),
-                Statement::Require(Requirement::Comparison { left, right, .. }) => {
-                    self.expression(left, path);
-                    self.expression(right, path);
-                }
-                Statement::LetBinding { value, .. } => self.expression(value, path),
-                Statement::VarAssign { target, value } => {
-                    match target {
-                        AssignmentTarget::Access(target) => self.expression(target, path),
-                        AssignmentTarget::ArrayIndex { index, .. } => self.expression(index, path),
-                        AssignmentTarget::Binding(_) => {}
-                    }
-                    self.expression(value, path);
-                }
-                Statement::IfElse {
-                    condition,
-                    then_body,
-                    else_body,
-                } => {
-                    self.expression(condition, path);
-                    let id = self.ifs;
-                    self.ifs += 1;
-                    path.push((id, true));
-                    self.statements(then_body, path);
-                    path.pop();
-                    path.push((id, false));
-                    self.statements(else_body.as_deref().unwrap_or_default(), path);
-                    path.pop();
-                }
-                Statement::ForIn { iterable, body, .. } => {
-                    self.expression(iterable, path);
-                    self.statements(body, path);
-                }
-                Statement::ForCount { body, .. } => self.statements(body, path),
-            }
-        }
-    }
-
-    fn expression(&mut self, expression: &Expression, path: &Path) {
+impl<'a> Visitor<'a> for Reads {
+    fn expression(&mut self, expression: &'a Expression) {
         if let Some((whole, fields)) = self.whole_read(expression) {
             self.reads.push(Read {
                 whole,
                 fields,
-                path: path.clone(),
+                path: self.path.clone(),
                 span: expression.span,
             });
         }
-        for child in child_exprs(expression) {
-            self.expression(child, path);
-        }
     }
 
+    fn enter_arm(&mut self, id: usize, then: bool) {
+        self.path.push((id, then));
+    }
+
+    fn exit_arm(&mut self) {
+        self.path.pop();
+    }
+}
+
+impl Reads {
     /// The whole-result spelling of a single-field multi-result read, when its operands
     /// name the same value wherever they appear in the function.
     fn whole_read(&self, expression: &Expression) -> Option<(String, &'static str)> {

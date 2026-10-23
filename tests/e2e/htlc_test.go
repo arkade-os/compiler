@@ -25,12 +25,17 @@ func TestCompiledHTLC(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Stand-ins for the SingleSig scripts the SDK derives; the covenant compares witness programs.
+	receiverScript := p2trScript(t, []byte{0x51})
+	senderScript := p2trScript(t, []byte{0x52})
 	values := map[string][]byte{
-		"preimageHash":      btcutil.Hash160(preimage),
-		"refundTime":        refundTimeBytes,
-		"sender":            fixedPublicKey(4).SerializeCompressed(),
-		"receiver":          fixedPublicKey(5).SerializeCompressed(),
-		"SERVER_EXIT_DELAY": exitBytes,
+		"CONTRACT:SingleSig(<receiver>)": receiverScript[2:],
+		"CONTRACT:SingleSig(<sender>)":   senderScript[2:],
+		"preimageHash":                   btcutil.Hash160(preimage),
+		"refundTime":                     refundTimeBytes,
+		"sender":                         fixedPublicKey(4).SerializeCompressed(),
+		"receiver":                       fixedPublicKey(5).SerializeCompressed(),
+		"SERVER_EXIT_DELAY":              exitBytes,
 	}
 	claim := instantiateGroup(
 		t, contract, "claim", values, serverKey.PubKey(), emulatorKey.PubKey(),
@@ -40,18 +45,25 @@ func TestCompiledHTLC(t *testing.T) {
 	)
 
 	t.Run("covenant", func(t *testing.T) {
-		for name, group := range map[string]instantiatedGroup{
-			"claim":  claim,
-			"refund": refund,
+		for name, test := range map[string]struct {
+			group         instantiatedGroup
+			payout, other []byte
+		}{
+			"claim":  {claim, receiverScript, senderScript},
+			"refund": {refund, senderScript, receiverScript},
 		} {
 			t.Run(name, func(t *testing.T) {
+				group := test.group
 				prevTx := fundingTx(group.pkScript, 10_000)
 
-				valid := spendingPSBT(t, prevTx, group, 10_000, group.pkScript)
+				valid := spendingPSBT(t, prevTx, group, 10_000, test.payout)
 				requireVMResult(t, valid, emulatorKey.PubKey(), "")
 
-				underfunded := spendingPSBT(t, prevTx, group, 9_999, group.pkScript)
+				underfunded := spendingPSBT(t, prevTx, group, 9_999, test.payout)
 				requireVMResult(t, underfunded, emulatorKey.PubKey(), "false stack entry")
+
+				misdirected := spendingPSBT(t, prevTx, group, 10_000, test.other)
+				requireVMResult(t, misdirected, emulatorKey.PubKey(), "OP_EQUALVERIFY failed")
 			})
 		}
 	})

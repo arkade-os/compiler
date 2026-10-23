@@ -113,8 +113,8 @@ library Fees {
     assert_eq!(output.functions.len(), 2);
     assert_eq!(output.structs.len(), 1);
     assert_eq!(
-        output.warnings,
-        ["warning[validation]: constructor parameter 'amount' is never used (vault.ark)"]
+        crate::common::feature_warnings(&output),
+        ["warning[unused-parameter]: line 2, column 35: constructor parameter 'amount' is never used (vault.ark)"]
     );
     let asm = arkade_asm_tokens(&output, "spend");
     assert!(asm.contains(&"OP_INSPECTOUTPUTVALUE".to_string()));
@@ -171,8 +171,12 @@ contract Main() {
         &[[("main.ark", source)].as_slice(), &libraries].concat(),
     )
     .unwrap();
+    assert!(
+        crate::common::feature_warnings(&output).is_empty(),
+        "{:?}",
+        output.warnings
+    );
     assert_eq!(output.source.unwrap().files.len(), 3);
-    assert!(output.warnings.is_empty(), "{:?}", output.warnings);
     for (imports, call, expected) in [
         (
             r#"import "a.ark";"#,
@@ -283,7 +287,11 @@ contract Vault(Policy policy, int amount, pubkey owner) {
     );
     assert_eq!(output.functions.len(), 2);
     assert_eq!(output.structs.len(), 1);
-    assert!(output.warnings.is_empty(), "{:?}", output.warnings);
+    assert!(
+        crate::common::feature_warnings(&output).is_empty(),
+        "{:?}",
+        output.warnings
+    );
     let bundle = output.source.as_ref().unwrap();
     assert_eq!(bundle.entry, "contracts/vault.ark");
     assert_eq!(bundle.files.len(), 3);
@@ -487,11 +495,11 @@ fn native_and_virtual_compilation_match_and_bundle_is_portable() {
     std::fs::write(dir.path().join("contracts/main.ark"), source).unwrap();
     std::fs::write(dir.path().join("helper.ark"), helper).unwrap();
     let output = compile_file(dir.path().join("contracts/main.ark")).unwrap();
-    assert_eq!(output.warnings.len(), 2);
+    assert_eq!(crate::common::feature_warnings(&output).len(), 2);
     for path in ["contracts/main.ark", "helper.ark"] {
         assert!(
             output.warnings.iter().any(|warning| {
-                warning.starts_with("warning[validation]:")
+                warning.starts_with("warning[unused-parameter]:")
                     && warning.ends_with(&format!(" ({path})"))
             }),
             "{:?}",

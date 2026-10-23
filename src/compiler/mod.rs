@@ -19,7 +19,7 @@ use crate::opcodes::Opcode::{
     Verify,
 };
 use crate::types::{self};
-use crate::validator::{self, Severity};
+use crate::validator;
 use chrono::Utc;
 use sha2::{Digest, Sha256};
 
@@ -420,7 +420,7 @@ pub fn compile(source_code: &str) -> Result<ContractJson, String> {
 
 /// A validated contract's warnings and its checked tapscript leaves, in declaration order.
 pub(crate) struct Prepared {
-    pub warnings: Vec<Diagnostic>,
+    pub lints: crate::lint::Lints,
     pub leaves: Vec<tapscript::CheckedLeaf>,
 }
 
@@ -440,10 +440,9 @@ pub(crate) fn prepare(
     // Catch errors the PEG grammar cannot express (duplicate names, missing
     // timelocks, etc.) before we attempt code generation.
     let ast_issues = validator::validate_ast(contract, require_entrypoint);
-    if validator::has_errors(&ast_issues) {
+    if !ast_issues.is_empty() {
         return Err(ast_issues
             .iter()
-            .filter(|i| matches!(i.severity, Severity::Error))
             .map(|i| {
                 Diagnostic::error(file, i.message.clone())
                     .with_code(i.code)
@@ -466,20 +465,10 @@ pub(crate) fn prepare(
     if !leaf_errors.is_empty() {
         return Err(leaf_errors);
     }
-    let mut warnings = Vec::new();
-
-    // Append any non-fatal validation warnings (e.g. renew=0)
-    for issue in &ast_issues {
-        if matches!(issue.severity, Severity::Warning) {
-            warnings.push(
-                Diagnostic::warning(file, issue.message.clone())
-                    .with_code(issue.code)
-                    .with_span(issue.span),
-            );
-        }
-    }
-
-    Ok(Prepared { warnings, leaves })
+    Ok(Prepared {
+        lints: crate::lint::check(contract),
+        leaves,
+    })
 }
 
 pub(crate) fn emit(
@@ -540,20 +529,14 @@ pub(crate) fn emit(
     // ── Output invariant check ─────────────────────────────────────────────
     // Self-check the emitted JSON for structural invariants.
     let output_issues = validator::validate_output(&json);
-    if validator::has_errors(&output_issues) {
+    if !output_issues.is_empty() {
         return Err(output_issues
             .iter()
-            .filter(|issue| matches!(issue.severity, Severity::Error))
             .map(|issue| format!("output validation error: {}", issue.message))
             .collect::<Vec<_>>()
             .join("; ")
             .into());
     }
-    for issue in &output_issues {
-        json.warnings
-            .push(format!("warning[output-invariant]: {}", issue.message));
-    }
-
     // Serialized field order is part of the fingerprint; reordering artifact fields changes it.
     let bytes = serde_json::to_vec(&json).map_err(|error| error.to_string())?;
     json.fingerprint = Some(format!("sha256:{:x}", Sha256::digest(bytes)));

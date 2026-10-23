@@ -542,7 +542,11 @@ contract C(pubkey owner, bytes32 hash) {
 "#,
     )
     .expect("logical calls and bindings");
-    assert!(output.warnings.is_empty(), "{:?}", output.warnings);
+    assert!(
+        crate::common::feature_warnings(&output).is_empty(),
+        "{:?}",
+        output.warnings
+    );
     assert_eq!(output.functions.len(), 1);
     assert_eq!(
         crate::common::arkade_inputs(&output, "compare"),

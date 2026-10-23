@@ -78,7 +78,10 @@ fn symbols_resolve_bindings_calls_and_constants_across_files() {
     let files = project(MAIN);
     let analysis = analyze("main.ark", &files);
     assert!(
-        analysis.diagnostics().is_empty(),
+        analysis
+            .diagnostics()
+            .iter()
+            .all(|d| d.lint.is_some_and(crate::common::is_covenant_lint)),
         "{:?}",
         analysis.diagnostics()
     );

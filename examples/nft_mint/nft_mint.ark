@@ -39,7 +39,7 @@ contract NFTMint(
     }
 
     // Transfer existing NFT (not fresh)
-    function transfer(bytes32 nftAssetIdTxid, int nftAssetIdGidx, bytes newOwnerScriptPubKey, signature ownerSig, pubkey ownerPk) {
+    function transfer(bytes32 nftAssetIdTxid, int nftAssetIdGidx, bytes newOwnerScriptPubKey, signature issuerSig) {
         let nftGroup = tx.assetGroups.find(nftAssetIdTxid, nftAssetIdGidx);
 
         // Must NOT be fresh (existing asset)
@@ -55,11 +55,11 @@ contract NFTMint(
         require(tx.outputs[0].assets.lookup(nftAssetIdTxid, nftAssetIdGidx) == 1, "NFT not in output");
         require(tx.outputs[0].scriptPubKey == newOwnerScriptPubKey, "wrong dest");
 
-        require(checkSig(ownerSig, ownerPk), "bad owner sig");
+        require(checkSig(issuerSig, issuerPk), "bad issuer sig");
     }
 
     // Burn an NFT (delta = -1)
-    function burn(bytes32 nftAssetIdTxid, int nftAssetIdGidx, signature ownerSig, pubkey ownerPk) {
+    function burn(bytes32 nftAssetIdTxid, int nftAssetIdGidx, signature issuerSig) {
         let nftGroup = tx.assetGroups.find(nftAssetIdTxid, nftAssetIdGidx);
 
         // Must be existing asset
@@ -68,6 +68,6 @@ contract NFTMint(
         // Must burn exactly 1 (negative delta)
         require(nftGroup.sumInputs >= nftGroup.sumOutputs + 1, "must burn exactly 1");
 
-        require(checkSig(ownerSig, ownerPk), "bad owner sig");
+        require(checkSig(issuerSig, issuerPk), "bad issuer sig");
     }
 }

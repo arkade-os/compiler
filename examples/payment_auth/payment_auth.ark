@@ -99,6 +99,7 @@ contract PaymentAuthorization(
 
     let vtxoValue = tx.input.current.value;
 
+    require(tx.numInputs == 1, "Expected 1 input for refund");
     require(tx.numOutputs == 1, "Expected 1 output for refund");
     require(tx.outputs[0].value == vtxoValue, "Refund amount incorrect");
     require(tx.outputs[0].scriptPubKey == customerScript, "Refund script incorrect");

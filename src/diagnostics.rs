@@ -79,15 +79,18 @@ pub enum Severity {
 /// One diagnostic, tied to the file (and, where known, the byte span) that
 /// produced it.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct Diagnostic {
     pub severity: Severity,
     /// Which pass raised this: `"validation"` (semantic checks), `"type"` (type checker),
-    /// `"emission"` (code generation) or `"internal"` (a compiler bug). `None` for parse, import
-    /// and file errors.
+    /// `"emission"` (code generation), `"internal"` (a compiler bug) or a lint's id. `None` for
+    /// parse, import and file errors.
     pub code: Option<String>,
     pub message: String,
     pub file: String,
     pub span: Option<Span>,
+    /// The lint this reports, whose level decides its severity.
+    pub lint: Option<crate::lint::Lint>,
 }
 
 impl Diagnostic {
@@ -98,6 +101,7 @@ impl Diagnostic {
             message: message.into(),
             file: file.into(),
             span: None,
+            lint: None,
         }
     }
 
@@ -108,6 +112,7 @@ impl Diagnostic {
             message: message.into(),
             file: file.into(),
             span: None,
+            lint: None,
         }
     }
 
@@ -118,6 +123,12 @@ impl Diagnostic {
 
     pub(crate) fn with_code(mut self, code: &str) -> Self {
         self.code = Some(code.to_string());
+        self
+    }
+
+    pub(crate) fn with_lint(mut self, lint: crate::lint::Lint) -> Self {
+        self.code = Some(lint.id().to_string());
+        self.lint = Some(lint);
         self
     }
 }

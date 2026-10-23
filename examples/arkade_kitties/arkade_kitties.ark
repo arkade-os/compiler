@@ -19,7 +19,8 @@ import "../single_sig/single_sig.ark";
 contract ArkadeKitties(
     bytes32 speciesControlIdTxid,
     int speciesControlIdGidx,
-    pubkey oraclePk
+    pubkey oraclePk,
+    pubkey ownerPk
 ) {
     // Breed two kitties to create a new one
     // Parents must be species-controlled, child must be fresh
@@ -73,7 +74,7 @@ contract ArkadeKitties(
     }
 
     // Transfer a kitty to a new owner
-    function transfer(bytes32 kittyIdTxid, int kittyIdGidx, bytes newOwnerScriptPubKey, signature ownerSig, pubkey ownerPk) {
+    function transfer(bytes32 kittyIdTxid, int kittyIdGidx, bytes newOwnerScriptPubKey, signature ownerSig) {
         let kittyGroup = tx.assetGroups.find(kittyIdTxid, kittyIdGidx);
 
         // Must be existing kitty (not fresh)

@@ -260,7 +260,11 @@ fn bytes_literals_compound_hash_comparisons() {
             if rhs.contains("suffix") { "bytes suffix" } else { "" }
         ))
             .unwrap_or_else(|error| panic!("{rhs}: {error}"));
-        assert!(out.warnings.is_empty(), "{:?}", out.warnings);
+        assert!(
+            crate::common::feature_warnings(&out).is_empty(),
+            "{:?}",
+            out.warnings
+        );
         assert!(arkade_asm_tokens(&out, "spend")
             .iter()
             .any(|token| token == "OP_EQUAL"));

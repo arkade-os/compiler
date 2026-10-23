@@ -102,6 +102,65 @@ pub struct Contract {
     pub imports: Vec<String>,
     /// Compile-time constants declared in the contract body.
     pub constants: Vec<Constant>,
+    /// Byte range of the contract or library declaration, without its attributes.
+    pub declaration: crate::diagnostics::Span,
+    pub attributes: Vec<Attribute>,
+}
+
+impl Contract {
+    /// Each node of this file that has attributes, with the node's declaration span: the
+    /// contract, its functions and tapscripts, and their statements.
+    pub(crate) fn attributed(&self) -> Vec<(crate::diagnostics::Span, &[Attribute])> {
+        fn walk<'a>(
+            statements: &'a [LocatedStatement],
+            out: &mut Vec<(crate::diagnostics::Span, &'a [Attribute])>,
+        ) {
+            for statement in statements {
+                out.push((statement.span, &statement.attributes));
+                match &statement.statement {
+                    Statement::IfElse {
+                        then_body,
+                        else_body,
+                        ..
+                    } => {
+                        walk(then_body, out);
+                        walk(else_body.as_deref().unwrap_or_default(), out);
+                    }
+                    Statement::ForIn { body, .. } | Statement::ForCount { body, .. } => {
+                        walk(body, out)
+                    }
+                    _ => {}
+                }
+            }
+        }
+        let mut out = vec![(self.declaration, &self.attributes[..])];
+        for function in self.functions.iter().filter(|f| !f.is_imported()) {
+            out.push((function.declaration, &function.attributes));
+            walk(&function.statements, &mut out);
+        }
+        for tapscript in &self.tapscripts {
+            out.push((tapscript.declaration, &tapscript.attributes));
+        }
+        out.retain(|(_, attributes)| !attributes.is_empty());
+        out
+    }
+}
+
+/// An outer attribute, `@name(arg, ...)`, of the contract, function or statement it precedes.
+#[derive(Debug, Clone)]
+pub struct Attribute {
+    pub name: String,
+    pub name_span: crate::diagnostics::Span,
+    pub args: Vec<AttributeArg>,
+    pub span: crate::diagnostics::Span,
+}
+
+#[derive(Debug, Clone)]
+pub enum AttributeArg {
+    /// A name, such as a lint id: `outputs-shared-across-inputs`.
+    Name(String, crate::diagnostics::Span),
+    /// A string literal, such as a reason.
+    Text(String, crate::diagnostics::Span),
 }
 
 /// A compile-time constant, folded into every use site before validation.
@@ -134,6 +193,7 @@ pub struct Function {
     pub is_exported: bool,
     /// Explicit result type; None means the function returns no value.
     pub return_type: Option<TypeName>,
+    pub attributes: Vec<Attribute>,
 }
 
 impl Function {
@@ -154,6 +214,7 @@ pub struct LocatedStatement {
     /// A `require`'s message.
     pub message: Option<String>,
     pub statement: Statement,
+    pub attributes: Vec<Attribute>,
 }
 
 /// Statement AST - represents any executable statement in a function body
@@ -210,7 +271,8 @@ pub enum AssignmentTarget {
 }
 
 impl Statement {
-    /// The expressions the statement itself evaluates, not those of nested statements.
+    /// The expressions the statement itself evaluates, in source order, not those of nested
+    /// statements.
     pub(crate) fn expressions(&self) -> Vec<&Expression> {
         match self {
             Statement::Call(expression) | Statement::Return(Some(expression)) => vec![expression],
@@ -220,7 +282,7 @@ impl Statement {
             Statement::VarAssign {
                 target: AssignmentTarget::ArrayIndex { index, .. } | AssignmentTarget::Access(index),
                 value,
-            } => vec![value, index],
+            } => vec![index, value],
             Statement::VarAssign { value, .. } => vec![value],
             Statement::IfElse { condition, .. } => vec![condition],
             Statement::ForIn { iterable, .. } => vec![iterable],
@@ -387,6 +449,9 @@ pub struct NamedTapscript {
     /// Declared name (decides function-binding by exact match).
     pub name: String,
     pub span: crate::diagnostics::Span,
+    /// Byte range of the whole declaration, without its attributes.
+    pub declaration: crate::diagnostics::Span,
+    pub attributes: Vec<Attribute>,
     /// Declared witness inputs (signatures, preimages, …), in source order.
     pub inputs: Vec<Parameter>,
     /// Ordered closure components.

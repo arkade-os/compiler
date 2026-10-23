@@ -24,6 +24,7 @@ pub(crate) fn substitute_loop_body(
             message: None,
             span: stmt.span,
             statement: substitute_statement(&stmt.statement, index_var, value_var, k, items),
+            attributes: stmt.attributes.clone(),
         })
         .collect()
 }

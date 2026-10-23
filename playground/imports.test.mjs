@@ -21,7 +21,7 @@ vm.runInContext(source.replace(/^import .*;$/gm, ''), context);
 const warningSource = 'contract HasWarnings(int value) { function spend() { require(true); } }';
 const detailed = JSON.parse(compile_sources_with_diagnostics('main.ark', JSON.stringify({ 'main.ark': warningSource }), false));
 const warningArtifact = JSON.parse(detailed.artifact);
-assert(detailed.warnings.some(warning => warning.startsWith('warning[validation]')));
+assert(detailed.warnings.some(warning => warning.startsWith('warning[unused-parameter]')));
 assert(!Object.hasOwn(warningArtifact, 'warnings'));
 assert.equal(warningArtifact.compiler.options.optimize, false);
 assert.equal(warningArtifact.formatVersion, 1);
@@ -211,7 +211,7 @@ for (const warning of warningDiagnostics) {
 assert(elements['error-count'].classList.contains('warning'));
 assert.equal(elements['error-count'].textContent, String(detailed.warnings.length));
 assert.equal(elements['compile-status'].className, 'compile-status warning');
-context.warningSource = 'contract Clean() { function spend() { require(true); } }';
+context.warningSource = 'contract Clean(pubkey k) { function spend(signature s) { require(checkSig(s, k)); } }';
 vm.runInContext('doCompile()', context);
 assert.equal(elements['errors-output'].innerHTML, '');
 assert(!elements['error-count'].classList.contains('visible'));
