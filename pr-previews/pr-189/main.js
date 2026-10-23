@@ -1,6 +1,6 @@
 // Arkade Playground - Main Application
 // Import default export for WASM initialization, plus the exported functions
-import initWasm, { compile_sources, compile_sources_with_diagnostics, symbols, version, init as initPanicHook } from './pkg/arkade_compiler.js';
+import initWasm, { check_sources, compile_sources, compile_sources_with_diagnostics, symbol_at, symbols, version, init as initPanicHook } from './pkg/arkade_compiler.js';
 import * as contracts from './contracts.js';
 import { generateBindings, AVAILABLE_TARGETS } from './codegen.js';
 
@@ -68,6 +68,9 @@ const bundledExamples = Object.fromEntries(
     })
 );
 
+// Saved with each snapshot so a later load can tell edited entries from stale bundled copies.
+const bundledSnapshot = JSON.parse(JSON.stringify({ projects, examples }));
+
 // Global state
 let editor = null;
 let wasmReady = false;
@@ -84,9 +87,9 @@ const STORAGE_KEY = 'arkade-playground';
 function saveToStorage() {
     const data = {
         projects: {},
-        examples: {}
+        examples: {},
+        defaults: bundledSnapshot
     };
-    // Only save user-created / modified entries
     for (const [id, proj] of Object.entries(projects)) {
         data.projects[id] = { name: proj.name, description: proj.description || '', files: proj.files };
     }
@@ -101,16 +104,37 @@ function loadFromStorage() {
         const raw = localStorage.getItem(STORAGE_KEY);
         if (!raw) return;
         const data = JSON.parse(raw);
+        // Snapshots without defaults cannot tell edits from stale copies, so their bundled
+        // entries take the current sources and the original snapshot is kept aside.
+        if (!data.defaults) localStorage.setItem(`${STORAGE_KEY}-legacy`, raw);
+        const base = data.defaults || data;
+        // Entries still equal to the bundled source they were saved with take the current one,
+        // or are dropped when the bundle no longer has them. Legacy snapshots only refresh.
         if (data.projects) {
             for (const [id, proj] of Object.entries(data.projects)) {
+                const was = base.projects?.[id]?.files || {};
+                const now = bundledSnapshot.projects[id]?.files || {};
+                for (const name of Object.keys(data.defaults ? { ...was, ...now } : now)) {
+                    if (proj.files[name] !== was[name]) continue;
+                    if (Object.hasOwn(now, name)) proj.files[name] = now[name];
+                    else delete proj.files[name];
+                }
                 projects[id] = proj;
             }
         }
         if (data.examples) {
             for (const [id, ex] of Object.entries(data.examples)) {
+                const now = bundledSnapshot.examples[id]?.code;
+                if (ex.code === base.examples?.[id]?.code) {
+                    if (now !== undefined) ex.code = now;
+                    else if (data.defaults) continue;
+                }
                 examples[id] = ex;
             }
         }
+        // Bundled entries the snapshot knew about but no longer holds were deleted by the user.
+        for (const id of Object.keys(data.defaults?.projects || {})) if (!Object.hasOwn(data.projects || {}, id)) delete projects[id];
+        for (const id of Object.keys(data.defaults?.examples || {})) if (!Object.hasOwn(data.examples || {}, id)) delete examples[id];
     } catch (e) {
         console.warn('Failed to load from localStorage:', e);
     }
@@ -776,6 +800,7 @@ async function initCompiler() {
         await initWasm();
         initPanicHook();
         wasmReady = true;
+        lint();
 
         const ver = version();
         document.getElementById('compiler-version').textContent = `v${ver}`;
@@ -1217,6 +1242,8 @@ function initMonaco() {
             }
         });
 
+        registerSymbolProviders();
+
         // Define theme
         monaco.editor.defineTheme('arkade-dark', window.arkadeTheme);
 
@@ -1244,11 +1271,16 @@ function initMonaco() {
             doCompile();
         });
 
+        editor.onDidChangeCursorPosition(({ position }) => {
+            markRuns(innermostRuns(sourceRuns(), position.lineNumber, position.column), 'cursor');
+        });
+
         // Mark dirty on change — no auto-compile
         editor.onDidChangeModelContent(() => {
             if (editor.getValue() !== lastCompiledSource) {
                 markDirty();
             }
+            lint();
         });
 
         // Load shared contract from URL hash if present
@@ -1311,6 +1343,58 @@ function sourceFiles() {
     return { entry, files };
 }
 
+// The compiler's symbol at `position` in the editor's file, or null.
+function symbolAt(model, position) {
+    if (!wasmReady || model !== editor?.getModel()) return null;
+    try {
+        const { entry, files } = sourceFiles();
+        return JSON.parse(symbol_at(entry, JSON.stringify(files), position.lineNumber, position.column));
+    } catch {
+        return null;
+    }
+}
+
+// The hover text for `symbol`: what it is, and where it is defined and used.
+function describeSymbol(symbol) {
+    const signature = `${symbol.kind} ${symbol.name}${symbol.type ? `: ${symbol.type}` : ''}`;
+    const { file, start } = symbol.definition;
+    const where = file === symbol.at.file ? `line ${start.line}` : `${file}:${start.line}`;
+    const uses = symbol.references.length;
+    return [signature, `Defined at ${where} · ${uses} reference${uses === 1 ? '' : 's'}`];
+}
+
+function registerSymbolProviders() {
+    const range = location => new monaco.Range(
+        location.start.line, location.start.column, location.end.line, location.end.column);
+    monaco.languages.registerHoverProvider('arkade', {
+        provideHover: (model, position) => {
+            const symbol = symbolAt(model, position);
+            if (!symbol?.at.start) return null;
+            const [signature, where] = describeSymbol(symbol);
+            return {
+                range: range(symbol.at),
+                contents: [{ value: '```arkade\n' + signature + '\n```' }, { value: where }],
+            };
+        },
+    });
+    monaco.languages.registerDefinitionProvider('arkade', {
+        provideDefinition: (model, position) => {
+            const symbol = symbolAt(model, position);
+            if (!symbol?.definition.start || symbol.definition.file !== symbol.at.file) return null;
+            return { uri: model.uri, range: range(symbol.definition) };
+        },
+    });
+    monaco.languages.registerDocumentHighlightProvider('arkade', {
+        provideDocumentHighlights: (model, position) => {
+            const symbol = symbolAt(model, position);
+            if (!symbol) return [];
+            return [symbol.definition, ...symbol.references]
+                .filter(location => location.file === symbol.at.file && location.start)
+                .map(location => ({ range: range(location) }));
+        },
+    });
+}
+
 // Symbols of the current file per entry path, from the last source that parsed.
 const lastSymbols = {};
 
@@ -1336,22 +1420,24 @@ function doCompile() {
     const source = editor.getValue();
     clearErrors();
 
-    let entry;
     try {
-        const sources = compilationSources();
-        entry = sources.entry;
-        const files = sources.files;
+        const { entry, files } = compilationSources();
         const optimize = document.getElementById('optimize-toggle').checked;
-        const { artifact: result, warnings } = JSON.parse(compile_sources_with_diagnostics(entry, JSON.stringify(files), optimize));
+        const { artifact: result, debug, warnings, diagnostics } = JSON.parse(compile_sources_with_diagnostics(entry, JSON.stringify(files), optimize));
+        markDiagnostics(diagnostics, entry);
+        if (result === null) {
+            showErrors(diagnostics, entry);
+            return;
+        }
         lastCompiledSource = source;
         displayJson(result);
-        displayAsm(result);
+        displayAsm(result, debug);
         displayBindings(result);
         showSuccess(result, warnings.length);
-        showWarnings(warnings);
+        renderDiagnostics(diagnostics, entry);
         markCompiled();
     } catch (err) {
-        showError(err.toString(), entry);
+        showError(err.toString());
     }
 }
 
@@ -1391,18 +1477,21 @@ function syntaxHighlightJson(json) {
 }
 
 // Display Assembly output
-function displayAsm(jsonStr) {
+function displayAsm(jsonStr, debugStr) {
     const container = document.getElementById('asm-output');
+    linkAsmToSource(container);
 
     try {
         const data = JSON.parse(jsonStr);
+        const debugFunctions = JSON.parse(debugStr).functions;
         let html = '';
+        asmRuns = [];
 
         if (data.functions && data.functions.length > 0) {
             for (const group of data.functions) {
                 if (group.arkade && group.arkade.asm && group.arkade.asm.length > 0) {
                     html += `<span class="asm-function">${group.name} <span class="asm-variant">(arkade covenant)</span></span>\n`;
-                    html += highlightAsm(group.arkade.asm) + '\n\n';
+                    html += covenantListing(group.arkade.asm, debugFunctions[group.name]?.sourceMap) + '\n';
                 }
                 for (const leaf of (group.leaves || [])) {
                     const label = leaf.name === group.name ? group.name : `${group.name}/${leaf.name}`;
@@ -1472,20 +1561,106 @@ function escapeHtml(text) {
     return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
+// The covenant source map ranges shown in the assembly tab, indexed by their `data-run`.
+let asmRuns = [];
+// They locate source only while the editor shows the source they were compiled from.
+const sourceRuns = () => (editor?.getValue() === lastCompiledSource ? asmRuns : []);
+let sourceDecorations = [];
+
 // Highlight assembly code
+function highlightToken(token) {
+    const text = escapeHtml(token);
+    if (token.startsWith('OP_')) return `<span class="asm-opcode">${text}</span>`;
+    if (token.startsWith('<') && token.endsWith('>')) return `<span class="asm-placeholder">${text}</span>`;
+    return text;
+}
+
 function highlightAsm(asm) {
     const tokens = Array.isArray(asm) ? asm : asm.split(' ');
-    return tokens
-        .map(token => {
-            const text = escapeHtml(token);
-            if (token.startsWith('OP_')) {
-                return `<span class="asm-opcode">${text}</span>`;
-            } else if (token.startsWith('<') && token.endsWith('>')) {
-                return `<span class="asm-placeholder">${text}</span>`;
-            }
-            return text;
-        })
-        .join(' ');
+    return tokens.map(highlightToken).join(' ');
+}
+
+// The covenant one source statement per line: its line number, its tokens and its
+// `require` message. Tokens the compiler adds itself get a line without a number.
+function covenantListing(asm, sourceMap = []) {
+    const lines = [];
+    let next = 0;
+    const unmapped = end => {
+        if (next < end) lines.push({ tokens: [next, end] });
+    };
+    for (const range of sourceMap) {
+        unmapped(range.asm[0]);
+        lines.push({ tokens: range.asm, range, run: asmRuns.push(range) - 1 });
+        next = range.asm[1];
+    }
+    unmapped(asm.length);
+    return lines.map(({ tokens, range, run }) => {
+        const code = asm.slice(tokens[0], tokens[1]).map(highlightToken).join(' ');
+        const message = range?.message
+            ? ` <span class="asm-comment">; ${escapeHtml(range.message)}</span>`
+            : '';
+        const attributes = range ? ` class="asm-line asm-run" data-run="${run}"` : ' class="asm-line"';
+        return `<div${attributes}><span class="asm-line-number">${range ? range.start[0] : ''}</span>`
+            + `<span class="asm-code">${code}${message}</span></div>`;
+    }).join('');
+}
+
+const before = (a, b) => a[0] < b[0] || (a[0] === b[0] && a[1] <= b[1]);
+
+// The runs of the narrowest statement containing `line`:`column`.
+function innermostRuns(runs, line, column) {
+    const at = [line, column];
+    const containing = runs
+        .map((range, run) => ({ range, run }))
+        .filter(({ range }) => before(range.start, at) && before(at, range.end));
+    if (!containing.length) return [];
+    const size = ({ range }) => (range.end[0] - range.start[0]) * 1e6 + range.end[1] - range.start[1];
+    const smallest = Math.min(...containing.map(size));
+    const innermost = containing.filter(entry => size(entry) === smallest);
+    return innermost.filter(({ range }) => range.start.join() === innermost[0].range.start.join())
+        .map(({ run }) => run);
+}
+
+function markRuns(runs, className) {
+    const container = document.getElementById('asm-output');
+    container.querySelectorAll(`.asm-run.${className}`).forEach(el => el.classList.remove(className));
+    for (const run of runs) {
+        container.querySelectorAll(`.asm-run[data-run="${run}"]`).forEach(el => el.classList.add(className));
+    }
+    if (className === 'cursor') container.querySelector('.asm-run.cursor')?.scrollIntoView?.({ block: 'nearest' });
+}
+
+function editorRange(range) {
+    return new monaco.Range(range.start[0], range.start[1], range.end[0], range.end[1]);
+}
+
+function linkAsmToSource(container) {
+    if (container.dataset.linked) return;
+    container.dataset.linked = 'true';
+    const hover = run => {
+        const range = sourceRuns()[run];
+        markRuns(range ? [run] : [], 'hover');
+        if (typeof monaco === 'undefined' || !editor?.deltaDecorations) return;
+        const decorations = range ? [{
+            range: editorRange(range),
+            options: { className: 'source-map-highlight' },
+        }] : [];
+        sourceDecorations = editor.deltaDecorations(sourceDecorations, decorations);
+        if (range) editor.revealRangeInCenterIfOutsideViewport(editorRange(range));
+    };
+    container.addEventListener('mouseover', event => {
+        const run = event.target.closest('.asm-run')?.dataset.run;
+        hover(run === undefined ? undefined : Number(run));
+    });
+    container.addEventListener('click', event => {
+        const range = sourceRuns()[event.target.closest('.asm-run')?.dataset.run];
+        if (!range || typeof monaco === 'undefined' || !editor) return;
+        const selection = editorRange(range);
+        editor.setSelection(selection);
+        editor.revealRangeInCenter(selection);
+        editor.focus();
+    });
+    container.addEventListener('mouseleave', () => hover(undefined));
 }
 
 // Show compilation success
@@ -1502,18 +1677,54 @@ function showSuccess(jsonStr, warningCount = 0) {
     statusEl.className = `compile-status ${warningCount ? 'warning' : 'success'}`;
 }
 
-function showWarnings(warnings) {
-    if (!warnings.length) return;
+// List `diagnostics` in the Diagnostics tab, one per line; those in the open file link to
+// their location. The badge counts errors, or warnings when there are none.
+function renderDiagnostics(diagnostics, entry) {
     const output = document.getElementById('errors-output');
     const count = document.getElementById('error-count');
-    output.textContent = warnings.join('\n');
-    output.classList.add('warning');
-    count.textContent = String(warnings.length);
-    count.classList.add('visible', 'warning');
+    const errors = diagnostics.filter(d => d.severity === 'error').length;
+    output.innerHTML = diagnostics.map(d => {
+        const location = d.file === entry && d.start
+            ? ` data-line="${d.start.line}" data-column="${d.start.column}"`
+            : '';
+        return `<div class="diagnostic ${d.severity}"${location}>${escapeHtml(formatDiagnostic(d))}</div>`;
+    }).join('');
+    output.classList.toggle('warning', errors === 0);
+    count.textContent = diagnostics.length ? String(errors || diagnostics.length) : '';
+    count.classList.toggle('visible', diagnostics.length > 0);
+    count.classList.toggle('warning', errors === 0);
+    if (!output.dataset.linked && output.addEventListener) {
+        output.dataset.linked = 'true';
+        output.addEventListener('click', event => {
+            const target = event.target.closest('.diagnostic[data-line]');
+            if (!target || !editor) return;
+            const position = { lineNumber: Number(target.dataset.line), column: Number(target.dataset.column) };
+            editor.setPosition(position);
+            editor.revealPositionInCenter(position);
+            editor.focus();
+        });
+    }
+}
+
+let lintTimer = null;
+
+// Diagnose the sources while typing, without touching the outputs of the last compile.
+function lint() {
+    clearTimeout(lintTimer);
+    lintTimer = setTimeout(() => {
+        if (!wasmReady || !editor) return;
+        try {
+            const { entry, files } = sourceFiles();
+            const optimize = document.getElementById('optimize-toggle').checked;
+            const diagnostics = JSON.parse(check_sources(entry, JSON.stringify(files), optimize));
+            markDiagnostics(diagnostics, entry);
+            renderDiagnostics(diagnostics, entry);
+        } catch {}
+    }, 300);
 }
 
 // Show error
-function showError(message, entry) {
+function showError(message, count = 1) {
     const statusEl = document.getElementById('compile-status');
     statusEl.innerHTML = `<i class="fas fa-times-circle"></i> Error`;
     statusEl.className = 'compile-status error';
@@ -1523,26 +1734,49 @@ function showError(message, entry) {
 
     errorsTab.textContent = message;
     errorsTab.classList.remove('warning');
-    errorCount.textContent = '1';
+    errorCount.textContent = String(count);
     errorCount.classList.remove('warning');
     errorCount.classList.add('visible');
 
     // Switch to errors tab
     switchTab('errors');
+}
 
-    // Highlight the line only when the error is located in the entry, the file in the editor.
-    const lineMatch = entry && message.startsWith(`${entry}: `)
-        && message.slice(entry.length + 2).match(/^(?:\w+ error: )?line (\d+)/);
-    if (lineMatch && editor) {
-        const lineNumber = parseInt(lineMatch[1], 10);
-        editor.revealLineInCenter(lineNumber);
-        editor.setSelection({
-            startLineNumber: lineNumber,
-            startColumn: 1,
-            endLineNumber: lineNumber,
-            endColumn: 1000
-        });
+function showErrors(diagnostics, entry) {
+    const errors = diagnostics.filter(d => d.severity === 'error');
+    showError('', errors.length);
+    renderDiagnostics(diagnostics, entry);
+
+    // Select the first error in the entry, the file in the editor.
+    const first = errors.find(d => d.file === entry && d.start);
+    if (first && editor) {
+        editor.revealLineInCenter(first.start.line);
+        editor.setSelection(markerRange(first));
     }
+}
+
+function formatDiagnostic(d) {
+    const location = d.start ? `${d.file}:${d.start.line}:${d.start.column}` : d.file;
+    return `${d.severity}${d.code ? `[${d.code}]` : ''}: ${d.message} (${location})`;
+}
+
+function markerRange(d) {
+    return {
+        startLineNumber: d.start.line,
+        startColumn: d.start.column,
+        endLineNumber: d.end.line,
+        endColumn: d.end.column,
+    };
+}
+
+function markDiagnostics(diagnostics, entry) {
+    if (typeof monaco === 'undefined' || !editor?.getModel) return;
+    const markers = diagnostics.filter(d => d.file === entry && d.start).map(d => ({
+        ...markerRange(d),
+        severity: d.severity === 'error' ? monaco.MarkerSeverity.Error : monaco.MarkerSeverity.Warning,
+        message: d.code ? `[${d.code}] ${d.message}` : d.message,
+    }));
+    monaco.editor.setModelMarkers(editor.getModel(), 'arkade', markers);
 }
 
 // Clear errors
@@ -1556,6 +1790,7 @@ function clearErrors() {
     const statusEl = document.getElementById('compile-status');
     statusEl.textContent = '';
     statusEl.className = 'compile-status';
+    markDiagnostics([]);
 }
 
 // Switch output tab

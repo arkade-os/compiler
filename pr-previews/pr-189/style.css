@@ -510,6 +510,11 @@ main {
     display: inline;
 }
 
+/* `.panel-header span` would otherwise show an empty badge. */
+.error-count:not(.visible) {
+    display: none;
+}
+
 .error-count.warning {
     background: var(--warning);
     color: var(--bg-primary);
@@ -569,8 +574,41 @@ main {
     white-space: pre-wrap;
 }
 
+.asm-line {
+    display: flex;
+    gap: 1ch;
+    padding: 1px 0;
+}
+
+.asm-line-number {
+    flex: 0 0 4ch;
+    text-align: right;
+    color: var(--text-muted);
+    user-select: none;
+}
+
+.asm-line.asm-run {
+    cursor: pointer;
+}
+
 #errors-output {
     color: var(--error);
+}
+
+.diagnostic {
+    padding: 2px 0;
+}
+
+.diagnostic.warning {
+    color: var(--warning);
+}
+
+.diagnostic[data-line] {
+    cursor: pointer;
+}
+
+.diagnostic[data-line]:hover {
+    text-decoration: underline;
 }
 
 #errors-output.warning {
@@ -667,6 +705,16 @@ main {
 
 .asm-placeholder {
     color: #4ec9b0;
+}
+
+.asm-run.hover,
+.asm-run.cursor {
+    background: rgba(86, 156, 214, 0.3);
+    box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.source-map-highlight {
+    background: rgba(86, 156, 214, 0.35);
 }
 
 .asm-comment {
