@@ -436,6 +436,7 @@ fn parse_statement(
         end: pair.as_span().end(),
     };
     let mut names = Vec::new();
+    let mut branches = Vec::new();
     let mut message = None;
     let statement = match pair.as_rule() {
         Rule::require_stmt => {
@@ -499,9 +500,11 @@ fn parse_statement(
             let then_block = inner
                 .next()
                 .ok_or_else(|| "Parse error: Missing then block in if statement".to_string())?;
+            branches.push(then_block.as_span().into());
             let then_body = parse_block(function_name, then_block, constants)?;
 
             let else_body = if let Some(else_block) = inner.next() {
+                branches.push(else_block.as_span().into());
                 Some(parse_block(function_name, else_block, constants)?)
             } else {
                 None
@@ -623,6 +626,7 @@ fn parse_statement(
     Ok(Some(LocatedStatement {
         span,
         names,
+        branches,
         message,
         statement,
     }))

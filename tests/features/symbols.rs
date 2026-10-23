@@ -192,3 +192,21 @@ fn symbols_survive_validation_errors() {
         .unwrap();
     assert_eq!(describe(&files, m), "Variable m int main.ark:1:44");
 }
+
+#[test]
+fn a_local_is_visible_to_the_end_of_its_branch() {
+    let source = "contract C() { function spend(int n) { if (n > 0) { let a = n; require(a == 1); } else { let b = n; require(b == 0); } } }";
+    let files = BTreeMap::from([("main.ark".to_string(), source.to_string())]);
+    let analysis = analyze("main.ark", &files);
+    for (local, visible) in [
+        ("a = n", "a = n; require(a == 1); }"),
+        ("b = n", "b = n; require(b == 0); }"),
+    ] {
+        let definition = analysis
+            .symbols()
+            .definition_at("main.ark", source.find(local).unwrap())
+            .unwrap();
+        let span = definition.visible.unwrap();
+        assert_eq!(&source[span.start..span.end], visible);
+    }
+}

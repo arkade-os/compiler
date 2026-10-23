@@ -760,6 +760,7 @@ contract Demo() {
         LocatedStatement {
             message: None,
             names: Vec::new(),
+            branches: Vec::new(),
             span: crate::diagnostics::Span { start: 0, end: 0 },
             statement,
         }

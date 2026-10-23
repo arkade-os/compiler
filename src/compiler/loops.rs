@@ -17,6 +17,7 @@ pub(crate) fn substitute_loop_body(
     body.iter()
         .map(|stmt| LocatedStatement {
             names: Vec::new(),
+            branches: stmt.branches.clone(),
             message: stmt.message.clone(),
             span: stmt.span,
             statement: substitute_statement(&stmt.statement, index_var, value_var, k, items),

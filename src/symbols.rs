@@ -331,9 +331,9 @@ impl Collector<'_> {
                     else_body,
                 } => {
                     self.expression(condition);
-                    self.block(then_body, located.span.end);
+                    self.block(then_body, located.branches[0].end);
                     if let Some(else_body) = else_body {
-                        self.block(else_body, located.span.end);
+                        self.block(else_body, located.branches[1].end);
                     }
                 }
                 Statement::ForIn {
