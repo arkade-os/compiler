@@ -303,3 +303,19 @@ fn visible_names_follow_blocks_and_include_imports() {
         "{in_helper:?}"
     );
 }
+
+#[test]
+fn a_shadowing_name_is_visible_once_as_the_inner_definition() {
+    let source = "contract C(int amount) { function spend(int amount) { require(amount > 0); } }";
+    let files = BTreeMap::from([("main.ark".to_string(), source.to_string())]);
+    let analysis = analyze("main.ark", &files);
+    let offset = source.find("amount > 0").unwrap();
+    let amounts: Vec<_> = analysis
+        .symbols()
+        .visible_at("main.ark", offset)
+        .into_iter()
+        .filter(|(name, _)| *name == "amount")
+        .map(|(_, definition)| definition.span.start)
+        .collect();
+    assert_eq!(amounts, [source.rfind("int amount)").unwrap() + 4]);
+}

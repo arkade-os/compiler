@@ -104,6 +104,11 @@ impl Symbols {
                 })
                 .map(|d| (d.name.as_str(), d)),
         );
+        // Broken source can repeat a name; the latest definition, the innermost, shadows.
+        let mut seen = HashSet::new();
+        visible.reverse();
+        visible.retain(|(name, _)| seen.insert(*name));
+        visible.reverse();
         visible
     }
 

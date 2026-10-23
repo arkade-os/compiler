@@ -1391,6 +1391,8 @@ function registerSymbolProviders() {
             };
         },
     });
+    // Monaco passes the opener only a position, so the name is selected from the provider's range.
+    const definitionRanges = new Map();
     monaco.languages.registerDefinitionProvider('arkade', {
         provideDefinition: (model, position) => {
             const symbol = symbolAt(model, position);
@@ -1408,8 +1410,6 @@ function registerSymbolProviders() {
             return { uri, range: range(symbol.definition) };
         },
     });
-    // Monaco passes the opener only a position, so the name is selected from the provider's range.
-    const definitionRanges = new Map();
     monaco.editor.registerEditorOpener?.({
         openCodeEditor: (source, resource) => {
             if (resource.scheme !== 'arkade' || !openSourcePath(resource.path.slice(1))) return false;

@@ -242,7 +242,10 @@ pub fn completions_at(
             let fields: Vec<_> = symbols
                 .definitions()
                 .iter()
-                .filter(|field| field.owner.as_deref() == Some(definition.name.as_str()))
+                .filter(|field| {
+                    field.owner.as_deref() == Some(definition.name.as_str())
+                        && field.file == definition.file
+                })
                 .map(|field| {
                     let ty = field.ty.as_ref().map(ToString::to_string);
                     serde_json::json!({ "name": field.name, "type": ty })

@@ -62,4 +62,4 @@ assert.deepEqual(labels('segment.ends[1].', table), ['x', 'y']);
 assert.deepEqual(labels('segment.missing.', table), []);
 assert.deepEqual(labels('Fees.', table), ['DELAY', 'calculate']);
 assert.deepEqual(labels('unknown.', table), []);
-assert(complete('tx.', null, 1).find(item => item.label === 'inputs').snippet);
+assert(complete('tx.', null).find(item => item.label === 'inputs').snippet);
