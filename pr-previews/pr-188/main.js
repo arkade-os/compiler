@@ -1272,7 +1272,7 @@ function initMonaco() {
         });
 
         editor.onDidChangeCursorPosition(({ position }) => {
-            markRuns(innermostRuns(asmRuns, position.lineNumber, position.column), 'cursor');
+            markRuns(innermostRuns(sourceRuns(), position.lineNumber, position.column), 'cursor');
         });
 
         // Mark dirty on change — no auto-compile
@@ -1563,6 +1563,8 @@ function escapeHtml(text) {
 
 // The covenant source map ranges shown in the assembly tab, indexed by their `data-run`.
 let asmRuns = [];
+// They locate source only while the editor shows the source they were compiled from.
+const sourceRuns = () => (editor?.getValue() === lastCompiledSource ? asmRuns : []);
 let sourceDecorations = [];
 
 // Highlight assembly code
@@ -1636,8 +1638,8 @@ function linkAsmToSource(container) {
     if (container.dataset.linked) return;
     container.dataset.linked = 'true';
     const hover = run => {
-        markRuns(run === undefined ? [] : [run], 'hover');
-        const range = asmRuns[run];
+        const range = sourceRuns()[run];
+        markRuns(range ? [run] : [], 'hover');
         if (typeof monaco === 'undefined' || !editor?.deltaDecorations) return;
         const decorations = range ? [{
             range: editorRange(range),
@@ -1651,7 +1653,7 @@ function linkAsmToSource(container) {
         hover(run === undefined ? undefined : Number(run));
     });
     container.addEventListener('click', event => {
-        const range = asmRuns[event.target.closest('.asm-run')?.dataset.run];
+        const range = sourceRuns()[event.target.closest('.asm-run')?.dataset.run];
         if (!range || typeof monaco === 'undefined' || !editor) return;
         const selection = editorRange(range);
         editor.setSelection(selection);
