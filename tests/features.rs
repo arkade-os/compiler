@@ -73,6 +73,8 @@ mod struct_arrays;
 
 #[path = "features/cli_check.rs"]
 mod cli_check;
+#[path = "features/lints.rs"]
+mod lints;
 #[path = "features/located_errors.rs"]
 mod located_errors;
 #[path = "features/source_map.rs"]

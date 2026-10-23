@@ -813,11 +813,11 @@ fn unary_negation_precedence_and_spend_shape() {
         ("modExp(-2, 3, 5)", "2 OP_NEGATE 3 5 OP_MODEXP"),
     ] {
         let source = format!(
-            "contract Unary() {{ function spend() {{ let result = {expression}; require(result == result); }} }}"
+            "contract Unary() {{ function spend() {{ let result = {expression}; @allow(self-comparison, \"any result type\") require(result == result); }} }}"
         );
         let output = compile(&source).unwrap_or_else(|error| panic!("{expression}: {error}"));
         assert!(
-            output.warnings.is_empty(),
+            crate::common::feature_warnings(&output).is_empty(),
             "{expression}: {:?}",
             output.warnings
         );
@@ -856,7 +856,11 @@ fn unary_negation_in_loops_and_conditions() {
     "#,
     )
     .expect("negated loop operands compile");
-    assert!(output.warnings.is_empty(), "{:?}", output.warnings);
+    assert!(
+        crate::common::feature_warnings(&output).is_empty(),
+        "{:?}",
+        output.warnings
+    );
     let asm = crate::common::arkade_asm(&output, "spend");
     for index in 0..2 {
         assert!(

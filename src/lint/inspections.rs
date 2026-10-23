@@ -1,10 +1,10 @@
-//! Warns when a function reads one multi-result inspection more than once, so the
+//! Reports a function that reads one multi-result inspection more than once, so the
 //! author can bind the whole result once instead of repeating the opcode.
 
-use super::{child_exprs, ValidationIssue};
+use super::{Finding, Lint};
 use crate::models::{
-    AssetLookupSource, AssignmentTarget, Contract, ExprKind, Expression, LocatedStatement,
-    Requirement, Statement,
+    child_exprs, AssetLookupSource, AssignmentTarget, Contract, ExprKind, Expression,
+    LocatedStatement, Requirement, Statement,
 };
 use crate::properties::{InputProperty, OutputProperty, ThisProperty};
 use std::collections::HashSet;
@@ -19,7 +19,7 @@ struct Read {
     span: crate::diagnostics::Span,
 }
 
-pub(super) fn check_repeated_inspections(contract: &Contract, issues: &mut Vec<ValidationIssue>) {
+pub(super) fn check(contract: &Contract, findings: &mut Vec<Finding>) {
     for function in contract.functions.iter().filter(|f| !f.is_imported()) {
         let mut assigned = HashSet::new();
         collect_assigned(&function.statements, &mut assigned);
@@ -46,15 +46,14 @@ pub(super) fn check_repeated_inspections(contract: &Contract, issues: &mut Vec<V
             });
             if together {
                 warned.insert(read.whole.clone());
-                issues.push(
-                    ValidationIssue::warning(format!(
+                findings.push(
+                    Finding::new(Lint::RepeatedInspection, read.span, format!(
                         "`{}` is inspected more than once in function '{}'; bind `let x = {};` once and read {}",
                         read.whole,
                         function.name,
                         read.whole,
                         read.fields
-                    ))
-                    .at(read.span),
+                    )),
                 );
             }
         }

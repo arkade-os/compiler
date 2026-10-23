@@ -499,6 +499,50 @@ A tapscript body is `require` statements only, and must follow the closure templ
 
 Keys resolve to constructor `pubkey` parameters, declared `pubkey` inputs, or the roles `server` and `emulator`. Any leaf without a CSV delay is a forfeit path and must include `server`. A leaf whose name matches a covenant must include bare `emulator`, which the compiler tweaks with that covenant's hash. A leaf with no matching covenant may not use bare `emulator`; it either stays standalone or binds to one covenant with `tweak(emulator, fn)` or `tweak(constructorPubkey, fn)`. Every tweak in a tapscript must name that same covenant. `older(serverExitDelay)` uses arkd's unilateral exit delay and lowers to `<SERVER_EXIT_DELAY>`, which the SDK fills from the server's config. Inputs named `server`, `emulator`, or `serverExitDelay` are rejected.
 
+## Lints
+
+Lints report code that compiles but is likely unsafe or wrong. Each has an id, which is the diagnostic's `code`, and a default level: `allow` (not reported), `warn` or `deny` (an error).
+
+| Lint | Category | Default | Reports |
+|---|---|---|---|
+| `anyone-can-spend` | security | warn | A covenant function with no transaction signature (`checkSig`, `checkMultisig`), no output constraint and no check of another input's script: anyone who satisfies it can send the coins anywhere. A revealed hash preimage or a `checkSigFromStack` message authorizes nothing. |
+| `output-script-unchecked` | security | warn | An unsigned function that checks the value of `tx.outputs[N]` but not its `scriptPubKey`, so the value can be paid to any script |
+| `output-value-unchecked` | security | warn | A function that checks the `scriptPubKey` of `tx.outputs[N]`, including `new Self(...)`, but not its value or assets |
+| `oracle-message-unbound` | security | warn | A `checkSigFromStack` message that is a witness parameter used nowhere else, so one signed message authorizes any spend |
+| `signer-from-witness` | security | warn | A `checkSig`, `checkSigFromStack` or `checkMultisig` key, or a multisig threshold, that is a witness parameter used nowhere else, so the spender chooses who must sign |
+| `duplicate-multisig-key` | security | warn | A key listed twice in `checkMultisig`, so one signature counts for each |
+| `ambiguous-hash-concat` | security | warn | A hash of two or more `bytes` parameters joined with `+`: their lengths vary, so other values can join to the same bytes |
+| `reveal-without-timeout` | security | warn | A hash preimage check when every function and tapscript has one, so the coins stay locked until the preimage is revealed |
+| `offchain-locktime` | correctness | warn | `tx.locktime` in a covenant: arkd rebuilds offchain spends with nLockTime 0, so use `checkTime(t)` |
+| `outputs-shared-across-inputs` | security | warn | An unsigned function whose outputs are constrained at fixed indexes without bounding `tx.numInputs`, comparing `this.activeInputIndex`, or reading an outpoint, so two inputs locked by the contract can be satisfied by the same outputs |
+| `divide-before-multiply` | correctness | warn | `(a / b) * c`, which drops the remainder before it scales |
+| `self-comparison` | correctness | warn | A comparison, `&&` or `\|\|` with the same operand on both sides |
+| `unused-parameter` | correctness | warn | A constructor parameter no function reads |
+| `unused-variable` | correctness | deny | A local variable nothing reads; an unread function parameter or tapscript input is an error, since anyone relaying the spend could replace it |
+| `timelock-without-unit` | style | warn | `older(n)` or `after(n)` with a raw number |
+| `repeated-inspection` | performance | warn | A multi-result inspection read more than once |
+| `unknown-lint` | correctness | warn | A lint attribute naming a lint that does not exist |
+| `unfulfilled-expectation` | correctness | warn | An `@expect` whose lint does not fire where it applies |
+
+Outputs at a computed index are not tracked.
+
+An attribute sets the level of the lints it names on the contract, function or statement after it and everything inside it, as in Rust. `@allow` and `@expect` need a reason; `@warn` and `@deny` take one optionally:
+
+```solidity
+@deny(self-comparison)
+contract Vault(pubkey owner) {
+  @allow(outputs-shared-across-inputs, "the control asset is a singleton")
+  function receive() { ... }
+
+  @expect(anyone-can-spend, "a public puzzle")
+  function solve(bytes32 answer) { ... }
+}
+```
+
+The innermost attribute wins, and an attribute wins over the CLI. `@expect` allows its lint and reports `unfulfilled-expectation` when the lint does not fire where it applies, so it goes once the code is fixed; a name that is no lint is reported as `unknown-lint`. A malformed attribute is an error. An imported file's lints, attributes included, are at most warnings: only the file being compiled decides what fails it.
+
+The CLI sets levels with `--allow <lint>`, `--warn <lint>` and `--deny <lint>`, where `<lint>` is an id, a category (`security`, `correctness`, `performance`, `style`), `all`, or, for `--deny`, `warnings`, and a lint named by its id overrides the others. A denied lint is an error that stops compilation, in the CLI and in `compile_sources`; `Analysis::diagnostics_with(&levels)` and `Analysis::compile_with(options, &levels)` take levels in the API.
+
 ## Artifact format
 
 ```json

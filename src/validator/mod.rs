@@ -5,8 +5,6 @@
 //! 1. **AST validation** (`validate_ast`) — runs after parsing, before compilation.
 //!    Catches semantic errors that the PEG grammar cannot express, such as duplicate
 //!    names, reserved tapscript roles, and invalid Asset ID operands.
-//!    Also performs CashScript-style require-guard checks (warn when a function has
-//!    no `require()` statements — it would trivially pass all spends).
 //!
 //! 2. **Output validation** (`validate_output`) — runs after compilation.
 //!    Asserts structural invariants on the emitted `ContractJson`, catching compiler
@@ -16,8 +14,8 @@
 //!    (signatures are witness-only). Tapscript-source-level operand scope checks
 //!    live in `compiler::tapscript::validate_arkd_rules`.
 //!
-//! Issues are returned as a `Vec<ValidationIssue>`.  Use [`has_errors`] to check
-//! whether any are fatal.
+//! Each pass returns its errors as a `Vec<ValidationIssue>`; code that compiles but is likely
+//! wrong is reported by [`crate::lint`] instead.
 
 use crate::models::child_exprs;
 use crate::models::{
@@ -32,7 +30,6 @@ mod assets;
 mod bindings;
 mod expressions;
 mod functions;
-mod inspections;
 mod operands;
 mod output;
 pub(crate) mod references;
@@ -48,19 +45,9 @@ pub(crate) use output::validate_output;
 
 // ─── Issue types ──────────────────────────────────────────────────────────────
 
-/// Severity of a validation issue.
-#[derive(Debug, Clone, PartialEq)]
-pub enum Severity {
-    /// Compilation must halt; the contract cannot be safely emitted.
-    Error,
-    /// Non-fatal; compilation continues but the caller should surface this.
-    Warning,
-}
-
-/// A single validation finding.
+/// A validation error: the contract cannot be safely emitted.
 #[derive(Debug, Clone)]
 pub struct ValidationIssue {
-    pub severity: Severity,
     pub message: String,
     /// Byte range of the expression, statement or function that caused it.
     pub span: Option<crate::diagnostics::Span>,
@@ -71,16 +58,6 @@ pub struct ValidationIssue {
 impl ValidationIssue {
     fn error(message: impl Into<String>) -> Self {
         Self {
-            severity: Severity::Error,
-            message: message.into(),
-            span: None,
-            code: "validation",
-        }
-    }
-
-    fn warning(message: impl Into<String>) -> Self {
-        Self {
-            severity: Severity::Warning,
             message: message.into(),
             span: None,
             code: "validation",
@@ -105,11 +82,6 @@ fn locate(issues: &mut [ValidationIssue], span: crate::diagnostics::Span) {
     for issue in issues {
         issue.span.get_or_insert(span);
     }
-}
-
-/// Returns `true` if any issue in the slice is [`Severity::Error`].
-pub fn has_errors(issues: &[ValidationIssue]) -> bool {
-    issues.iter().any(|i| matches!(i.severity, Severity::Error))
 }
 
 // ─── AST validation ───────────────────────────────────────────────────────────
@@ -264,27 +236,19 @@ pub(crate) fn validate_ast(contract: &Contract, require_entrypoint: bool) -> Vec
                 )));
             }
         }
-        // A literal or constant without blocks(n)/seconds(n) is pushed raw.
-        for item in &ts.items {
-            let (call, value, raw) = match item {
-                TapItem::Older { value, unit: None } => ("older", value, "BIP68 sequence"),
-                TapItem::After { value, unit: None } => ("after", value, "nLockTime"),
-                _ => continue,
-            };
-            if value.parse::<i64>().is_ok() {
-                issues.push(ValidationIssue::warning(format!(
-                    "tapscript '{}': {call}({value}) is a raw {raw}; write blocks(n) or seconds(n) to state its unit",
-                    ts.name
-                )));
-            }
-        }
     }
 
     check_shadowing(contract, &mut issues);
     check_unused(contract, &mut issues);
     check_binding_semantics(contract, &mut issues);
     check_asset_id_operands(contract, &mut issues);
-    inspections::check_repeated_inspections(contract, &mut issues);
+    for (_, attributes) in contract.attributed() {
+        for attribute in attributes {
+            if let Some((message, span)) = crate::lint::attributes::error(attribute) {
+                issues.push(ValidationIssue::error(message).at(span));
+            }
+        }
+    }
 
     issues
 }
@@ -495,35 +459,22 @@ fn validate_source_identifier(name: &str, context: &str, issues: &mut Vec<Valida
     }
 }
 
-/// Reject parameters, locals, and tapscript inputs that are never read: an
-/// unread witness element is unchecked, so anyone relaying the spend could
-/// replace it. An unread constructor parameter is only a warning because it is
-/// pruned from the script and cannot be malleated.
+/// Reject parameters and tapscript inputs that are never read: an unread witness
+/// element is unchecked, so anyone relaying the spend could replace it. An unread
+/// constructor parameter or local is only a lint, since neither can be malleated.
 fn check_unused(contract: &Contract, issues: &mut Vec<ValidationIssue>) {
-    let mut contract_used: HashSet<&str> = HashSet::new();
     for tapscript in &contract.tapscripts {
-        let mut used = HashSet::new();
-        for item in &tapscript.items {
-            match item {
-                TapItem::Hash { preimage, hash, .. } => used.extend([preimage, hash]),
-                TapItem::Older { value, .. } | TapItem::After { value, .. } => {
-                    used.insert(value);
-                }
-                TapItem::Sig { keys, sigs, .. } => {
-                    used.extend(keys.iter().map(|key| match key {
-                        KeyExpr::Ident(name) | KeyExpr::Tweak { base: name, .. } => name,
-                    }));
-                    used.extend(sigs);
-                }
-            }
-        }
-        for input in tapscript.inputs.iter().filter(|i| !used.contains(&i.name)) {
+        let used = tapscript_reads(tapscript);
+        for input in tapscript
+            .inputs
+            .iter()
+            .filter(|i| !used.contains(i.name.as_str()))
+        {
             issues.push(ValidationIssue::error(format!(
                 "input '{}' in tapscript '{}' is never used",
                 input.name, tapscript.name
             )));
         }
-        contract_used.extend(used.into_iter().map(String::as_str));
     }
     for function in contract.functions.iter().filter(|f| !f.is_imported()) {
         let used = references::referenced_parameters(&function.statements, &[]);
@@ -540,57 +491,27 @@ fn check_unused(contract: &Contract, issues: &mut Vec<ValidationIssue>) {
                 .at(function.span),
             );
         }
-        check_unused_locals(&function.statements, &function.name, issues);
-        contract_used.extend(used);
-    }
-    for parameter in contract
-        .parameters
-        .iter()
-        .filter(|p| !contract_used.contains(p.name.as_str()))
-    {
-        issues.push(ValidationIssue::warning(format!(
-            "constructor parameter '{}' is never used",
-            parameter.name
-        )));
     }
 }
 
-/// A local is read only by later statements in its own block, since shadowing
-/// is rejected; sibling blocks may reuse the name for a separate binding.
-// ponytail: rescans the rest of the block per binding, O(n²) in block length;
-// index reads per binding in one pass if contract bodies ever grow large.
-fn check_unused_locals(
-    statements: &[LocatedStatement],
-    function: &str,
-    issues: &mut Vec<ValidationIssue>,
-) {
-    for (index, statement) in statements.iter().enumerate() {
-        match &statement.statement {
-            Statement::Declaration { name, .. } | Statement::LetBinding { name, .. }
-                if !references::referenced_parameters(&statements[index + 1..], &[])
-                    .contains(name.as_str()) =>
-            {
-                issues.push(
-                    ValidationIssue::error(format!(
-                        "variable '{name}' in function '{function}' is never used"
-                    ))
-                    .at(statement.span),
-                );
+/// The names a tapscript's items read.
+pub(crate) fn tapscript_reads(tapscript: &crate::models::NamedTapscript) -> HashSet<&str> {
+    let mut used = HashSet::new();
+    for item in &tapscript.items {
+        match item {
+            TapItem::Hash { preimage, hash, .. } => used.extend([preimage.as_str(), hash]),
+            TapItem::Older { value, .. } | TapItem::After { value, .. } => {
+                used.insert(value);
             }
-            Statement::IfElse {
-                then_body,
-                else_body,
-                ..
-            } => {
-                check_unused_locals(then_body, function, issues);
-                check_unused_locals(else_body.as_deref().unwrap_or_default(), function, issues);
+            TapItem::Sig { keys, sigs, .. } => {
+                used.extend(keys.iter().map(|key| match key {
+                    KeyExpr::Ident(name) | KeyExpr::Tweak { base: name, .. } => name.as_str(),
+                }));
+                used.extend(sigs.iter().map(String::as_str));
             }
-            Statement::ForIn { body, .. } | Statement::ForCount { body, .. } => {
-                check_unused_locals(body, function, issues)
-            }
-            _ => {}
         }
     }
+    used
 }
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
@@ -616,7 +537,7 @@ mod tests {
             let asm = &mut output.functions[0].arkade.as_mut().unwrap().asm;
             asm.splice(..2, placeholders.into_iter().map(String::from));
             assert_eq!(
-                !has_errors(&validate_output(&output)),
+                validate_output(&output).is_empty(),
                 valid,
                 "{placeholders:?}"
             );
@@ -652,7 +573,7 @@ mod tests {
                 1,
                 "{statement}: {issues:?}"
             );
-            assert!(has_errors(&issues), "{issues:?}");
+            assert!(!issues.is_empty(), "{issues:?}");
         }
     }
 
@@ -669,7 +590,7 @@ contract Demo() {
 }
 "#,
         );
-        assert!(!has_errors(&issues), "{issues:?}");
+        assert!(issues.is_empty(), "{issues:?}");
     }
 
     #[test]
@@ -763,6 +684,7 @@ contract Demo() {
             branches: Vec::new(),
             span: crate::diagnostics::Span { start: 0, end: 0 },
             statement,
+            attributes: Vec::new(),
         }
     }
 
@@ -771,6 +693,8 @@ contract Demo() {
             span: Default::default(),
             name: name.to_string(),
             is_library: false,
+            declaration: Default::default(),
+            attributes: vec![],
             structs: vec![],
             parameters: vec![Parameter {
                 span: Default::default(),
@@ -807,6 +731,7 @@ contract Demo() {
                 is_static: false,
                 is_exported: false,
                 return_type: None,
+                attributes: vec![],
             }],
             tapscripts: Vec::new(),
             imports: vec![],
@@ -820,7 +745,7 @@ contract Demo() {
         // `flag` is only read by the branch tests.
         contract.functions[0].parameters.pop();
         let issues = validate(&contract);
-        assert!(!has_errors(&issues));
+        assert!(issues.is_empty());
     }
 
     #[test]
@@ -843,7 +768,7 @@ contract Demo() {
             else_body: None,
         })];
         let issues = validate(&contract);
-        assert!(has_errors(&issues));
+        assert!(!issues.is_empty());
         assert!(issues
             .iter()
             .any(|i| i.message.contains("spend path with no require()")));
@@ -869,14 +794,14 @@ contract Demo() {
             then_body: vec![req()],
             else_body: Some(vec![req()]),
         })];
-        assert!(!has_errors(&validate(&contract)));
+        assert!(validate(&contract).is_empty());
     }
 
     #[test]
     fn empty_contract_name_is_error() {
         let contract = make_contract("");
         let issues = validate(&contract);
-        assert!(has_errors(&issues));
+        assert!(!issues.is_empty());
         assert!(issues.iter().any(|i| i.message.contains("name")));
     }
 
@@ -885,7 +810,7 @@ contract Demo() {
         let mut contract = make_contract("Empty");
         contract.functions.clear();
         let issues = validate(&contract);
-        assert!(has_errors(&issues));
+        assert!(!issues.is_empty());
         assert!(issues.iter().any(|i| i.message.contains("public function")));
     }
 
@@ -894,7 +819,7 @@ contract Demo() {
         let mut contract = make_contract("AllInternal");
         contract.functions[0].is_private = true;
         let issues = validate(&contract);
-        assert!(has_errors(&issues));
+        assert!(!issues.is_empty());
     }
 
     #[test]
@@ -902,7 +827,7 @@ contract Demo() {
         let mut contract = make_contract("Dup");
         contract.functions.push(contract.functions[0].clone());
         let issues = validate(&contract);
-        assert!(has_errors(&issues));
+        assert!(!issues.is_empty());
         assert!(issues.iter().any(|i| i.message.contains("spend")));
     }
 
@@ -911,7 +836,7 @@ contract Demo() {
         let mut contract = make_contract("Dup");
         contract.parameters.push(contract.parameters[0].clone());
         let issues = validate(&contract);
-        assert!(has_errors(&issues));
+        assert!(!issues.is_empty());
     }
 
     fn make_output(name: &str) -> ContractJson {
@@ -947,7 +872,7 @@ contract Demo() {
     fn valid_output_has_no_errors() {
         let output = make_output("Simple");
         let issues = validate_output(&output);
-        assert!(!has_errors(&issues));
+        assert!(issues.is_empty());
     }
 
     #[test]
@@ -955,7 +880,7 @@ contract Demo() {
         let mut output = make_output("Bad");
         output.functions[0].leaves[0].asm.clear();
         let issues = validate_output(&output);
-        assert!(has_errors(&issues));
+        assert!(!issues.is_empty());
         assert!(issues.iter().any(|i| i.message.contains("empty asm")));
     }
 
@@ -968,7 +893,7 @@ contract Demo() {
             output.functions[0].leaves[0].asm = vec![leaked.to_string()];
             let issues = validate_output(&output);
             assert!(
-                has_errors(&issues),
+                !issues.is_empty(),
                 "leaked placeholder {leaked} must be an output error"
             );
             assert!(
