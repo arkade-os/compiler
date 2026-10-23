@@ -204,6 +204,7 @@ arkadec contract.ark --check             # every error and warning as file:line:
 arkadec contract.ark --check --json      # the same diagnostics as a JSON array
 arkadec contract.ark --debug             # also writes contract.debug.json with covenant source maps
 arkadec contract.ark --report            # each covenant's script bytes, stack peak and opcode execution counts
+arkadec --explain anyone-can-spend      # what a lint reports, why it matters and how to fix it
 ```
 
 `--report` shows each covenant's script size as a lower bound, peak stack items, and an upper bound on executions of each named opcode, sorted by name. Branches take the maximum per opcode; sequential work adds up. Correlated conditions are counted independently, so the counts can overestimate actual execution. The report excludes data pushes without named opcodes. Opcode counts are informational: a row does not imply that the opcode has a configured budget. Compute budgets are operator-configurable and are not enforced by the compiler. Compare the counts against the target deployment's per-input limits, and check its request-wide budget for the complete transaction.
@@ -532,6 +533,7 @@ Lints report code that compiles but is likely unsafe or wrong. Each has an id, w
 | `unused-variable` | correctness | deny | A local variable nothing reads; an unread function parameter or tapscript input is an error, since anyone relaying the spend could replace it |
 | `timelock-without-unit` | style | warn | `older(n)` or `after(n)` with a raw number |
 | `repeated-inspection` | performance | warn | A multi-result inspection read more than once |
+| `signature-may-fail` | correctness | warn | A signature check used as a value that can be false |
 | `unknown-lint` | correctness | warn | A lint attribute naming a lint that does not exist |
 | `unfulfilled-expectation` | correctness | warn | An `@expect` whose lint does not fire where it applies |
 
@@ -552,7 +554,7 @@ contract Vault(pubkey owner) {
 
 The innermost attribute wins, and an attribute wins over the CLI. `@expect` allows its lint and reports `unfulfilled-expectation` when the lint does not fire where it applies, so it goes once the code is fixed; a name that is no lint is reported as `unknown-lint`. A malformed attribute is an error. An imported file's lints, attributes included, are at most warnings: only the file being compiled decides what fails it.
 
-The CLI sets levels with `--allow <lint>`, `--warn <lint>` and `--deny <lint>`, where `<lint>` is an id, a category (`security`, `correctness`, `performance`, `style`), `all`, or, for `--deny`, `warnings`, and a lint named by its id overrides the others. A denied lint is an error that stops compilation, in the CLI and in `compile_sources`; `Analysis::diagnostics_with(&levels)` and `Analysis::compile_with(options, &levels)` take levels in the API.
+`arkadec --explain <lint>` prints what a lint reports, why it matters and how to fix it. The CLI sets levels with `--allow <lint>`, `--warn <lint>` and `--deny <lint>`, where `<lint>` is an id, a category (`security`, `correctness`, `performance`, `style`), `all`, or, for `--deny`, `warnings`, and a lint named by its id overrides the others. A denied lint is an error that stops compilation, in the CLI and in `compile_sources`; `Analysis::diagnostics_with(&levels)` and `Analysis::compile_with(options, &levels)` take levels in the API.
 
 ## Artifact format
 

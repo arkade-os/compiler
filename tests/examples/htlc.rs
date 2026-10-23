@@ -50,7 +50,9 @@ fn test_htlc_contract() {
         "claim covenant should keep its own input value in its own output: {claim_cov}"
     );
     assert!(
-        claim_cov.contains("<CONTRACT:SingleSig(<receiver>)> OP_1 OP_SWAP OP_ROT OP_EQUALVERIFY OP_NUMEQUALVERIFY"),
+        claim_cov.contains(
+            "<CONTRACT:SingleSig(<receiver>)> OP_1 OP_SWAP OP_ROT OP_EQUALVERIFY OP_NUMEQUALVERIFY"
+        ),
         "claim covenant should pay the receiver: {claim_cov}"
     );
 
@@ -98,7 +100,9 @@ fn test_htlc_contract() {
         "refund covenant should keep its own input value in its own output: {refund_cov}"
     );
     assert!(
-        refund_cov.contains("<CONTRACT:SingleSig(<sender>)> OP_1 OP_SWAP OP_ROT OP_EQUALVERIFY OP_NUMEQUALVERIFY"),
+        refund_cov.contains(
+            "<CONTRACT:SingleSig(<sender>)> OP_1 OP_SWAP OP_ROT OP_EQUALVERIFY OP_NUMEQUALVERIFY"
+        ),
         "refund covenant should pay the sender: {refund_cov}"
     );
 
