@@ -24,8 +24,8 @@ use arkade_compiler::{analyze_file, CompileOptions, Severity};
 #[command(about = "Arkade Compiler for Bitcoin Taproot scripts", long_about = None)]
 struct Args {
     /// Source file path (.ark)
-    #[arg(required = true)]
-    file: String,
+    #[arg(required_unless_present = "explain")]
+    file: Option<String>,
 
     /// Output file path (defaults to source filename with .json extension)
     #[arg(short, long)]
@@ -57,6 +57,10 @@ struct Args {
     #[arg(long, value_name = "LINT")]
     warn: Vec<String>,
 
+    /// Explain a lint: what it reports, why it matters and how to fix it
+    #[arg(long, value_name = "LINT", exclusive = true)]
+    explain: Option<String>,
+
     /// Report a lint as an error (by id, category, `all`, or `warnings` for every warning-level lint)
     #[arg(long, value_name = "LINT")]
     deny: Vec<String>,
@@ -73,9 +77,23 @@ struct Args {
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Parse CLI arguments
     let args = Args::parse();
+    if let Some(id) = &args.explain {
+        let lint: Lint = id.parse()?;
+        let level = format!("{:?}", lint.level()).to_lowercase();
+        let category = format!("{:?}", lint.category()).to_lowercase();
+        println!(
+            "{id}: {category}, {level} by default\n\n{}",
+            lint.explanation()
+        );
+        return Ok(());
+    }
 
     // Ensure file has .ark extension
-    let file_path = Path::new(&args.file);
+    let file = args
+        .file
+        .as_deref()
+        .expect("clap requires a file without --explain");
+    let file_path = Path::new(file);
     if file_path.extension().unwrap_or_default() != "ark" {
         return Err("Input file must have .ark extension".into());
     }

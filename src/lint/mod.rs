@@ -9,8 +9,10 @@ use crate::models::{Contract, TapItem};
 
 pub(crate) mod attributes;
 mod covenants;
+mod expressions;
 mod inspections;
 mod unused;
+mod walk;
 
 /// One lint's finding, at the node that reports it.
 #[derive(Debug, Clone)]
@@ -68,6 +70,7 @@ pub(crate) fn check(contract: &Contract) -> Lints {
     unused::check(contract, &mut findings);
     inspections::check(contract, &mut findings);
     covenants::check(contract, &mut findings);
+    expressions::check(contract, &mut findings);
     Lints(attributes::levels(contract, findings))
 }
 
@@ -110,166 +113,57 @@ pub enum Category {
     Style,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum Lint {
-    AnyoneCanSpend,
-    OutputScriptUnchecked,
-    OutputValueUnchecked,
-    OutputsSharedAcrossInputs,
-    OracleMessageUnbound,
-    SignerFromWitness,
-    DuplicateMultisigKey,
-    AmbiguousHashConcat,
-    RevealWithoutTimeout,
-    OffchainLocktime,
-    DivideBeforeMultiply,
-    SelfComparison,
-    UnusedParameter,
-    UnusedVariable,
-    TimelockWithoutUnit,
-    RepeatedInspection,
-    UnknownLint,
-    UnfulfilledExpectation,
+/// Declares every lint: its variant, id, category, default level and summary. Its explanation
+/// is `docs/<id>.md`.
+macro_rules! lints {
+    ($($variant:ident: $id:literal, $category:ident, $level:ident, $summary:literal;)*) => {
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+        pub enum Lint {
+            $($variant),*
+        }
+
+        impl Lint {
+            pub const ALL: &'static [Lint] = &[$(Lint::$variant),*];
+
+            /// Id, category, default level and summary.
+            fn describe(self) -> (&'static str, Category, Level, &'static str) {
+                match self {
+                    $(Lint::$variant => ($id, Category::$category, Level::$level, $summary)),*
+                }
+            }
+
+            /// What the lint reports, why it matters and how to fix it, in Markdown.
+            pub fn explanation(self) -> &'static str {
+                match self {
+                    $(Lint::$variant => include_str!(concat!("docs/", $id, ".md"))),*
+                }
+            }
+        }
+    };
+}
+
+lints! {
+    AnyoneCanSpend: "anyone-can-spend", Security, Warn, "a covenant function with no signature check and no output constraint";
+    OutputScriptUnchecked: "output-script-unchecked", Security, Warn, "an output whose value is checked but not its scriptPubKey";
+    OutputValueUnchecked: "output-value-unchecked", Security, Warn, "an output whose scriptPubKey is checked but not its value or assets";
+    OutputsSharedAcrossInputs: "outputs-shared-across-inputs", Security, Warn, "an unsigned function that constrains outputs by index without bounding the inputs, so one output can satisfy two";
+    OracleMessageUnbound: "oracle-message-unbound", Security, Warn, "a checkSigFromStack message taken from the witness as given";
+    SignerFromWitness: "signer-from-witness", Security, Warn, "a signature key or multisig threshold taken from the witness as given";
+    DuplicateMultisigKey: "duplicate-multisig-key", Security, Warn, "a key listed twice in checkMultisig, so one signer counts twice";
+    AmbiguousHashConcat: "ambiguous-hash-concat", Security, Warn, "a hash of two concatenated variable-length parameters, which other values can match";
+    RevealWithoutTimeout: "reveal-without-timeout", Security, Warn, "a hash preimage reveal with no timeout path, so the coins wait for it forever";
+    OffchainLocktime: "offchain-locktime", Correctness, Warn, "tx.locktime in a covenant, which arkd sets to 0 offchain";
+    DivideBeforeMultiply: "divide-before-multiply", Correctness, Warn, "(a / b) * c, which truncates before it scales";
+    SelfComparison: "self-comparison", Correctness, Warn, "a comparison or logical operator with the same operand on both sides";
+    UnusedParameter: "unused-parameter", Correctness, Warn, "a constructor parameter no function reads";
+    UnusedVariable: "unused-variable", Correctness, Deny, "a local variable nothing reads";
+    TimelockWithoutUnit: "timelock-without-unit", Style, Warn, "older(n) or after(n) with a raw number instead of blocks(n) or seconds(n)";
+    RepeatedInspection: "repeated-inspection", Performance, Warn, "a multi-result inspection read more than once instead of bound once";
+    UnknownLint: "unknown-lint", Correctness, Warn, "a lint attribute naming a lint that does not exist";
+    UnfulfilledExpectation: "unfulfilled-expectation", Correctness, Warn, "an @expect whose lint does not fire where it applies";
 }
 
 impl Lint {
-    pub const ALL: [Lint; 18] = [
-        Lint::AnyoneCanSpend,
-        Lint::OutputScriptUnchecked,
-        Lint::OutputValueUnchecked,
-        Lint::OutputsSharedAcrossInputs,
-        Lint::OracleMessageUnbound,
-        Lint::SignerFromWitness,
-        Lint::DuplicateMultisigKey,
-        Lint::AmbiguousHashConcat,
-        Lint::RevealWithoutTimeout,
-        Lint::OffchainLocktime,
-        Lint::DivideBeforeMultiply,
-        Lint::SelfComparison,
-        Lint::UnusedParameter,
-        Lint::UnusedVariable,
-        Lint::TimelockWithoutUnit,
-        Lint::RepeatedInspection,
-        Lint::UnknownLint,
-        Lint::UnfulfilledExpectation,
-    ];
-
-    /// Id, category, default level and summary.
-    fn describe(self) -> (&'static str, Category, Level, &'static str) {
-        use Category::*;
-        use Level::*;
-        match self {
-            Lint::AnyoneCanSpend => (
-                "anyone-can-spend",
-                Security,
-                Warn,
-                "a covenant function with no signature check and no output constraint",
-            ),
-            Lint::OutputScriptUnchecked => (
-                "output-script-unchecked",
-                Security,
-                Warn,
-                "an output whose value is checked but not its scriptPubKey",
-            ),
-            Lint::OutputValueUnchecked => (
-                "output-value-unchecked",
-                Security,
-                Warn,
-                "an output whose scriptPubKey is checked but not its value or assets",
-            ),
-            Lint::OutputsSharedAcrossInputs => (
-                "outputs-shared-across-inputs",
-                Security,
-                Warn,
-                "an unsigned function that constrains outputs by index without bounding the inputs, so one output can satisfy two",
-            ),
-            Lint::OracleMessageUnbound => (
-                "oracle-message-unbound",
-                Security,
-                Warn,
-                "a checkSigFromStack message taken from the witness as given",
-            ),
-            Lint::SignerFromWitness => (
-                "signer-from-witness",
-                Security,
-                Warn,
-                "a signature key or multisig threshold taken from the witness as given",
-            ),
-            Lint::DuplicateMultisigKey => (
-                "duplicate-multisig-key",
-                Security,
-                Warn,
-                "a key listed twice in checkMultisig, so one signer counts twice",
-            ),
-            Lint::AmbiguousHashConcat => (
-                "ambiguous-hash-concat",
-                Security,
-                Warn,
-                "a hash of two concatenated variable-length parameters, which other values can match",
-            ),
-            Lint::RevealWithoutTimeout => (
-                "reveal-without-timeout",
-                Security,
-                Warn,
-                "a hash preimage reveal with no timeout path, so the coins wait for it forever",
-            ),
-            Lint::OffchainLocktime => (
-                "offchain-locktime",
-                Correctness,
-                Warn,
-                "tx.locktime in a covenant, which arkd sets to 0 offchain",
-            ),
-            Lint::DivideBeforeMultiply => (
-                "divide-before-multiply",
-                Correctness,
-                Warn,
-                "(a / b) * c, which truncates before it scales",
-            ),
-            Lint::SelfComparison => (
-                "self-comparison",
-                Correctness,
-                Warn,
-                "a comparison or logical operator with the same operand on both sides",
-            ),
-            Lint::UnusedParameter => (
-                "unused-parameter",
-                Correctness,
-                Warn,
-                "a constructor parameter no function reads",
-            ),
-            Lint::UnusedVariable => (
-                "unused-variable",
-                Correctness,
-                Deny,
-                "a local variable nothing reads",
-            ),
-            Lint::TimelockWithoutUnit => (
-                "timelock-without-unit",
-                Style,
-                Warn,
-                "older(n) or after(n) with a raw number instead of blocks(n) or seconds(n)",
-            ),
-            Lint::RepeatedInspection => (
-                "repeated-inspection",
-                Performance,
-                Warn,
-                "a multi-result inspection read more than once instead of bound once",
-            ),
-            Lint::UnknownLint => (
-                "unknown-lint",
-                Correctness,
-                Warn,
-                "a lint attribute naming a lint that does not exist",
-            ),
-            Lint::UnfulfilledExpectation => (
-                "unfulfilled-expectation",
-                Correctness,
-                Warn,
-                "an @expect whose lint does not fire where it applies",
-            ),
-        }
-    }
-
     /// The id the diagnostic `code`, the CLI and lint attributes use.
     pub fn id(self) -> &'static str {
         self.describe().0
@@ -293,7 +187,8 @@ impl std::str::FromStr for Lint {
 
     fn from_str(id: &str) -> Result<Self, String> {
         Lint::ALL
-            .into_iter()
+            .iter()
+            .copied()
             .find(|lint| lint.id() == id)
             .ok_or_else(|| format!("unknown lint '{id}'"))
     }
@@ -321,11 +216,13 @@ impl Levels {
         let lints: Vec<Lint> = match id {
             "all" => Lint::ALL.to_vec(),
             "warnings" => Lint::ALL
-                .into_iter()
+                .iter()
+                .copied()
                 .filter(|&lint| self.level(lint) == Level::Warn)
                 .collect(),
             _ if category.is_some() => Lint::ALL
-                .into_iter()
+                .iter()
+                .copied()
                 .filter(|lint| Some(lint.category()) == category)
                 .collect(),
             _ => vec![id.parse()?],

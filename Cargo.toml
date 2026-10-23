@@ -17,7 +17,7 @@ description = "A compiler for Arkade Script - a language for creating Bitcoin Ta
 authors.workspace = true
 license.workspace = true
 repository.workspace = true
-include = ["src/**/*.rs", "src/**/*.pest", "LICENSE"]
+include = ["src/**/*.rs", "src/**/*.pest", "src/**/*.md", "LICENSE"]
 
 [dependencies]
 pest = "2.7.8"

@@ -271,7 +271,8 @@ pub enum AssignmentTarget {
 }
 
 impl Statement {
-    /// The expressions the statement itself evaluates, not those of nested statements.
+    /// The expressions the statement itself evaluates, in source order, not those of nested
+    /// statements.
     pub(crate) fn expressions(&self) -> Vec<&Expression> {
         match self {
             Statement::Call(expression) | Statement::Return(Some(expression)) => vec![expression],
@@ -281,7 +282,7 @@ impl Statement {
             Statement::VarAssign {
                 target: AssignmentTarget::ArrayIndex { index, .. } | AssignmentTarget::Access(index),
                 value,
-            } => vec![value, index],
+            } => vec![index, value],
             Statement::VarAssign { value, .. } => vec![value],
             Statement::IfElse { condition, .. } => vec![condition],
             Statement::ForIn { iterable, .. } => vec![iterable],

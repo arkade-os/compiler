@@ -334,3 +334,28 @@ fn denied_lints_stop_compilation_only_in_the_file_being_compiled() {
     assert_eq!(severity("main.ark"), Some(Severity::Warning));
     assert_eq!(severity("fees.ark"), Some(Severity::Error));
 }
+
+#[test]
+fn every_lint_is_documented_and_explained() {
+    let readme = include_str!("../../README.md");
+    for &lint in Lint::ALL {
+        assert!(
+            readme.contains(&format!("| `{}` |", lint.id())),
+            "README's table of lints is missing {}",
+            lint.id()
+        );
+        assert!(!lint.explanation().trim().is_empty(), "{}", lint.id());
+    }
+    let explain = |id: &str| {
+        std::process::Command::new(env!("CARGO_BIN_EXE_arkadec"))
+            .args(["--explain", id])
+            .output()
+            .unwrap()
+    };
+    let output = explain("reveal-without-timeout");
+    let text = String::from_utf8(output.stdout).unwrap();
+    assert!(output.status.success());
+    assert!(text.starts_with("reveal-without-timeout: security, warn by default"));
+    assert!(text.contains("checkTime"), "{text}");
+    assert!(!explain("no-such-lint").status.success());
+}

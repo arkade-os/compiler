@@ -199,6 +199,7 @@ arkadec contract.ark --no-optimize       # skips constant folding, static branch
 arkadec contract.ark --check             # every error and warning as file:line:column, no artifact
 arkadec contract.ark --check --json      # the same diagnostics as a JSON array
 arkadec contract.ark --debug             # also writes contract.debug.json with covenant source maps
+arkadec --explain anyone-can-spend      # what a lint reports, why it matters and how to fix it
 ```
 
 Warnings go to stderr; type and validation errors abort with a non-zero exit. `--check` exits with status 1 when any diagnostic is an error. From a checkout, `cargo run -- examples/htlc/htlc.ark -o /tmp/htlc.json` is the fastest way to inspect output.
@@ -541,7 +542,7 @@ contract Vault(pubkey owner) {
 
 The innermost attribute wins, and an attribute wins over the CLI. `@expect` allows its lint and reports `unfulfilled-expectation` when the lint does not fire where it applies, so it goes once the code is fixed; a name that is no lint is reported as `unknown-lint`. A malformed attribute is an error. An imported file's lints, attributes included, are at most warnings: only the file being compiled decides what fails it.
 
-The CLI sets levels with `--allow <lint>`, `--warn <lint>` and `--deny <lint>`, where `<lint>` is an id, a category (`security`, `correctness`, `performance`, `style`), `all`, or, for `--deny`, `warnings`, and a lint named by its id overrides the others. A denied lint is an error that stops compilation, in the CLI and in `compile_sources`; `Analysis::diagnostics_with(&levels)` and `Analysis::compile_with(options, &levels)` take levels in the API.
+`arkadec --explain <lint>` prints what a lint reports, why it matters and how to fix it. The CLI sets levels with `--allow <lint>`, `--warn <lint>` and `--deny <lint>`, where `<lint>` is an id, a category (`security`, `correctness`, `performance`, `style`), `all`, or, for `--deny`, `warnings`, and a lint named by its id overrides the others. A denied lint is an error that stops compilation, in the CLI and in `compile_sources`; `Analysis::diagnostics_with(&levels)` and `Analysis::compile_with(options, &levels)` take levels in the API.
 
 ## Artifact format
 
