@@ -24,7 +24,7 @@ const warningSource = 'contract HasWarnings(int value) { function spend() { requ
 const detailed = await compile({ entry: 'main.ark', files: { 'main.ark': warningSource } }, { optimize: false });
 const warningArtifact = detailed.artifact;
 const warningDiagnostics = detailed.diagnostics.filter(d => d.severity === 'warning');
-assert(warningDiagnostics.length > 0 && warningDiagnostics.every(d => d.code === 'validation'));
+assert(warningDiagnostics.some(d => d.code === 'unused-parameter'));
 assert(!Object.hasOwn(detailed, 'warnings'));
 assert(!Object.hasOwn(warningArtifact, 'warnings'));
 assert.equal(warningArtifact.compiler.options.optimize, false);
@@ -226,7 +226,7 @@ for (const warning of warningDiagnostics) {
 assert(elements['error-count'].classList.contains('warning'));
 assert.equal(elements['error-count'].textContent, String(warningDiagnostics.length));
 assert.equal(elements['compile-status'].className, 'compile-status warning');
-context.warningSource = 'contract Clean() { function spend() { require(true); } }';
+context.warningSource = 'contract Clean(pubkey k) { function spend(signature s) { require(checkSig(s, k)); } }';
 await vm.runInContext('doCompile()', context);
 assert.equal(elements['errors-output'].innerHTML, '');
 assert(!elements['error-count'].classList.contains('visible'));

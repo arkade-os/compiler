@@ -78,7 +78,10 @@ pub fn compile_sources_with_diagnostics(
     let mut diagnostics = analysis.diagnostics();
     let mut artifact = None;
     let mut debug = None;
-    if analysis.contract().is_some() {
+    let failed = diagnostics
+        .iter()
+        .any(|d| d.severity == crate::Severity::Error);
+    if !failed && analysis.contract().is_some() {
         match analysis.compile(options) {
             Ok(output) => {
                 artifact = Some(

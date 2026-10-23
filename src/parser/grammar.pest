@@ -14,7 +14,12 @@ pragma_constraint = { (">=" | "<=" | ">" | "<" | "=" | "^" | "~")? ~ pragma_vers
 pragma_stmt = { pragma_keyword ~ pragma_language ~ pragma_constraint+ ~ ("||" ~ pragma_constraint+)* ~ ";" }
 
 // Main entry point - must consume the entire input
-main = { SOI ~ pragma_stmt? ~ import_stmt* ~ struct_definition* ~ (contract | library)? ~ EOI }
+main = { SOI ~ pragma_stmt? ~ import_stmt* ~ struct_definition* ~ (attribute* ~ (contract | library))? ~ EOI }
+
+// Outer attribute of the contract, function or statement after it: @name(arg, ...)
+attribute = { "@" ~ identifier ~ "(" ~ attribute_arg ~ ("," ~ attribute_arg)* ~ ")" }
+attribute_arg = _{ string_literal | attribute_name }
+attribute_name = @{ ASCII_ALPHA ~ (ASCII_ALPHANUMERIC | "-" | "_")* }
 
 struct_definition = {
     "struct" ~ identifier ~ "{" ~ struct_field+ ~ "}"
@@ -26,11 +31,11 @@ struct_field = { data_type ~ identifier ~ ";" }
 contract = {
     "contract" ~ identifier ~
     "(" ~ param_list ~ ")" ~
-    "{" ~ (const_decl | function)* ~ "}"
+    "{" ~ (const_decl | attribute* ~ function)* ~ "}"
 }
 
 library = {
-    "library" ~ identifier ~ "{" ~ (const_decl | function)* ~ "}"
+    "library" ~ identifier ~ "{" ~ (const_decl | attribute* ~ function)* ~ "}"
 }
 
 // Compile-time constant: const int NAME = 144;
@@ -69,7 +74,8 @@ return_keyword = @{ "return" ~ !(ASCII_ALPHANUMERIC | "_") }
 return_stmt = { return_keyword ~ general_expression? ~ ";" }
 
 // Statement types - order matters, more specific first
-statement = _{
+statement = _{ attribute* ~ statement_kind }
+statement_kind = _{
     return_stmt |
     if_stmt |
     for_stmt |

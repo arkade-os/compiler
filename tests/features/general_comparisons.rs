@@ -556,9 +556,9 @@ contract C(pubkey owner, bytes32 hash) {
 "#,
     )
     .expect("logical calls and bindings");
-    assert_eq!(output.warnings.len(), 3, "{:?}", output.warnings);
-    assert!(output
-        .warnings
+    let warnings = crate::common::feature_warnings(&output);
+    assert_eq!(warnings.len(), 3, "{warnings:?}");
+    assert!(warnings
         .iter()
         .all(|warning| warning.contains("invalid non-empty signature")));
     assert_eq!(output.functions.len(), 1);

@@ -838,6 +838,7 @@ mod tests {
         NamedTapscript {
             span: Default::default(),
             declaration: Default::default(),
+            attributes: vec![],
             name: "t".into(),
             inputs: vec![],
             items,
@@ -1004,6 +1005,8 @@ mod tests {
             span: Default::default(),
             name: "C".into(),
             is_library: false,
+            declaration: Default::default(),
+            attributes: vec![],
             structs: vec![],
             parameters: vec![
                 Parameter {
@@ -1029,6 +1032,7 @@ mod tests {
                     is_static: false,
                     is_exported: false,
                     return_type: None,
+                    attributes: vec![],
                 })
                 .collect(),
             tapscripts,
@@ -1067,6 +1071,7 @@ mod tests {
         let leaf = NamedTapscript {
             span: Default::default(),
             declaration: Default::default(),
+            attributes: vec![],
             name: "claim".into(),
             inputs: vec![],
             items: vec![sig(vec![ident("server"), ident("emulator")])],
@@ -1080,6 +1085,7 @@ mod tests {
         let leaf = NamedTapscript {
             span: Default::default(),
             declaration: Default::default(),
+            attributes: vec![],
             name: "claim".into(),
             inputs: vec![],
             items: vec![sig(vec![ident("server"), ident("owner")])],
@@ -1094,6 +1100,7 @@ mod tests {
         let leaf = NamedTapscript {
             span: Default::default(),
             declaration: Default::default(),
+            attributes: vec![],
             name: "weird".into(),
             inputs: vec![],
             items: vec![sig(vec![ident("server"), ident("emulator")])],
@@ -1108,6 +1115,7 @@ mod tests {
         let leaf = NamedTapscript {
             span: Default::default(),
             declaration: Default::default(),
+            attributes: vec![],
             name: "direct".into(),
             inputs: vec![],
             items: vec![sig(vec![KeyExpr::Tweak {
@@ -1127,6 +1135,7 @@ mod tests {
         let leaf = NamedTapscript {
             span: Default::default(),
             declaration: Default::default(),
+            attributes: vec![],
             name: "claim".into(),
             inputs: vec![],
             items: vec![sig(vec![KeyExpr::Tweak {
@@ -1144,6 +1153,7 @@ mod tests {
         let leaf = NamedTapscript {
             span: Default::default(),
             declaration: Default::default(),
+            attributes: vec![],
             name: "direct".into(),
             inputs: vec![],
             items: vec![sig(vec![KeyExpr::Tweak {
@@ -1160,6 +1170,7 @@ mod tests {
         let leaf = NamedTapscript {
             span: Default::default(),
             declaration: Default::default(),
+            attributes: vec![],
             name: "direct".into(),
             inputs: vec![],
             items: vec![sig(vec![
@@ -1183,6 +1194,7 @@ mod tests {
         let leaf = NamedTapscript {
             span: Default::default(),
             declaration: Default::default(),
+            attributes: vec![],
             name: "unilateral".into(),
             inputs: vec![],
             items: vec![sig(vec![ident("owner")])],
@@ -1200,6 +1212,7 @@ mod tests {
         let leaf = NamedTapscript {
             span: Default::default(),
             declaration: Default::default(),
+            attributes: vec![],
             name: "liquidate".into(),
             inputs: sig_params(2),
             items: vec![sig(vec![ident("owner"), ident("backup")])],
@@ -1216,6 +1229,7 @@ mod tests {
         let leaf = NamedTapscript {
             span: Default::default(),
             declaration: Default::default(),
+            attributes: vec![],
             name: "unilateral".into(),
             inputs: sig_params(1),
             items: vec![
@@ -1237,6 +1251,7 @@ mod tests {
         let leaf = NamedTapscript {
             span: Default::default(),
             declaration: Default::default(),
+            attributes: vec![],
             name: "x".into(),
             inputs: vec![],
             items: vec![sig(vec![ident("server"), ident("ghost")])],
@@ -1343,6 +1358,7 @@ mod tests {
             let leaf = NamedTapscript {
                 span: Default::default(),
                 declaration: Default::default(),
+                attributes: vec![],
                 name: "exit".into(),
                 inputs: sig_params(2),
                 items: vec![timelock, sig(vec![ident("server"), ident("owner")])],
@@ -1380,6 +1396,7 @@ mod tests {
         let leaf = NamedTapscript {
             span: Default::default(),
             declaration: Default::default(),
+            attributes: vec![],
             name: "x".into(),
             inputs: vec![Parameter {
                 span: Default::default(),
@@ -1405,6 +1422,7 @@ mod tests {
         let leaf = NamedTapscript {
             span: Default::default(),
             declaration: Default::default(),
+            attributes: vec![],
             name: "x".into(),
             inputs: vec![],
             items: vec![TapItem::Sig {
@@ -1429,6 +1447,7 @@ mod tests {
         let leaf = NamedTapscript {
             span: Default::default(),
             declaration: Default::default(),
+            attributes: vec![],
             name: "exit".into(),
             inputs: sig_params(1),
             items: vec![
@@ -1452,6 +1471,7 @@ mod tests {
         let leaf = NamedTapscript {
             span: Default::default(),
             declaration: Default::default(),
+            attributes: vec![],
             name: "claim".into(),
             inputs: vec![
                 Parameter {
@@ -1496,6 +1516,7 @@ mod tests {
         let leaf = NamedTapscript {
             span: Default::default(),
             declaration: Default::default(),
+            attributes: vec![],
             name: "claim".into(),
             inputs: vec![
                 Parameter {
@@ -1550,6 +1571,7 @@ mod tests {
         let leaf = NamedTapscript {
             span: Default::default(),
             declaration: Default::default(),
+            attributes: vec![],
             name: "refund".into(),
             inputs: vec![],
             items: vec![
@@ -1581,6 +1603,7 @@ mod tests {
         let leaf = NamedTapscript {
             span: Default::default(),
             declaration: Default::default(),
+            attributes: vec![],
             name: "unilateral".into(),
             inputs: vec![Parameter {
                 span: Default::default(),

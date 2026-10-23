@@ -101,7 +101,11 @@ contract Composite(Pair initial) {
 "#,
     )
     .expect("composite calls");
-    assert!(output.warnings.is_empty(), "{:?}", output.warnings);
+    assert!(
+        crate::common::feature_warnings(&output).is_empty(),
+        "{:?}",
+        output.warnings
+    );
     assert_eq!(output.functions.len(), 1);
     assert!(arkade_asm_tokens(&output, "spend")
         .iter()

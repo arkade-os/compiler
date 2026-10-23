@@ -341,7 +341,7 @@ fn cashscript_parity_acceptances() {
     );
     assert_eq!(
         output.warnings,
-        ["warning[validation]: constructor parameter 'unused' is never used (main.ark)"]
+        ["warning[unused-parameter]: line 1, column 46: constructor parameter 'unused' is never used (main.ark)"]
     );
 }
 

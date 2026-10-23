@@ -1,7 +1,7 @@
 use crate::diagnostics::CompileError;
 use crate::models::{
-    ArraySize, AssignmentTarget, Constant, Contract, ExprKind, Expression, Function,
-    LocatedStatement, Parameter, Statement, StructDefinition, TypeName,
+    ArraySize, AssignmentTarget, Attribute, AttributeArg, Constant, Contract, ExprKind, Expression,
+    Function, LocatedStatement, Parameter, Statement, StructDefinition, TypeName,
 };
 use pest::iterators::{Pair, Pairs};
 use pest::Parser;
@@ -137,6 +137,8 @@ fn rule_term(rule: &Rule) -> Option<String> {
         Rule::function_visibility | Rule::function => "a function",
         Rule::data_type => "a type",
         Rule::block => "a block",
+        Rule::attribute => "an attribute",
+        Rule::attribute_name => "a name",
         Rule::unary_expr
         | Rule::primary_expr
         | Rule::parenthesized_expr
@@ -212,13 +214,17 @@ pub(crate) fn build_ast(
         tapscripts: Vec::new(),
         imports: Vec::new(),
         constants: constants.to_vec(),
+        declaration: Default::default(),
+        attributes: Vec::new(),
     };
 
     for pair in pairs {
         match pair.as_rule() {
             Rule::main => {
+                let mut attributes = Vec::new();
                 for inner_pair in pair.into_inner() {
                     match inner_pair.as_rule() {
+                        Rule::attribute => attributes.push(parse_attribute(inner_pair)?),
                         Rule::import_stmt => {
                             // Extract the import path (string literal without quotes)
                             if let Some(path_pair) = inner_pair.into_inner().next() {
@@ -227,6 +233,7 @@ pub(crate) fn build_ast(
                             }
                         }
                         Rule::contract | Rule::library => {
+                            contract.attributes = std::mem::take(&mut attributes);
                             parse_contract(&mut contract, inner_pair)?;
                         }
                         Rule::struct_definition => {
@@ -247,6 +254,30 @@ pub(crate) fn build_ast(
     }
 
     Ok(contract)
+}
+
+/// Parse `@name(arg, ...)`.
+fn parse_attribute(pair: Pair<Rule>) -> Result<Attribute, String> {
+    let span = pair.as_span().into();
+    let mut inner = pair.into_inner();
+    let name = inner.next().ok_or("Missing attribute name")?;
+    let args = inner
+        .map(|arg| {
+            let span = arg.as_span().into();
+            Ok(match arg.as_rule() {
+                Rule::string_literal => {
+                    AttributeArg::Text(parse_string_literal(arg.as_str())?, span)
+                }
+                _ => AttributeArg::Name(arg.as_str().to_string(), span),
+            })
+        })
+        .collect::<Result<_, String>>()?;
+    Ok(Attribute {
+        name: name.as_str().to_string(),
+        name_span: name.as_span().into(),
+        args,
+        span,
+    })
 }
 
 fn parse_struct_definition(pair: Pair<Rule>) -> Result<StructDefinition, String> {
@@ -280,6 +311,7 @@ fn parse_struct_definition(pair: Pair<Rule>) -> Result<StructDefinition, String>
 /// Parse a contract or library definition.
 fn parse_contract(contract: &mut Contract, pair: Pair<Rule>) -> Result<(), CompileError> {
     contract.is_library = pair.as_rule() == Rule::library;
+    contract.declaration = pair.as_span().into();
     let mut inner_pairs = pair.into_inner().peekable();
 
     // Contract name (required)
@@ -319,10 +351,17 @@ fn parse_contract(contract: &mut Contract, pair: Pair<Rule>) -> Result<(), Compi
 
     // Functions (covenant) and tapscript declarations share the `function` rule;
     // a tapscript carries a `tapscript_block` body.
+    let mut attributes = Vec::new();
     for func_pair in inner_pairs {
-        if func_pair.as_rule() != Rule::function {
-            continue;
+        match func_pair.as_rule() {
+            Rule::attribute => {
+                attributes.push(parse_attribute(func_pair)?);
+                continue;
+            }
+            Rule::function => {}
+            _ => continue,
         }
+        let attributes = std::mem::take(&mut attributes);
         if function_pair_is_tapscript(&func_pair) {
             let span = func_pair.as_span().into();
             if contract.is_library {
@@ -331,10 +370,12 @@ fn parse_contract(contract: &mut Contract, pair: Pair<Rule>) -> Result<(), Compi
             }
             let ts = parse_named_tapscript(func_pair, &parsing_constants)
                 .map_err(|error| CompileError::from(error).at(span))?;
-            contract.tapscripts.push(ts);
+            contract
+                .tapscripts
+                .push(crate::models::NamedTapscript { attributes, ..ts });
         } else {
             let func = parse_function(func_pair, &parsing_constants, contract.is_library)?;
-            contract.functions.push(func);
+            contract.functions.push(Function { attributes, ..func });
         }
     }
     Ok(())
@@ -407,11 +448,7 @@ fn parse_function(
     } else {
         None
     };
-    let mut statements = Vec::new();
-    for statement in inner {
-        let span = statement.as_span().into();
-        statements.extend(parse_statement(&name, statement, constants).map_err(|e| e.at(span))?);
-    }
+    let statements = parse_statements(&name, inner, constants)?;
     Ok(Function {
         name,
         span,
@@ -422,7 +459,31 @@ fn parse_function(
         is_static,
         is_exported,
         return_type,
+        attributes: Vec::new(),
     })
+}
+
+/// Parse a function body or block: statements, each after its own attributes.
+fn parse_statements<'a>(
+    function_name: &str,
+    pairs: impl Iterator<Item = Pair<'a, Rule>>,
+    constants: &[Constant],
+) -> Result<Vec<LocatedStatement>, CompileError> {
+    let mut statements = Vec::new();
+    let mut attributes = Vec::new();
+    for pair in pairs {
+        let span = pair.as_span().into();
+        if pair.as_rule() == Rule::attribute {
+            attributes.push(parse_attribute(pair).map_err(|e| CompileError::from(e).at(span))?);
+            continue;
+        }
+        let statement = parse_statement(function_name, pair, constants).map_err(|e| e.at(span))?;
+        statements.extend(statement.map(|statement| LocatedStatement {
+            attributes: std::mem::take(&mut attributes),
+            ..statement
+        }));
+    }
+    Ok(statements)
 }
 
 /// Parse a statement in a function body (require, let binding, function call, variable declaration)
@@ -628,6 +689,7 @@ fn parse_statement(
         branches,
         message,
         statement,
+        attributes: Vec::new(),
     }))
 }
 
@@ -653,13 +715,7 @@ fn parse_block(
     pair: Pair<Rule>,
     constants: &[Constant],
 ) -> Result<Vec<LocatedStatement>, CompileError> {
-    let mut statements = Vec::new();
-    for inner in pair.into_inner() {
-        let span = inner.as_span().into();
-        statements
-            .extend(parse_statement(function_name, inner, constants).map_err(|e| e.at(span))?);
-    }
-    Ok(statements)
+    parse_statements(function_name, pair.into_inner(), constants)
 }
 
 pub(crate) fn parse_data_type(type_pair: Pair<Rule>) -> TypeName {
@@ -701,7 +757,9 @@ pub(crate) fn parse_parameters(params: Pair<Rule>) -> Result<Vec<Parameter>, Str
 #[cfg(test)]
 mod tests {
     use super::parse;
-    use crate::models::{AssignmentTarget, ExprKind, Expression, Requirement, Statement};
+    use crate::models::{
+        AssignmentTarget, Attribute, AttributeArg, ExprKind, Expression, Requirement, Statement,
+    };
     use crate::operators::UnaryOperator;
 
     #[test]
@@ -866,6 +924,50 @@ mod tests {
                 texts.contains(&expected),
                 "no node spans {expected:?} in {texts:?}"
             );
+        }
+    }
+
+    #[test]
+    fn attributes_attach_to_the_node_after_them() {
+        let source = r#"
+@allow(unused-parameter, "kept")
+contract C(pubkey k, int unused) {
+    @deny(self-comparison)
+    function f(signature s, int x) {
+        if (x > 0) {
+            @allow(self-comparison, "a")
+            @warn(divide-before-multiply)
+            require(x == x);
+        }
+        require(checkSig(s, k));
+    }
+    @allow(timelock-without-unit, "raw")
+    function t(signature s) tapscript { require(checkSig(s, k)); }
+}"#;
+        let contract = parse(source).unwrap();
+        fn names(attributes: &[Attribute]) -> Vec<&str> {
+            attributes.iter().map(|a| a.name.as_str()).collect()
+        }
+        assert_eq!(names(&contract.attributes), ["allow"]);
+        assert_eq!(names(&contract.functions[0].attributes), ["deny"]);
+        assert_eq!(names(&contract.tapscripts[0].attributes), ["allow"]);
+        let Statement::IfElse { then_body, .. } = &contract.functions[0].statements[0].statement
+        else {
+            panic!("expected if");
+        };
+        assert_eq!(names(&then_body[0].attributes), ["allow", "warn"]);
+        assert!(matches!(
+            &then_body[0].attributes[0].args[..],
+            [AttributeArg::Name(lint, _), AttributeArg::Text(reason, _)]
+                if lint == "self-comparison" && reason == "a"
+        ));
+        assert!(contract.functions[0].statements[1].attributes.is_empty());
+        for span in [
+            then_body[0].span,
+            contract.functions[0].declaration,
+            contract.declaration,
+        ] {
+            assert!(!source[span.start..span.end].starts_with('@'));
         }
     }
 

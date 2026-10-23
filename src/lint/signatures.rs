@@ -1,17 +1,19 @@
 //! Warns where a signature check's result is used as a value that can be false: the VM fails
 //! the spend on a non-empty invalid signature, so such a check is false only for an empty one.
 
-use super::{child_exprs, ValidationIssue};
-use crate::models::{Contract, ExprKind, Expression, LocatedStatement, Requirement, Statement};
+use super::{Finding, Lint};
+use crate::models::{
+    child_exprs, Contract, ExprKind, Expression, LocatedStatement, Requirement, Statement,
+};
 use crate::operators::{BinaryOperator, UnaryOperator};
 
-pub(super) fn check_signature_results(contract: &Contract, issues: &mut Vec<ValidationIssue>) {
+pub(super) fn check(contract: &Contract, issues: &mut Vec<Finding>) {
     for function in contract.functions.iter().filter(|f| !f.is_imported()) {
         statements(&function.statements, &function.name, issues);
     }
 }
 
-fn statements(statements: &[LocatedStatement], function: &str, issues: &mut Vec<ValidationIssue>) {
+fn statements(statements: &[LocatedStatement], function: &str, issues: &mut Vec<Finding>) {
     for statement in statements {
         let branches = matches!(
             statement.statement,
@@ -39,12 +41,7 @@ fn statements(statements: &[LocatedStatement], function: &str, issues: &mut Vec<
 
 /// `branches` when the value decides something, as an `if` condition, a `||` operand, a
 /// negation or a comparison does, rather than having to hold.
-fn expression(
-    expression: &Expression,
-    branches: bool,
-    function: &str,
-    issues: &mut Vec<ValidationIssue>,
-) {
+fn expression(expression: &Expression, branches: bool, function: &str, issues: &mut Vec<Finding>) {
     let child_branches = match &expression.kind {
         ExprKind::Builtin { builtin, .. }
             if branches
@@ -53,14 +50,15 @@ fn expression(
                     "checkSig" | "checkSigFromStack" | "checkMultisig"
                 ) =>
         {
-            issues.push(
-                ValidationIssue::warning(format!(
+            issues.push(Finding::new(
+                Lint::SignatureMayFail,
+                expression.span,
+                format!(
                     "function '{function}': {} fails the spend on an invalid non-empty signature \
                      instead of returning false; pass an empty signature where the check may fail",
                     builtin.name
-                ))
-                .at(expression.span),
-            );
+                ),
+            ));
             false
         }
         ExprKind::BinaryOp {
