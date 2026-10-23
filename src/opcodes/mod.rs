@@ -112,6 +112,8 @@ opcodes! {
     BoolAnd = OP_BOOLAND => (2, 1),
     Not = OP_NOT => (1, 1),
     False = OP_FALSE,
+    // The only opcode that opens a branch: an `OP_NOTIF` added here must also open one in the
+    // generator's stack model and in `most_executions`.
     If = OP_IF,
     EndIf = OP_ENDIF,
     Else = OP_ELSE,
