@@ -72,12 +72,12 @@ impl Analysis {
         &self.symbols
     }
 
-    /// The diagnostics, and for a contract code generation's first error, which finds some
-    /// problems alone, such as the VM's stack and script limits.
-    pub fn check(&self) -> Vec<Diagnostic> {
+    /// The diagnostics, and for a contract code generation's first error with `options`, which
+    /// finds some problems alone, such as the VM's stack and script limits.
+    pub fn check(&self, options: crate::CompileOptions) -> Vec<Diagnostic> {
         let mut diagnostics = self.diagnostics();
         if self.contract().is_some_and(|contract| !contract.is_library) {
-            if let Err(errors) = self.compile(crate::CompileOptions::default()) {
+            if let Err(errors) = self.compile(options) {
                 diagnostics.extend(errors);
             }
         }
@@ -174,7 +174,7 @@ fn load_diagnostics(entry: &str) -> impl Fn(LoadError) -> Vec<Diagnostic> + '_ {
 }
 
 pub(crate) fn check_sources(entry: &str, files: &BTreeMap<String, String>) -> Vec<Diagnostic> {
-    analyze(entry, files).check()
+    analyze(entry, files).check(Default::default())
 }
 
 pub(crate) fn compile_sources(

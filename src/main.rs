@@ -67,18 +67,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Err("Input file must have .ark extension".into());
     }
 
+    let options = CompileOptions {
+        optimize: !args.no_optimize,
+    };
     if args.check {
-        check(file_path, args.json)?;
+        check(file_path, args.json, options)?;
         return Ok(());
     }
 
     // Compile source code to JSON
-    let output = match compile_file_with_options(
-        file_path,
-        CompileOptions {
-            optimize: !args.no_optimize,
-        },
-    ) {
+    let output = match compile_file_with_options(file_path, options) {
         Ok(json) => json,
         Err(err) => {
             eprintln!("Compilation error: {err}");
@@ -119,8 +117,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 /// Print every diagnostic of the file at `path`, and exit with status 1 if one is an error.
-fn check(path: &Path, json: bool) -> Result<(), Box<dyn std::error::Error>> {
-    let diagnostics = analyze_file(path).check();
+fn check(
+    path: &Path,
+    json: bool,
+    options: CompileOptions,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let diagnostics = analyze_file(path).check(options);
     let source = |file: &str| fs::read_to_string(file).ok();
     if json {
         let diagnostics: Vec<_> = diagnostics
