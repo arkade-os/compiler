@@ -159,10 +159,14 @@ fn rule_term(rule: &Rule) -> Option<String> {
 /// matters, e.g. `check()`, instead of `parse_main`'s rendered string.
 pub(crate) fn try_parse(source: &str) -> Result<Pairs<'_, Rule>, pest::error::Error<Rule>> {
     // Tracking parse attempts, which only the error message needs, slows every parse, so a
-    // failed parse is repeated with it. The flag is global: only the lock holder turns it on.
+    // failed parse is repeated with it unless it was already on, which an error with attempts
+    // shows. The flag is global: only the lock holder turns it on, and back off.
     static DETAILED: std::sync::Mutex<()> = std::sync::Mutex::new(());
     ArkadeParser::parse(Rule::main, source)
-        .or_else(|_| {
+        .or_else(|error| {
+            if error.parse_attempts().is_some() {
+                return Err(error);
+            }
             let _detailed = DETAILED
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner());

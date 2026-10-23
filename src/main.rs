@@ -122,8 +122,8 @@ fn check(
     json: bool,
     options: CompileOptions,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let diagnostics = analyze_file(path).check(options);
-    let source = |file: &str| fs::read_to_string(file).ok();
+    let analysis = analyze_file(path);
+    let diagnostics = analysis.check(options);
     // Files show relative to the working directory, as text and as JSON.
     let cwd = std::env::current_dir().unwrap_or_default();
     let shown = |file: &str| {
@@ -137,7 +137,7 @@ fn check(
         let diagnostics: Vec<_> = diagnostics
             .iter()
             .map(|d| {
-                let mut json = arkade_compiler::diagnostics::to_json(d, source(&d.file).as_deref());
+                let mut json = arkade_compiler::diagnostics::to_json(d, analysis.source(&d.file));
                 json["file"] = shown(&d.file).into();
                 json
             })
@@ -146,9 +146,9 @@ fn check(
     } else {
         for d in &diagnostics {
             let mut location = shown(&d.file);
-            let start = d.span.zip(source(&d.file));
+            let start = d.span.zip(analysis.source(&d.file));
             if let Some((line, column)) = start.and_then(|(span, source)| {
-                arkade_compiler::diagnostics::position(&source, span.start)
+                arkade_compiler::diagnostics::position(source, span.start)
             }) {
                 location.push_str(&format!(":{line}:{column}"));
             }

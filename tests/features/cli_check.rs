@@ -50,6 +50,20 @@ fn check_reports_every_error_with_its_location_and_fails() {
 }
 
 #[test]
+fn check_gives_file_and_import_errors_no_code() {
+    let (status, stdout) = check(&["nothere.ark", "--check"], &[]);
+    assert_eq!(status, 1);
+    assert!(
+        stdout.starts_with("nothere.ark: error: cannot read "),
+        "{stdout}"
+    );
+    let main = "import \"gone.ark\"; contract C() { function f() { require(true); } }";
+    let (status, stdout) = check(&["main.ark", "--check"], &[("main.ark", main)]);
+    assert_eq!(status, 1);
+    assert!(stdout.starts_with("main.ark:1:1: error: "), "{stdout}");
+}
+
+#[test]
 fn check_json_lists_diagnostics_and_only_errors_fail() {
     let (status, stdout) = check(
         &["main.ark", "--check", "--json"],

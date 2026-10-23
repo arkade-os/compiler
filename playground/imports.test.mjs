@@ -294,6 +294,17 @@ assert.equal(vm.runInContext('describeSymbol(symbol)[1]', context), 'Defined at 
 const amount = symbolAtPosition(3, 37);
 assert.deepEqual([amount.name, amount.references.length], ['amount', 2]);
 assert.equal(symbolAtPosition(4, 1), null);
+// The analysis symbol_at keeps for unchanged sources is redone after an edit to an imported file.
+context.lookupFiles = JSON.parse(symbolFiles);
+vm.runInContext(`
+    projects.lookup = { name: 'Lookup', files: lookupFiles };
+    [currentProject, currentFile] = ['lookup', 'main.ark'];
+    editor = { getModel: () => 'model', getValue: () => lookupFiles['main.ark'] };
+`, context);
+const feeDefinitionLine = () => vm.runInContext("symbolAt('model', { lineNumber: 5, column: 18 })", context).definition.start.line;
+assert.deepEqual([feeDefinitionLine(), feeDefinitionLine()], [2, 2]);
+context.lookupFiles['fees.ark'] = `\n${context.lookupFiles['fees.ark']}`;
+assert.equal(feeDefinitionLine(), 3);
 
 function loadStored(saved) {
     const store = { 'arkade-playground': JSON.stringify(saved) };

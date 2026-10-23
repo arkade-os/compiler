@@ -30,8 +30,7 @@ pub(crate) type Spanned = (Op, Option<Span>);
 /// Instructions, each with the span of the source statement it was emitted for.
 #[derive(Debug, Default)]
 pub(crate) struct Assembly {
-    ops: Vec<Op>,
-    spans: Vec<Option<Span>>,
+    ops: Vec<Spanned>,
     /// The span of instructions pushed from now on.
     span: Option<Span>,
     /// While positive, `set_span` keeps the current span, as for an imported helper's body,
@@ -41,8 +40,7 @@ pub(crate) struct Assembly {
 
 impl Assembly {
     pub(crate) fn push(&mut self, op: Op) {
-        self.ops.push(op);
-        self.spans.push(self.span);
+        self.ops.push((op, self.span));
     }
 
     pub(crate) fn extend(&mut self, ops: impl IntoIterator<Item = Op>) {
@@ -54,13 +52,11 @@ impl Assembly {
     /// Append instructions split off earlier, keeping their spans.
     pub(crate) fn append(&mut self, mut other: Assembly) {
         self.ops.append(&mut other.ops);
-        self.spans.append(&mut other.spans);
     }
 
     pub(crate) fn split_off(&mut self, at: usize) -> Assembly {
         Assembly {
             ops: self.ops.split_off(at),
-            spans: self.spans.split_off(at),
             ..Default::default()
         }
     }
@@ -74,12 +70,12 @@ impl Assembly {
     }
 
     pub(crate) fn last(&self) -> Option<&Op> {
-        self.ops.last()
+        self.ops.last().map(|(op, _)| op)
     }
 
     #[cfg(test)]
-    pub(crate) fn iter(&self) -> std::slice::Iter<'_, Op> {
-        self.ops.iter()
+    pub(crate) fn iter(&self) -> impl Iterator<Item = &Op> {
+        self.ops.iter().map(|(op, _)| op)
     }
 
     pub(crate) fn span(&self) -> Option<Span> {
@@ -101,7 +97,7 @@ impl Assembly {
     }
 
     pub(crate) fn into_spanned(self) -> Vec<Spanned> {
-        self.ops.into_iter().zip(self.spans).collect()
+        self.ops
     }
 }
 

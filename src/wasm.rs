@@ -74,7 +74,7 @@ pub fn compile_sources_with_diagnostics(
     let options = crate::CompileOptions {
         optimize: optimize.unwrap_or(true),
     };
-    let analysis = crate::analyze(entry, &files);
+    let analysis = crate::imports::analyze(entry, &files, false);
     let mut diagnostics = analysis.diagnostics();
     let mut artifact = None;
     let mut debug = None;
@@ -94,7 +94,7 @@ pub fn compile_sources_with_diagnostics(
     }
     let diagnostics: Vec<_> = diagnostics
         .iter()
-        .map(|diagnostic| located(diagnostic, &files))
+        .map(|d| crate::diagnostics::to_json(d, analysis.source(&d.file)))
         .collect();
     serde_json::to_string(&serde_json::json!({
         "artifact": artifact,
@@ -103,19 +103,6 @@ pub fn compile_sources_with_diagnostics(
         "diagnostics": diagnostics,
     }))
     .map_err(|e| format!("Serialization error: {e}"))
-}
-
-fn located(
-    diagnostic: &crate::Diagnostic,
-    files: &std::collections::BTreeMap<String, String>,
-) -> serde_json::Value {
-    let source = files
-        .iter()
-        .find(|(path, _)| {
-            crate::imports::relative_path(path).is_ok_and(|path| path == diagnostic.file)
-        })
-        .map(|(_, source)| source.as_str());
-    crate::diagnostics::to_json(diagnostic, source)
 }
 
 /// The diagnostics of a virtual project, in the form `compile_sources_with_diagnostics` gives
@@ -128,10 +115,11 @@ pub fn check_sources(entry: &str, files: &str, optimize: Option<bool>) -> Result
     let options = crate::CompileOptions {
         optimize: optimize.unwrap_or(true),
     };
-    let diagnostics: Vec<_> = crate::analyze(entry, &files)
+    let analysis = crate::imports::analyze(entry, &files, false);
+    let diagnostics: Vec<_> = analysis
         .check(options)
         .iter()
-        .map(|diagnostic| located(diagnostic, &files))
+        .map(|d| crate::diagnostics::to_json(d, analysis.source(&d.file)))
         .collect();
     serde_json::to_string(&diagnostics).map_err(|e| format!("Serialization error: {e}"))
 }
@@ -161,25 +149,34 @@ pub fn symbols(entry: &str, files: &str) -> Result<String, String> {
 /// `{ file, start, end }`, or `null` when no name is there.
 #[wasm_bindgen]
 pub fn symbol_at(entry: &str, files: &str, line: usize, column: usize) -> Result<String, String> {
-    let files: std::collections::BTreeMap<String, String> =
-        serde_json::from_str(files).map_err(|e| format!("Invalid source files: {e}"))?;
+    thread_local! {
+        /// The entry and files JSON last analyzed, and their analysis.
+        // ponytail: one project, the open one every lookup asks about, analyzed again apart from the
+        // lint; returning the symbol table from `check_sources` would share the lint's analysis.
+        static ANALYZED: std::cell::RefCell<Option<(String, String, std::rc::Rc<crate::Analysis>)>> =
+            Default::default();
+    }
     let entry = crate::imports::relative_path(entry)?;
-    let source_of = |file: &str| {
-        files
-            .iter()
-            .find(|(path, _)| crate::imports::relative_path(path).is_ok_and(|path| path == file))
-            .map(|(_, source)| source.as_str())
-    };
-    let analysis = crate::analyze(&entry, &files);
+    let analysis = ANALYZED.with_borrow_mut(|analyzed| match analyzed {
+        Some((e, f, analysis)) if *e == entry && f == files => Ok(analysis.clone()),
+        _ => {
+            let parsed =
+                serde_json::from_str(files).map_err(|e| format!("Invalid source files: {e}"))?;
+            let analysis = std::rc::Rc::new(crate::analyze(&entry, &parsed));
+            *analyzed = Some((entry.clone(), files.to_string(), analysis.clone()));
+            Ok::<_, String>(analysis)
+        }
+    })?;
     let symbols = analysis.symbols();
-    let offset =
-        source_of(&entry).and_then(|source| crate::diagnostics::offset(source, line, column));
+    let offset = analysis
+        .source(&entry)
+        .and_then(|source| crate::diagnostics::offset(source, line, column));
     let Some(definition) = offset.and_then(|offset| symbols.definition_at(&entry, offset)) else {
         return Ok("null".to_string());
     };
     let location = |file: &str, span: crate::diagnostics::Span| {
         let position = |offset| {
-            let (line, column) = crate::diagnostics::position(source_of(file)?, offset)?;
+            let (line, column) = crate::diagnostics::position(analysis.source(file)?, offset)?;
             Some(serde_json::json!({ "line": line, "column": column }))
         };
         serde_json::json!({ "file": file, "start": position(span.start), "end": position(span.end) })

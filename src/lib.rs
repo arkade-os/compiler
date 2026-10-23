@@ -132,13 +132,13 @@ pub fn compile_sources_with_options(
 /// assert_eq!(artifact.name, "C");
 /// ```
 pub fn analyze(entry: &str, files: &std::collections::BTreeMap<String, String>) -> Analysis {
-    imports::analyze(entry, files)
+    imports::analyze(entry, files, true)
 }
 
 /// [`analyze`] for an entry file and its relative imports on the filesystem; diagnostics name
 /// files by absolute path.
 pub fn analyze_file(path: impl AsRef<std::path::Path>) -> Analysis {
-    imports::analyze_file(path.as_ref())
+    imports::analyze_file(path.as_ref(), true)
 }
 
 /// Every parse, validation and type diagnostic for `entry`, without writing

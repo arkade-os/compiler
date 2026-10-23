@@ -82,7 +82,8 @@ pub enum Severity {
 pub struct Diagnostic {
     pub severity: Severity,
     /// Which pass raised this: `"validation"` (semantic checks), `"type"` (type checker),
-    /// `"emission"` (code generation) or `"internal"` (a compiler bug). `None` for parse errors.
+    /// `"emission"` (code generation) or `"internal"` (a compiler bug). `None` for parse, import
+    /// and file errors.
     pub code: Option<String>,
     pub message: String,
     pub file: String,
