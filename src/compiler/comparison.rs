@@ -1,6 +1,6 @@
 use super::*;
 use crate::models::*;
-use crate::opcodes::Opcode::Roll;
+use crate::opcodes::Opcode::{NumEqualVerify, Roll};
 use crate::operators::{BinaryOperator, OperatorClass};
 use crate::types::{bind_local_type, ArkType};
 
@@ -32,22 +32,28 @@ impl Generator {
         if op.class() != OperatorClass::Equality {
             return Err(format!("'{op}' is not defined for '{ty}' values").into());
         }
-        let width = self.width(ty)?;
+        let leaves = crate::models::flatten_value(&Path::new(""), ty, &self.structs)?;
+        let width = leaves.len();
         self.emit_typed_value(left, ty)?;
         self.emit_typed_value(right, ty)?;
-        for remaining in (1..=width).rev() {
+        for (leaf, remaining) in leaves.iter().zip((1..=width).rev()) {
+            let numeric = crate::types::is_numeric(&leaf.leaf_type.ark_type());
+            let (equal, equal_verify) = match numeric {
+                true => (NumEqual, NumEqualVerify),
+                false => (Equal, EqualVerify),
+            };
             if op == BinaryOperator::Eq {
                 if remaining > 1 {
                     self.roll(remaining)?;
                 }
-                self.apply(EqualVerify, 2, 0)?;
+                self.apply(equal_verify, 2, 0)?;
             } else if remaining == width {
                 self.roll(width)?;
-                self.apply(Equal, 2, 1)?;
+                self.apply(equal, 2, 1)?;
             } else {
                 self.roll(remaining + 1)?;
                 self.roll(2)?;
-                self.apply(Equal, 2, 1)?;
+                self.apply(equal, 2, 1)?;
                 self.apply(BoolAnd, 2, 1)?;
             }
         }

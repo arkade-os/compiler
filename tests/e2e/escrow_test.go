@@ -165,7 +165,7 @@ func TestCompiledEscrow(t *testing.T) {
 			extra := fundingTx(complete.pkScript, amount)
 			requireVMResult(
 				t, withExtraInput(t, attested(amount, oracleMsg[:], oracleKey, toPartyB), extra),
-				emulatorKey.PubKey(), "OP_EQUALVERIFY failed",
+				emulatorKey.PubKey(), "OP_NUMEQUALVERIFY failed",
 			)
 		})
 	})
@@ -223,7 +223,7 @@ func TestCompiledEscrow(t *testing.T) {
 			extra := fundingTx(cancel.pkScript, amount)
 			requireVMResult(
 				t, withExtraInput(t, refund(cancel, 0, toPartyA), extra),
-				emulatorKey.PubKey(), "OP_EQUALVERIFY failed",
+				emulatorKey.PubKey(), "OP_NUMEQUALVERIFY failed",
 			)
 		})
 	})

@@ -408,7 +408,7 @@ contract HexCasts(pubkey owner) {
         "9223372036854775807 OP_LESSTHANOREQUAL",
         "4722366482869645213695 OP_LESSTHAN",
         "256 OP_GREATERTHANOREQUAL",
-        "0 OP_EQUAL OP_NOT",
+        "0 OP_NUMNOTEQUAL",
     ] {
         assert!(asm.contains(expected), "{expected}: {asm}");
     }

@@ -808,7 +808,7 @@ fn unary_negation_precedence_and_spend_shape() {
         ("!!true", "OP_1 OP_NOT OP_NOT"),
         ("!!false", "OP_0 OP_NOT OP_NOT"),
         ("!(1 < 2)", "1 2 OP_LESSTHAN OP_NOT"),
-        ("!true != false", "OP_1 OP_NOT OP_0 OP_EQUAL OP_NOT"),
+        ("!true != false", "OP_1 OP_NOT OP_0 OP_NUMNOTEQUAL"),
         ("num2bin(-1, 4)", "1 OP_NEGATE 4 OP_NUM2BIN"),
         ("modExp(-2, 3, 5)", "2 OP_NEGATE 3 5 OP_MODEXP"),
     ] {
@@ -948,19 +948,25 @@ fn unary_negation_in_builtin_atom_arguments() {
             "OP_0 OP_ROLL OP_NEGATE OP_NEGATE 2 3 OP_MODEXP",
         ),
         (
-            "let result = ecAdd(point, point, -1);",
-            "1 OP_NEGATE OP_ECADD",
+            "let result = ecAdd(point, point, --1);",
+            "1 OP_NEGATE OP_NEGATE OP_ECADD",
         ),
         (
             "let result = ecMul(point, -3, 0);",
             "3 OP_NEGATE 0 OP_ECMUL",
         ),
         (
-            "let result = ecPairing(g1s, g2s, -2);",
-            "OP_1 2 OP_NEGATE OP_ECPAIRING",
+            "let result = ecPairing(g1s, g2s, --2);",
+            "OP_1 2 OP_NEGATE OP_NEGATE OP_ECPAIRING",
         ),
-        ("let result = sighash(-1);", "1 OP_NEGATE OP_SIGHASH"),
-        ("let result = digest(data, -1);", "1 OP_NEGATE OP_DIGEST"),
+        (
+            "let result = sighash(--1);",
+            "1 OP_NEGATE OP_NEGATE OP_SIGHASH",
+        ),
+        (
+            "let result = digest(data, --1);",
+            "1 OP_NEGATE OP_NEGATE OP_DIGEST",
+        ),
         (
             "let result = substr(data, -(value + 1), (2 * 3));",
             "1 OP_ADD OP_NEGATE 2 3 OP_MUL OP_SUBSTR",
@@ -1030,7 +1036,10 @@ fn logical_negation_preserves_nested_expressions() {
     "#,
     )
     .expect("nested logical operands compile");
-    assert!(output.warnings.is_empty(), "{:?}", output.warnings);
+    let [warning] = output.warnings.as_slice() else {
+        panic!("{:?}", output.warnings);
+    };
+    assert!(warning.contains("checkSig fails the spend on an invalid non-empty signature"));
     let asm = crate::common::arkade_asm_tokens(&output, "spend");
     assert!(asm.iter().any(|token| token == "OP_CAT"), "{asm:?}");
     assert!(
@@ -1128,7 +1137,7 @@ fn bitwise_and_shift_operators_emit_their_opcodes_by_precedence() {
         (
             "int n, int k",
             "require(n + k % 2 == 1);",
-            &["OP_MOD", "OP_ADD", "OP_EQUAL"],
+            &["OP_MOD", "OP_ADD", "OP_NUMEQUAL"],
         ),
     ] {
         let source = format!("contract Ops({params}) {{ function spend() {{ {statement} }} }}");

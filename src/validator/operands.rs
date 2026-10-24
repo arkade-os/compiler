@@ -32,6 +32,24 @@ pub(crate) const BUILTIN_SIGNATURES: &[(&str, &[&str])] = &[
     ("tx.inputs[].assets.tryLookup", &["int"]),
 ];
 
+/// Builtin, operand index, operand name, and the inclusive ranges the VM accepts.
+type Domain = (&'static str, usize, &'static str, &'static [(i128, i128)]);
+
+/// The values the VM accepts for an operand, checked when the operand is a constant.
+pub(crate) const CONSTANT_DOMAINS: &[Domain] = &[
+    ("digest", 1, "hashType", &[(1, 5)]),
+    ("sighash", 0, "hashType", &[(0, 3), (0x81, 0x83)]),
+    ("ecAdd", 2, "curveId", &[(0, 2)]),
+    ("ecMul", 2, "curveId", &[(0, 2)]),
+    ("ecPairing", 2, "curveId", &[(0, 2)]),
+    ("num2bin", 1, "size", &[(0, 520)]),
+    ("checkTime", 0, "timestamp", &[(0, i128::MAX)]),
+    ("modExp", 1, "exponent", &[(0, i128::MAX)]),
+    ("modExp", 2, "modulus", &[(1, i128::MAX)]),
+    ("tx.packet", 0, "packet type", &[(0, 255)]),
+    ("tx.inputs[].packet", 1, "packet type", &[(0, 255)]),
+];
+
 pub(crate) fn find(name: &str) -> Option<Vec<&'static str>> {
     if let Some(builtin) = crate::builtins::find(name) {
         return Some(builtin.params.iter().map(|(_, ty)| *ty).collect());

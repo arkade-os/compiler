@@ -47,6 +47,10 @@ struct Args {
     /// (`<name>.debug.json`)
     #[arg(long, conflicts_with = "check")]
     debug: bool,
+
+    /// Print each covenant's script bytes, stack peak and heavy opcodes against the VM's limits
+    #[arg(long)]
+    report: bool,
 }
 
 /// Main function for the Arkade Compiler CLI
@@ -87,6 +91,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Print any type-check warnings to stderr
     for w in &output.warnings {
         eprintln!("{w}");
+    }
+
+    if args.report {
+        print_report(&output);
     }
 
     // Determine output path
@@ -168,4 +176,21 @@ fn check(
         std::process::exit(1);
     }
     Ok(())
+}
+
+/// One block per covenant: each cost, its limit and the share of the limit it uses.
+fn print_report(output: &arkade_compiler::models::ContractJson) {
+    for group in &output.functions {
+        let Some(covenant) = &group.arkade else {
+            continue;
+        };
+        println!("{}", group.name);
+        for cost in &covenant.costs {
+            let percent = cost.used * 100 / cost.limit.max(1);
+            println!(
+                "  {:<24} {:>6} / {:<6} {percent:>3}%",
+                cost.name, cost.used, cost.limit
+            );
+        }
+    }
 }
