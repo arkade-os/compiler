@@ -1402,7 +1402,7 @@ function registerSymbolProviders() {
             // Another file opens through the editor opener below; Monaco needs its model.
             const source = sourceFiles().files[file];
             if (source === undefined) return null;
-            const uri = monaco.Uri.parse(`arkade:///${file}`);
+            const uri = monaco.Uri.from({ scheme: 'arkade', path: `/${file}` });
             const other = monaco.editor.getModel(uri);
             if (other) other.setValue(source);
             else monaco.editor.createModel(source, 'arkade', uri);
@@ -1435,7 +1435,8 @@ function registerSymbolProviders() {
 // Symbols of the current file per entry path, from the last source that parsed.
 const lastSymbols = {};
 
-// The line being typed rarely parses, so it is blanked; if the file still fails, reuse the last table.
+// The line being typed rarely parses, so it is blanked; if the project still does not load, which
+// leaves it no names, reuse the last table.
 function symbolTable(lineNumber) {
     if (!wasmReady) return null;
     let entry;
@@ -1445,7 +1446,8 @@ function symbolTable(lineNumber) {
         const lines = sources.files[entry].split('\n');
         lines[lineNumber - 1] = '';
         sources.files[entry] = lines.join('\n');
-        lastSymbols[entry] = JSON.parse(completions_at(entry, JSON.stringify(sources.files), lineNumber, 1));
+        const table = JSON.parse(completions_at(entry, JSON.stringify(sources.files), lineNumber, 1));
+        if (table.symbols.length) lastSymbols[entry] = table;
     } catch {}
     return lastSymbols[entry] || null;
 }

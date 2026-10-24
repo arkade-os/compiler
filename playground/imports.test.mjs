@@ -318,6 +318,12 @@ assert.ok(!names(completionsAt(9)).includes('inner'));
 assert.deepEqual(completionsAt(9).symbols.find(symbol => symbol.name === 'amount'), { name: 'amount', kind: 'parameter', type: 'int' });
 assert.deepEqual(completionsAt(9).members.Fees.map(member => member.name).sort(), ['BASE', 'fee']);
 assert.deepEqual(completionsAt(9).structs, [{ name: 'Point', fields: [{ name: 'x', type: 'int' }, { name: 'y', type: 'bytes32' }] }]);
+// An import that stops parsing leaves the entry no names, so completion keeps the last table.
+vm.runInContext('wasmReady = true;', context);
+const loadedTable = vm.runInContext('symbolTable(5)', context);
+assert.ok(loadedTable.symbols.some(symbol => symbol.name === 'owner'));
+context.lookupFiles['fees.ark'] = 'library Fees {';
+assert.equal(vm.runInContext('symbolTable(5)', context), loadedTable);
 
 function loadStored(saved) {
     const store = { 'arkade-playground': JSON.stringify(saved) };

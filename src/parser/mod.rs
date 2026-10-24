@@ -431,13 +431,9 @@ fn parse_statement(
     pair: Pair<Rule>,
     constants: &[Constant],
 ) -> Result<Option<LocatedStatement>, CompileError> {
-    // An `if` without `else` takes the whitespace before where an `else` would be.
-    let span = crate::diagnostics::Span {
-        start: pair.as_span().start(),
-        end: pair.as_span().start() + pair.as_str().trim_end().len(),
-    };
+    let mut span: crate::diagnostics::Span = pair.as_span().into();
     let mut names = Vec::new();
-    let mut branches = Vec::new();
+    let mut branches: Vec<crate::diagnostics::Span> = Vec::new();
     let mut message = None;
     let statement = match pair.as_rule() {
         Rule::require_stmt => {
@@ -508,6 +504,8 @@ fn parse_statement(
                 branches.push(else_block.as_span().into());
                 Some(parse_block(function_name, else_block, constants)?)
             } else {
+                // The pair also takes the whitespace and comments before where an `else` would be.
+                span.end = branches[0].end;
                 None
             };
 
@@ -787,6 +785,20 @@ mod tests {
             ));
             crate::compile(&source).unwrap();
         }
+    }
+
+    #[test]
+    fn an_if_without_else_ends_at_its_block() {
+        let source = "contract C() { function spend(int n) {
+            if (n > 0) { require(n > 1); }
+            // next
+            require(n > 2);
+        } }";
+        let span = parse(source).expect("parses").functions[0].statements[0].span;
+        assert_eq!(
+            &source[span.start..span.end],
+            "if (n > 0) { require(n > 1); }"
+        );
     }
 
     #[test]
