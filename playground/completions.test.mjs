@@ -5,6 +5,7 @@ import vm from 'node:vm';
 
 const context = vm.createContext({ window: {} });
 vm.runInContext(fs.readFileSync(new URL('./arkade-language.js', import.meta.url), 'utf8'), context);
+context.window.arkadeUseDocs(JSON.parse(fs.readFileSync(new URL('./builtins.json', import.meta.url), 'utf8')));
 const complete = context.window.arkadeComplete;
 const labels = (before, table = null) => [...complete(before, table)].map(item => item.label);
 
@@ -90,3 +91,18 @@ const { tokenizer } = context.window.arkadeMonarch;
 const opensLints = text => new RegExp(`^(?:${tokenizer.root.find(rule => rule[1].next === '@lints')[0].source})`).test(text);
 assert(opensLints('@allow (unused-variable)') && !opensLints('@allow let'));
 assert.equal('Unused_lint-2)'.match(tokenizer.lints[1][0])[0], 'Unused_lint-2');
+assert.equal(complete('', null).find(item => item.label === 'checkMultisig').insertText, 'checkMultisig([${1:pubkeys}], [${2:sigs}])');
+assert.deepEqual(labels('tx.input.current.'), ['value', 'script', 'witnessVersion', 'sequence', 'outpoint', 'arkadeScriptHash', 'arkadeWitnessHash']);
+
+const describe = context.window.arkadeDescribe;
+assert.equal(describe('require(', 'sha256', null).declaration, 'function sha256(bytes data) bytes32');
+assert.equal(describe('tx.outputs[o].assets.', 'lookup', null).key, 'tx.inputs[].assets.lookup');
+assert.equal(describe('tx.input.current.', 'value', null).key, 'tx.inputs[].value');
+assert.equal(describe('group.inputs[j].', 'txid', table).declaration, 'bytes32 tx.assetGroups[].inputs[].txid');
+assert.equal(describe('', 'constructor', null), null);
+assert.equal(describe('point.', 'x', table), null);
+
+const { text, lines } = context.window.arkadeDeclarations();
+const declared = text.split('\n');
+assert.equal(declared[lines.sha256 - 1], 'function sha256(bytes data) bytes32;');
+assert.equal(declared[lines['tx.version'] - 2], '// Transaction version.');
