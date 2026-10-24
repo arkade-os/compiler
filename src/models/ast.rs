@@ -109,8 +109,11 @@ pub struct Contract {
 pub struct Constant {
     pub name: String,
     pub const_type: TypeName,
+    /// The folded literal once parsing resolves constants.
     pub value: Expression,
     pub span: crate::diagnostics::Span,
+    /// The value as written, which keeps the names it uses.
+    pub initializer: Expression,
 }
 
 /// Function AST
@@ -391,6 +394,11 @@ pub struct NamedTapscript {
     pub inputs: Vec<Parameter>,
     /// Ordered closure components.
     pub items: Vec<TapItem>,
+    /// The whole declaration, where its inputs are visible.
+    pub declaration: crate::diagnostics::Span,
+    /// Each name the items use, with where it is spelled, in source order; `items` keep only
+    /// the text.
+    pub operands: Vec<(String, crate::diagnostics::Span)>,
 }
 
 /// Source of an asset lookup (input or output)

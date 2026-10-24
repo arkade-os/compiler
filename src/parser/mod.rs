@@ -350,6 +350,7 @@ fn parse_const_decl(pair: Pair<Rule>) -> Result<Constant, String> {
     Ok(Constant {
         name: name.as_str().to_string(),
         const_type,
+        initializer: value.clone(),
         value,
         span: name.as_span().into(),
     })

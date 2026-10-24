@@ -15,6 +15,7 @@ pub(crate) fn parse_named_tapscript(
     pair: Pair<Rule>,
     constants: &[Constant],
 ) -> Result<crate::models::NamedTapscript, String> {
+    let declaration = pair.as_span().into();
     let mut inner = pair.into_inner().peekable();
     if inner
         .peek()
@@ -32,6 +33,7 @@ pub(crate) fn parse_named_tapscript(
     let inputs = parse_parameters(params)?;
     let block = inner.next().ok_or("Missing tapscript body")?;
     let mut items = Vec::new();
+    let mut operands = Vec::new();
     for stmt in block.into_inner() {
         if stmt.as_rule() == Rule::tap_require_stmt {
             let mut inner = stmt.into_inner();
@@ -52,6 +54,7 @@ pub(crate) fn parse_named_tapscript(
                 };
                 return Err(format!("`{name}` is only available in covenant functions"));
             }
+            collect_operands(expr.clone(), &mut operands);
             items.push(parse_tap_item(expr, constants)?);
             if let Some(message) = inner.next() {
                 parse_string_literal(message.as_str())?;
@@ -63,7 +66,25 @@ pub(crate) fn parse_named_tapscript(
         span,
         inputs,
         items,
+        declaration,
+        operands,
     })
+}
+
+/// The names `pair` uses: a binding's root, not its field names or indexes.
+fn collect_operands(pair: Pair<Rule>, operands: &mut Vec<(String, crate::diagnostics::Span)>) {
+    match pair.as_rule() {
+        Rule::identifier => operands.push((pair.as_str().to_string(), pair.as_span().into())),
+        Rule::named_binding => {
+            if let Some(root) = pair.into_inner().next() {
+                collect_operands(root, operands);
+            }
+        }
+        Rule::binding_suffix => {}
+        _ => pair
+            .into_inner()
+            .for_each(|inner| collect_operands(inner, operands)),
+    }
 }
 
 /// Interpret one `require(...)` inner expression as a tapscript item.

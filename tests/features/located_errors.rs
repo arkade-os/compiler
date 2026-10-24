@@ -123,3 +123,28 @@ fn an_error_in_an_import_is_located_in_that_file() {
     assert_eq!(text, "m");
     assert!(message.contains("unknown type 'Missing'"), "{message}");
 }
+
+#[test]
+fn an_unknown_tapscript_operand_is_located_at_the_operand() {
+    let leaf = |body: &str| {
+        format!("contract C(pubkey owner) {{ function f(signature s) {{ require(checkSig(s, owner)); }} function exit(signature s) tapscript {{ {body} }} }}")
+    };
+    for (body, expected_text, expected_message) in [
+        (
+            "require(older(144)); require(checkSig(s, ownr));",
+            "ownr",
+            "unknown key `ownr` in tapscript `exit`",
+        ),
+        (
+            "require(older(delay)); require(checkSig(s, owner));",
+            "delay",
+            "'delay' is undefined in tapscript 'exit'",
+        ),
+    ] {
+        let (file, text, message) = located(&leaf(body), &[]);
+        assert_eq!(
+            (file.as_str(), text.as_str(), message.as_str()),
+            ("main.ark", expected_text, expected_message)
+        );
+    }
+}

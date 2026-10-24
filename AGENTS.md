@@ -25,7 +25,7 @@ Preserve unrelated worktree changes. Do not edit secrets or Git internals. Do no
 
 ## Project map
 
-This is a Cargo workspace containing the compiler crate at the repository root and the binding generator in `arkade-bindgen/`.
+This is a Cargo workspace containing the compiler crate at the repository root and its tools in `tools/`: the binding generator in `tools/arkade-bindgen/` and the language server in `tools/arkade-lsp/`. Tools use only the compiler's public API; `tests/workspace.rs` enforces it.
 
 - `src/parser/grammar.pest` defines the language grammar.
 - `src/parser/` maps source text into the AST.
