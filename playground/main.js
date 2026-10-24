@@ -1,6 +1,6 @@
 // Arkade Playground - Main Application
 // Import default export for WASM initialization, plus the exported functions
-import initWasm, { check_sources, compile_sources, compile_sources_with_diagnostics, completions_at, symbol_at, version, init as initPanicHook } from './pkg/arkade_compiler.js';
+import initWasm, { builtin_docs, check_sources, compile_sources, compile_sources_with_diagnostics, completions_at, symbol_at, version, init as initPanicHook } from './pkg/arkade_compiler.js';
 import * as contracts from './contracts.js';
 import { generateBindings, AVAILABLE_TARGETS } from './codegen.js';
 
@@ -1239,8 +1239,8 @@ function initMonaco() {
         }
     });
 
-    const builtinDocs = fetch('builtins.json').then(response => response.json()).catch(err => {
-        console.warn('Failed to load builtins.json:', err);
+    const builtinDocs = initWasm().then(() => JSON.parse(builtin_docs())).catch(err => {
+        console.warn('Failed to load the builtin docs:', err);
         return { languages: {}, functions: {}, members: {} };
     });
 

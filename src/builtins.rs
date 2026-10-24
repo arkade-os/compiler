@@ -270,8 +270,7 @@ mod tests {
     #[test]
     fn the_playground_documents_every_builtin_and_property() {
         use crate::properties::*;
-        let docs: serde_json::Value =
-            serde_json::from_str(include_str!("../playground/builtins.json")).unwrap();
+        let docs: serde_json::Value = serde_json::from_str(include_str!("builtins.json")).unwrap();
         let functions = docs["functions"].as_object().unwrap();
         for builtin in BUILTINS {
             let entry = &functions[builtin.name];
@@ -345,8 +344,7 @@ mod tests {
     /// documented one is compiled as declared: called with its parameters, returning its type.
     #[test]
     fn every_documented_member_compiles_as_declared() {
-        let docs: serde_json::Value =
-            serde_json::from_str(include_str!("../playground/builtins.json")).unwrap();
+        let docs: serde_json::Value = serde_json::from_str(include_str!("builtins.json")).unwrap();
         let mut failures = Vec::new();
         for (key, entry) in docs["members"].as_object().unwrap() {
             let Some(result) = entry["result"].as_str().or(entry["type"].as_str()) else {
