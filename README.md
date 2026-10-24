@@ -205,6 +205,7 @@ arkadec contract.ark --check --json      # the same diagnostics as a JSON array
 arkadec contract.ark --debug             # also writes contract.debug.json with covenant source maps
 arkadec contract.ark --report            # each covenant's script bytes, stack peak and opcode execution counts
 arkadec --explain unsigned-spend-path      # what a lint reports, why it matters and how to fix it
+arkadec --builtins                       # every builtin and tx/this member: signature and docs, as JSON
 ```
 
 `--report` shows each covenant's script size as a lower bound, peak stack items, and an upper bound on executions of each named opcode, sorted by name. Branches take the maximum per opcode; sequential work adds up. Correlated conditions are counted independently, so the counts can overestimate actual execution. The report excludes data pushes without named opcodes. Opcode counts are informational: a row does not imply that the opcode has a configured budget. Compute budgets are operator-configurable and are not enforced by the compiler. Compare the counts against the target deployment's per-input limits, and check its request-wide budget for the complete transaction.

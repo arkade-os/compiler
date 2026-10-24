@@ -4,12 +4,12 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import { deflateRawSync } from 'node:zlib';
 import * as contracts from './contracts.js';
-import { compile, check, completionsAt, symbolAt, version } from '../npm/dist/node/index.js';
+import { builtinDocs, compile, check, completionsAt, symbolAt, version } from '../npm/dist/node/index.js';
 import { generateBindings } from './codegen.js';
 
 const storage = new Map();
 const context = vm.createContext({
-    contracts, compile, check, completionsAt, compilerSymbolAt: symbolAt, version,
+    contracts, compile, check, compilerBuiltinDocs: builtinDocs, completionsAt, compilerSymbolAt: symbolAt, version,
     document: { addEventListener() {} },
     localStorage: { getItem: key => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value) },
     location: { hash: '' },

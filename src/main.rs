@@ -24,7 +24,7 @@ use arkade_compiler::{analyze_file, CompileOptions, Severity};
 #[command(about = "Arkade Compiler for Bitcoin Taproot scripts", long_about = None)]
 struct Args {
     /// Source file path (.ark)
-    #[arg(required_unless_present = "explain")]
+    #[arg(required_unless_present_any = ["explain", "builtins"])]
     file: Option<String>,
 
     /// Output file path (defaults to source filename with .json extension)
@@ -68,6 +68,10 @@ struct Args {
     /// Report a lint as an error (by id, category, `all`, or `warnings` for every warning-level lint)
     #[arg(long, value_name = "LINT")]
     deny: Vec<String>,
+
+    /// Print every builtin function and transaction member, with its signature and docs, as JSON
+    #[arg(long, exclusive = true)]
+    builtins: bool,
 }
 
 /// Main function for the Arkade Compiler CLI
@@ -97,11 +101,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
 
+    if args.builtins {
+        print!("{}", arkade_compiler::builtin_docs());
+        return Ok(());
+    }
+
     // Ensure file has .ark extension
     let file = args
         .file
         .as_deref()
-        .expect("clap requires a file without --explain");
+        .expect("clap requires a file without --explain or --builtins");
     let file_path = Path::new(file);
     if file_path.extension().unwrap_or_default() != "ark" {
         return Err("Input file must have .ark extension".into());
