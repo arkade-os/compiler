@@ -21,13 +21,18 @@ const table = {
         { name: 'group', kind: 'variable', type: 'AssetGroup' },
         { name: 'point', kind: 'variable', type: 'Point' },
         { name: 'segment', kind: 'variable', type: 'Segment' },
+        { name: 'segments', kind: 'parameter', type: 'Segment[2]' },
+        { name: 'Shadowed', kind: 'parameter', type: 'Point' },
         { name: 'Fees', kind: 'library' },
     ],
     structs: [
         { name: 'Point', fields: [{ name: 'x', type: 'int' }, { name: 'y', type: 'bytes32' }] },
         { name: 'Segment', fields: [{ name: 'from', type: 'Point' }, { name: 'ends', type: 'Point[2]' }] },
     ],
-    members: { Fees: [{ name: 'DELAY', kind: 'constant', type: 'int' }, { name: 'calculate', kind: 'function', type: 'int' }] },
+    members: {
+        Fees: [{ name: 'DELAY', kind: 'constant', type: 'int' }, { name: 'calculate', kind: 'function', type: 'int' }],
+        Shadowed: [{ name: 'hidden', kind: 'constant', type: 'int' }],
+    },
 };
 
 const top = labels('    require(', table);
@@ -60,6 +65,9 @@ assert.deepEqual(labels('segment.from.', table), ['x', 'y']);
 assert.deepEqual(labels('segment.ends.', table), ['length']);
 assert.deepEqual(labels('segment.ends[1].', table), ['x', 'y']);
 assert.deepEqual(labels('segment.missing.', table), []);
+assert.deepEqual(labels('segments.from.', table), []);
+assert.deepEqual(labels('segments[0].from.', table), ['x', 'y']);
+assert.deepEqual(labels('Shadowed.', table), ['x', 'y']);
 assert.deepEqual(labels('Fees.', table), ['DELAY', 'calculate']);
 assert.deepEqual(labels('unknown.', table), []);
 assert(complete('tx.', null).find(item => item.label === 'inputs').snippet);

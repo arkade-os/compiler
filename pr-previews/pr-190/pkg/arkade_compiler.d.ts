@@ -38,7 +38,8 @@ export function compile_sources_with_diagnostics(entry: string, files: string, o
 /**
  * The names usable at 1-based `line` and UTF-16 `column` of `entry`, for completion:
  * `{ symbols, structs, members }`, where `members` lists a library's or contract's names
- * under its own, and `structs` gives each visible struct's fields.
+ * under its own, and `structs` gives the fields of every struct analyzed, since a field's type
+ * can name a struct the entry does not see.
  */
 export function completions_at(entry: string, files: string, line: number, column: number): string;
 
