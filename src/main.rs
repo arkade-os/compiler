@@ -23,8 +23,8 @@ use arkade_compiler::{analyze_file, compile_file_with_options, CompileOptions, S
 #[command(about = "Arkade Compiler for Bitcoin Taproot scripts", long_about = None)]
 struct Args {
     /// Source file path (.ark)
-    #[arg(required = true)]
-    file: String,
+    #[arg(required_unless_present = "builtins")]
+    file: Option<String>,
 
     /// Output file path (defaults to source filename with .json extension)
     #[arg(short, long)]
@@ -51,6 +51,10 @@ struct Args {
     /// Print each covenant's script bytes, stack peak and opcode execution counts
     #[arg(long, conflicts_with = "check")]
     report: bool,
+
+    /// Print every builtin function and transaction member, with its signature and docs, as JSON
+    #[arg(long, exclusive = true)]
+    builtins: bool,
 }
 
 /// Main function for the Arkade Compiler CLI
@@ -64,9 +68,13 @@ struct Args {
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Parse CLI arguments
     let args = Args::parse();
+    let Some(file) = &args.file else {
+        print!("{}", arkade_compiler::builtin_docs());
+        return Ok(());
+    };
 
     // Ensure file has .ark extension
-    let file_path = Path::new(&args.file);
+    let file_path = Path::new(file);
     if file_path.extension().unwrap_or_default() != "ark" {
         return Err("Input file must have .ark extension".into());
     }

@@ -5,7 +5,7 @@ import vm from 'node:vm';
 
 const context = vm.createContext({ window: {} });
 vm.runInContext(fs.readFileSync(new URL('./arkade-language.js', import.meta.url), 'utf8'), context);
-context.window.arkadeUseDocs(JSON.parse(fs.readFileSync(new URL('./builtins.json', import.meta.url), 'utf8')));
+context.window.arkadeUseDocs(JSON.parse(fs.readFileSync(new URL('../src/builtins.json', import.meta.url), 'utf8')));
 const complete = context.window.arkadeComplete;
 const labels = (before, table = null) => [...complete(before, table)].map(item => item.label);
 

@@ -1,5 +1,5 @@
 // Arkade Playground - Main Application
-import { compile, check, symbolAt as compilerSymbolAt, completionsAt, version } from './pkg/browser/index.js';
+import { builtinDocs as compilerBuiltinDocs, compile, check, symbolAt as compilerSymbolAt, completionsAt, version } from './pkg/browser/index.js';
 import * as contracts from './contracts.js';
 import { generateBindings, AVAILABLE_TARGETS } from './codegen.js';
 
@@ -1247,8 +1247,8 @@ function initMonaco() {
         }
     });
 
-    const builtinDocs = fetch('builtins.json').then(response => response.json()).catch(err => {
-        console.warn('Failed to load builtins.json:', err);
+    const builtinDocs = compilerBuiltinDocs().catch(err => {
+        console.warn('Failed to load the builtin docs:', err);
         return { languages: {}, functions: {}, members: {} };
     });
 
