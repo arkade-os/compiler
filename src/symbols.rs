@@ -18,6 +18,8 @@ pub enum SymbolKind {
     Tapscript,
     Parameter,
     Variable,
+    /// A struct field, whose `owner` is the struct.
+    Field,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -31,6 +33,8 @@ pub struct Definition {
     pub span: Span,
     /// Where a function parameter or local can be used; `None` for file-level names.
     pub visible: Option<Span>,
+    /// The struct a field belongs to.
+    pub owner: Option<String>,
 }
 
 /// A use of a name, which `definition` indexes in [`Symbols::definitions`].
@@ -50,6 +54,8 @@ pub struct Symbols {
     references: Vec<Reference>,
     /// Each file's names visible to a file importing it, such as `Fees` and `Fees.DELAY`.
     exports: HashMap<String, HashMap<String, usize>>,
+    /// Each file's file-level names, its own and those it imports.
+    globals: HashMap<String, HashMap<String, usize>>,
 }
 
 impl Symbols {
@@ -76,6 +82,36 @@ impl Symbols {
             })
     }
 
+    /// Every name usable at `offset` in `file`, as it is written there (such as `Fees.DELAY`),
+    /// with its definition: the file-level names, then the parameters and locals in scope.
+    pub fn visible_at(&self, file: &str, offset: usize) -> Vec<(&str, &Definition)> {
+        let mut visible: Vec<_> = self
+            .globals
+            .get(file)
+            .into_iter()
+            .flatten()
+            .map(|(name, &id)| (name.as_str(), &self.definitions[id]))
+            .collect();
+        visible
+            .sort_by(|(a, x), (b, y)| (&x.file, x.span.start, a).cmp(&(&y.file, y.span.start, b)));
+        visible.extend(
+            self.definitions
+                .iter()
+                .filter(|d| d.file == file)
+                .filter(|d| {
+                    d.visible
+                        .is_some_and(|v| v.start <= offset && offset < v.end)
+                })
+                .map(|d| (d.name.as_str(), d)),
+        );
+        // Broken source can repeat a name; the latest definition, the innermost, shadows.
+        let mut seen = HashSet::new();
+        visible.reverse();
+        visible.retain(|(name, _)| seen.insert(*name));
+        visible.reverse();
+        visible
+    }
+
     /// Record `contract`, typed, as `file`; `constants` are the constant references folded away.
     pub(crate) fn collect(
         &mut self,
@@ -87,8 +123,9 @@ impl Symbols {
         constants: &[(Path, Span)],
     ) {
         let mut names = Names::default();
-        for dependency in dependencies {
-            names.globals.extend(self.exports[dependency].clone());
+        // A dependency that failed before its names were recorded has none.
+        for exports in dependencies.iter().filter_map(|d| self.exports.get(d)) {
+            names.globals.extend(exports.clone());
         }
         let mut collector = Collector {
             symbols: self,
@@ -113,6 +150,11 @@ impl Symbols {
             let span = definition.span;
             let id = collector.define(&definition.name, SymbolKind::Struct, None, span, None);
             names.export(definition.name.clone(), id);
+            for field in &definition.fields {
+                let ty = Some(field.param_type.clone());
+                let id = collector.define(&field.name, SymbolKind::Field, ty, field.span, None);
+                collector.symbols.definitions[id].owner = Some(definition.name.clone());
+            }
         }
         for constant in contract.constants.iter().filter(|c| !c.name.contains('.')) {
             let ty = Some(constant.const_type.clone());
@@ -139,12 +181,20 @@ impl Symbols {
                 function.span,
                 None,
             );
-            names.member(owner, &function.name, id, function.is_exported);
+            // An entrypoint cannot be called, so only a helper is a name in scope.
+            if function.is_private {
+                names.member(owner, &function.name, id, function.is_exported);
+            }
         }
         for tapscript in &contract.tapscripts {
             let span = tapscript.span;
             let id = collector.define(&tapscript.name, SymbolKind::Tapscript, None, span, None);
             names.globals.insert(tapscript.name.clone(), id);
+            for input in &tapscript.inputs {
+                let ty = Some(input.param_type.clone());
+                let visible = Some(tapscript.declaration);
+                collector.define(&input.name, SymbolKind::Parameter, ty, input.span, visible);
+            }
         }
         for parameter in &contract.parameters {
             let ty = Some(parameter.param_type.clone());
@@ -152,6 +202,10 @@ impl Symbols {
             let id = collector.define(&parameter.name, SymbolKind::Parameter, ty, span, None);
             names.globals.insert(parameter.name.clone(), id);
         }
+        collector
+            .symbols
+            .globals
+            .insert(file.to_string(), names.globals.clone());
         collector.scopes.push(names.globals);
         for (path, span) in constants {
             let start = collector.token(span.start);
@@ -228,6 +282,7 @@ impl Collector<'_> {
             file: self.file.to_string(),
             span,
             visible,
+            owner: None,
         });
         self.symbols.definitions.len() - 1
     }
@@ -245,11 +300,9 @@ impl Collector<'_> {
         frame.insert(name.to_string(), id);
     }
 
-    fn local(&mut self, name: &str, ty: Option<TypeName>, span: Span, end: usize) {
-        let visible = Some(Span {
-            start: span.start,
-            end,
-        });
+    /// A local named at `span`, usable from `start` to `end`.
+    fn local(&mut self, name: &str, ty: Option<TypeName>, span: Span, start: usize, end: usize) {
+        let visible = Some(Span { start, end });
         self.bind(name, SymbolKind::Variable, ty, span, visible);
     }
 
@@ -320,7 +373,10 @@ impl Collector<'_> {
                 Statement::Declaration {
                     name,
                     declared_type,
-                } => self.local(name, Some(declared_type.clone()), located.names[0], end),
+                } => {
+                    let ty = Some(declared_type.clone());
+                    self.local(name, ty, located.names[0], located.span.end, end)
+                }
                 Statement::LetBinding {
                     name,
                     declared_type,
@@ -328,7 +384,7 @@ impl Collector<'_> {
                 } => {
                     self.expression(value);
                     let ty = declared_type.clone().or_else(|| known(value.ty()));
-                    self.local(name, ty, located.names[0], end);
+                    self.local(name, ty, located.names[0], located.span.end, end);
                 }
                 Statement::VarAssign { target, value } => {
                     match target {
@@ -365,8 +421,9 @@ impl Collector<'_> {
                         _ => None,
                     };
                     let index_type = Some(TypeName::Named("int".to_string()));
-                    self.local(index_var, index_type, located.names[0], located.span.end);
-                    self.local(value_var, element, located.names[1], located.span.end);
+                    let (start, end) = (iterable.span.end, located.span.end);
+                    self.local(index_var, index_type, located.names[0], start, end);
+                    self.local(value_var, element, located.names[1], start, end);
                     self.statements(body, located.span.end);
                     self.scopes.pop();
                 }

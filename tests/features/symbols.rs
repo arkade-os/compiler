@@ -97,10 +97,12 @@ fn symbols_resolve_bindings_calls_and_constants_across_files() {
             "Parameter amount int fees.ark:3:28",
             "Contract Vault main.ark:3:10",
             "Struct Point main.ark:2:8",
+            "Field x int main.ark:2:20",
             "Constant LIMIT int main.ark:4:15",
             "Function spend main.ark:5:14",
             "Function helper int main.ark:15:22",
             "Tapscript unilateral main.ark:16:14",
+            "Parameter ownerSig signature main.ark:16:35",
             "Parameter p Point main.ark:3:22",
             "Parameter owner pubkey main.ark:3:32",
             "Parameter sig signature main.ark:5:30",
@@ -242,8 +244,8 @@ fn a_local_is_visible_to_the_end_of_its_branch() {
     let files = BTreeMap::from([("main.ark".to_string(), source.to_string())]);
     let analysis = analyze("main.ark", &files);
     for (local, visible) in [
-        ("a = n", "a = n; require(a == 1); }"),
-        ("b = n", "b = n; require(b == 0); }"),
+        ("a = n", " require(a == 1); }"),
+        ("b = n", " require(b == 0); }"),
     ] {
         let definition = analysis
             .symbols()
@@ -251,5 +253,119 @@ fn a_local_is_visible_to_the_end_of_its_branch() {
             .unwrap();
         let span = definition.visible.unwrap();
         assert_eq!(&source[span.start..span.end], visible);
+    }
+    let after_branch = source.find(" else").unwrap();
+    let visible = analysis.symbols().visible_at("main.ark", after_branch);
+    assert!(!visible.iter().any(|(name, _)| *name == "a"), "{visible:?}");
+}
+
+#[test]
+fn visible_names_follow_blocks_and_include_imports() {
+    let files = project(MAIN);
+    let analysis = analyze("main.ark", &files);
+    let visible = |needle: &str| {
+        let offset = MAIN.find(needle).unwrap();
+        let names: Vec<String> = analysis
+            .symbols()
+            .visible_at("main.ark", offset)
+            .iter()
+            .map(|(name, _)| name.to_string())
+            .collect();
+        names
+    };
+    let in_loop = visible("require(doubled");
+    for name in [
+        "doubled",
+        "i",
+        "x",
+        "total",
+        "xs",
+        "sig",
+        "owner",
+        "LIMIT",
+        "Fees",
+        "Fees.calculate",
+        "Fees.DELAY",
+        "Point",
+        "helper",
+    ] {
+        assert!(in_loop.iter().any(|n| n == name), "{name}: {in_loop:?}");
+    }
+    let after_loop = visible("require(checkSig");
+    assert!(
+        !after_loop.iter().any(|n| n == "doubled" || n == "i"),
+        "{after_loop:?}"
+    );
+    let before_total = visible("let total");
+    assert!(
+        !before_total.iter().any(|n| n == "total"),
+        "{before_total:?}"
+    );
+    let in_initializer = visible("xs[0] + LIMIT");
+    assert!(
+        !in_initializer.iter().any(|n| n == "total"),
+        "{in_initializer:?}"
+    );
+    assert!(!in_loop.iter().any(|n| n == "spend" || n == "Vault.spend"));
+    let in_tapscript = visible("checkSig(ownerSig");
+    assert!(
+        in_tapscript.iter().any(|n| n == "ownerSig") && !in_tapscript.iter().any(|n| n == "sig"),
+        "{in_tapscript:?}"
+    );
+    let in_helper = visible("return amount");
+    assert!(
+        in_helper.iter().any(|n| n == "amount") && !in_helper.iter().any(|n| n == "sig"),
+        "{in_helper:?}"
+    );
+}
+
+#[test]
+fn a_shadowing_name_is_visible_once_as_the_inner_definition() {
+    let source = "contract C(int amount) { function spend(int amount) { require(amount > 0); } }";
+    let files = BTreeMap::from([("main.ark".to_string(), source.to_string())]);
+    let analysis = analyze("main.ark", &files);
+    let offset = source.find("amount > 0").unwrap();
+    let amounts: Vec<_> = analysis
+        .symbols()
+        .visible_at("main.ark", offset)
+        .into_iter()
+        .filter(|(name, _)| *name == "amount")
+        .map(|(_, definition)| definition.span.start)
+        .collect();
+    assert_eq!(amounts, [source.rfind("int amount)").unwrap() + 4]);
+}
+
+#[test]
+fn a_file_keeps_its_names_when_an_import_fails() {
+    let main = "import \"fees.ark\";\ncontract C(int limit) { function spend(int n) { require(n > limit); } }";
+    for (fees, imported) in [
+        ("library Fees {", None),
+        (
+            "library Fees { function f(int a) int { return a + nope; } }",
+            Some("Fees.f"),
+        ),
+        ("struct C { int x; }", None),
+    ] {
+        let files = BTreeMap::from([
+            ("main.ark".to_string(), main.to_string()),
+            ("fees.ark".to_string(), fees.to_string()),
+        ]);
+        let analysis = analyze("main.ark", &files);
+        assert!(analysis.contract().is_none(), "{fees}");
+        let offset = main.find("require").unwrap();
+        let visible: Vec<_> = analysis
+            .symbols()
+            .visible_at("main.ark", offset)
+            .into_iter()
+            .map(|(name, _)| name)
+            .collect();
+        assert!(
+            visible.contains(&"limit") && visible.contains(&"n"),
+            "{fees}: {visible:?}"
+        );
+        assert!(
+            imported.is_none_or(|name| visible.contains(&name)),
+            "{visible:?}"
+        );
     }
 }
