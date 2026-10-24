@@ -102,7 +102,6 @@ fn symbols_resolve_bindings_calls_and_constants_across_files() {
             "Function spend main.ark:5:14",
             "Function helper int main.ark:15:22",
             "Tapscript unilateral main.ark:16:14",
-            "Parameter ownerSig signature main.ark:16:35",
             "Parameter p Point main.ark:3:22",
             "Parameter owner pubkey main.ark:3:32",
             "Parameter sig signature main.ark:5:30",
@@ -112,6 +111,7 @@ fn symbols_resolve_bindings_calls_and_constants_across_files() {
             "Variable x int main.ark:7:17",
             "Variable doubled int main.ark:8:17",
             "Parameter amount int main.ark:15:33",
+            "Parameter ownerSig signature main.ark:16:35",
         ]
     );
     assert_eq!(
@@ -143,6 +143,8 @@ fn symbols_resolve_bindings_calls_and_constants_across_files() {
             "main.ark:13:51 p -> Parameter p Point main.ark:3:22",
             "main.ark:13:54 owner -> Parameter owner pubkey main.ark:3:32",
             "main.ark:15:54 amount -> Parameter amount int main.ark:15:33",
+            "main.ark:18:26 ownerSig -> Parameter ownerSig signature main.ark:16:35",
+            "main.ark:18:36 owner -> Parameter owner pubkey main.ark:3:32",
         ]
     );
 }
@@ -368,4 +370,28 @@ fn a_file_keeps_its_names_when_an_import_fails() {
             "{visible:?}"
         );
     }
+}
+
+#[test]
+fn constant_initializers_refer_to_the_constants_they_use() {
+    let main = "import \"fees.ark\";
+contract C(pubkey owner) {
+    const int BASE = 2;
+    const int WAIT = BASE * Fees.DELAY;
+    function spend(signature s) { require(checkSig(s, owner)); require(tx.locktime >= WAIT); }
+}";
+    let files = project(main);
+    let analysis = analyze("main.ark", &files);
+    let used: Vec<_> = references(&files, analysis.symbols())
+        .into_iter()
+        .filter(|reference| reference.starts_with("main.ark:4:"))
+        .collect();
+    assert_eq!(
+        used,
+        [
+            "main.ark:4:22 BASE -> Constant BASE int main.ark:3:15",
+            "main.ark:4:29 Fees -> Library Fees fees.ark:1:9",
+            "main.ark:4:34 DELAY -> Constant DELAY int fees.ark:2:15",
+        ]
+    );
 }

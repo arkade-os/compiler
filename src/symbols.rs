@@ -190,11 +190,6 @@ impl Symbols {
             let span = tapscript.span;
             let id = collector.define(&tapscript.name, SymbolKind::Tapscript, None, span, None);
             names.globals.insert(tapscript.name.clone(), id);
-            for input in &tapscript.inputs {
-                let ty = Some(input.param_type.clone());
-                let visible = Some(tapscript.declaration);
-                collector.define(&input.name, SymbolKind::Parameter, ty, input.span, visible);
-            }
         }
         for parameter in &contract.parameters {
             let ty = Some(parameter.param_type.clone());
@@ -211,6 +206,9 @@ impl Symbols {
             let start = collector.token(span.start);
             collector.qualified(start, &path.key());
         }
+        for constant in contract.constants.iter().filter(|c| !c.name.contains('.')) {
+            collector.initializer(&constant.initializer);
+        }
         for function in functions {
             collector.scopes.push(HashMap::new());
             for parameter in &function.parameters {
@@ -225,6 +223,18 @@ impl Symbols {
                 );
             }
             collector.statements(&function.statements, function.declaration.end);
+            collector.scopes.pop();
+        }
+        for tapscript in &contract.tapscripts {
+            collector.scopes.push(HashMap::new());
+            for input in &tapscript.inputs {
+                let ty = Some(input.param_type.clone());
+                let visible = Some(tapscript.declaration);
+                collector.bind(&input.name, SymbolKind::Parameter, ty, input.span, visible);
+            }
+            for (name, span) in &tapscript.operands {
+                collector.refer(name, span.start);
+            }
             collector.scopes.pop();
         }
         self.exports.insert(file.to_string(), names.exports);
@@ -444,6 +454,17 @@ impl Collector<'_> {
         self.scopes.push(HashMap::new());
         self.statements(statements, end);
         self.scopes.pop();
+    }
+
+    /// A constant's initializer as written, whose names are all constants.
+    fn initializer(&mut self, expression: &Expression) {
+        if let ExprKind::Name(path) = &expression.kind {
+            let start = self.token(expression.span.start);
+            self.qualified(start, &path.key());
+        }
+        for child in crate::models::child_exprs(expression) {
+            self.initializer(child);
+        }
     }
 
     fn expression(&mut self, expression: &Expression) {

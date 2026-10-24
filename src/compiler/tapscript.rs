@@ -836,6 +836,7 @@ mod tests {
 
     fn ts(items: Vec<TapItem>) -> NamedTapscript {
         NamedTapscript {
+            operands: Vec::new(),
             span: Default::default(),
             declaration: Default::default(),
             name: "t".into(),
@@ -1065,6 +1066,7 @@ mod tests {
     fn name_matched_requires_bare_emulator() {
         // claim covenant exists; leaf named claim with bare emulator → NameMatched
         let leaf = NamedTapscript {
+            operands: Vec::new(),
             span: Default::default(),
             declaration: Default::default(),
             name: "claim".into(),
@@ -1078,6 +1080,7 @@ mod tests {
     #[test]
     fn name_matched_without_emulator_is_error() {
         let leaf = NamedTapscript {
+            operands: Vec::new(),
             span: Default::default(),
             declaration: Default::default(),
             name: "claim".into(),
@@ -1092,6 +1095,7 @@ mod tests {
     #[test]
     fn standalone_with_bare_emulator_is_error() {
         let leaf = NamedTapscript {
+            operands: Vec::new(),
             span: Default::default(),
             declaration: Default::default(),
             name: "weird".into(),
@@ -1106,6 +1110,7 @@ mod tests {
     #[test]
     fn standalone_tweak_groups_under_target() {
         let leaf = NamedTapscript {
+            operands: Vec::new(),
             span: Default::default(),
             declaration: Default::default(),
             name: "direct".into(),
@@ -1125,6 +1130,7 @@ mod tests {
     #[test]
     fn name_matched_with_explicit_tweak_is_error() {
         let leaf = NamedTapscript {
+            operands: Vec::new(),
             span: Default::default(),
             declaration: Default::default(),
             name: "claim".into(),
@@ -1142,6 +1148,7 @@ mod tests {
     #[test]
     fn tweak_to_missing_function_is_error() {
         let leaf = NamedTapscript {
+            operands: Vec::new(),
             span: Default::default(),
             declaration: Default::default(),
             name: "direct".into(),
@@ -1158,6 +1165,7 @@ mod tests {
     #[test]
     fn ambiguous_tweak_targets_are_error() {
         let leaf = NamedTapscript {
+            operands: Vec::new(),
             span: Default::default(),
             declaration: Default::default(),
             name: "direct".into(),
@@ -1181,6 +1189,7 @@ mod tests {
     #[test]
     fn pure_standalone_has_no_emulator_no_tweak() {
         let leaf = NamedTapscript {
+            operands: Vec::new(),
             span: Default::default(),
             declaration: Default::default(),
             name: "unilateral".into(),
@@ -1198,6 +1207,7 @@ mod tests {
     #[test]
     fn forfeit_without_server_is_rejected() {
         let leaf = NamedTapscript {
+            operands: Vec::new(),
             span: Default::default(),
             declaration: Default::default(),
             name: "liquidate".into(),
@@ -1214,6 +1224,7 @@ mod tests {
     #[test]
     fn csv_exit_without_server_is_accepted() {
         let leaf = NamedTapscript {
+            operands: Vec::new(),
             span: Default::default(),
             declaration: Default::default(),
             name: "unilateral".into(),
@@ -1235,6 +1246,7 @@ mod tests {
     #[test]
     fn unknown_key_is_rejected() {
         let leaf = NamedTapscript {
+            operands: Vec::new(),
             span: Default::default(),
             declaration: Default::default(),
             name: "x".into(),
@@ -1341,6 +1353,7 @@ mod tests {
                 }
             };
             let leaf = NamedTapscript {
+                operands: Vec::new(),
                 span: Default::default(),
                 declaration: Default::default(),
                 name: "exit".into(),
@@ -1378,6 +1391,7 @@ mod tests {
     fn misaligned_sig_and_key_count_is_rejected() {
         // 2 keys but 1 declared signature → witness cannot satisfy the closure.
         let leaf = NamedTapscript {
+            operands: Vec::new(),
             span: Default::default(),
             declaration: Default::default(),
             name: "x".into(),
@@ -1403,6 +1417,7 @@ mod tests {
     fn undeclared_signature_operand_is_rejected() {
         // sig operand `ghostSig` is not declared as a `signature` input.
         let leaf = NamedTapscript {
+            operands: Vec::new(),
             span: Default::default(),
             declaration: Default::default(),
             name: "x".into(),
@@ -1427,6 +1442,7 @@ mod tests {
     fn undeclared_timelock_operand_is_rejected() {
         // after(typo) where `typo` is neither a literal nor a declared name.
         let leaf = NamedTapscript {
+            operands: Vec::new(),
             span: Default::default(),
             declaration: Default::default(),
             name: "exit".into(),
@@ -1450,6 +1466,7 @@ mod tests {
     fn undeclared_hash_value_is_rejected() {
         // hash160(preimage) == typoHash where typoHash is not declared.
         let leaf = NamedTapscript {
+            operands: Vec::new(),
             span: Default::default(),
             declaration: Default::default(),
             name: "claim".into(),
@@ -1494,6 +1511,7 @@ mod tests {
     fn emits_condition_multisig_like_golden_htlc_claim() {
         // ConditionMultisigClosure { HASH160 <preimageHash> EQUAL, [server, emulator(claim)] }
         let leaf = NamedTapscript {
+            operands: Vec::new(),
             span: Default::default(),
             declaration: Default::default(),
             name: "claim".into(),
@@ -1548,6 +1566,7 @@ mod tests {
     #[test]
     fn emits_cltv_multisig_like_golden_htlc_refund() {
         let leaf = NamedTapscript {
+            operands: Vec::new(),
             span: Default::default(),
             declaration: Default::default(),
             name: "refund".into(),
@@ -1579,6 +1598,7 @@ mod tests {
     #[test]
     fn emits_csv_single_sig_exit() {
         let leaf = NamedTapscript {
+            operands: Vec::new(),
             span: Default::default(),
             declaration: Default::default(),
             name: "unilateral".into(),
