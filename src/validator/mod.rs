@@ -281,6 +281,7 @@ pub(crate) fn validate_ast(contract: &Contract, require_entrypoint: bool) -> Vec
     }
 
     check_shadowing(contract, &mut issues);
+    check_tapscript_names(contract, &mut issues);
     check_unused(contract, &mut issues);
     check_binding_semantics(contract, &mut issues);
     check_asset_id_operands(contract, &mut issues);
@@ -492,6 +493,56 @@ fn validate_source_identifier(name: &str, context: &str, issues: &mut Vec<Valida
         issues.push(ValidationIssue::error(format!(
             "{context} '{name}' uses a reserved keyword or type name"
         )));
+    }
+}
+
+/// Reject a name a tapscript uses that is no input, constructor parameter, constant, function or
+/// key role, at the operand that spells it. `tweak(...)` operands are left to the leaf checks,
+/// which say what is wrong with them.
+fn check_tapscript_names(contract: &Contract, issues: &mut Vec<ValidationIssue>) {
+    use crate::models::{EMULATOR, SERVER, SERVER_EXIT_DELAY};
+    for tapscript in &contract.tapscripts {
+        let (mut keys, mut tweaks) = (HashSet::new(), HashSet::new());
+        for item in &tapscript.items {
+            let TapItem::Sig {
+                keys: expressions, ..
+            } = item
+            else {
+                continue;
+            };
+            for key in expressions {
+                match key {
+                    KeyExpr::Ident(name) => keys.insert(name.as_str()),
+                    KeyExpr::Tweak { base, func } => {
+                        tweaks.extend([base.as_str(), func.as_str()]);
+                        true
+                    }
+                };
+            }
+        }
+        let known = |name: &str| {
+            [SERVER, EMULATOR, SERVER_EXIT_DELAY].contains(&name)
+                || tapscript.inputs.iter().any(|p| p.name == name)
+                || contract.parameters.iter().any(|p| p.name == name)
+                || contract.functions.iter().any(|f| f.name == name)
+                || contract.constants.iter().any(|c| {
+                    c.name == name
+                        || c.name
+                            .strip_prefix(name)
+                            .is_some_and(|m| m.starts_with('.'))
+                })
+        };
+        let mut reported = HashSet::new();
+        for (name, span) in &tapscript.operands {
+            if known(name) || tweaks.contains(name.as_str()) || !reported.insert(name) {
+                continue;
+            }
+            let message = match keys.contains(name.as_str()) {
+                true => format!("unknown key `{name}` in tapscript `{}`", tapscript.name),
+                false => format!("'{name}' is undefined in tapscript '{}'", tapscript.name),
+            };
+            issues.push(ValidationIssue::error(message).at(*span));
+        }
     }
 }
 
