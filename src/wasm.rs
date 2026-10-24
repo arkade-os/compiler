@@ -136,11 +136,8 @@ fn compile_project(
     crate::imports::compile_sources(entry, &files, options)
 }
 
-/// The symbol at 1-based `line` and UTF-16 `column` of `entry`, for hover, go to definition
-/// and highlighting: `{ name, kind, type, at, definition, references }`, each location
-/// `{ file, start, end }`, or `null` when no name is there.
-#[wasm_bindgen]
-pub fn symbol_at(entry: &str, files: &str, line: usize, column: usize) -> Result<String, String> {
+/// The analysis of `entry`, made relative, in the `files` JSON, kept while both stay the same.
+fn analyzed(entry: &str, files: &str) -> Result<(String, std::rc::Rc<crate::Analysis>), String> {
     thread_local! {
         /// The entry and files JSON last analyzed, and their analysis.
         // ponytail: one project, the open one every lookup asks about, analyzed again apart from the
@@ -159,6 +156,15 @@ pub fn symbol_at(entry: &str, files: &str, line: usize, column: usize) -> Result
             Ok::<_, String>(analysis)
         }
     })?;
+    Ok((entry, analysis))
+}
+
+/// The symbol at 1-based `line` and UTF-16 `column` of `entry`, for hover, go to definition
+/// and highlighting: `{ name, kind, type, at, definition, references }`, each location
+/// `{ file, start, end }`, or `null` when no name is there.
+#[wasm_bindgen]
+pub fn symbol_at(entry: &str, files: &str, line: usize, column: usize) -> Result<String, String> {
+    let (entry, analysis) = analyzed(entry, files)?;
     let symbols = analysis.symbols();
     let offset = analysis
         .source(&entry)
@@ -203,7 +209,8 @@ pub fn symbol_at(entry: &str, files: &str, line: usize, column: usize) -> Result
 
 /// The names usable at 1-based `line` and UTF-16 `column` of `entry`, for completion:
 /// `{ symbols, structs, members }`, where `members` lists a library's or contract's names
-/// under its own, and `structs` gives each visible struct's fields.
+/// under its own, and `structs` gives the fields of every struct analyzed, since a field's type
+/// can name a struct the entry does not see.
 #[wasm_bindgen]
 pub fn completions_at(
     entry: &str,
@@ -212,21 +219,16 @@ pub fn completions_at(
     column: usize,
 ) -> Result<String, String> {
     use crate::symbols::SymbolKind;
-    let files: std::collections::BTreeMap<String, String> =
-        serde_json::from_str(files).map_err(|e| format!("Invalid source files: {e}"))?;
-    let entry = crate::imports::relative_path(entry)?;
-    let analysis = crate::analyze(&entry, &files);
+    let (entry, analysis) = analyzed(entry, files)?;
     let symbols = analysis.symbols();
-    let offset = files
-        .iter()
-        .find(|(path, _)| crate::imports::relative_path(path).is_ok_and(|path| path == entry))
-        .and_then(|(_, source)| crate::diagnostics::offset(source, line, column))
+    let offset = analysis
+        .source(&entry)
+        .and_then(|source| crate::diagnostics::offset(source, line, column))
         .unwrap_or_default();
     let mut names = Vec::new();
     let mut members: std::collections::BTreeMap<&str, Vec<serde_json::Value>> = Default::default();
-    let mut structs = Vec::new();
     for (name, definition) in symbols.visible_at(&entry, offset) {
-        if matches!(definition.kind, SymbolKind::Tapscript | SymbolKind::Field) {
+        if definition.kind == SymbolKind::Tapscript {
             continue;
         }
         let item = serde_json::json!({
@@ -238,9 +240,13 @@ pub fn completions_at(
             Some((owner, _)) => members.entry(owner).or_default().push(item),
             None => names.push(item),
         }
-        if definition.kind == SymbolKind::Struct {
-            let fields: Vec<_> = symbols
-                .definitions()
+    }
+    let definitions = symbols.definitions();
+    let structs: Vec<_> = definitions
+        .iter()
+        .filter(|definition| definition.kind == SymbolKind::Struct)
+        .map(|definition| {
+            let fields: Vec<_> = definitions
                 .iter()
                 .filter(|field| {
                     field.owner.as_deref() == Some(definition.name.as_str())
@@ -251,8 +257,8 @@ pub fn completions_at(
                     serde_json::json!({ "name": field.name, "type": ty })
                 })
                 .collect();
-            structs.push(serde_json::json!({ "name": definition.name, "fields": fields }));
-        }
-    }
+            serde_json::json!({ "name": definition.name, "fields": fields })
+        })
+        .collect();
     Ok(serde_json::json!({ "symbols": names, "structs": structs, "members": members }).to_string())
 }

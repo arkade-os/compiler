@@ -100,7 +100,7 @@ impl Symbols {
                 .filter(|d| d.file == file)
                 .filter(|d| {
                     d.visible
-                        .is_some_and(|v| v.start <= offset && offset <= v.end)
+                        .is_some_and(|v| v.start <= offset && offset < v.end)
                 })
                 .map(|d| (d.name.as_str(), d)),
         );
@@ -123,8 +123,9 @@ impl Symbols {
         constants: &[(Path, Span)],
     ) {
         let mut names = Names::default();
-        for dependency in dependencies {
-            names.globals.extend(self.exports[dependency].clone());
+        // A dependency that failed before its names were recorded has none.
+        for exports in dependencies.iter().filter_map(|d| self.exports.get(d)) {
+            names.globals.extend(exports.clone());
         }
         let mut collector = Collector {
             symbols: self,
@@ -180,12 +181,20 @@ impl Symbols {
                 function.span,
                 None,
             );
-            names.member(owner, &function.name, id, function.is_exported);
+            // An entrypoint cannot be called, so only a helper is a name in scope.
+            if function.is_private {
+                names.member(owner, &function.name, id, function.is_exported);
+            }
         }
         for tapscript in &contract.tapscripts {
             let span = tapscript.span;
             let id = collector.define(&tapscript.name, SymbolKind::Tapscript, None, span, None);
             names.globals.insert(tapscript.name.clone(), id);
+            for input in &tapscript.inputs {
+                let ty = Some(input.param_type.clone());
+                let visible = Some(tapscript.declaration);
+                collector.define(&input.name, SymbolKind::Parameter, ty, input.span, visible);
+            }
         }
         for parameter in &contract.parameters {
             let ty = Some(parameter.param_type.clone());
@@ -291,11 +300,9 @@ impl Collector<'_> {
         frame.insert(name.to_string(), id);
     }
 
-    fn local(&mut self, name: &str, ty: Option<TypeName>, span: Span, end: usize) {
-        let visible = Some(Span {
-            start: span.start,
-            end,
-        });
+    /// A local named at `span`, usable from `start` to `end`.
+    fn local(&mut self, name: &str, ty: Option<TypeName>, span: Span, start: usize, end: usize) {
+        let visible = Some(Span { start, end });
         self.bind(name, SymbolKind::Variable, ty, span, visible);
     }
 
@@ -366,7 +373,10 @@ impl Collector<'_> {
                 Statement::Declaration {
                     name,
                     declared_type,
-                } => self.local(name, Some(declared_type.clone()), located.names[0], end),
+                } => {
+                    let ty = Some(declared_type.clone());
+                    self.local(name, ty, located.names[0], located.span.end, end)
+                }
                 Statement::LetBinding {
                     name,
                     declared_type,
@@ -374,7 +384,7 @@ impl Collector<'_> {
                 } => {
                     self.expression(value);
                     let ty = declared_type.clone().or_else(|| known(value.ty()));
-                    self.local(name, ty, located.names[0], end);
+                    self.local(name, ty, located.names[0], located.span.end, end);
                 }
                 Statement::VarAssign { target, value } => {
                     match target {
@@ -411,8 +421,9 @@ impl Collector<'_> {
                         _ => None,
                     };
                     let index_type = Some(TypeName::Named("int".to_string()));
-                    self.local(index_var, index_type, located.names[0], located.span.end);
-                    self.local(value_var, element, located.names[1], located.span.end);
+                    let (start, end) = (iterable.span.end, located.span.end);
+                    self.local(index_var, index_type, located.names[0], start, end);
+                    self.local(value_var, element, located.names[1], start, end);
                     self.statements(body, located.span.end);
                     self.scopes.pop();
                 }

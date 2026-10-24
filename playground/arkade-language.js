@@ -228,11 +228,12 @@ function arkadeComplete(before, table) {
     }
     const path = chain[1].replace(/\s+/g, '');
     if (Object.hasOwn(arkadeMembers, path)) return arkadeMembers[path];
-    if (Object.hasOwn(members, path)) return members[path].map(symbolItem);
+    // A binding of the same name hides a library's or contract's members.
+    if (Object.hasOwn(members, path) && ['library', 'contract'].includes(visible.get(path)?.kind)) return members[path].map(symbolItem);
     const group = path.match(/^(\w+)(\.(?:inputs|outputs)\[\])?$/);
     if (visible.get(group?.[1])?.type === 'AssetGroup') return arkadeMembers[`tx.assetGroups[]${group[2] || ''}`];
     // The type the path names, such as `Signer` for `next.primary`, through struct fields.
-    const struct = type => structs.find(s => s.name === type.replace(/\[.*$/, ''));
+    const struct = type => structs.find(s => s.name === type);
     let type = '';
     path.split('.').forEach((segment, index) => {
         const name = segment.replace(/\[\]$/, '');

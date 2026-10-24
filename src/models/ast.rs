@@ -387,6 +387,8 @@ pub struct NamedTapscript {
     /// Declared name (decides function-binding by exact match).
     pub name: String,
     pub span: crate::diagnostics::Span,
+    /// Byte range of the whole declaration, through its closing brace.
+    pub declaration: crate::diagnostics::Span,
     /// Declared witness inputs (signatures, preimages, …), in source order.
     pub inputs: Vec<Parameter>,
     /// Ordered closure components.

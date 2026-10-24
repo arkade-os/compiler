@@ -837,6 +837,7 @@ mod tests {
     fn ts(items: Vec<TapItem>) -> NamedTapscript {
         NamedTapscript {
             span: Default::default(),
+            declaration: Default::default(),
             name: "t".into(),
             inputs: vec![],
             items,
@@ -1065,6 +1066,7 @@ mod tests {
         // claim covenant exists; leaf named claim with bare emulator → NameMatched
         let leaf = NamedTapscript {
             span: Default::default(),
+            declaration: Default::default(),
             name: "claim".into(),
             inputs: vec![],
             items: vec![sig(vec![ident("server"), ident("emulator")])],
@@ -1077,6 +1079,7 @@ mod tests {
     fn name_matched_without_emulator_is_error() {
         let leaf = NamedTapscript {
             span: Default::default(),
+            declaration: Default::default(),
             name: "claim".into(),
             inputs: vec![],
             items: vec![sig(vec![ident("server"), ident("owner")])],
@@ -1090,6 +1093,7 @@ mod tests {
     fn standalone_with_bare_emulator_is_error() {
         let leaf = NamedTapscript {
             span: Default::default(),
+            declaration: Default::default(),
             name: "weird".into(),
             inputs: vec![],
             items: vec![sig(vec![ident("server"), ident("emulator")])],
@@ -1103,6 +1107,7 @@ mod tests {
     fn standalone_tweak_groups_under_target() {
         let leaf = NamedTapscript {
             span: Default::default(),
+            declaration: Default::default(),
             name: "direct".into(),
             inputs: vec![],
             items: vec![sig(vec![KeyExpr::Tweak {
@@ -1121,6 +1126,7 @@ mod tests {
     fn name_matched_with_explicit_tweak_is_error() {
         let leaf = NamedTapscript {
             span: Default::default(),
+            declaration: Default::default(),
             name: "claim".into(),
             inputs: vec![],
             items: vec![sig(vec![KeyExpr::Tweak {
@@ -1137,6 +1143,7 @@ mod tests {
     fn tweak_to_missing_function_is_error() {
         let leaf = NamedTapscript {
             span: Default::default(),
+            declaration: Default::default(),
             name: "direct".into(),
             inputs: vec![],
             items: vec![sig(vec![KeyExpr::Tweak {
@@ -1152,6 +1159,7 @@ mod tests {
     fn ambiguous_tweak_targets_are_error() {
         let leaf = NamedTapscript {
             span: Default::default(),
+            declaration: Default::default(),
             name: "direct".into(),
             inputs: vec![],
             items: vec![sig(vec![
@@ -1174,6 +1182,7 @@ mod tests {
     fn pure_standalone_has_no_emulator_no_tweak() {
         let leaf = NamedTapscript {
             span: Default::default(),
+            declaration: Default::default(),
             name: "unilateral".into(),
             inputs: vec![],
             items: vec![sig(vec![ident("owner")])],
@@ -1190,6 +1199,7 @@ mod tests {
     fn forfeit_without_server_is_rejected() {
         let leaf = NamedTapscript {
             span: Default::default(),
+            declaration: Default::default(),
             name: "liquidate".into(),
             inputs: sig_params(2),
             items: vec![sig(vec![ident("owner"), ident("backup")])],
@@ -1205,6 +1215,7 @@ mod tests {
     fn csv_exit_without_server_is_accepted() {
         let leaf = NamedTapscript {
             span: Default::default(),
+            declaration: Default::default(),
             name: "unilateral".into(),
             inputs: sig_params(1),
             items: vec![
@@ -1225,6 +1236,7 @@ mod tests {
     fn unknown_key_is_rejected() {
         let leaf = NamedTapscript {
             span: Default::default(),
+            declaration: Default::default(),
             name: "x".into(),
             inputs: vec![],
             items: vec![sig(vec![ident("server"), ident("ghost")])],
@@ -1330,6 +1342,7 @@ mod tests {
             };
             let leaf = NamedTapscript {
                 span: Default::default(),
+                declaration: Default::default(),
                 name: "exit".into(),
                 inputs: sig_params(2),
                 items: vec![timelock, sig(vec![ident("server"), ident("owner")])],
@@ -1366,6 +1379,7 @@ mod tests {
         // 2 keys but 1 declared signature → witness cannot satisfy the closure.
         let leaf = NamedTapscript {
             span: Default::default(),
+            declaration: Default::default(),
             name: "x".into(),
             inputs: vec![Parameter {
                 span: Default::default(),
@@ -1390,6 +1404,7 @@ mod tests {
         // sig operand `ghostSig` is not declared as a `signature` input.
         let leaf = NamedTapscript {
             span: Default::default(),
+            declaration: Default::default(),
             name: "x".into(),
             inputs: vec![],
             items: vec![TapItem::Sig {
@@ -1413,6 +1428,7 @@ mod tests {
         // after(typo) where `typo` is neither a literal nor a declared name.
         let leaf = NamedTapscript {
             span: Default::default(),
+            declaration: Default::default(),
             name: "exit".into(),
             inputs: sig_params(1),
             items: vec![
@@ -1435,6 +1451,7 @@ mod tests {
         // hash160(preimage) == typoHash where typoHash is not declared.
         let leaf = NamedTapscript {
             span: Default::default(),
+            declaration: Default::default(),
             name: "claim".into(),
             inputs: vec![
                 Parameter {
@@ -1478,6 +1495,7 @@ mod tests {
         // ConditionMultisigClosure { HASH160 <preimageHash> EQUAL, [server, emulator(claim)] }
         let leaf = NamedTapscript {
             span: Default::default(),
+            declaration: Default::default(),
             name: "claim".into(),
             inputs: vec![
                 Parameter {
@@ -1531,6 +1549,7 @@ mod tests {
     fn emits_cltv_multisig_like_golden_htlc_refund() {
         let leaf = NamedTapscript {
             span: Default::default(),
+            declaration: Default::default(),
             name: "refund".into(),
             inputs: vec![],
             items: vec![
@@ -1561,6 +1580,7 @@ mod tests {
     fn emits_csv_single_sig_exit() {
         let leaf = NamedTapscript {
             span: Default::default(),
+            declaration: Default::default(),
             name: "unilateral".into(),
             inputs: vec![Parameter {
                 span: Default::default(),

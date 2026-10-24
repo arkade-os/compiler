@@ -433,55 +433,65 @@ fn load(
         let imports =
             parser::imports(&pairs).map_err(|error| locate(path, source, error.into(), None))?;
         let mut dependencies = Vec::new();
+        // ponytail: collecting symbols, an import that fails stops loading but the file's own names
+        // are still recorded; later imports go unread, since reading them needs failed files
+        // remembered so that a diamond of imports does not load one twice.
+        let mut failed = None;
         for (import, span) in imports {
             let at_import = |error: LoadError| match error {
                 LoadError::Message(error) => locate(path, source, error.at(span), None),
                 other => other,
             };
-            let dependency = import_path(path, &import).map_err(|e| at_import(e.into()))?;
-            load(
-                &dependency,
-                entry,
-                read,
-                loaded,
-                active,
-                declarations,
-                symbols.as_deref_mut(),
-            )
-            .map_err(at_import)?;
-            if !dependencies.contains(&dependency) {
-                dependencies.push(dependency);
+            let imported = match import_path(path, &import) {
+                Ok(dependency) => {
+                    let imported = load(
+                        &dependency,
+                        entry,
+                        read,
+                        loaded,
+                        active,
+                        declarations,
+                        symbols.as_deref_mut(),
+                    );
+                    if !dependencies.contains(&dependency) {
+                        dependencies.push(dependency);
+                    }
+                    imported
+                }
+                Err(error) => Err(error.into()),
+            };
+            match imported.map_err(at_import) {
+                Err(error) if symbols.is_some() => {
+                    failed = Some(error);
+                    break;
+                }
+                imported => imported?,
             }
         }
         let mut constants = Vec::new();
-        for dependency in &dependencies {
-            let contract = &loaded.modules[dependency].contract;
+        for module in dependencies.iter().filter_map(|d| loaded.modules.get(d)) {
+            let contract = &module.contract;
             for constant in contract.constants.iter().filter(|c| !c.name.contains('.')) {
                 let mut constant = constant.clone();
                 constant.name = format!("{}.{}", contract.name, constant.name);
                 constants.push(constant);
             }
         }
-        let mut contract = parser::build_ast(pairs, &constants)?;
+        let mut contract = match parser::build_ast(pairs, &constants) {
+            Ok(contract) => contract,
+            Err(error) => return Err(failed.unwrap_or_else(|| error.into())),
+        };
         let own_structs: HashSet<_> = contract.structs.iter().map(|s| s.name.clone()).collect();
-        if models::is_builtin_type(&contract.name)
-            || models::is_builtin_struct(&contract.name)
-            || matches!(contract.name.as_str(), "tx" | "this")
-        {
-            let message = format!("contract name '{}' is reserved", contract.name);
-            return Err(CompileError::from(message).at(contract.span).into());
-        }
-        for (name, span) in contract
-            .structs
-            .iter()
-            .map(|s| (&s.name, s.span))
-            .chain((!contract.name.is_empty()).then_some((&contract.name, contract.span)))
-        {
-            if let Some(previous) = declarations.insert(name.clone(), path.to_string()) {
-                let message =
-                    format!("duplicate declaration '{name}' in '{previous}' and '{path}'");
-                return Err(CompileError::from(message).at(span).into());
+        let declared = match failed {
+            Some(error) => Err(error),
+            None => declare(path, &contract, declarations).map_err(LoadError::from),
+        };
+        if let Err(error) = declared {
+            // Untyped, so a `let` without a declared type has no type.
+            if let Some(symbols) = &mut symbols {
+                symbols.collect(path, source, &contract, &own_structs, &dependencies, &[]);
             }
+            return Err(error);
         }
         let mut visible_structs = own_structs.clone();
         let mut visible_contracts = HashMap::new();
@@ -625,6 +635,34 @@ fn locate(path: &str, source: &str, error: CompileError, code: Option<&str>) -> 
     let mut diagnostic = Diagnostic::error(path, error.to_string()).with_span(error.span);
     diagnostic.code = code.map(str::to_string);
     LoadError::Located(Box::new(diagnostic), format!("{path}: {message}"))
+}
+
+/// Reject a reserved contract name, then record `contract`'s declarations as made in `path`,
+/// rejecting a name another file declared.
+fn declare(
+    path: &str,
+    contract: &Contract,
+    declarations: &mut HashMap<String, String>,
+) -> Result<(), CompileError> {
+    if models::is_builtin_type(&contract.name)
+        || models::is_builtin_struct(&contract.name)
+        || matches!(contract.name.as_str(), "tx" | "this")
+    {
+        let message = format!("contract name '{}' is reserved", contract.name);
+        return Err(CompileError::from(message).at(contract.span));
+    }
+    for (name, span) in contract
+        .structs
+        .iter()
+        .map(|s| (&s.name, s.span))
+        .chain((!contract.name.is_empty()).then_some((&contract.name, contract.span)))
+    {
+        if let Some(previous) = declarations.insert(name.clone(), path.to_string()) {
+            let message = format!("duplicate declaration '{name}' in '{previous}' and '{path}'");
+            return Err(CompileError::from(message).at(span));
+        }
+    }
+    Ok(())
 }
 
 fn validate_scope(

@@ -15,6 +15,7 @@ pub(crate) fn parse_named_tapscript(
     pair: Pair<Rule>,
     constants: &[Constant],
 ) -> Result<crate::models::NamedTapscript, String> {
+    let declaration = pair.as_span().into();
     let mut inner = pair.into_inner().peekable();
     if inner
         .peek()
@@ -61,6 +62,7 @@ pub(crate) fn parse_named_tapscript(
     Ok(crate::models::NamedTapscript {
         name,
         span,
+        declaration,
         inputs,
         items,
     })
