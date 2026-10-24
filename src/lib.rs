@@ -150,3 +150,9 @@ pub fn analyze_file(path: impl AsRef<std::path::Path>) -> Analysis {
 pub fn check(entry: &str, files: &std::collections::BTreeMap<String, String>) -> Vec<Diagnostic> {
     imports::check_sources(entry, files)
 }
+
+/// Every builtin function and `tx`/`this` member as JSON: its parameters, its result or type,
+/// and its docs per language. Tests keep it in step with the compiler.
+pub fn builtin_docs() -> &'static str {
+    include_str!("builtins.json")
+}

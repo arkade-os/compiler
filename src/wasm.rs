@@ -34,6 +34,12 @@ pub fn version() -> String {
     env!("CARGO_PKG_VERSION").to_string()
 }
 
+/// [`crate::builtin_docs`]: every builtin and transaction member with its signature and docs.
+#[wasm_bindgen]
+pub fn builtin_docs() -> String {
+    crate::builtin_docs().to_string()
+}
+
 /// Validate Arkade Script source code without generating output
 ///
 /// # Arguments
