@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "arkade-bindgen"]
+members = [".", "tools/*"]
 resolver = "2"
 
 [workspace.package]
