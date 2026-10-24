@@ -1211,6 +1211,26 @@ function updateCurrentFileName(name) {
         ? `${currentProject}/${name}` : examplePaths[currentFile] || `_examples/${currentFile}.ark`;
 }
 
+const DOCS_LANGUAGE_KEY = 'arkade-docs-language';
+
+// Pick the builtin docs language: the saved choice, else the browser's, else English.
+function initDocsLanguage(docs) {
+    const languages = Object.keys(docs.languages);
+    let saved = null;
+    try { saved = localStorage.getItem(DOCS_LANGUAGE_KEY); } catch {}
+    const wanted = [saved, ...navigator.languages.flatMap(tag => [tag, tag.split('-')[0]])];
+    const language = wanted.find(tag => languages.includes(tag)) || 'en';
+    window.arkadeUseDocs(docs, language);
+    const select = document.getElementById('docs-language');
+    select.innerHTML = languages.map(tag => `<option value="${tag}">${escapeHtml(docs.languages[tag])}</option>`).join('');
+    select.value = language;
+    select.hidden = languages.length < 2;
+    select.addEventListener('change', () => {
+        try { localStorage.setItem(DOCS_LANGUAGE_KEY, select.value); } catch {}
+        window.arkadeUseDocs(docs, select.value);
+    });
+}
+
 // Initialize Monaco Editor
 function initMonaco() {
     require.config({
@@ -1219,7 +1239,14 @@ function initMonaco() {
         }
     });
 
-    require(['vs/editor/editor.main'], function() {
+    const builtinDocs = fetch('builtins.json').then(response => response.json()).catch(err => {
+        console.warn('Failed to load builtins.json:', err);
+        return { languages: {}, functions: {}, members: {} };
+    });
+
+    require(['vs/editor/editor.main'], async function() {
+        initDocsLanguage(await builtinDocs);
+
         // Register Arkade language
         monaco.languages.register({ id: 'arkade' });
 
@@ -1250,6 +1277,7 @@ function initMonaco() {
                     insertText: item.insertText,
                     insertTextRules: item.snippet ? monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet : undefined,
                     detail: item.detail || '',
+                    documentation: item.documentation,
                     range
                 }));
                 return { suggestions };
@@ -1377,12 +1405,36 @@ function describeSymbol(symbol) {
     return [signature, `Defined at ${where} · ${uses} reference${uses === 1 ? '' : 's'}`];
 }
 
+// The builtin function or member at `position`, for when no program name is there.
+function builtinAt(model, position) {
+    const word = model.getWordAtPosition(position);
+    if (!word) return null;
+    const before = model.getLineContent(position.lineNumber).slice(0, word.startColumn - 1);
+    const table = /\.\s*$/.test(before) && model === editor?.getModel() ? symbolTable(position.lineNumber) : null;
+    const builtin = window.arkadeDescribe(before, word.word, table);
+    return builtin && { ...builtin, range: new monaco.Range(position.lineNumber, word.startColumn, position.lineNumber, word.endColumn) };
+}
+
+// The read-only builtins.ark that go to definition shows for a builtin, and its line per key.
+function builtinDeclarations() {
+    const uri = monaco.Uri.parse('arkade-builtins:///builtins.ark');
+    const { text, lines } = window.arkadeDeclarations();
+    const model = monaco.editor.getModel(uri) || monaco.editor.createModel(text, 'arkade', uri);
+    if (model.getValue() !== text) model.setValue(text);
+    return { model, lines };
+}
+
 function registerSymbolProviders() {
     const range = location => new monaco.Range(
         location.start.line, location.start.column, location.end.line, location.end.column);
     monaco.languages.registerHoverProvider('arkade', {
         provideHover: (model, position) => {
             const symbol = symbolAt(model, position);
+            const builtin = !symbol && builtinAt(model, position);
+            if (builtin) {
+                const contents = [{ value: '```arkade\n' + builtin.declaration + '\n```' }];
+                return { range: builtin.range, contents: builtin.doc ? [...contents, { value: builtin.doc }] : contents };
+            }
             if (!symbol?.at.start) return null;
             const [signature, where] = describeSymbol(symbol);
             return {
@@ -1393,9 +1445,19 @@ function registerSymbolProviders() {
     });
     // Monaco passes the opener only a position, so the name is selected from the provider's range.
     const definitionRanges = new Map();
+    // Ctrl+click leaves the cursor elsewhere, and peek looks up the definition at the cursor.
+    let builtinPosition = null;
     monaco.languages.registerDefinitionProvider('arkade', {
         provideDefinition: (model, position) => {
             const symbol = symbolAt(model, position);
+            const builtin = !symbol && builtinAt(model, position);
+            if (builtin) {
+                const { model: declarations, lines } = builtinDeclarations();
+                const line = lines[builtin.key];
+                const column = declarations.getLineContent(line).indexOf(builtin.key) + 1;
+                if (model === editor.getModel()) builtinPosition = position;
+                return { uri: declarations.uri, range: new monaco.Range(line, column, line, column + builtin.key.length) };
+            }
             if (!symbol?.definition.start) return null;
             const { file } = symbol.definition;
             if (file === symbol.at.file) return { uri: model.uri, range: range(symbol.definition) };
@@ -1412,6 +1474,12 @@ function registerSymbolProviders() {
     });
     monaco.editor.registerEditorOpener?.({
         openCodeEditor: (source, resource) => {
+            // builtins.ark is not a playground file, so it opens in place as a peek.
+            if (resource.scheme === 'arkade-builtins') {
+                if (builtinPosition) editor.setPosition(builtinPosition);
+                editor.trigger('builtins', 'editor.action.peekDefinition');
+                return true;
+            }
             if (resource.scheme !== 'arkade' || !openSourcePath(resource.path.slice(1))) return false;
             const target = definitionRanges.get(resource.toString());
             if (target) {

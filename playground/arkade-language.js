@@ -50,28 +50,9 @@ const arkadeTheme = {
     }
 };
 
-// Completions
-const S = (label, kind, insertText, detail) => ({ label, kind, insertText, detail, snippet: insertText.includes('$') });
+// Completions; builtin functions and members come from builtins.json through arkadeUseDocs.
+const S = (label, kind, insertText, detail, documentation) => ({ label, kind, insertText, detail, documentation, snippet: insertText.includes('$') });
 const prop = (label, detail) => S(label, 'Property', label, detail);
-const method = (label, args, detail) => S(label, 'Method', `${label}(${args})`, detail);
-const assetIdArgs = '${1:assetTxid}, ${2:assetGidx}';
-const inputProps = [
-    prop('value', 'Input value (sats)'),
-    prop('scriptPubKey', 'Input scriptPubKey'),
-    prop('witnessVersion', 'Input witness version'),
-    prop('sequence', 'Input nSequence'),
-    prop('outpoint', 'Input outpoint'),
-    prop('arkadeScriptHash', 'Hash of the input\'s Arkade script'),
-    prop('arkadeWitnessHash', 'Hash of the input\'s Arkade witness'),
-];
-const groupProps = ['numInputs', 'numOutputs', 'sumInputs', 'sumOutputs', 'delta', 'hasControl', 'controlAssetId', 'metadataHash', 'assetId', 'isFresh']
-    .map(name => prop(name, 'Asset group property'));
-const groupRecords = [
-    S('inputs', 'Property', 'inputs[${1:j}]', 'Group input records'),
-    S('outputs', 'Property', 'outputs[${1:j}]', 'Group output records'),
-];
-const recordProps = [prop('amount', 'Record amount'), prop('type', 'Record type: 1 local, 2 intent'), prop('index', 'vout, vin, or the referenced intent output')];
-const groupMembers = [...groupProps, ...groupRecords, method('controlIs', assetIdArgs, 'Whether the control asset matches')];
 
 const arkadeCompletions = [
     // Keywords
@@ -105,36 +86,6 @@ const arkadeCompletions = [
     S('server', 'Variable', 'server', 'Arkade server key'),
     S('emulator', 'Variable', 'emulator', 'Arkade emulator key'),
     S('serverExitDelay', 'Variable', 'serverExitDelay', 'Arkade server unilateral exit delay'),
-
-    // Functions
-    S('checkSig', 'Function', 'checkSig(${1:sig}, ${2:pubkey})', 'Verify signature against pubkey'),
-    S('checkMultisig', 'Function', 'checkMultisig([${1:keys}], [${2:sigs}], ${3:threshold})', 'Verify multiple signatures'),
-    S('checkSigFromStack', 'Function', 'checkSigFromStack(${1:sig}, ${2:pubkey}, ${3:msg})', 'Verify signature over a message'),
-    S('checkSigFromStackVerify', 'Function', 'checkSigFromStackVerify(${1:sig}, ${2:pubkey}, ${3:msg})', 'Verify signature over a message or fail'),
-    S('checkTime', 'Function', 'checkTime(${1:timestamp})', 'Whether the emulator clock has reached a Unix timestamp'),
-    S('tweak', 'Function', 'tweak(${1:emulator}, ${2:functionName})', 'Tweaked emulator key'),
-    S('sha256', 'Function', 'sha256(${1:data})', 'SHA256 hash'),
-    S('hash256', 'Function', 'hash256(${1:data}) == ${2:hash}', 'Double SHA256 comparison'),
-    S('hash160', 'Function', 'hash160(${1:data}) == ${2:hash}', 'HASH160 comparison'),
-    S('ripemd160', 'Function', 'ripemd160(${1:data}) == ${2:hash}', 'RIPEMD160 comparison'),
-    S('sha256Initialize', 'Function', 'sha256Initialize(${1:data})', 'Start a streaming SHA256'),
-    S('sha256Update', 'Function', 'sha256Update(${1:ctx}, ${2:chunk})', 'Update a streaming SHA256'),
-    S('sha256Finalize', 'Function', 'sha256Finalize(${1:ctx}, ${2:lastChunk})', 'Finish a streaming SHA256'),
-    S('digest', 'Function', 'digest(${1:data}, ${2:hashType})', 'Hash selected by hash type (20 or 32 bytes)'),
-    S('sighash', 'Function', 'sighash(${1:hashType})', 'Transaction sighash'),
-    S('merkleRoot', 'Function', 'merkleRoot(${1:leafTag}, ${2:branchTag}, ${3:proof}, ${4:leaf})', 'Merkle root from a tagged-hash proof'),
-    S('modExp', 'Function', 'modExp(${1:base}, ${2:exponent}, ${3:modulus})', 'Modular exponentiation'),
-    S('ecAdd', 'Function', 'ecAdd(${1:P}, ${2:Q}, ${3:curveId})', 'EC point addition'),
-    S('ecMul', 'Function', 'ecMul(${1:P}, ${2:scalar}, ${3:curveId})', 'EC scalar multiplication'),
-    S('ecPairing', 'Function', 'ecPairing(${1:g1Points}, ${2:g2Points}, ${3:curveId})', 'EC pairing check'),
-    S('ecMulScalarVerify', 'Function', 'ecMulScalarVerify(${1:k}, ${2:P}, ${3:Q})', 'Verify Q = k·P'),
-    S('tweakVerify', 'Function', 'tweakVerify(${1:P}, ${2:k}, ${3:Q})', 'Verify Q = P + k·G'),
-    S('substr', 'Function', 'substr(${1:data}, ${2:offset}, ${3:size})', 'Byte slice'),
-    S('cat', 'Function', 'cat(${1:a}, ${2:b})', 'Byte concatenation'),
-    S('bin2num', 'Function', 'bin2num(${1:bytes})', 'Bytes to number'),
-    S('num2bin', 'Function', 'num2bin(${1:num}, ${2:size})', 'Number to fixed-width bytes'),
-    S('reverseBytes', 'Function', 'reverseBytes(${1:bytes})', 'Reverse byte order'),
-    S('size', 'Function', 'size(${1:bytes})', 'Byte length'),
 ];
 
 // Monarch tokenizer definition (for setMonarchTokensProvider); word lists come from the completions.
@@ -143,8 +94,7 @@ const arkadeMonarch = {
     defaultToken: 'invalid',
     keywords: [...completionLabels('Keyword'), 'in'],
     typeKeywords: completionLabels('TypeParameter'),
-    // Tapscript-only timelocks are highlighted but not offered as completions.
-    builtinFunctions: [...completionLabels('Function'), 'older', 'after', 'blocks', 'seconds'],
+    builtinFunctions: [],
     implicitBindings: completionLabels('Variable'),
 
     tokenizer: {
@@ -172,65 +122,80 @@ const arkadeMonarch = {
     }
 };
 
+let docs = { functions: {}, members: {} };
+let docLanguage = 'en';
+let functionItems = [];
 // Members offered after `<path>.`, keyed by the path with indexes collapsed to `[]`.
-const arkadeMembers = {
-    'tx': [
-        prop('version', 'Transaction version'),
-        prop('locktime', 'Transaction locktime'),
-        prop('numInputs', 'Number of inputs'),
-        prop('numOutputs', 'Number of outputs'),
-        prop('weight', 'Transaction weight'),
-        prop('id', 'Transaction id'),
-        S('inputs', 'Property', 'inputs[${1:i}]', 'Transaction inputs'),
-        S('outputs', 'Property', 'outputs[${1:o}]', 'Transaction outputs'),
-        prop('input', 'Current input (tx.input.current)'),
-        prop('assetGroups', 'Asset groups'),
-        prop('intent', 'Intent fields'),
-        method('packet', '${1:packetType}', 'Extension packet bytes of this transaction'),
-    ],
-    'tx.input': [prop('current', 'Input being spent')],
-    'tx.input.current': inputProps,
-    'tx.inputs[]': [...inputProps, prop('assets', 'Input assets'), method('packet', '${1:packetType}', 'Extension packet of the Arkade transaction that created this input')],
-    'tx.outputs[]': [prop('value', 'Output value (sats)'), prop('scriptPubKey', 'Output scriptPubKey'), prop('witnessVersion', 'Output witness version'), prop('assets', 'Output assets')],
-    'tx.inputs[].assets': [prop('length', 'Number of assets'), method('lookup', assetIdArgs, 'Amount of an asset'), method('has', assetIdArgs, 'Whether an asset is present')],
-    'tx.inputs[].assets[]': [prop('assetId', 'Asset id'), prop('amount', 'Asset amount')],
-    'tx.assetGroups': [method('find', assetIdArgs, 'Asset group by id'), method('has', assetIdArgs, 'Whether an asset group exists'), prop('length', 'Number of asset groups')],
-    'tx.assetGroups[]': groupMembers,
-    'tx.assetGroups[].inputs[]': [...recordProps, prop('txid', 'Intent input source transaction')],
-    'tx.assetGroups[].outputs[]': recordProps,
-    'tx.intent': [method('field', '"${1:name}"', 'Intent field bytes'), method('has', '"${1:name}"', 'Whether an intent field is present')],
-    'tx.packet': [method('has', '${1:packetType}', 'Whether this transaction carries the packet')],
-    'tx.inputs[].packet': [method('has', '${1:packetType}', 'Whether the Arkade transaction that created this input carries the packet')],
-    'this': [
-        prop('activeInputIndex', 'Index of the input being spent'),
-        prop('activeBytecode', 'Script being executed'),
-        prop('expiry', 'Contract expiry'),
-        method('tunnel', '${1:outputIndex}', 'Carry the contract into an output'),
-    ],
+let arkadeMembers = {};
+// Paths documented under another path, and the members the alias lacks.
+const memberAliases = [['tx.input.current', 'tx.inputs[]', ['assets', 'packet']], ['tx.outputs[].assets', 'tx.inputs[].assets', []]];
+
+const docText = doc => doc?.[docLanguage] ?? doc?.en ?? '';
+// Snippet arguments: `bytes[] keys` becomes `[${1:keys}]`, and optional parameters are left out.
+const call = (name, params) => `${name}(${params.filter(p => !p.endsWith('?')).map((p, i) => {
+    const [type, arg] = p.split(' ');
+    return type.endsWith(']') ? `[\${${i + 1}:${arg}}]` : `\${${i + 1}:${arg}}`;
+}).join(', ')})`;
+const declaration = (name, entry) => entry.params
+    ? `function ${name}(${entry.params.join(', ')})${entry.result ? ` ${entry.result}` : ''}`
+    : `${entry.type ? `${entry.type} ` : ''}${name}`;
+const docItem = (kind, name, entry) => {
+    const insert = entry.params ? call(name, entry.params) : entry.index ? `${name}[\${1:${entry.index}}]` : name;
+    return S(name, kind, insert, declaration(name, entry).replace(/^function /, ''), docText(entry.doc));
 };
-arkadeMembers['tx.outputs[].assets'] = arkadeMembers['tx.inputs[].assets'];
-arkadeMembers['tx.outputs[].assets[]'] = arkadeMembers['tx.inputs[].assets[]'];
+
+// Use `json` (builtins.json) for completions, hover and declarations, in `language` where it has one.
+function arkadeUseDocs(json, language = 'en') {
+    docs = json;
+    docLanguage = language;
+    arkadeMonarch.builtinFunctions = Object.keys(docs.functions);
+    // Tapscript-only timelocks are highlighted but not offered as completions.
+    functionItems = Object.entries(docs.functions).filter(([, entry]) => !entry.tapscript)
+        .map(([name, entry]) => docItem('Function', name, entry));
+    arkadeMembers = {};
+    for (const [key, entry] of Object.entries(docs.members)) {
+        const dot = key.lastIndexOf('.');
+        (arkadeMembers[key.slice(0, dot)] ??= []).push(docItem(entry.params ? 'Method' : 'Property', key.slice(dot + 1), entry));
+    }
+    for (const [alias, path, missing] of memberAliases) {
+        arkadeMembers[alias] = arkadeMembers[path].filter(item => !missing.includes(item.label));
+    }
+}
 
 const symbolKinds = { struct: 'Struct', contract: 'Class', library: 'Module', function: 'Function', constant: 'Constant', parameter: 'Variable', variable: 'Variable' };
 const symbolItem = s => S(s.name, symbolKinds[s.kind], s.kind === 'function' ? `${s.name}($1)` : s.name, s.type ? `${s.kind}: ${s.type}` : s.kind);
+
+// The path before a trailing `.` in `before`, with indexes collapsed to `[]`, or null.
+function memberPath(before) {
+    let flat = before;
+    while (flat !== (flat = flat.replace(/\[[^\][]*\]/g, '<>')));
+    const chain = flat.replaceAll('<>', '[]').match(/([A-Za-z]\w*(?:\[\])*(?:\s*\.\s*[A-Za-z]\w*(?:\[\])*)*)\s*\.\s*$/);
+    return chain && chain[1].replace(/\s+/g, '');
+}
+
+// The documented path `path` stands for: an `AssetGroup` name stands for `tx.assetGroups[]`.
+function documentedPath(path, visible) {
+    const group = path.match(/^(\w+)(\.(?:inputs|outputs)\[\])?$/);
+    if (visible.get(group?.[1])?.type === 'AssetGroup') return `tx.assetGroups[]${group[2] || ''}`;
+    const alias = memberAliases.find(([from]) => path === from || path.startsWith(from + '.') || path.startsWith(from + '['));
+    return alias ? alias[1] + path.slice(alias[0].length) : path;
+}
 
 // Completions for the cursor: `before` is the line up to the word being typed, and `table` the
 // names the compiler sees at the cursor (or null before it is available).
 function arkadeComplete(before, table) {
     const { symbols = [], structs = [], members = {} } = table || {};
     const visible = new Map(symbols.map(symbol => [symbol.name, symbol]));
-    let flat = before;
-    while (flat !== (flat = flat.replace(/\[[^\][]*\]/g, '<>')));
-    const chain = flat.replaceAll('<>', '[]').match(/([A-Za-z]\w*(?:\[\])*(?:\s*\.\s*[A-Za-z]\w*(?:\[\])*)*)\s*\.\s*$/);
-    if (!chain) {
-        const builtins = new Set(arkadeCompletions.map(item => item.label));
-        return [...arkadeCompletions, ...[...visible.values()].filter(s => !builtins.has(s.name)).map(symbolItem)];
+    const path = memberPath(before);
+    if (!path) {
+        const builtins = [...arkadeCompletions, ...functionItems];
+        const labels = new Set(builtins.map(item => item.label));
+        return [...builtins, ...[...visible.values()].filter(s => !labels.has(s.name)).map(symbolItem)];
     }
-    const path = chain[1].replace(/\s+/g, '');
     if (Object.hasOwn(arkadeMembers, path)) return arkadeMembers[path];
     if (Object.hasOwn(members, path)) return members[path].map(symbolItem);
-    const group = path.match(/^(\w+)(\.(?:inputs|outputs)\[\])?$/);
-    if (visible.get(group?.[1])?.type === 'AssetGroup') return arkadeMembers[`tx.assetGroups[]${group[2] || ''}`];
+    const documented = documentedPath(path, visible);
+    if (Object.hasOwn(arkadeMembers, documented)) return arkadeMembers[documented];
     // The type the path names, such as `Signer` for `next.primary`, through struct fields.
     const struct = type => structs.find(s => s.name === type.replace(/\[.*$/, ''));
     let type = '';
@@ -243,8 +208,34 @@ function arkadeComplete(before, table) {
     return struct(type)?.fields.map(field => prop(field.name, field.type)) || [];
 }
 
+// The builtin `word` names after `before`: `{ key, declaration, doc }`, or null.
+function arkadeDescribe(before, word, table) {
+    const visible = new Map((table?.symbols || []).map(symbol => [symbol.name, symbol]));
+    const path = memberPath(before);
+    const [entries, key] = path ? [docs.members, `${documentedPath(path, visible)}.${word}`] : [docs.functions, word];
+    if (!Object.hasOwn(entries, key)) return null;
+    return { key, declaration: declaration(key, entries[key]), doc: docText(entries[key].doc) };
+}
+
+// The builtins as a read-only declaration file: its `text`, and the 1-based line of each key.
+function arkadeDeclarations() {
+    const lines = ['// Arkade builtin functions and members, generated from builtins.json.'];
+    const at = {};
+    for (const entries of [docs.functions, docs.members]) {
+        for (const [key, entry] of Object.entries(entries)) {
+            lines.push('', `// ${docText(entry.doc)}`);
+            at[key] = lines.length + 1;
+            lines.push(`${declaration(key, entry)};`);
+        }
+    }
+    return { text: lines.join('\n'), lines: at };
+}
+
 // Export all parts
 window.arkadeMonarch = arkadeMonarch;
 window.arkadeLanguageConfig = arkadeLanguageConfig;
 window.arkadeTheme = arkadeTheme;
 window.arkadeComplete = arkadeComplete;
+window.arkadeUseDocs = arkadeUseDocs;
+window.arkadeDescribe = arkadeDescribe;
+window.arkadeDeclarations = arkadeDeclarations;

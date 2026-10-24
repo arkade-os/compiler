@@ -241,6 +241,13 @@ mod tests {
     use super::*;
     use crate::types::ArkType;
 
+    fn known(ty: &str) -> bool {
+        match ArkType::parse(ty) {
+            ArkType::Struct(name) => crate::models::builtin_struct_fields(&name).is_some(),
+            parsed => parsed != ArkType::Unknown,
+        }
+    }
+
     #[test]
     fn every_builtin_is_unique_with_known_types() {
         for (index, builtin) in BUILTINS.iter().enumerate() {
@@ -252,15 +259,124 @@ mod tests {
             let types = builtin.params.iter().map(|(_, ty)| *ty);
             for ty in types.chain(builtin.result) {
                 let element = ty.strip_suffix("[]").unwrap_or(ty);
-                let known = match ArkType::parse(element) {
-                    ArkType::Struct(name) => crate::models::builtin_struct_fields(&name).is_some(),
-                    parsed => parsed != ArkType::Unknown,
-                };
-                assert!(known, "{}: unknown type '{ty}'", builtin.name);
+                assert!(known(element), "{}: unknown type '{ty}'", builtin.name);
             }
             if let Lowering::Opcodes(opcodes) = builtin.lowering {
                 assert!(!opcodes.is_empty(), "{} emits nothing", builtin.name);
             }
         }
+    }
+
+    #[test]
+    fn the_playground_documents_every_builtin_and_property() {
+        use crate::properties::*;
+        let docs: serde_json::Value =
+            serde_json::from_str(include_str!("../playground/builtins.json")).unwrap();
+        let functions = docs["functions"].as_object().unwrap();
+        for builtin in BUILTINS {
+            let entry = &functions[builtin.name];
+            let params: Vec<(&str, &str)> = entry["params"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|param| {
+                    let (ty, name) = param.as_str().unwrap().split_once(' ').unwrap();
+                    (name.trim_end_matches('?'), ty)
+                })
+                .collect();
+            assert_eq!(params, builtin.params, "{}", builtin.name);
+            assert_eq!(entry["result"].as_str(), builtin.result, "{}", builtin.name);
+            assert!(entry["doc"]["en"].is_string(), "{}", builtin.name);
+        }
+        // Calls the grammar spells itself rather than through BUILTINS.
+        let syntax = ["tweak", "older", "after", "blocks", "seconds"];
+        for name in functions.keys() {
+            assert!(
+                find(name).is_some() || syntax.contains(&name.as_str()),
+                "'{name}' is not a builtin"
+            );
+        }
+
+        fn check<P: Copy>(
+            docs: &serde_json::Value,
+            path: &str,
+            all: &[P],
+            describe: fn(P) -> (&'static str, &'static str),
+        ) {
+            for &property in all {
+                let (name, ty) = describe(property);
+                let key = format!("{path}.{name}");
+                assert_eq!(docs["members"][&key]["type"].as_str(), Some(ty), "{key}");
+            }
+        }
+        check(&docs, "tx", TxProperty::ALL, |p| (p.name(), p.value_type()));
+        check(&docs, "tx.inputs[]", InputProperty::ALL, |p| {
+            (p.name(), p.value_type())
+        });
+        check(&docs, "tx.outputs[]", OutputProperty::ALL, |p| {
+            (p.name(), p.value_type())
+        });
+        check(&docs, "this", ThisProperty::ALL, |p| {
+            (p.name(), p.value_type())
+        });
+        check(&docs, "tx.assetGroups[]", GroupProperty::ALL, |p| {
+            (p.name(), p.value_type())
+        });
+        check(
+            &docs,
+            "tx.assetGroups[].inputs[]",
+            GroupIoProperty::ALL,
+            |p| (p.name(), p.value_type()),
+        );
+        let outputs: Vec<_> = GroupIoProperty::ALL
+            .iter()
+            .copied()
+            .filter(|p| *p != GroupIoProperty::Txid)
+            .collect();
+        check(&docs, "tx.assetGroups[].outputs[]", &outputs, |p| {
+            (p.name(), p.value_type())
+        });
+        check(&docs, "tx.inputs[].assets[]", AssetProperty::ALL, |p| {
+            (p.name(), p.value_type())
+        });
+    }
+
+    /// Members the grammar spells rule by rule have no table to compare with, so each
+    /// documented one is compiled as declared: called with its parameters, returning its type.
+    #[test]
+    fn every_documented_member_compiles_as_declared() {
+        let docs: serde_json::Value =
+            serde_json::from_str(include_str!("../playground/builtins.json")).unwrap();
+        let mut failures = Vec::new();
+        for (key, entry) in docs["members"].as_object().unwrap() {
+            let Some(result) = entry["result"].as_str().or(entry["type"].as_str()) else {
+                continue;
+            };
+            if !known(result) {
+                continue;
+            }
+            let params: Vec<&str> = entry["params"].as_array().map_or(vec![], |params| {
+                let params = params.iter().map(|param| param.as_str().unwrap());
+                params.filter(|param| !param.ends_with('?')).collect()
+            });
+            let names: Vec<&str> = params
+                .iter()
+                .map(|p| p.split_once(' ').unwrap().1)
+                .collect();
+            let call = if entry["params"].is_array() {
+                format!("({})", names.join(", "))
+            } else {
+                String::new()
+            };
+            let expression = format!("{}{call}", key.replace("[]", "[0]"));
+            let source = format!(
+                "contract Probe(pubkey owner) {{\n  private function probe({}) {result} {{ return {expression}; }}\n  function spend(signature sig) {{ require(checkSig(sig, owner)); }}\n}}",
+                params.join(", ")
+            );
+            if let Err(error) = crate::compile(&source) {
+                failures.push(format!("{key}: {error}\n{source}"));
+            }
+        }
+        assert!(failures.is_empty(), "{}", failures.join("\n\n"));
     }
 }
