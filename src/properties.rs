@@ -50,7 +50,6 @@ properties!(
     /// `tx.inputs[i].<property>`
     InputProperty {
         Value => ("value", "int"),
-        ScriptPubKey => ("scriptPubKey", "bytes"),
         WitnessVersion => ("witnessVersion", "int"),
         Sequence => ("sequence", "int"),
         Outpoint => ("outpoint", "Outpoint"),
@@ -64,14 +63,13 @@ properties!(
     /// `tx.outputs[o].<property>`
     OutputProperty {
         Value => ("value", "int"),
-        ScriptPubKey => ("scriptPubKey", "bytes"),
         WitnessVersion => ("witnessVersion", "int"),
         Script => ("script", "ScriptPubKey"),
     }
 );
 
 properties!(
-    /// `this.<property>`; `this.activeBytecode` is the current input's scriptPubKey.
+    /// `this.<property>`; `this.activeBytecode` is the current input's script struct.
     ThisProperty {
         ActiveInputIndex => ("activeInputIndex", "int"),
         Expiry => ("expiry", "int"),

@@ -235,6 +235,8 @@ func flattenInput(name, typeName string, structs []structDefinition) []string {
 	switch typeName {
 	case "AssetId":
 		return []string{name + ".txid", name + ".gidx"}
+	case "ScriptPubKey":
+		return []string{name + ".program", name + ".version"}
 	case "Outpoint":
 		return []string{name + ".txid", name + ".vout"}
 	case "ECPoint":

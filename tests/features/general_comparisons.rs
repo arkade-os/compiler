@@ -259,7 +259,7 @@ fn constructor_and_introspection_results_use_general_comparisons() {
     let source = r#"
 import "single_sig.ark";
 
-contract Compare(pubkey owner, bytes expectedScript, bytes32 expectedTxid) {
+contract Compare(pubkey owner, ScriptPubKey expectedScript, bytes32 expectedTxid) {
     function compare() {
         require(expectedScript == new SingleSig(owner));
         require(expectedTxid == tx.id);
@@ -284,9 +284,9 @@ contract Compare(pubkey owner, bytes expectedScript, bytes32 expectedTxid) {
 
     assert!(
         asm.windows(3).any(|window| {
-            window[0] == "<expectedScript>"
-                && window[1].contains("CONTRACT:SingleSig(")
-                && window[2] == OP_EQUAL
+            window[0] == "<expectedScript.version>"
+                && window[1] == "<expectedScript.program>"
+                && window[2].contains("CONTRACT:SingleSig(")
         }),
         "constructor comparison must preserve the reversed operand order: {asm:?}"
     );

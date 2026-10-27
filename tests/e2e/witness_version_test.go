@@ -5,25 +5,23 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-
-	"github.com/btcsuite/btcd/wire"
 )
 
 func TestWitnessVersion(t *testing.T) {
 	source := filepath.Join(t.TempDir(), "witness_version.ark")
 	err := os.WriteFile(source, []byte(`
 contract WitnessVersion() {
-    function spend(int version) {
+    function spend(int version, bytes inputProgram, bytes outputProgram) {
         require(tx.input.current.witnessVersion == 1);
         require(tx.inputs[0].witnessVersion == 1);
         require(tx.inputs[1].witnessVersion == 0);
         require(tx.outputs[0].witnessVersion == version);
         let input = tx.inputs[1].script;
         require(input.version == 0);
-        require(input.program == tx.inputs[1].scriptPubKey);
+        require(input.program == inputProgram);
         let output = tx.outputs[0].script;
         require(output.version == version);
-        require(output.program == tx.outputs[0].scriptPubKey);
+        require(output.program == outputProgram);
     }
 }`), 0600)
 	if err != nil {
@@ -45,7 +43,9 @@ contract WitnessVersion() {
 		{"wrong version", group.pkScript, 0, "OP_EQUALVERIFY failed"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			spend := spendingPSBTWithWitness(t, deployment, group, 10_000, tc.pkScript, wire.TxWitness{scriptInt(t, tc.version)})
+			spend := spendingPSBTWithWitness(t, deployment, group, 10_000, tc.pkScript, covenantWitness(t, contract, covenantGroup(t, contract, "spend"), map[string][]byte{
+				"version": scriptInt(t, tc.version), "inputProgram": p2wpkh[2:], "outputProgram": tc.pkScript[2:],
+			}))
 			spend = withExtraInput(t, spend, fundingTx(p2wpkh, 10_000))
 			requireVMResult(t, spend, emulatorKey.PubKey(), tc.wantErr)
 		})

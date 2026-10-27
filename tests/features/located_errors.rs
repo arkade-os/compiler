@@ -62,7 +62,7 @@ fn errors_outside_the_validator_are_located() {
             "unknown type 'Missing'",
         ),
         (
-            "contract C() { function f() { require(tx.outputs[0].scriptPubKey == new Other()); } }",
+            "contract C() { function f() { require(tx.outputs[0].script == new Other()); } }",
             &[],
             "new Other()",
             "unknown contract 'Other'",

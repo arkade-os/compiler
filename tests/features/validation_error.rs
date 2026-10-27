@@ -486,7 +486,7 @@ fn introspection_diagnostics_name_normalized_operands() {
     for (expression, expected) in [
         (
             "tx.assetGroups.has(id, this.activeBytecode)",
-            "gidx operand 'tx.inputs[this.activeInputIndex].scriptPubKey' must be int",
+            "gidx operand 'tx.inputs[this.activeInputIndex].script' must be int",
         ),
         (
             "checkMultisig([values[0]], [values[this.activeInputIndex]])",

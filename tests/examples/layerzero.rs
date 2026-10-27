@@ -1,10 +1,11 @@
 use arkade_compiler::compile_sources;
 use arkade_compiler::models::ContractJson;
 use arkade_compiler::opcodes::{
-    OP_CHECKSIG, OP_CHECKSIGFROMSTACK, OP_DROP, OP_FINDASSETGROUPBYASSETID,
+    OP_CHECKSIG, OP_CHECKSIGFROMSTACK, OP_EQUALVERIFY, OP_FINDASSETGROUPBYASSETID,
     OP_INSPECTASSETGROUPSUM, OP_INSPECTINASSETLOOKUP, OP_INSPECTINPUTARKADESCRIPTHASH,
     OP_INSPECTINPUTPACKET, OP_INSPECTINPUTSCRIPTPUBKEY, OP_INSPECTOUTASSETLOOKUP,
-    OP_INSPECTOUTPUTSCRIPTPUBKEY, OP_INSPECTPACKET, OP_PUSHCURRENTINPUTINDEX, OP_SHA256, OP_SUBSTR,
+    OP_INSPECTOUTPUTSCRIPTPUBKEY, OP_INSPECTPACKET, OP_PUSHCURRENTINPUTINDEX, OP_ROT, OP_SHA256,
+    OP_SUBSTR, OP_SWAP,
 };
 
 /// Return the emulator covenant ASM for a spend group (the function body).
@@ -22,18 +23,19 @@ fn covenant<'a>(output: &'a ContractJson, name: &str) -> &'a [String] {
         .asm
 }
 
-/// Assert the recursive-covenant continuation pattern: output[k].scriptPubKey
-/// is pinned to the spent input's own pkScript (mirrors the Go reference's
-/// state-continuation check in BuildEndpointReceiveScript /
-/// BuildOAppReceiveScript). Each inspection is followed by OP_DROP, which
-/// discards the witness version the opcode pushes above the program.
+/// Continuation compares both the output program and version with the current input.
 fn has_self_continuation(asm: &[String]) -> bool {
-    asm.windows(5).any(|w| {
-        w[0] == OP_INSPECTOUTPUTSCRIPTPUBKEY
-            && w[1] == OP_DROP
-            && w[2] == OP_PUSHCURRENTINPUTINDEX
-            && w[3] == OP_INSPECTINPUTSCRIPTPUBKEY
-            && w[4] == OP_DROP
+    asm.windows(8).any(|w| {
+        w == [
+            OP_INSPECTOUTPUTSCRIPTPUBKEY,
+            OP_SWAP,
+            OP_PUSHCURRENTINPUTINDEX,
+            OP_INSPECTINPUTSCRIPTPUBKEY,
+            OP_SWAP,
+            OP_ROT,
+            OP_EQUALVERIFY,
+            OP_EQUALVERIFY,
+        ]
     })
 }
 

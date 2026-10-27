@@ -35,10 +35,10 @@ fn test_input_value() {
 #[test]
 fn test_input_script_pubkey() {
     let code = r#"
-        contract InputScriptChecker(pubkey owner, bytes32 expectedScript) {
+        contract InputScriptChecker(pubkey owner, ScriptPubKey expectedScript) {
             function checkInputScript(signature ownerSig) {
                 require(checkSig(ownerSig, owner));
-                require(tx.inputs[0].scriptPubKey == expectedScript);
+                require(tx.inputs[0].script == expectedScript);
             }
         }
     "#;
@@ -46,7 +46,7 @@ fn test_input_script_pubkey() {
     let result = compile(code);
     assert!(
         result.is_ok(),
-        "Failed to parse tx.inputs[0].scriptPubKey: {:?}",
+        "Failed to parse tx.inputs[0].script: {:?}",
         result.err()
     );
 
@@ -164,10 +164,10 @@ fn test_output_value() {
 #[test]
 fn test_output_script_pubkey() {
     let code = r#"
-        contract OutputScriptChecker(pubkey owner, bytes32 expectedScript) {
+        contract OutputScriptChecker(pubkey owner, ScriptPubKey expectedScript) {
             function checkOutputScript(signature ownerSig) {
                 require(checkSig(ownerSig, owner));
-                require(tx.outputs[0].scriptPubKey == expectedScript);
+                require(tx.outputs[0].script == expectedScript);
             }
         }
     "#;
@@ -175,7 +175,7 @@ fn test_output_script_pubkey() {
     let result = compile(code);
     assert!(
         result.is_ok(),
-        "Failed to parse tx.outputs[0].scriptPubKey: {:?}",
+        "Failed to parse tx.outputs[0].script: {:?}",
         result.err()
     );
 
