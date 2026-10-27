@@ -57,7 +57,7 @@ const method = (label, args, detail) => S(label, 'Method', `${label}(${args})`, 
 const assetIdArgs = '${1:assetTxid}, ${2:assetGidx}';
 const inputProps = [
     prop('value', 'Input value (sats)'),
-    prop('scriptPubKey', 'Input scriptPubKey'),
+    prop('script', 'Input program and witness version'),
     prop('witnessVersion', 'Input witness version'),
     prop('sequence', 'Input nSequence'),
     prop('outpoint', 'Input outpoint'),
@@ -97,7 +97,7 @@ const arkadeCompletions = [
     S('false', 'Keyword', 'false'),
 
     // Types
-    ...['pubkey', 'signature', 'bytes', 'bytes20', 'bytes32', 'int', 'bool', 'asset', 'AssetGroup'].map(t => S(t, 'TypeParameter', t)),
+    ...['pubkey', 'signature', 'bytes', 'bytes20', 'bytes32', 'int', 'bool', 'asset', 'AssetGroup', 'ScriptPubKey'].map(t => S(t, 'TypeParameter', t)),
 
     // Implicit bindings
     S('tx', 'Variable', 'tx', 'Spending transaction'),
@@ -191,7 +191,7 @@ const arkadeMembers = {
     'tx.input': [prop('current', 'Input being spent')],
     'tx.input.current': inputProps,
     'tx.inputs[]': [...inputProps, prop('assets', 'Input assets'), method('packet', '${1:packetType}', 'Extension packet of the Arkade transaction that created this input')],
-    'tx.outputs[]': [prop('value', 'Output value (sats)'), prop('scriptPubKey', 'Output scriptPubKey'), prop('witnessVersion', 'Output witness version'), prop('assets', 'Output assets')],
+    'tx.outputs[]': [prop('value', 'Output value (sats)'), prop('script', 'Output program and witness version'), prop('witnessVersion', 'Output witness version'), prop('assets', 'Output assets')],
     'tx.inputs[].assets': [prop('length', 'Number of assets'), method('lookup', assetIdArgs, 'Amount of an asset'), method('has', assetIdArgs, 'Whether an asset is present')],
     'tx.inputs[].assets[]': [prop('assetId', 'Asset id'), prop('amount', 'Asset amount')],
     'tx.assetGroups': [method('find', assetIdArgs, 'Asset group by id'), method('has', assetIdArgs, 'Whether an asset group exists'), prop('length', 'Number of asset groups')],
@@ -203,7 +203,7 @@ const arkadeMembers = {
     'tx.inputs[].packet': [method('has', '${1:packetType}', 'Whether the Arkade transaction that created this input carries the packet')],
     'this': [
         prop('activeInputIndex', 'Index of the input being spent'),
-        prop('activeBytecode', 'Script being executed'),
+        prop('activeBytecode', 'Current input program and witness version'),
         prop('expiry', 'Contract expiry'),
         method('tunnel', '${1:outputIndex}', 'Carry the contract into an output'),
     ],

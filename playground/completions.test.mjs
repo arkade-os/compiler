@@ -45,9 +45,9 @@ assert(labels('').includes('checkSig'));
 
 assert(labels('tx.').includes('inputs'));
 assert(labels('require(tx . ').includes('assetGroups'));
-assert.deepEqual(labels('tx.outputs[0].'), ['value', 'scriptPubKey', 'witnessVersion', 'assets']);
+assert.deepEqual(labels('tx.outputs[0].'), ['value', 'script', 'witnessVersion', 'assets']);
 assert(labels('tx.inputs[this.activeInputIndex].').includes('arkadeScriptHash'));
-assert.deepEqual(labels('tx.outputs[idx[0]].'), ['value', 'scriptPubKey', 'witnessVersion', 'assets']);
+assert.deepEqual(labels('tx.outputs[idx[0]].'), ['value', 'script', 'witnessVersion', 'assets']);
 assert(!top.includes('older'));
 assert(labels('tx.inputs[i].assets.').includes('lookup'));
 assert.deepEqual(labels('tx.outputs[o].assets[0].'), ['assetId', 'amount']);
@@ -71,3 +71,9 @@ assert.deepEqual(labels('Shadowed.', table), ['x', 'y']);
 assert.deepEqual(labels('Fees.', table), ['DELAY', 'calculate']);
 assert.deepEqual(labels('unknown.', table), []);
 assert(complete('tx.', null).find(item => item.label === 'inputs').snippet);
+
+for (const prefix of ['tx.inputs[0].', 'tx.input.current.', 'tx.outputs[0].']) {
+    assert(labels(prefix).includes('script'));
+    assert(!labels(prefix).includes('scriptPubKey'));
+}
+assert(labels('').includes('ScriptPubKey'));
