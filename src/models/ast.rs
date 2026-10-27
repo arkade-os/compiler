@@ -544,13 +544,13 @@ pub enum ExprKind {
     TxIntrospection {
         property: crate::properties::TxProperty,
     },
-    /// Input introspection: tx.inputs[i].value, scriptPubKey, sequence, outpoint;
+    /// Input introspection: tx.inputs[i].value, script, sequence, outpoint;
     /// tx.input.current.* indexes it with this.activeInputIndex
     InputIntrospection {
         index: Box<Expression>,
         property: crate::properties::InputProperty,
     },
-    /// Output introspection: tx.outputs[o].value, scriptPubKey
+    /// Output introspection: tx.outputs[o].value, script
     OutputIntrospection {
         index: Box<Expression>,
         property: crate::properties::OutputProperty,
@@ -607,10 +607,10 @@ pub enum ExprKind {
     },
     /// Contract instantiation: new ContractName(arg1, arg2, ...)
     ///
-    /// Resolves to the Taproot scriptPubKey of the named contract instantiated
+    /// Resolves to the Taproot program and witness version 1 of the named contract instantiated
     /// with the given arguments. Options (server key, exit timelock) are
     /// inherited from the enclosing contract. Used for recursion enforcement
-    /// via output introspection: `tx.outputs[0].scriptPubKey == new Foo(x)`
+    /// via output introspection: `tx.outputs[0].script == new Foo(x)`
     ContractInstance {
         /// Name of the contract to instantiate
         contract_name: String,
@@ -652,6 +652,7 @@ pub fn expression_result_struct(expression: &Expression) -> Option<&'static str>
             Some(property.map_or("AssetEntry", |p| p.value_type()))
         }
         ExprKind::AssetTryLookup { .. } => Some("AssetLookup"),
+        ExprKind::ContractInstance { .. } => Some("ScriptPubKey"),
         ExprKind::GroupProperty { property, .. } => Some(property.value_type()),
         ExprKind::InputIntrospection { property, .. } => Some(property.value_type()),
         ExprKind::OutputIntrospection { property, .. } => Some(property.value_type()),

@@ -14,9 +14,9 @@ pragma arkade ^0.1.0;
 //   substr / cat / bin2num         — fixed-width field extraction
 //   sha256(substr(...))            — DVN attestation hash binding
 //   checkSigFromStack              — DVN Schnorr verification
-//   tx.outputs[0].scriptPubKey ==  — recursive covenant (state continuation)
-//     tx.input.current.scriptPubKey
-//   tx.outputs[1].scriptPubKey ==  — canonical pkScript pinning
+//   tx.outputs[0].script ==  — recursive covenant (state continuation)
+//     tx.input.current.script
+//   tx.outputs[1].script ==  — canonical pkScript pinning
 //     new ReceiveMarker(...)        for marker outputs
 //
 // Packet type ids (16 = EndpointState 0x10, 17 = LzReceive 0x11,
@@ -189,7 +189,7 @@ contract Endpoint(
     // OP_INSPECTOUTPUTSCRIPTPUBKEY == OP_PUSHCURRENTINPUTINDEX
     // OP_INSPECTINPUTSCRIPTPUBKEY (BuildEndpointReceiveScript).
     require(
-      tx.outputs[0].scriptPubKey == tx.input.current.scriptPubKey,
+      tx.outputs[0].script == tx.input.current.script,
       "endpoint state must continue"
     );
     require(
@@ -206,7 +206,7 @@ contract Endpoint(
       "marker asset missing"
     );
     require(
-      tx.outputs[1].scriptPubKey == new ReceiveMarker(
+      tx.outputs[1].script == new ReceiveMarker(
         receiveMarkerScriptHash, oappCtrlAssetIdTxid, oappCtrlAssetIdGidx
       ),
       "marker pkScript not canonical"
@@ -289,7 +289,7 @@ contract Endpoint(
     // Endpoint state continues: recursive covenant via the spent input's
     // own pkScript (see receive() for rationale).
     require(
-      tx.outputs[0].scriptPubKey == tx.input.current.scriptPubKey,
+      tx.outputs[0].script == tx.input.current.script,
       "endpoint state must continue"
     );
     require(

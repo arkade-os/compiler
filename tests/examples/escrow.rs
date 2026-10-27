@@ -78,7 +78,12 @@ fn test_payouts_are_pinned_to_committed_destinations() {
         complete.contains(&single_input),
         "complete must require exactly one input: {complete}"
     );
-    for destination in ["<partyBScript>", "<partyAScript>"] {
+    for destination in [
+        "<partyBScript.program>",
+        "<partyBScript.version>",
+        "<partyAScript.program>",
+        "<partyAScript.version>",
+    ] {
         assert!(
             complete.contains(destination),
             "complete must pin a payout to {destination}: {complete}"
@@ -103,7 +108,9 @@ fn test_payouts_are_pinned_to_committed_destinations() {
         "arkd rebuilds this spend with nLockTime 0, so tx.locktime cannot gate cancel: {cancel}"
     );
     assert!(
-        cancel.contains("<partyAScript>") && !cancel.contains("<partyBScript>"),
+        cancel.contains("<partyAScript.program>")
+            && cancel.contains("<partyAScript.version>")
+            && !cancel.contains("<partyBScript.program>"),
         "a timeout refund may only reach party A: {cancel}"
     );
 }

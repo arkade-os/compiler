@@ -23,7 +23,7 @@ contract ThresholdOracle(
   function attest(
     int amount,
     bytes32 messageHash,
-    bytes recipientScriptPubKey,
+    ScriptPubKey recipientScriptPubKey,
     signature[3] oracleSigs
   ) {
     require(amount > 0, "zero");
@@ -38,7 +38,7 @@ contract ThresholdOracle(
 
     require(tx.inputs[0].assets.lookup(ctrlAssetIdTxid, ctrlAssetIdGidx) > 0, "no ctrl");
     require(tx.outputs[1].assets.lookup(tokenAssetIdTxid, tokenAssetIdGidx) >= amount, "short");
-    require(tx.outputs[1].scriptPubKey == recipientScriptPubKey, "wrong dest");
-    require(tx.outputs[0].scriptPubKey == new ThresholdOracle(tokenAssetIdTxid, tokenAssetIdGidx, ctrlAssetIdTxid, ctrlAssetIdGidx, oracles, threshold), "broken");
+    require(tx.outputs[1].script == recipientScriptPubKey, "wrong dest");
+    require(tx.outputs[0].script == new ThresholdOracle(tokenAssetIdTxid, tokenAssetIdGidx, ctrlAssetIdTxid, ctrlAssetIdGidx, oracles, threshold), "broken");
   }
 }

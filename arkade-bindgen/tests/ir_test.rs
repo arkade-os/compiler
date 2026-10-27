@@ -274,3 +274,55 @@ contract C(State state) {
         ["points.0.x", "points.0.y", "points.1.x", "points.1.y"]
     );
 }
+
+#[test]
+fn test_versioned_script_bindings() {
+    let artifact = arkade_compiler::compile(
+        r#"
+contract C(ScriptPubKey destination) {
+    function spend(ScriptPubKey expected) {
+        require(tx.outputs[0].script == destination);
+        require(tx.outputs[1].script == expected);
+    }
+}
+"#,
+    )
+    .unwrap();
+    let json = serde_json::to_string(&artifact).unwrap();
+    let ir = build_ir(&load_artifact_str(&json).unwrap()).unwrap();
+    for (fields, prefix) in [
+        (&ir.constructor_fields, "destination"),
+        (&ir.groups[0].covenant.as_ref().unwrap().inputs, "expected"),
+    ] {
+        assert_eq!(
+            fields
+                .iter()
+                .map(|field| (field.name.clone(), &field.encoding))
+                .collect::<Vec<_>>(),
+            [
+                (format!("{prefix}.program"), &Encoding::Raw),
+                (format!("{prefix}.version"), &Encoding::ScriptNum),
+            ]
+        );
+    }
+    for (target, declarations) in [
+        (
+            arkade_bindgen::Target::TypeScript,
+            [
+                "\"destination.program\": Bytes;",
+                "\"destination.version\": bigint;",
+            ],
+        ),
+        (
+            arkade_bindgen::Target::Go,
+            ["Destination_Dprogram []byte", "Destination_Dversion int64"],
+        ),
+    ] {
+        let code = arkade_bindgen::generate_from_str(&json, target, &Default::default())
+            .unwrap()
+            .content;
+        for declaration in declarations {
+            assert!(code.contains(declaration), "{declaration}");
+        }
+    }
+}

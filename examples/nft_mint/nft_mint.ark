@@ -15,7 +15,7 @@ contract NFTMint(
     pubkey issuerPk
 ) {
     // Mint a new NFT: must be fresh with delta=1
-    function mint(bytes32 nftAssetIdTxid, int nftAssetIdGidx, bytes recipientScriptPubKey, signature issuerSig) {
+    function mint(bytes32 nftAssetIdTxid, int nftAssetIdGidx, ScriptPubKey recipientScriptPubKey, signature issuerSig) {
         let nftGroup = tx.assetGroups.find(nftAssetIdTxid, nftAssetIdGidx);
 
         // Must be a brand new asset (genesis in this tx)
@@ -33,13 +33,13 @@ contract NFTMint(
 
         // NFT goes to recipient
         require(tx.outputs[0].assets.lookup(nftAssetIdTxid, nftAssetIdGidx) == 1, "NFT not in output");
-        require(tx.outputs[0].scriptPubKey == recipientScriptPubKey, "wrong recipient");
+        require(tx.outputs[0].script == recipientScriptPubKey, "wrong recipient");
 
         require(checkSig(issuerSig, issuerPk), "bad issuer sig");
     }
 
     // Transfer existing NFT (not fresh)
-    function transfer(bytes32 nftAssetIdTxid, int nftAssetIdGidx, bytes newOwnerScriptPubKey, signature ownerSig, pubkey ownerPk) {
+    function transfer(bytes32 nftAssetIdTxid, int nftAssetIdGidx, ScriptPubKey newOwnerScriptPubKey, signature ownerSig, pubkey ownerPk) {
         let nftGroup = tx.assetGroups.find(nftAssetIdTxid, nftAssetIdGidx);
 
         // Must NOT be fresh (existing asset)
@@ -53,7 +53,7 @@ contract NFTMint(
 
         // NFT goes to new owner
         require(tx.outputs[0].assets.lookup(nftAssetIdTxid, nftAssetIdGidx) == 1, "NFT not in output");
-        require(tx.outputs[0].scriptPubKey == newOwnerScriptPubKey, "wrong dest");
+        require(tx.outputs[0].script == newOwnerScriptPubKey, "wrong dest");
 
         require(checkSig(ownerSig, ownerPk), "bad owner sig");
     }

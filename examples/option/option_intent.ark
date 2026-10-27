@@ -19,9 +19,9 @@ pragma arkade ^0.1.0;
 
 contract OptionIntent(
   pubkey userPk,
-  bytes32 userScript,
-  bytes32 solverScript,
-  bytes32 optionScript,
+  ScriptPubKey userScript,
+  ScriptPubKey solverScript,
+  ScriptPubKey optionScript,
   int side,
   int collateral,
   int premium,
@@ -33,26 +33,26 @@ contract OptionIntent(
     require(!checkTime(deadline), "expired");
     require(this.activeInputIndex == 0, "intent input");
     require(tx.numInputs == 2, "funding input");
-    require(tx.inputs[1].scriptPubKey != tx.input.current.scriptPubKey, "one intent");
+    require(tx.inputs[1].script != tx.input.current.script, "one intent");
     int locked = tx.input.current.value;
     if (side == 0) {
       require(locked >= collateral, "short collateral");
       int change = locked - collateral;
       require(tx.outputs[0].value >= premium + change, "premium");
-      require(tx.outputs[0].scriptPubKey == userScript, "user");
+      require(tx.outputs[0].script == userScript, "user");
       require(tx.outputs[1].value >= collateral, "option size");
-      require(tx.outputs[1].scriptPubKey == optionScript, "option");
+      require(tx.outputs[1].script == optionScript, "option");
     }
     if (side == 1) {
       require(locked >= premium, "short premium");
       require(tx.outputs[0].value >= premium, "premium");
-      require(tx.outputs[0].scriptPubKey == solverScript, "solver");
+      require(tx.outputs[0].script == solverScript, "solver");
       require(tx.outputs[1].value >= collateral, "option size");
-      require(tx.outputs[1].scriptPubKey == optionScript, "option");
+      require(tx.outputs[1].script == optionScript, "option");
       int change = locked - premium;
       if (change > DUST) {
         require(tx.outputs[2].value >= change, "change");
-        require(tx.outputs[2].scriptPubKey == userScript, "change");
+        require(tx.outputs[2].script == userScript, "change");
       }
     }
   }
@@ -61,7 +61,7 @@ contract OptionIntent(
     require(tx.numInputs == 1, "one input");
     require(checkTime(deadline), "open");
     require(tx.outputs[0].value >= tx.input.current.value, "refund");
-    require(tx.outputs[0].scriptPubKey == userScript, "user");
+    require(tx.outputs[0].script == userScript, "user");
   }
 
   function unilateral(signature userSig) tapscript {

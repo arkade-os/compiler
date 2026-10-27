@@ -164,7 +164,7 @@ impl Walk {
         let (whole, fields, operands) = match &expression.kind {
             ExprKind::InputIntrospection {
                 index,
-                property: InputProperty::ScriptPubKey | InputProperty::WitnessVersion,
+                property: InputProperty::Script | InputProperty::WitnessVersion,
             } => {
                 let whole = if matches!(index.kind, ExprKind::This(ThisProperty::ActiveInputIndex))
                 {
@@ -176,7 +176,7 @@ impl Walk {
             }
             ExprKind::OutputIntrospection {
                 index,
-                property: OutputProperty::ScriptPubKey | OutputProperty::WitnessVersion,
+                property: OutputProperty::Script | OutputProperty::WitnessVersion,
             } => (
                 format!("tx.outputs[{}].script", index.source_text()),
                 "`x.program` and `x.version`",

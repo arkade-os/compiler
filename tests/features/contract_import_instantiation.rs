@@ -83,7 +83,7 @@ import "single_sig.ark";
 
 contract RecursiveVtxo(pubkey ownerPk, int exit) {
   function send() {
-    require(tx.outputs[0].scriptPubKey == new SingleSig(ownerPk, exit));
+    require(tx.outputs[0].script == new SingleSig(ownerPk, exit));
   }
 }
 "#;
@@ -100,7 +100,7 @@ import "single_sig.ark";
 
 contract RecursiveVtxo(pubkey ownerPk, int exit) {
   function send() {
-    require(tx.outputs[0].scriptPubKey == new SingleSig(ownerPk, exit));
+    require(tx.outputs[0].script == new SingleSig(ownerPk, exit));
   }
 }
 "#;
@@ -135,7 +135,7 @@ import "htlc.ark";
 
 contract HtlcForwarder(pubkey sender, pubkey receiver, bytes hash, int refundTime, int exit) {
   function forward(signature senderSig) {
-    require(tx.outputs[0].scriptPubKey == new HTLC(sender, receiver, hash, refundTime, exit));
+    require(tx.outputs[0].script == new HTLC(sender, receiver, hash, refundTime, exit));
     require(checkSig(senderSig, sender));
   }
 }
@@ -178,7 +178,7 @@ import "single_sig.ark";
 
 contract RecursiveVtxo(pubkey ownerPk, int exit) {
   function send() {
-    require(tx.outputs[0].scriptPubKey == new SingleSig(ownerPk, exit));
+    require(tx.outputs[0].script == new SingleSig(ownerPk, exit));
   }
 }
 "#;
@@ -205,17 +205,12 @@ contract RecursiveVtxo(pubkey ownerPk, int exit) {
 
 #[test]
 fn test_cooperative_path_asm_order() {
-    // Verify exact covenant ASM (arkade) for 'send'. The OP_DROP discards the
-    // witness version that OP_INSPECTOUTPUTSCRIPTPUBKEY pushes above the program:
-    //   0 OP_INSPECTOUTPUTSCRIPTPUBKEY OP_DROP <CONTRACT:SingleSig(<ownerPk>,<exit>)> OP_EQUAL
-    // And verify exact default-leaf ASM:
-    //   <SERVER_KEY> OP_CHECKSIGVERIFY <EMULATOR_KEY:send> OP_CHECKSIG
     let code = r#"
 import "single_sig.ark";
 
 contract RecursiveVtxo(pubkey ownerPk, int exit) {
   function send() {
-    require(tx.outputs[0].scriptPubKey == new SingleSig(ownerPk, exit));
+    require(tx.outputs[0].script == new SingleSig(ownerPk, exit));
   }
 }
 "#;
@@ -226,10 +221,14 @@ contract RecursiveVtxo(pubkey ownerPk, int exit) {
     let expected_arkade: Vec<&str> = vec![
         "0",
         "OP_INSPECTOUTPUTSCRIPTPUBKEY",
-        "OP_DROP",
+        "OP_SWAP",
         "<CONTRACT:SingleSig(<ownerPk>,<exit>)>",
-        "OP_EQUAL",
-        "OP_VERIFY",
+        "OP_1",
+        "OP_SWAP",
+        "OP_2",
+        "OP_ROLL",
+        "OP_EQUALVERIFY",
+        "OP_EQUALVERIFY",
         "OP_1",
     ];
     assert_eq!(
@@ -260,7 +259,7 @@ import "single_sig.ark";
 
 contract RecursiveVtxo(pubkey ownerPk, int exit) {
   function send() {
-    require(tx.outputs[0].scriptPubKey == new SingleSig(ownerPk, exit));
+    require(tx.outputs[0].script == new SingleSig(ownerPk, exit));
   }
 }
 "#;
@@ -293,7 +292,7 @@ import "single_sig.ark";
 
 contract RecursiveVtxo(pubkey ownerPk, int exit) {
   function send() {
-    require(tx.outputs[0].scriptPubKey == new SingleSig(ownerPk, exit));
+    require(tx.outputs[0].script == new SingleSig(ownerPk, exit));
   }
 }
 "#;
@@ -321,7 +320,7 @@ import "single_sig.ark";
 
 contract SpendChecker(pubkey ownerPk, int exit) {
   function check(signature ownerSig) {
-    require(tx.inputs[0].scriptPubKey == new SingleSig(ownerPk, exit));
+    require(tx.inputs[0].script == new SingleSig(ownerPk, exit));
     require(checkSig(ownerSig, ownerPk));
   }
 }
@@ -352,7 +351,7 @@ import "random_num.ark";
 
 contract ZeroArgUser(pubkey ownerPk) {
   function spend() {
-    require(tx.outputs[0].scriptPubKey == new RandomNum());
+    require(tx.outputs[0].script == new RandomNum());
   }
 }
 "#;
@@ -378,7 +377,7 @@ import "time_locked.ark";
 
 contract TimedForwarder(pubkey ownerPk) {
   function forward() {
-    require(tx.outputs[0].scriptPubKey == new TimeLocked(ownerPk, 144));
+    require(tx.outputs[0].script == new TimeLocked(ownerPk, 144));
   }
 }
 "#;
@@ -413,7 +412,7 @@ import "single_sig.ark";
 
 contract Forwarder(int exit) {
   function forward(pubkey ownerPk) {
-    require(tx.outputs[0].scriptPubKey == new SingleSig(ownerPk, exit));
+    require(tx.outputs[0].script == new SingleSig(ownerPk, exit));
   }
 }
 "#;
@@ -433,7 +432,7 @@ import "threshold_oracle.ark";
 
 contract Forwarder(pubkey[3] owners) {
   function forward() {
-    require(tx.outputs[0].scriptPubKey == new ThresholdOracle(owners));
+    require(tx.outputs[0].script == new ThresholdOracle(owners));
   }
 }
 "#;
@@ -461,8 +460,8 @@ import "htlc.ark";
 
 contract Splitter(pubkey alicePk, pubkey bobPk, int exit) {
   function split() {
-    require(tx.outputs[0].scriptPubKey == new SingleSig(alicePk, exit));
-    require(tx.outputs[1].scriptPubKey == new SingleSig(bobPk, exit));
+    require(tx.outputs[0].script == new SingleSig(alicePk, exit));
+    require(tx.outputs[1].script == new SingleSig(bobPk, exit));
   }
 }
 "#;
@@ -504,7 +503,7 @@ import "single_sig.ark";
 
 contract ForwardAndSign(pubkey ownerPk, int exit) {
   function send(signature ownerSig) {
-    require(tx.outputs[0].scriptPubKey == new SingleSig(ownerPk, exit));
+    require(tx.outputs[0].script == new SingleSig(ownerPk, exit));
     require(checkSig(ownerSig, ownerPk));
   }
 }
@@ -534,7 +533,7 @@ import "single_sig.ark";
 
 contract ForwardAndSign(pubkey ownerPk, int exit) {
   function send(signature ownerSig) {
-    require(tx.outputs[0].scriptPubKey == new SingleSig(ownerPk, exit));
+    require(tx.outputs[0].script == new SingleSig(ownerPk, exit));
     require(checkSig(ownerSig, ownerPk));
   }
 }
@@ -571,7 +570,7 @@ import "single_sig.ark";
 
 contract TwoFunctions(pubkey ownerPk, int exit) {
   function forward() {
-    require(tx.outputs[0].scriptPubKey == new SingleSig(ownerPk, exit));
+    require(tx.outputs[0].script == new SingleSig(ownerPk, exit));
   }
 
   function spend(signature ownerSig) {
@@ -623,14 +622,14 @@ contract TwoFunctions(pubkey ownerPk, int exit) {
 
 #[test]
 fn test_new_expression_on_current_input_scriptpubkey() {
-    // new ContractName(...) can appear on the RHS of a tx.input.current.scriptPubKey
+    // new ContractName(...) can appear on the RHS of a tx.input.current.script
     // comparison (recursive covenant enforcing the current UTXO's own script).
     let code = r#"
 import "single_sig.ark";
 
 contract SelfEnforcing(pubkey ownerPk, int exit) {
   function renew() {
-    require(tx.input.current.scriptPubKey == new SingleSig(ownerPk, exit));
+    require(tx.input.current.script == new SingleSig(ownerPk, exit));
   }
 }
 "#;
@@ -666,7 +665,7 @@ fn test_self_referential_contract() {
 
 contract SelfRef(pubkey ownerPk) {
   function renew() {
-    require(tx.outputs[0].scriptPubKey == new SelfRef(ownerPk));
+    require(tx.outputs[0].script == new SelfRef(ownerPk));
   }
 }
 "#;
