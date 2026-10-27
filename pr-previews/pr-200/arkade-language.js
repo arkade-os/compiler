@@ -72,6 +72,7 @@ const groupRecords = [
 ];
 const recordProps = [prop('amount', 'Record amount'), prop('type', 'Record type: 1 local, 2 intent'), prop('index', 'vout, vin, or the referenced intent output')];
 const groupMembers = [...groupProps, ...groupRecords, method('controlIs', assetIdArgs, 'Whether the control asset matches')];
+const scriptFields = [{ name: 'program', type: 'bytes' }, { name: 'version', type: 'int' }];
 
 const arkadeCompletions = [
     // Keywords
@@ -210,6 +211,9 @@ const arkadeMembers = {
 };
 arkadeMembers['tx.outputs[].assets'] = arkadeMembers['tx.inputs[].assets'];
 arkadeMembers['tx.outputs[].assets[]'] = arkadeMembers['tx.inputs[].assets[]'];
+for (const path of ['tx.inputs[].script', 'tx.input.current.script', 'tx.outputs[].script', 'this.activeBytecode']) {
+    arkadeMembers[path] = scriptFields.map(field => prop(field.name, field.type));
+}
 
 const symbolKinds = { struct: 'Struct', contract: 'Class', library: 'Module', function: 'Function', constant: 'Constant', parameter: 'Variable', variable: 'Variable' };
 const symbolItem = s => S(s.name, symbolKinds[s.kind], s.kind === 'function' ? `${s.name}($1)` : s.name, s.type ? `${s.kind}: ${s.type}` : s.kind);
@@ -233,7 +237,7 @@ function arkadeComplete(before, table) {
     const group = path.match(/^(\w+)(\.(?:inputs|outputs)\[\])?$/);
     if (visible.get(group?.[1])?.type === 'AssetGroup') return arkadeMembers[`tx.assetGroups[]${group[2] || ''}`];
     // The type the path names, such as `Signer` for `next.primary`, through struct fields.
-    const struct = type => structs.find(s => s.name === type);
+    const struct = type => type === 'ScriptPubKey' ? { fields: scriptFields } : structs.find(s => s.name === type);
     let type = '';
     path.split('.').forEach((segment, index) => {
         const name = segment.replace(/\[\]$/, '');
