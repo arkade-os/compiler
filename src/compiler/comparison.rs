@@ -22,12 +22,13 @@ impl Generator {
         );
     }
 
-    pub(super) fn emit_composite_requirement(
+    pub(super) fn emit_composite_comparison(
         &mut self,
         left: &Expression,
         op: BinaryOperator,
         right: &Expression,
         ty: &TypeName,
+        verify: bool,
     ) -> Result<()> {
         if op.class() != OperatorClass::Equality {
             return Err(format!("'{op}' is not defined for '{ty}' values").into());
@@ -36,7 +37,7 @@ impl Generator {
         self.emit_typed_value(left, ty)?;
         self.emit_typed_value(right, ty)?;
         for remaining in (1..=width).rev() {
-            if op == BinaryOperator::Eq {
+            if verify && op == BinaryOperator::Eq {
                 if remaining > 1 {
                     self.roll(remaining)?;
                 }
@@ -53,6 +54,8 @@ impl Generator {
         }
         if op == BinaryOperator::Ne {
             self.apply(Not, 1, 1)?;
+        }
+        if verify && op == BinaryOperator::Ne {
             self.apply(Verify, 1, 0)?;
         }
         Ok(())
