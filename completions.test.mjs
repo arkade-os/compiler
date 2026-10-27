@@ -24,10 +24,12 @@ const table = {
         { name: 'segments', kind: 'parameter', type: 'Segment[2]' },
         { name: 'Shadowed', kind: 'parameter', type: 'Point' },
         { name: 'Fees', kind: 'library' },
+        { name: 'destination', kind: 'parameter', type: 'ScriptPubKey' },
+        { name: 'destinations', kind: 'parameter', type: 'ScriptPubKey[2]' },
     ],
     structs: [
         { name: 'Point', fields: [{ name: 'x', type: 'int' }, { name: 'y', type: 'bytes32' }] },
-        { name: 'Segment', fields: [{ name: 'from', type: 'Point' }, { name: 'ends', type: 'Point[2]' }] },
+        { name: 'Segment', fields: [{ name: 'from', type: 'Point' }, { name: 'ends', type: 'Point[2]' }, { name: 'script', type: 'ScriptPubKey' }] },
     ],
     members: {
         Fees: [{ name: 'DELAY', kind: 'constant', type: 'int' }, { name: 'calculate', kind: 'function', type: 'int' }],
@@ -45,9 +47,9 @@ assert(labels('').includes('checkSig'));
 
 assert(labels('tx.').includes('inputs'));
 assert(labels('require(tx . ').includes('assetGroups'));
-assert.deepEqual(labels('tx.outputs[0].'), ['value', 'scriptPubKey', 'witnessVersion', 'assets']);
+assert.deepEqual(labels('tx.outputs[0].'), ['value', 'script', 'witnessVersion', 'assets']);
 assert(labels('tx.inputs[this.activeInputIndex].').includes('arkadeScriptHash'));
-assert.deepEqual(labels('tx.outputs[idx[0]].'), ['value', 'scriptPubKey', 'witnessVersion', 'assets']);
+assert.deepEqual(labels('tx.outputs[idx[0]].'), ['value', 'script', 'witnessVersion', 'assets']);
 assert(!top.includes('older'));
 assert(labels('tx.inputs[i].assets.').includes('lookup'));
 assert.deepEqual(labels('tx.outputs[o].assets[0].'), ['assetId', 'amount']);
@@ -71,3 +73,14 @@ assert.deepEqual(labels('Shadowed.', table), ['x', 'y']);
 assert.deepEqual(labels('Fees.', table), ['DELAY', 'calculate']);
 assert.deepEqual(labels('unknown.', table), []);
 assert(complete('tx.', null).find(item => item.label === 'inputs').snippet);
+
+for (const prefix of ['tx.inputs[0].', 'tx.input.current.', 'tx.outputs[0].']) {
+    assert(labels(prefix).includes('script'));
+    assert(!labels(prefix).includes('scriptPubKey'));
+}
+assert(labels('').includes('ScriptPubKey'));
+for (const path of ['destination', 'destinations[0]', 'segment.script', 'tx.outputs[0].script', 'tx.inputs[0].script', 'tx.input.current.script', 'this.activeBytecode']) {
+    assert.deepEqual(labels(`${path}.`, table), ['program', 'version']);
+}
+assert.deepEqual(labels('destinations.', table), ['length']);
+assert.deepEqual(labels('destination.program.', table), []);

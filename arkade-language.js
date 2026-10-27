@@ -57,7 +57,7 @@ const method = (label, args, detail) => S(label, 'Method', `${label}(${args})`, 
 const assetIdArgs = '${1:assetTxid}, ${2:assetGidx}';
 const inputProps = [
     prop('value', 'Input value (sats)'),
-    prop('scriptPubKey', 'Input scriptPubKey'),
+    prop('script', 'Input program and witness version'),
     prop('witnessVersion', 'Input witness version'),
     prop('sequence', 'Input nSequence'),
     prop('outpoint', 'Input outpoint'),
@@ -72,6 +72,7 @@ const groupRecords = [
 ];
 const recordProps = [prop('amount', 'Record amount'), prop('type', 'Record type: 1 local, 2 intent'), prop('index', 'vout, vin, or the referenced intent output')];
 const groupMembers = [...groupProps, ...groupRecords, method('controlIs', assetIdArgs, 'Whether the control asset matches')];
+const scriptFields = [{ name: 'program', type: 'bytes' }, { name: 'version', type: 'int' }];
 
 const arkadeCompletions = [
     // Keywords
@@ -97,7 +98,7 @@ const arkadeCompletions = [
     S('false', 'Keyword', 'false'),
 
     // Types
-    ...['pubkey', 'signature', 'bytes', 'bytes20', 'bytes32', 'int', 'bool', 'asset', 'AssetGroup'].map(t => S(t, 'TypeParameter', t)),
+    ...['pubkey', 'signature', 'bytes', 'bytes20', 'bytes32', 'int', 'bool', 'asset', 'AssetGroup', 'ScriptPubKey'].map(t => S(t, 'TypeParameter', t)),
 
     // Implicit bindings
     S('tx', 'Variable', 'tx', 'Spending transaction'),
@@ -191,7 +192,7 @@ const arkadeMembers = {
     'tx.input': [prop('current', 'Input being spent')],
     'tx.input.current': inputProps,
     'tx.inputs[]': [...inputProps, prop('assets', 'Input assets'), method('packet', '${1:packetType}', 'Extension packet of the Arkade transaction that created this input')],
-    'tx.outputs[]': [prop('value', 'Output value (sats)'), prop('scriptPubKey', 'Output scriptPubKey'), prop('witnessVersion', 'Output witness version'), prop('assets', 'Output assets')],
+    'tx.outputs[]': [prop('value', 'Output value (sats)'), prop('script', 'Output program and witness version'), prop('witnessVersion', 'Output witness version'), prop('assets', 'Output assets')],
     'tx.inputs[].assets': [prop('length', 'Number of assets'), method('lookup', assetIdArgs, 'Amount of an asset'), method('has', assetIdArgs, 'Whether an asset is present')],
     'tx.inputs[].assets[]': [prop('assetId', 'Asset id'), prop('amount', 'Asset amount')],
     'tx.assetGroups': [method('find', assetIdArgs, 'Asset group by id'), method('has', assetIdArgs, 'Whether an asset group exists'), prop('length', 'Number of asset groups')],
@@ -203,13 +204,16 @@ const arkadeMembers = {
     'tx.inputs[].packet': [method('has', '${1:packetType}', 'Whether the Arkade transaction that created this input carries the packet')],
     'this': [
         prop('activeInputIndex', 'Index of the input being spent'),
-        prop('activeBytecode', 'Script being executed'),
+        prop('activeBytecode', 'Current input program and witness version'),
         prop('expiry', 'Contract expiry'),
         method('tunnel', '${1:outputIndex}', 'Carry the contract into an output'),
     ],
 };
 arkadeMembers['tx.outputs[].assets'] = arkadeMembers['tx.inputs[].assets'];
 arkadeMembers['tx.outputs[].assets[]'] = arkadeMembers['tx.inputs[].assets[]'];
+for (const path of ['tx.inputs[].script', 'tx.input.current.script', 'tx.outputs[].script', 'this.activeBytecode']) {
+    arkadeMembers[path] = scriptFields.map(field => prop(field.name, field.type));
+}
 
 const symbolKinds = { struct: 'Struct', contract: 'Class', library: 'Module', function: 'Function', constant: 'Constant', parameter: 'Variable', variable: 'Variable' };
 const symbolItem = s => S(s.name, symbolKinds[s.kind], s.kind === 'function' ? `${s.name}($1)` : s.name, s.type ? `${s.kind}: ${s.type}` : s.kind);
@@ -233,7 +237,7 @@ function arkadeComplete(before, table) {
     const group = path.match(/^(\w+)(\.(?:inputs|outputs)\[\])?$/);
     if (visible.get(group?.[1])?.type === 'AssetGroup') return arkadeMembers[`tx.assetGroups[]${group[2] || ''}`];
     // The type the path names, such as `Signer` for `next.primary`, through struct fields.
-    const struct = type => structs.find(s => s.name === type);
+    const struct = type => type === 'ScriptPubKey' ? { fields: scriptFields } : structs.find(s => s.name === type);
     let type = '';
     path.split('.').forEach((segment, index) => {
         const name = segment.replace(/\[\]$/, '');
