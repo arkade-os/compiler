@@ -330,7 +330,13 @@ impl Generator {
                 }
                 Op::Value(index) => {
                     let value = values.get(index).ok_or("invalid call marker")?;
-                    if matches!(&value.kind, ExprKind::Call { .. }) {
+                    if let ExprKind::BinaryOp { left, op, right } = &value.kind {
+                        let ty = self
+                            .composite_type(left)
+                            .or_else(|| self.composite_type(right))
+                            .expect("extracted comparisons have composite operands");
+                        self.emit_composite_comparison(left, *op, right, &ty, false)?;
+                    } else if matches!(&value.kind, ExprKind::Call { .. }) {
                         self.emit_call(value)?;
                     } else if matches!(&value.kind, ExprKind::Builtin { builtin, .. } if matches!(builtin.lowering, crate::builtins::Lowering::Pairing))
                     {

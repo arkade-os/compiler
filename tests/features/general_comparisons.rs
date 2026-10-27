@@ -20,6 +20,77 @@ fn contains_tokens(asm: &[String], expected: &[&str]) -> bool {
 }
 
 #[test]
+fn composite_comparisons_are_boolean_expressions() {
+    for (ty, other) in [
+        ("Item", "{value: 1}"),
+        ("Nested", "{head: {value: 1}, tail: [2, 3, 4]}"),
+        ("int[1]", "[1]"),
+        ("int[3]", "[1, 2, 3]"),
+        ("Item[2]", "right"),
+        ("ScriptPubKey", "{program: 0x1234, version: 1}"),
+    ] {
+        let source = format!(
+            "struct Item {{ int value; }}
+             struct Nested {{ Item head; int[3] tail; }}
+             contract C() {{
+                 private function same({ty} left, {ty} right) bool {{ return left == right; }}
+                 function compare({ty} left, {ty} right, bool expected) {{
+                     bool equal = left == right;
+                     equal = left != right;
+                     require(equal == !expected);
+                     require(same(left, right) == expected);
+                     require(left == right || left != right);
+                     require(!(left == right && left != right));
+                     require((left == {other}) || ({other} != left));
+                     if (left == right) {{ require(expected); }} else {{ require(!expected); }}
+                 }}
+             }}"
+        );
+        for optimize in [false, true] {
+            let output = arkade_compiler::compile_sources_with_options(
+                "main.ark",
+                &[("main.ark".into(), source.clone())].into(),
+                arkade_compiler::CompileOptions { optimize },
+            )
+            .unwrap_or_else(|error| panic!("{ty}, optimize={optimize}: {error}"));
+            assert_eq!(output.functions.len(), 1);
+            assert_eq!(output.functions[0].leaves.len(), 1);
+            assert_eq!(output.functions[0].arkade.as_ref().unwrap().inputs.len(), 3);
+        }
+    }
+}
+
+#[test]
+fn composite_comparison_expressions_validate_operand_types() {
+    for (left, right, op) in [
+        ("Item", "Other", "=="),
+        ("Item", "int", "!="),
+        ("int", "Item", "=="),
+        ("int[1]", "int[2]", "=="),
+        ("bytes[1]", "bytes20[1]", "!="),
+        ("Item", "Item", "<"),
+        ("Item", "Item", "<="),
+        ("Item", "Item", ">"),
+        ("int[2]", "int[2]", ">"),
+        ("int[2]", "int[2]", ">="),
+    ] {
+        let source = format!(
+            "struct Item {{ int value; }} struct Other {{ int value; }}
+             contract C() {{ function compare({left} left, {right} right) {{
+                 require(true || (left {op} right));
+             }} }}"
+        );
+        let error = compile(&source)
+            .expect_err("invalid composite comparison")
+            .to_string();
+        assert!(error.contains("not defined"), "{source}: {error}");
+    }
+    let error = compile("struct Item { int value; } contract C() { function compare(Item left) { require(true || (left < {value: 1})); } }")
+        .expect_err("composite ordering is invalid even with a literal").to_string();
+    assert!(error.contains("not defined"), "{error}");
+}
+
+#[test]
 fn integer_comparisons_emit_all_boolean_operators() {
     let cases: [(&str, &[&str]); 6] = [
         ("==", &["<left>", "<right>", OP_EQUAL]),
@@ -400,15 +471,20 @@ fn composite_comparison_literals_are_validated() {
     ] {
         for op in ["==", "!="] {
             for (left, right) in [("value", literal), (literal, "value")] {
-                let source = format!(
-                    "struct Point {{ int x; int y; }}
+                for comparison in [
+                    format!("{left} {op} {right}"),
+                    format!("true || ({left} {op} {right})"),
+                ] {
+                    let source = format!(
+                        "struct Point {{ int x; int y; }}
                      struct Nested {{ Point point; int[2] values; }}
                      contract C() {{
-                         function spend({ty} value) {{ require({left} {op} {right}); }}
+                         function spend({ty} value) {{ require({comparison}); }}
                      }}"
-                );
-                let error = compile(&source).expect_err(&source).to_string();
-                assert!(error.contains(diagnostic), "{source}: {error}");
+                    );
+                    let error = compile(&source).expect_err(&source).to_string();
+                    assert!(error.contains(diagnostic), "{source}: {error}");
+                }
             }
         }
     }
