@@ -24,10 +24,12 @@ const table = {
         { name: 'segments', kind: 'parameter', type: 'Segment[2]' },
         { name: 'Shadowed', kind: 'parameter', type: 'Point' },
         { name: 'Fees', kind: 'library' },
+        { name: 'destination', kind: 'parameter', type: 'ScriptPubKey' },
+        { name: 'destinations', kind: 'parameter', type: 'ScriptPubKey[2]' },
     ],
     structs: [
         { name: 'Point', fields: [{ name: 'x', type: 'int' }, { name: 'y', type: 'bytes32' }] },
-        { name: 'Segment', fields: [{ name: 'from', type: 'Point' }, { name: 'ends', type: 'Point[2]' }] },
+        { name: 'Segment', fields: [{ name: 'from', type: 'Point' }, { name: 'ends', type: 'Point[2]' }, { name: 'script', type: 'ScriptPubKey' }] },
     ],
     members: {
         Fees: [{ name: 'DELAY', kind: 'constant', type: 'int' }, { name: 'calculate', kind: 'function', type: 'int' }],
@@ -77,3 +79,8 @@ for (const prefix of ['tx.inputs[0].', 'tx.input.current.', 'tx.outputs[0].']) {
     assert(!labels(prefix).includes('scriptPubKey'));
 }
 assert(labels('').includes('ScriptPubKey'));
+for (const path of ['destination', 'destinations[0]', 'segment.script', 'tx.outputs[0].script', 'tx.inputs[0].script', 'tx.input.current.script', 'this.activeBytecode']) {
+    assert.deepEqual(labels(`${path}.`, table), ['program', 'version']);
+}
+assert.deepEqual(labels('destinations.', table), ['length']);
+assert.deepEqual(labels('destination.program.', table), []);

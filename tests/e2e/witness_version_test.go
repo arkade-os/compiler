@@ -44,6 +44,7 @@ contract WitnessVersion() {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			spend := spendingPSBTWithWitness(t, deployment, group, 10_000, tc.pkScript, covenantWitness(t, contract, covenantGroup(t, contract, "spend"), map[string][]byte{
+				// Script introspection returns the program without the version and push-length prefix.
 				"version": scriptInt(t, tc.version), "inputProgram": p2wpkh[2:], "outputProgram": tc.pkScript[2:],
 			}))
 			spend = withExtraInput(t, spend, fundingTx(p2wpkh, 10_000))
@@ -65,6 +66,8 @@ contract C() {
     }
     function supplied(ScriptPubKey expected) { require(tx.outputs[0].script == expected); }
     function different() { require(tx.outputs[0].script != new C()); }
+    function continuation() { require(tx.input.current.script == tx.outputs[0].script); }
+    function activeBytecode() { require(tx.outputs[0].script == this.activeBytecode); }
 }`), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -72,12 +75,16 @@ contract C() {
 	serverKey, emulatorKey := fixedPrivateKey(1), fixedPrivateKey(2)
 	program := bytes.Repeat([]byte{7}, 32)
 	otherProgram := bytes.Repeat([]byte{8}, 32)
-	for _, name := range []string{"direct", "reversed", "bound", "supplied", "different"} {
+	for _, name := range []string{"direct", "reversed", "bound", "supplied", "different", "continuation", "activeBytecode"} {
 		t.Run(name, func(t *testing.T) {
 			group := instantiateGroup(t, contract, name, map[string][]byte{
 				"CONTRACT:C()": program,
 			}, serverKey.PubKey(), emulatorKey.PubKey())
 			deployment := fundingTx(group.pkScript, 10_000)
+			expectedProgram := program
+			if name == "continuation" || name == "activeBytecode" {
+				expectedProgram = group.pkScript[2:]
+			}
 			witness := covenantWitness(t, contract, covenantGroup(t, contract, name), map[string][]byte{
 				"expected.program": program, "expected.version": scriptInt(t, 1),
 			})
@@ -86,9 +93,9 @@ contract C() {
 				pkScript []byte
 				matches  bool
 			}{
-				{"matching v1", p2trTo(program), true},
-				{"same program v0", append([]byte{0x00, 0x20}, program...), false},
-				{"same program v2", append([]byte{0x52, 0x20}, program...), false},
+				{"matching v1", p2trTo(expectedProgram), true},
+				{"same program v0", append([]byte{0x00, 0x20}, expectedProgram...), false},
+				{"same program v2", append([]byte{0x52, 0x20}, expectedProgram...), false},
 				{"wrong program v1", p2trTo(otherProgram), false},
 				{"wrong program v0", append([]byte{0x00, 0x20}, otherProgram...), false},
 				{"non-witness script", []byte{0x51}, false},
