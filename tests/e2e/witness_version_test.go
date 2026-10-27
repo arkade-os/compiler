@@ -51,3 +51,61 @@ contract WitnessVersion() {
 		})
 	}
 }
+
+func TestContractScriptVersion(t *testing.T) {
+	source := filepath.Join(t.TempDir(), "script.ark")
+	if err := os.WriteFile(source, []byte(`
+contract C() {
+    function direct() { require(tx.outputs[0].script == new C()); }
+    function reversed() { require(new C() == tx.outputs[0].script); }
+    function bound() {
+        let expected = new C();
+        require(expected.version == 1);
+        require(tx.outputs[0].script == expected);
+    }
+    function supplied(ScriptPubKey expected) { require(tx.outputs[0].script == expected); }
+    function different() { require(tx.outputs[0].script != new C()); }
+}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	contract := compileArtifact(t, source)
+	serverKey, emulatorKey := fixedPrivateKey(1), fixedPrivateKey(2)
+	program := bytes.Repeat([]byte{7}, 32)
+	otherProgram := bytes.Repeat([]byte{8}, 32)
+	for _, name := range []string{"direct", "reversed", "bound", "supplied", "different"} {
+		t.Run(name, func(t *testing.T) {
+			group := instantiateGroup(t, contract, name, map[string][]byte{
+				"CONTRACT:C()": program,
+			}, serverKey.PubKey(), emulatorKey.PubKey())
+			deployment := fundingTx(group.pkScript, 10_000)
+			witness := covenantWitness(t, contract, covenantGroup(t, contract, name), map[string][]byte{
+				"expected.program": program, "expected.version": scriptInt(t, 1),
+			})
+			for _, tc := range []struct {
+				name     string
+				pkScript []byte
+				matches  bool
+			}{
+				{"matching v1", p2trTo(program), true},
+				{"same program v0", append([]byte{0x00, 0x20}, program...), false},
+				{"same program v2", append([]byte{0x52, 0x20}, program...), false},
+				{"wrong program v1", p2trTo(otherProgram), false},
+				{"wrong program v0", append([]byte{0x00, 0x20}, otherProgram...), false},
+				{"non-witness script", []byte{0x51}, false},
+			} {
+				t.Run(tc.name, func(t *testing.T) {
+					wantErr := ""
+					if name == "different" {
+						if tc.matches {
+							wantErr = "false stack entry"
+						}
+					} else if !tc.matches {
+						wantErr = "OP_EQUALVERIFY failed"
+					}
+					spend := spendingPSBTWithWitness(t, deployment, group, 10_000, tc.pkScript, witness)
+					requireVMResult(t, spend, emulatorKey.PubKey(), wantErr)
+				})
+			}
+		})
+	}
+}
