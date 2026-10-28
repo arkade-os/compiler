@@ -1,6 +1,6 @@
 // Arkade Playground - Main Application
 // Import default export for WASM initialization, plus the exported functions
-import initWasm, { check_sources, compile_sources, compile_sources_with_diagnostics, symbol_at, symbols, version, init as initPanicHook } from './pkg/arkade_compiler.js';
+import initWasm, { check_sources, compile_sources, compile_sources_with_diagnostics, completions_at, symbol_at, version, init as initPanicHook } from './pkg/arkade_compiler.js';
 import * as contracts from './contracts.js';
 import { generateBindings, AVAILABLE_TARGETS } from './codegen.js';
 
@@ -1050,6 +1050,29 @@ function selectProjectFile(projectId, fileName) {
     markDirty();
 }
 
+// Open the playground file `sourceFiles()` names `path`; false when there is none.
+function openSourcePath(path) {
+    const location = workspaceIndex().locations[path];
+    if (location?.example) selectExample(location.example);
+    else if (location) selectProjectFile(location.project, location.file);
+    return Boolean(location);
+}
+
+// Keep `source` as the text of the playground file `sourceFiles()` names `path`, one the editor
+// does not show.
+function storeSourcePath(path, source) {
+    const { files, locations } = workspaceIndex();
+    const location = locations[path];
+    if (!location || files[path] === source) return;
+    if (location.example) examples[location.example].code = source;
+    else projects[location.project].files[location.file] = source;
+    const tabId = location.example || `${location.project}:${location.file}`;
+    if (Object.hasOwn(fileContents, tabId)) fileContents[tabId] = source;
+    saveToStorage();
+    lastCompiledSource = null;
+    markDirty();
+}
+
 // Select a single-file example
 function selectExample(exampleId) {
     // Save current file content
@@ -1229,8 +1252,9 @@ function initMonaco() {
                 // Replace (the editor default) overwrites the rest of the word; Shift+Enter inserts instead.
                 const range = { insert, replace: { ...insert, endColumn: model.getWordAtPosition(position)?.endColumn ?? position.column } };
                 const before = model.getLineContent(position.lineNumber).slice(0, word.startColumn - 1);
-                const table = symbolTable(position.lineNumber);
-                const suggestions = window.arkadeComplete(before, table, position.lineNumber).map(item => ({
+                // A peek at another file shows its own text, so only the editor's file has names.
+                const table = model === editor.getModel() ? symbolTable(position.lineNumber) : null;
+                const suggestions = window.arkadeComplete(before, table).map(item => ({
                     label: item.label,
                     kind: monaco.languages.CompletionItemKind[item.kind] || monaco.languages.CompletionItemKind.Text,
                     insertText: item.insertText,
@@ -1377,11 +1401,44 @@ function registerSymbolProviders() {
             };
         },
     });
+    // Going to a definition passes the opener only the definition's start, so its name's range is
+    // kept to select it.
+    const definitionRanges = new Map();
     monaco.languages.registerDefinitionProvider('arkade', {
         provideDefinition: (model, position) => {
             const symbol = symbolAt(model, position);
-            if (!symbol?.definition.start || symbol.definition.file !== symbol.at.file) return null;
-            return { uri: model.uri, range: range(symbol.definition) };
+            if (!symbol?.definition.start) return null;
+            const { file } = symbol.definition;
+            if (file === symbol.at.file) return { uri: model.uri, range: range(symbol.definition) };
+            // Another file opens through the editor opener below; Monaco needs its model.
+            const source = sourceFiles().files[file];
+            if (source === undefined) return null;
+            const uri = monaco.Uri.from({ scheme: 'arkade', path: `/${file}` });
+            let other = monaco.editor.getModel(uri);
+            if (!other) {
+                other = monaco.editor.createModel(source, 'arkade', uri);
+                // A peek at the definition can edit its file.
+                other.onDidChangeContent(() => {
+                    storeSourcePath(file, other.getValue());
+                    lint();
+                });
+            } else if (other.getValue() !== source) other.setValue(source);
+            definitionRanges.set(uri.toString(), range(symbol.definition));
+            return { uri, range: range(symbol.definition) };
+        },
+    });
+    monaco.editor.registerEditorOpener?.({
+        openCodeEditor: (source, resource, selectionOrPosition) => {
+            if (resource.scheme !== 'arkade' || !openSourcePath(resource.path.slice(1))) return false;
+            const at = !selectionOrPosition ? null : monaco.Range.isIRange(selectionOrPosition)
+                ? monaco.Range.lift(selectionOrPosition) : monaco.Range.fromPositions(selectionOrPosition);
+            const name = definitionRanges.get(resource.toString());
+            const target = !at || (at.isEmpty() && name?.getStartPosition().equals(at.getStartPosition())) ? name : at;
+            if (target) {
+                editor.setSelection(target);
+                editor.revealRangeInCenter(target);
+            }
+            return true;
         },
     });
     monaco.languages.registerDocumentHighlightProvider('arkade', {
@@ -1395,22 +1452,29 @@ function registerSymbolProviders() {
     });
 }
 
-// Symbols of the current file per entry path, from the last source that parsed.
-const lastSymbols = {};
+// The last sources JSON that gave the editor's file names, per entry path.
+const lastSources = {};
 
-// The line being typed rarely parses, so it is blanked; if the file still fails, reuse the last table.
+// The line being typed rarely parses, so it is blanked; if the file still does not parse, which
+// leaves it no names, the names are those at the cursor's line in the last sources that gave some.
+// ponytail: lines added or removed above the cursor since shift those names a line or more; the
+// parser recovering from errors would give names in the current text.
 function symbolTable(lineNumber) {
     if (!wasmReady) return null;
-    let entry;
     try {
-        const sources = sourceFiles();
-        entry = sources.entry;
-        const lines = sources.files[entry].split('\n');
+        const { entry, files } = sourceFiles();
+        const lines = files[entry].split('\n');
         lines[lineNumber - 1] = '';
-        sources.files[entry] = lines.join('\n');
-        lastSymbols[entry] = JSON.parse(symbols(entry, JSON.stringify(sources.files)));
-    } catch {}
-    return lastSymbols[entry] || null;
+        files[entry] = lines.join('\n');
+        const at = sources => JSON.parse(completions_at(entry, sources, lineNumber, 1));
+        const sources = JSON.stringify(files);
+        const table = at(sources);
+        if (table.symbols.length) lastSources[entry] = sources;
+        else if (lastSources[entry]) return at(lastSources[entry]);
+        return table;
+    } catch {
+        return null;
+    }
 }
 
 // Compile the source code

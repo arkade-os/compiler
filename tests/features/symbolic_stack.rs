@@ -514,7 +514,7 @@ fn constructor_references_cover_nested_bodies_and_named_operands() {
          "require(groupIndex.sumInputs >= 0); require(groupIndex.controlIs(txid, gidx));",
          vec!["<groupIndex>", "<gidx>", "<txid>"]),
         ("Policy policy", "",
-         "require(tx.outputs[0].scriptPubKey == new Child(policy));",
+         "require(tx.outputs[0].script == new Child(policy));",
          vec![]),
     ] {
         let source = format!(

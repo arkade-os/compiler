@@ -187,7 +187,7 @@ fn roundtrip_nft_mint() {
         assert!(arkade
             .inputs
             .iter()
-            .any(|input| input.name == destination && input.param_type == "bytes"));
+            .any(|input| input.name == destination && input.param_type == "ScriptPubKey"));
         assert!(!arkade
             .asm
             .iter()
@@ -238,7 +238,7 @@ fn roundtrip_non_interactive_swap() {
                 .find(|input| input.name == "takerScriptPubKey")
         })
         .expect("swap taker destination input");
-    assert_eq!(destination.param_type, "bytes");
+    assert_eq!(destination.param_type, "ScriptPubKey");
 }
 
 #[test]

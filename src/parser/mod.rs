@@ -19,8 +19,6 @@ mod checksig;
 mod crypto;
 mod expr;
 mod introspection;
-#[cfg(any(feature = "wasm", test))]
-mod symbols;
 mod tapscript;
 
 pub(crate) use asset::*;
@@ -28,8 +26,6 @@ pub(crate) use checksig::*;
 pub(crate) use crypto::*;
 pub(crate) use expr::*;
 pub(crate) use introspection::*;
-#[cfg(any(feature = "wasm", test))]
-pub(crate) use symbols::{symbols, Symbol};
 pub(crate) use tapscript::*;
 
 #[cfg(test)]
@@ -56,7 +52,7 @@ pub(crate) fn imports(
 }
 
 /// Parse a source file, naming expected tokens in source terms instead of grammar rules.
-#[cfg(any(feature = "wasm", test))]
+#[cfg(test)]
 pub(crate) fn parse_main(source: &str) -> Result<Pairs<'_, Rule>, String> {
     try_parse(source).map_err(|e| format!("Parse error: {e}"))
 }
@@ -435,12 +431,9 @@ fn parse_statement(
     pair: Pair<Rule>,
     constants: &[Constant],
 ) -> Result<Option<LocatedStatement>, CompileError> {
-    let span = crate::diagnostics::Span {
-        start: pair.as_span().start(),
-        end: pair.as_span().end(),
-    };
+    let mut span: crate::diagnostics::Span = pair.as_span().into();
     let mut names = Vec::new();
-    let mut branches = Vec::new();
+    let mut branches: Vec<crate::diagnostics::Span> = Vec::new();
     let mut message = None;
     let statement = match pair.as_rule() {
         Rule::require_stmt => {
@@ -511,6 +504,8 @@ fn parse_statement(
                 branches.push(else_block.as_span().into());
                 Some(parse_block(function_name, else_block, constants)?)
             } else {
+                // The pair also takes the whitespace and comments before where an `else` would be.
+                span.end = branches[0].end;
                 None
             };
 
@@ -790,6 +785,20 @@ mod tests {
             ));
             crate::compile(&source).unwrap();
         }
+    }
+
+    #[test]
+    fn an_if_without_else_ends_at_its_block() {
+        let source = "contract C() { function spend(int n) {
+            if (n > 0) { require(n > 1); }
+            // next
+            require(n > 2);
+        } }";
+        let span = parse(source).expect("parses").functions[0].statements[0].span;
+        assert_eq!(
+            &source[span.start..span.end],
+            "if (n > 0) { require(n > 1); }"
+        );
     }
 
     #[test]

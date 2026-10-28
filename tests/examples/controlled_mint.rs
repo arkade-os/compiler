@@ -50,7 +50,7 @@ fn test_controlled_mint_contract() {
         .inputs;
     assert!(mint_inputs
         .iter()
-        .any(|input| input.name == "recipientScriptPubKey" && input.param_type == "bytes"));
+        .any(|input| input.name == "recipientScriptPubKey" && input.param_type == "ScriptPubKey"));
     assert!(!mint_asm.contains("CONTRACT:SingleSig"));
 
     // Should have asset group find opcode

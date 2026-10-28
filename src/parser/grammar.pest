@@ -298,7 +298,7 @@ input_introspection = {
 // opcodes and are used by invocation-marker contracts to pin themselves to
 // a specific consuming Arkade closure.
 input_introspection_property = {
-    "value" | "scriptPubKey" | "witnessVersion" | "sequence" | "outpoint" |
+    "value" | "witnessVersion" | "sequence" | "outpoint" |
     "arkadeScriptHash" | "arkadeWitnessHash" | "script"
 }
 
@@ -308,7 +308,7 @@ output_introspection = {
 }
 
 // Output introspection properties (excluding asset - use .assets.* API instead)
-output_introspection_property = { "value" | "scriptPubKey" | "witnessVersion" | "script" }
+output_introspection_property = { "value" | "witnessVersion" | "script" }
 
 // ─── Asset Groups ──────────────────────────────────────────────────────────────
 

@@ -264,24 +264,10 @@ fn emit_packet_result_asm(presence_only: bool, asm: &mut Vec<Op>) {
 
 /// Emit assembly for a contract instantiation: `new ContractName(arg1, arg2, ...)`
 ///
-/// Produces a single placeholder token `<CONTRACT:ContractName(<arg1>,<arg2>)>` that
-/// the runtime resolves to the 32-byte Taproot witness program (the output key)
-/// of the named contract instantiated with the given constructor arguments.
-/// It is compared against a witness program, not a serialized 34-byte P2TR
-/// script, because that is what a scriptPubKey inspection leaves on the stack.
-///
+/// Produces a `<CONTRACT:ContractName(<arg1>,<arg2>)>` placeholder for the
+/// 32-byte Taproot witness program, followed by witness version 1.
 /// Options (server key, exit timelock) are inherited from the enclosing contract
-/// and must be applied by the runtime when computing the child contract's taproot
-/// key.
-///
-/// Typical usage (recursion / self-referential contract enforcement):
-/// ```text
-/// require(tx.outputs[0].scriptPubKey == new SingleSig(ownerPk));
-/// ```
-/// compiles to:
-/// ```text
-/// 0 OP_INSPECTOUTPUTSCRIPTPUBKEY OP_DROP <CONTRACT:SingleSig(<ownerPk>)> OP_EQUAL
-/// ```
+/// and must be applied by the runtime when computing the child contract's key.
 pub(crate) fn emit_contract_instance_asm(
     contract_name: &str,
     args: &[Expression],
@@ -303,6 +289,7 @@ pub(crate) fn emit_contract_instance_asm(
         name: contract_name.to_string(),
         args,
     });
+    asm.push(Int1.into());
 }
 
 /// Emit assembly for arithmetic or a short-circuit logical operation.

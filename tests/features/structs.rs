@@ -317,7 +317,7 @@ fn constructor_struct_arguments_expand_recursively() {
 struct Point { int x; int y; }
 contract C(Point point) {
     function renew() {
-        require(tx.outputs[0].scriptPubKey == new C(point));
+        require(tx.outputs[0].script == new C(point));
     }
 }
 "#,

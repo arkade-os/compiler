@@ -136,19 +136,8 @@ fn compile_project(
     crate::imports::compile_sources(entry, &files, options)
 }
 
-/// Completion symbols for `entry` in a virtual project. `files` is a JSON object
-/// mapping relative .ark paths to source text.
-#[wasm_bindgen]
-pub fn symbols(entry: &str, files: &str) -> Result<String, String> {
-    let files = serde_json::from_str(files).map_err(|e| format!("Invalid source files: {e}"))?;
-    Ok(crate::imports::source_symbols(entry, &files)?.to_string())
-}
-
-/// The symbol at 1-based `line` and UTF-16 `column` of `entry`, for hover, go to definition
-/// and highlighting: `{ name, kind, type, at, definition, references }`, each location
-/// `{ file, start, end }`, or `null` when no name is there.
-#[wasm_bindgen]
-pub fn symbol_at(entry: &str, files: &str, line: usize, column: usize) -> Result<String, String> {
+/// The analysis of `entry`, made relative, in the `files` JSON, kept while both stay the same.
+fn analyzed(entry: &str, files: &str) -> Result<(String, std::rc::Rc<crate::Analysis>), String> {
     thread_local! {
         /// The entry and files JSON last analyzed, and their analysis.
         // ponytail: one project, the open one every lookup asks about, analyzed again apart from the
@@ -167,6 +156,15 @@ pub fn symbol_at(entry: &str, files: &str, line: usize, column: usize) -> Result
             Ok::<_, String>(analysis)
         }
     })?;
+    Ok((entry, analysis))
+}
+
+/// The symbol at 1-based `line` and UTF-16 `column` of `entry`, for hover, go to definition
+/// and highlighting: `{ name, kind, type, at, definition, references }`, each location
+/// `{ file, start, end }`, or `null` when no name is there.
+#[wasm_bindgen]
+pub fn symbol_at(entry: &str, files: &str, line: usize, column: usize) -> Result<String, String> {
+    let (entry, analysis) = analyzed(entry, files)?;
     let symbols = analysis.symbols();
     let offset = analysis
         .source(&entry)
@@ -207,4 +205,60 @@ pub fn symbol_at(entry: &str, files: &str, line: usize, column: usize) -> Result
             .collect::<Vec<_>>(),
     })
     .to_string())
+}
+
+/// The names usable at 1-based `line` and UTF-16 `column` of `entry`, for completion:
+/// `{ symbols, structs, members }`, where `members` lists a library's or contract's names
+/// under its own, and `structs` gives the fields of every struct analyzed, since a field's type
+/// can name a struct the entry does not see.
+#[wasm_bindgen]
+pub fn completions_at(
+    entry: &str,
+    files: &str,
+    line: usize,
+    column: usize,
+) -> Result<String, String> {
+    use crate::symbols::SymbolKind;
+    let (entry, analysis) = analyzed(entry, files)?;
+    let symbols = analysis.symbols();
+    let offset = analysis
+        .source(&entry)
+        .and_then(|source| crate::diagnostics::offset(source, line, column))
+        .unwrap_or_default();
+    let mut names = Vec::new();
+    let mut members: std::collections::BTreeMap<&str, Vec<serde_json::Value>> = Default::default();
+    for (name, definition) in symbols.visible_at(&entry, offset) {
+        if definition.kind == SymbolKind::Tapscript {
+            continue;
+        }
+        let item = serde_json::json!({
+            "name": definition.name,
+            "kind": format!("{:?}", definition.kind).to_lowercase(),
+            "type": definition.ty.as_ref().map(ToString::to_string),
+        });
+        match name.split_once('.') {
+            Some((owner, _)) => members.entry(owner).or_default().push(item),
+            None => names.push(item),
+        }
+    }
+    let definitions = symbols.definitions();
+    let structs: Vec<_> = definitions
+        .iter()
+        .filter(|definition| definition.kind == SymbolKind::Struct)
+        .map(|definition| {
+            let fields: Vec<_> = definitions
+                .iter()
+                .filter(|field| {
+                    field.owner.as_deref() == Some(definition.name.as_str())
+                        && field.file == definition.file
+                })
+                .map(|field| {
+                    let ty = field.ty.as_ref().map(ToString::to_string);
+                    serde_json::json!({ "name": field.name, "type": ty })
+                })
+                .collect();
+            serde_json::json!({ "name": definition.name, "fields": fields })
+        })
+        .collect();
+    Ok(serde_json::json!({ "symbols": names, "structs": structs, "members": members }).to_string())
 }

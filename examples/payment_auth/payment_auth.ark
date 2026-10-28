@@ -19,9 +19,9 @@ contract PaymentAuthorization(
   int feeRateBasisPoints,
 
   // Output scripts (P2TR scriptPubKeys)
-  bytes merchantScript,
-  bytes processorScript,
-  bytes customerScript,
+  ScriptPubKey merchantScript,
+  ScriptPubKey processorScript,
+  ScriptPubKey customerScript,
 
   // Refund time in Unix seconds
   int refundTime,
@@ -49,10 +49,10 @@ contract PaymentAuthorization(
       let merchantAmount = vtxoValue - processorFee;
 
       require(tx.outputs[0].value == merchantAmount, "Merchant amount incorrect");
-      require(tx.outputs[0].scriptPubKey == merchantScript, "Merchant script incorrect");
+      require(tx.outputs[0].script == merchantScript, "Merchant script incorrect");
 
       require(tx.outputs[1].value == processorFee, "Processor fee incorrect");
-      require(tx.outputs[1].scriptPubKey == processorScript, "Processor script incorrect");
+      require(tx.outputs[1].script == processorScript, "Processor script incorrect");
     }
 
     // Case 2: Exact payment (vtxoValue == invoiceAmount)
@@ -65,10 +65,10 @@ contract PaymentAuthorization(
       let merchantAmount = invoiceAmount - processorFee;
 
       require(tx.outputs[0].value == merchantAmount, "Merchant amount incorrect");
-      require(tx.outputs[0].scriptPubKey == merchantScript, "Merchant script incorrect");
+      require(tx.outputs[0].script == merchantScript, "Merchant script incorrect");
 
       require(tx.outputs[1].value == processorFee, "Processor fee incorrect");
-      require(tx.outputs[1].scriptPubKey == processorScript, "Processor script incorrect");
+      require(tx.outputs[1].script == processorScript, "Processor script incorrect");
     }
 
     // Case 3: Overpayment (vtxoValue > invoiceAmount)
@@ -82,13 +82,13 @@ contract PaymentAuthorization(
       let changeAmount = vtxoValue - invoiceAmount;
 
       require(tx.outputs[0].value == merchantAmount, "Merchant amount incorrect");
-      require(tx.outputs[0].scriptPubKey == merchantScript, "Merchant script incorrect");
+      require(tx.outputs[0].script == merchantScript, "Merchant script incorrect");
 
       require(tx.outputs[1].value == processorFee, "Processor fee incorrect");
-      require(tx.outputs[1].scriptPubKey == processorScript, "Processor script incorrect");
+      require(tx.outputs[1].script == processorScript, "Processor script incorrect");
 
       require(tx.outputs[2].value == changeAmount, "Change amount incorrect");
-      require(tx.outputs[2].scriptPubKey == customerScript, "Change script incorrect");
+      require(tx.outputs[2].script == customerScript, "Change script incorrect");
     }
   }
 
@@ -101,7 +101,7 @@ contract PaymentAuthorization(
 
     require(tx.numOutputs == 1, "Expected 1 output for refund");
     require(tx.outputs[0].value == vtxoValue, "Refund amount incorrect");
-    require(tx.outputs[0].scriptPubKey == customerScript, "Refund script incorrect");
+    require(tx.outputs[0].script == customerScript, "Refund script incorrect");
   }
 
   // Unilateral exit (CSV): merchant reclaims cooperatively after CSV delay.

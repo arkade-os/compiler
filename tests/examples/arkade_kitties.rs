@@ -144,7 +144,7 @@ fn test_transfer_uses_owner_authorized_destination_script() {
         .find(|input| input.name == "newOwnerScriptPubKey")
         .expect("new owner destination input");
 
-    assert_eq!(destination.param_type, "bytes");
+    assert_eq!(destination.param_type, "ScriptPubKey");
     assert!(transfer
         .asm
         .iter()
