@@ -94,6 +94,54 @@ fn nonnegative_operand_domains_accept_integers_beyond_i128() {
     }
 }
 
+#[test]
+fn constant_expression_operands_are_checked_in_both_modes() {
+    for compile in [compile, crate::common::compile_unoptimized] {
+        for (body, expected) in [
+            (
+                "require(size(digest(d, 4 + 5)) > 0);",
+                "digest hashType must be 1 to 5, got 9",
+            ),
+            (
+                "require(sighash(4 - 4 + 7) == h);",
+                "sighash hashType must be 0 to 3 or 129 to 131, got 7",
+            ),
+            (
+                "require(size(tx.packet(128 * 2)) > 0);",
+                "tx.packet packet type must be 0 to 255, got 256",
+            ),
+            (
+                "require(size(num2bin(n, 520 + 1)) > 0);",
+                "num2bin size must be 0 to 520, got 521",
+            ),
+            (
+                "require(checkTime(0 - 1));",
+                "checkTime timestamp must be at least 0, got -1",
+            ),
+            (
+                "require(modExp(n, 2 - 3, 7) == 1);",
+                "modExp exponent must be at least 0, got -1",
+            ),
+            (
+                "require(modExp(n, 2, 1 - 1) == 1);",
+                "modExp modulus must be at least 1, got 0",
+            ),
+        ] {
+            let source = format!("contract C(bytes32 h) {{ function f(bytes d, int n) {{ {body} require(size(d) + n > 0); }} }}");
+            let error = compile(&source).expect_err(body).to_string();
+            assert!(error.contains(expected), "{body}: {error}");
+        }
+        for body in [
+            "require(size(digest(d, 2 + 3)) > 0);",
+            "require(size(digest(d, n)) > 0);",
+            "require(size(num2bin(n, 500 + 20)) > 0);",
+        ] {
+            let source = format!("contract C() {{ function f(bytes d, int n) {{ {body} require(size(d) + n > 0); }} }}");
+            compile(&source).unwrap_or_else(|error| panic!("{body}: {error}"));
+        }
+    }
+}
+
 fn signatures(keys: usize, body: &str) -> String {
     format!(
         "contract C(pubkey[{keys}] keys) {{ function f(signature[{keys}] sigs, int n) {{ {body} }} }}"

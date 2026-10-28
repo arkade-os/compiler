@@ -358,14 +358,15 @@ pub(super) fn validate_binding_expression(
                 let Some(operand) = operands.get(index) else {
                     continue;
                 };
-                let Some((negative, magnitude)) = literal_index(operand) else {
+                let Ok(value) =
+                    crate::compiler::constants::evaluate(operand, &mut |path| Err(path.key()))
+                else {
                     continue;
                 };
-                let value = format!("{}{magnitude}", if negative { "-" } else { "" });
                 let accepted = value.parse::<i128>().map_or_else(
                     |_| {
                         // An i128::MAX upper bound denotes an unbounded domain.
-                        !negative && ranges.iter().any(|(_, high)| *high == i128::MAX)
+                        !value.starts_with('-') && ranges.iter().any(|(_, high)| *high == i128::MAX)
                     },
                     |value| {
                         ranges
