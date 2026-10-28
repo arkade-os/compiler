@@ -61,7 +61,7 @@ pub struct ArkadeCovenant {
     /// debug file (`ContractJson::debug_info`), not the artifact.
     #[serde(skip_serializing, default)]
     pub source_map: Vec<SourceRange>,
-    /// What the covenant uses of the VM's limits, for reports; not part of the artifact.
+    /// Resource usage for reports; not part of the artifact.
     #[serde(skip)]
     pub costs: Vec<Cost>,
 }
@@ -80,14 +80,12 @@ pub struct SourceRange {
     pub message: Option<String>,
 }
 
-/// How much of one VM limit a covenant uses: its script bytes (a lower bound, since
-/// variable-width arguments can add more), its stack peak, or the executions of a heavy opcode
-/// on its longest path.
+/// Resource usage: script bytes (a lower bound, since variable-width arguments can add
+/// more), stack peak, or an upper bound on executions of a named opcode.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Cost {
     pub name: String,
     pub used: usize,
-    pub limit: usize,
 }
 
 /// One L1 tapleaf within a spend group.

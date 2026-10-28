@@ -77,27 +77,47 @@ fn signatures(keys: usize, body: &str) -> String {
 const EACH_KEY: &str = "for (i, key) in keys { require(checkSig(sigs[i], key)); }";
 
 #[test]
-fn heavy_opcodes_are_counted_on_the_longest_path() {
-    compile(&signatures(50, &format!("require(n > 0); {EACH_KEY}"))).unwrap();
-    let error = compile_error(&signatures(51, &format!("require(n > 0); {EACH_KEY}")));
-    assert!(
-        error.contains("can run OP_CHECKSIGVERIFY 51 times, above the VM limit of 50 per input"),
-        "{error}"
-    );
-    // The first key is checked with OP_CHECKSIG, which has its own limit.
-    let multisig = |keys| signatures(keys, "require(n > 0); require(checkMultisig(keys, sigs));");
-    compile(&multisig(51)).unwrap();
-    let error = compile_error(&multisig(52));
-    assert!(error.contains("OP_CHECKSIGADD 51 times"), "{error}");
-
-    // Exclusive branches each stay within the limit; consecutive ones do not.
+fn opcode_counts_do_not_enforce_emulator_compute_limits() {
+    let count = |source: &str, opcode: &str| {
+        let output = compile(source).unwrap();
+        output.functions[0]
+            .arkade
+            .as_ref()
+            .unwrap()
+            .costs
+            .iter()
+            .find(|cost| cost.name == opcode)
+            .unwrap()
+            .used
+    };
+    for keys in [50, 51] {
+        assert_eq!(
+            count(
+                &signatures(keys, &format!("require(n > 0); {EACH_KEY}")),
+                "OP_CHECKSIGVERIFY"
+            ),
+            keys
+        );
+    }
+    // The first key uses OP_CHECKSIG; the rest use OP_CHECKSIGADD.
+    for keys in [51, 52] {
+        assert_eq!(
+            count(
+                &signatures(keys, "require(n > 0); require(checkMultisig(keys, sigs));"),
+                "OP_CHECKSIGADD"
+            ),
+            keys - 1
+        );
+    }
     let branches = format!("if (n > 0) {{ {EACH_KEY} }} else {{ {EACH_KEY} }}");
-    compile(&signatures(30, &branches)).unwrap();
-    let error = compile_error(&signatures(
-        30,
-        &format!("require(n > 0); {EACH_KEY} {EACH_KEY}"),
-    ));
-    assert!(error.contains("OP_CHECKSIGVERIFY 60 times"), "{error}");
+    assert_eq!(count(&signatures(30, &branches), "OP_CHECKSIGVERIFY"), 30);
+    assert_eq!(
+        count(
+            &signatures(30, &format!("require(n > 0); {EACH_KEY} {EACH_KEY}")),
+            "OP_CHECKSIGVERIFY"
+        ),
+        60
+    );
 }
 
 #[test]

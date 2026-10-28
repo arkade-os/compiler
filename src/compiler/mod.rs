@@ -71,23 +71,6 @@ const MAX_STACK_ITEMS: usize = 1000;
 const MAX_SCRIPT_SIZE: usize = 10_000;
 /// Bytes the VM allows in one stack element (`txscript.MaxScriptElementSize`).
 const MAX_ELEMENT_SIZE: usize = 520;
-/// How often the VM lets each heavy opcode run per input (`arkade.DefaultComputeLimits`).
-const COMPUTE_LIMITS: [(Opcode, usize); 11] = {
-    use crate::opcodes::Opcode::*;
-    [
-        (CheckSig, 50),
-        (CheckSigVerify, 50),
-        (CheckSigAdd, 50),
-        (CheckSigFromStack, 50),
-        (EcAdd, 1000),
-        (EcMul, 50),
-        (EcMulScalarVerify, 50),
-        (TweakVerify, 50),
-        (EcPairing, 2),
-        (ModExp, 64),
-        (InspectIntentMessage, 16),
-    ]
-};
 
 fn integer_op(value: usize) -> Op {
     use crate::opcodes::Opcode::*;
@@ -735,30 +718,25 @@ fn covenant_for(
         )
         .into());
     }
-    let executions = most_executions(&ops, &mut 0);
-    for (opcode, limit) in COMPUTE_LIMITS {
-        let count = executions.get(&opcode).copied().unwrap_or(0);
-        if count > limit {
-            return Err(format!(
-                "function '{}' can run {opcode} {count} times, above the VM limit of {limit} per input",
-                function.name
-            )
-            .into());
+    let mut executions = most_executions(&ops, &mut 0);
+    // Conditional opcodes execute even inside skipped branches.
+    for (op, _) in &ops {
+        if let Op::Opcode(opcode @ (If | Else | EndIf)) = op {
+            *executions.entry(*opcode).or_default() += 1;
         }
     }
-    let cost = |name: &str, used, limit| crate::models::Cost {
+    let cost = |name: &str, used| crate::models::Cost {
         name: name.to_string(),
         used,
-        limit,
     };
     let mut costs = vec![
-        cost("script bytes (min)", size, MAX_SCRIPT_SIZE),
-        cost("stack items", peak, MAX_STACK_ITEMS),
+        cost("script bytes (min)", size),
+        cost("stack items (peak)", peak),
     ];
-    for (opcode, limit) in COMPUTE_LIMITS {
-        if let Some(&count) = executions.get(&opcode) {
-            costs.push(cost(opcode.name(), count, limit));
-        }
+    let mut executions: Vec<_> = executions.into_iter().collect();
+    executions.sort_unstable_by_key(|(opcode, _)| opcode.name());
+    for (opcode, count) in executions {
+        costs.push(cost(opcode.name(), count));
     }
     Ok((inputs, ops, costs))
 }
@@ -822,8 +800,8 @@ fn require_messages(
     }
 }
 
-/// The most times each opcode runs on one path through `ops` from `position` to the `Else`
-/// or `EndIf` that closes the enclosing branch, where `position` stops.
+/// An upper bound on executions of each non-conditional opcode from `position` to the
+/// enclosing `Else` or `EndIf`. Correlated branch conditions are counted independently.
 fn most_executions(
     ops: &[Spanned],
     position: &mut usize,

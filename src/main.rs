@@ -48,7 +48,7 @@ struct Args {
     #[arg(long, conflicts_with = "check")]
     debug: bool,
 
-    /// Print each covenant's script bytes, stack peak and heavy opcodes against the VM's limits
+    /// Print each covenant's script bytes, stack peak and opcode execution counts
     #[arg(long)]
     report: bool,
 }
@@ -178,7 +178,7 @@ fn check(
     Ok(())
 }
 
-/// One block per covenant: each cost, its limit and the share of the limit it uses.
+/// One block per covenant with its resource usage.
 fn print_report(output: &arkade_compiler::models::ContractJson) {
     for group in &output.functions {
         let Some(covenant) = &group.arkade else {
@@ -186,11 +186,7 @@ fn print_report(output: &arkade_compiler::models::ContractJson) {
         };
         println!("{}", group.name);
         for cost in &covenant.costs {
-            let percent = cost.used * 100 / cost.limit.max(1);
-            println!(
-                "  {:<24} {:>6} / {:<6} {percent:>3}%",
-                cost.name, cost.used, cost.limit
-            );
+            println!("  {:<24} {:>6}", cost.name, cost.used);
         }
     }
 }
