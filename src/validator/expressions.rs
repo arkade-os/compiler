@@ -379,6 +379,7 @@ pub(super) fn validate_binding_expression(
                         .iter()
                         .map(|(low, high)| match (*low, *high) {
                             (low, i128::MAX) => format!("at least {low}"),
+                            (low, high) if low == high => low.to_string(),
                             (low, high) => format!("{low} to {high}"),
                         })
                         .collect::<Vec<_>>()

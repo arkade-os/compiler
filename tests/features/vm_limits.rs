@@ -142,6 +142,28 @@ fn constant_expression_operands_are_checked_in_both_modes() {
     }
 }
 
+#[test]
+fn pairing_only_accepts_the_bn254_curve() {
+    for compile in [compile, crate::common::compile_unoptimized] {
+        for curve in ["0", "1", "2", "1 + 1"] {
+            let source = format!("contract C() {{ function f(ECPoint[1] p, G2Point[1] q) {{ require(ecPairing(p, q, {curve})); }} }}");
+            if matches!(curve, "0" | "1") {
+                let error = compile(&source).expect_err(curve).to_string();
+                assert!(
+                    error.contains(&format!("ecPairing curveId must be 2, got {curve}")),
+                    "{error}"
+                );
+            } else {
+                compile(&source).unwrap_or_else(|error| panic!("{curve}: {error}"));
+            }
+        }
+        for curve in [0, 1, 2] {
+            let source = format!("contract C() {{ function f(ECPoint p, ECPoint q, int k) {{ ECPoint sum = ecAdd(p, q, {curve}); ECPoint product = ecMul(p, k, {curve}); require(sum.x == product.x); }} }}");
+            compile(&source).unwrap_or_else(|error| panic!("{curve}: {error}"));
+        }
+    }
+}
+
 fn signatures(keys: usize, body: &str) -> String {
     format!(
         "contract C(pubkey[{keys}] keys) {{ function f(signature[{keys}] sigs, int n) {{ {body} }} }}"
