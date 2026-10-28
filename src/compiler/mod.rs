@@ -704,16 +704,12 @@ fn covenant_for(
             function.name
         ).into());
     }
-    if let Some(size) = ops
+    if ops
         .iter()
-        .filter_map(|(op, _)| match op {
-            Op::Push(value) => Some(value.strip_prefix("0x")?.len() / 2),
-            _ => None,
-        })
-        .find(|&size| size > MAX_ELEMENT_SIZE)
+        .any(|(op, _)| op.pushes_more_than(MAX_ELEMENT_SIZE))
     {
         return Err(format!(
-            "function '{}' pushes a {size}-byte value, above the VM element limit of {MAX_ELEMENT_SIZE}",
+            "function '{}' pushes a value above the VM element limit of {MAX_ELEMENT_SIZE}",
             function.name
         )
         .into());

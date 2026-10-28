@@ -227,9 +227,47 @@ fn pushes_above_the_vm_element_size_do_not_compile() {
     compile(&source(520)).unwrap();
     let error = compile_error(&source(521));
     assert!(
-        error.contains("pushes a 521-byte value, above the VM element limit of 520"),
+        error.contains("pushes a value above the VM element limit of 520"),
         "{error}"
     );
+}
+
+#[test]
+fn numeric_pushes_respect_the_element_limit_and_sign_byte() {
+    for compile in [compile, crate::common::compile_unoptimized] {
+        for (hex, accepted) in [
+            (format!("7f{}", "ff".repeat(519)), true),
+            (format!("80{}", "00".repeat(519)), false),
+            (format!("01{}", "00".repeat(520)), false),
+        ] {
+            for sign in ["", "-"] {
+                let source = format!(
+                    "contract C() {{ function f(int n) {{ require(n == {sign}int(0x{hex})); }} }}"
+                );
+                let result = compile(&source);
+                if accepted {
+                    result.expect("520-byte numeric push");
+                } else {
+                    let error = result.expect_err("521-byte numeric push").to_string();
+                    assert!(
+                        error.contains("above the VM element limit of 520"),
+                        "{error}"
+                    );
+                }
+            }
+        }
+        let source = format!(
+            "contract C() {{ function f(int n) {{ require(n == {}); }} }}",
+            "9".repeat(10_000)
+        );
+        let error = compile(&source)
+            .expect_err("oversized decimal literal")
+            .to_string();
+        assert!(
+            error.contains("above the VM element limit of 520"),
+            "{error}"
+        );
+    }
 }
 
 #[test]

@@ -128,6 +128,35 @@ impl Op {
         }
     }
 
+    pub(super) fn pushes_more_than(&self, limit: usize) -> bool {
+        let Self::Push(value) = self else {
+            return false;
+        };
+        if let Some(hex) = value.strip_prefix("0x") {
+            return hex.len() / 2 > limit;
+        }
+        if let Ok(number) = value.parse::<i64>() {
+            return scriptnum_len(number) > limit;
+        }
+        let mut bytes = vec![0u8];
+        for digit in value.trim_start_matches('-').bytes() {
+            let mut carry = u16::from(digit - b'0');
+            for byte in &mut bytes {
+                carry += u16::from(*byte) * 10;
+                *byte = carry as u8;
+                carry >>= 8;
+            }
+            if carry != 0 {
+                bytes.push(carry as u8);
+            }
+            // Stop once the magnitude alone exceeds the limit, bounding conversion memory.
+            if bytes.len() > limit {
+                return true;
+            }
+        }
+        bytes.len() + usize::from(bytes.last().unwrap() & 0x80 != 0) > limit
+    }
+
     /// The fewest bytes this takes once assembled with canonical pushes;
     /// `param_width` is the data width a parameter's type guarantees.
     pub(crate) fn min_size(&self, param_width: &dyn Fn(&str) -> usize) -> usize {
