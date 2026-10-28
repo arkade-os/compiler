@@ -68,6 +68,32 @@ fn constant_operands_inside_the_vm_domain_compile() {
     }
 }
 
+#[test]
+fn nonnegative_operand_domains_accept_integers_beyond_i128() {
+    let large = "170141183460469231731687303715884105728";
+    for compile in [compile, crate::common::compile_unoptimized] {
+        for body in [
+            format!("require(!checkTime({large}));"),
+            format!("require(modExp(n, {large}, 3) == 1);"),
+            format!("require(modExp(n, 2, {large}) == 4);"),
+            format!("require(modExp(n, 2, --{large}) == 4);"),
+        ] {
+            let source =
+                format!("contract C() {{ function f(int n) {{ {body} require(n > 0); }} }}");
+            compile(&source).unwrap_or_else(|error| panic!("{body}: {error}"));
+        }
+        for body in [
+            format!("require(checkTime(-{large}));"),
+            format!("require(modExp(n, -{large}, 3) == 1);"),
+            format!("require(modExp(n, 2, -{large}) == 4);"),
+            format!("require(size(digest(d, {large})) > 0);"),
+        ] {
+            let source = format!("contract C() {{ function f(int n, bytes d) {{ {body} require(n + size(d) > 0); }} }}");
+            assert!(compile(&source).is_err(), "{body}");
+        }
+    }
+}
+
 fn signatures(keys: usize, body: &str) -> String {
     format!(
         "contract C(pubkey[{keys}] keys) {{ function f(signature[{keys}] sigs, int n) {{ {body} }} }}"

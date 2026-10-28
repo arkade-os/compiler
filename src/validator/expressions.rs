@@ -362,11 +362,17 @@ pub(super) fn validate_binding_expression(
                     continue;
                 };
                 let value = format!("{}{magnitude}", if negative { "-" } else { "" });
-                let accepted = value.parse::<i128>().is_ok_and(|value| {
-                    ranges
-                        .iter()
-                        .any(|(low, high)| (*low..=*high).contains(&value))
-                });
+                let accepted = value.parse::<i128>().map_or_else(
+                    |_| {
+                        // An i128::MAX upper bound denotes an unbounded domain.
+                        !negative && ranges.iter().any(|(_, high)| *high == i128::MAX)
+                    },
+                    |value| {
+                        ranges
+                            .iter()
+                            .any(|(low, high)| (*low..=*high).contains(&value))
+                    },
+                );
                 if !accepted {
                     let allowed = ranges
                         .iter()
