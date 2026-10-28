@@ -2,7 +2,8 @@ use crate::common::compile_unoptimized as compile;
 use arkade_compiler::opcodes::{
     OP_EQUALVERIFY, OP_INSPECTINPUTARKADESCRIPTHASH, OP_INSPECTINPUTARKADEWITNESSHASH,
     OP_INSPECTINPUTOUTPOINT, OP_INSPECTINPUTSCRIPTPUBKEY, OP_INSPECTINPUTSEQUENCE,
-    OP_INSPECTINPUTVALUE, OP_INSPECTOUTPUTSCRIPTPUBKEY, OP_INSPECTOUTPUTVALUE, OP_SWAP,
+    OP_INSPECTINPUTVALUE, OP_INSPECTOUTPUTSCRIPTPUBKEY, OP_INSPECTOUTPUTVALUE, OP_NUMEQUALVERIFY,
+    OP_SWAP,
 };
 
 /// Test input introspection opcodes
@@ -128,9 +129,10 @@ fn test_input_outpoint_is_compared_field_by_field() {
         "both outpoints are inspected: {asm:?}"
     );
     assert_eq!(
-        asm.iter().filter(|token| *token == OP_EQUALVERIFY).count(),
-        2,
-        "txid and vout are both verified: {asm:?}"
+        [OP_EQUALVERIFY, OP_NUMEQUALVERIFY]
+            .map(|opcode| asm.iter().filter(|token| *token == opcode).count()),
+        [1, 1],
+        "the txid is verified as bytes and the vout as a number: {asm:?}"
     );
 }
 

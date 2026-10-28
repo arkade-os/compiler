@@ -37,6 +37,7 @@ mod operands;
 mod output;
 pub(crate) mod references;
 mod shadowing;
+mod signatures;
 
 use assets::check_asset_id_operands;
 use bindings::check_binding_semantics;
@@ -285,6 +286,7 @@ pub(crate) fn validate_ast(contract: &Contract, require_entrypoint: bool) -> Vec
     check_binding_semantics(contract, &mut issues);
     check_asset_id_operands(contract, &mut issues);
     inspections::check_repeated_inspections(contract, &mut issues);
+    signatures::check_signature_results(contract, &mut issues);
 
     issues
 }

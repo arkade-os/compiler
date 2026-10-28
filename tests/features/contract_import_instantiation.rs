@@ -228,7 +228,7 @@ contract RecursiveVtxo(pubkey ownerPk, int exit) {
         "OP_2",
         "OP_ROLL",
         "OP_EQUALVERIFY",
-        "OP_EQUALVERIFY",
+        "OP_NUMEQUALVERIFY",
         "OP_1",
     ];
     assert_eq!(

@@ -61,6 +61,9 @@ pub struct ArkadeCovenant {
     /// debug file (`ContractJson::debug_info`), not the artifact.
     #[serde(skip_serializing, default)]
     pub source_map: Vec<SourceRange>,
+    /// Resource usage for reports; not part of the artifact.
+    #[serde(skip)]
+    pub costs: Vec<Cost>,
 }
 
 /// A run of covenant tokens and the source statement they come from.
@@ -75,6 +78,14 @@ pub struct SourceRange {
     /// The statement's `require` message.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
+}
+
+/// Resource usage: script bytes (a lower bound, since variable-width arguments can add
+/// more), stack peak, or an upper bound on executions of a named opcode.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Cost {
+    pub name: String,
+    pub used: usize,
 }
 
 /// One L1 tapleaf within a spend group.

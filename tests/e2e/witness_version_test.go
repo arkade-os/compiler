@@ -40,7 +40,7 @@ contract WitnessVersion() {
 	}{
 		{"taproot output", group.pkScript, 1, ""},
 		{"segwit v0 output", p2wpkh, 0, ""},
-		{"wrong version", group.pkScript, 0, "OP_EQUALVERIFY failed"},
+		{"wrong version", group.pkScript, 0, "OP_NUMEQUALVERIFY failed"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			spend := spendingPSBTWithWitness(t, deployment, group, 10_000, tc.pkScript, covenantWitness(t, contract, covenantGroup(t, contract, "spend"), map[string][]byte{
@@ -91,23 +91,23 @@ contract C() {
 			for _, tc := range []struct {
 				name     string
 				pkScript []byte
-				matches  bool
+				wantErr  string
 			}{
-				{"matching v1", p2trTo(expectedProgram), true},
-				{"same program v0", append([]byte{0x00, 0x20}, expectedProgram...), false},
-				{"same program v2", append([]byte{0x52, 0x20}, expectedProgram...), false},
-				{"wrong program v1", p2trTo(otherProgram), false},
-				{"wrong program v0", append([]byte{0x00, 0x20}, otherProgram...), false},
-				{"non-witness script", []byte{0x51}, false},
+				{"matching v1", p2trTo(expectedProgram), ""},
+				{"same program v0", append([]byte{0x00, 0x20}, expectedProgram...), "OP_NUMEQUALVERIFY failed"},
+				{"same program v2", append([]byte{0x52, 0x20}, expectedProgram...), "OP_NUMEQUALVERIFY failed"},
+				{"wrong program v1", p2trTo(otherProgram), "OP_EQUALVERIFY failed"},
+				{"wrong program v0", append([]byte{0x00, 0x20}, otherProgram...), "OP_EQUALVERIFY failed"},
+				{"non-witness script", []byte{0x51}, "OP_EQUALVERIFY failed"},
 			} {
 				t.Run(tc.name, func(t *testing.T) {
-					wantErr := ""
+					wantErr := tc.wantErr
 					if name == "different" {
-						if tc.matches {
+						if wantErr == "" {
 							wantErr = "false stack entry"
+						} else {
+							wantErr = ""
 						}
-					} else if !tc.matches {
-						wantErr = "OP_EQUALVERIFY failed"
 					}
 					spend := spendingPSBTWithWitness(t, deployment, group, 10_000, tc.pkScript, witness)
 					requireVMResult(t, spend, emulatorKey.PubKey(), wantErr)

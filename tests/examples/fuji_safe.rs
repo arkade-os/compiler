@@ -113,9 +113,9 @@ fn test_fuji_safe_contract() {
             ("OP_INSPECTOUTPUTVALUE", value_read),
         ] {
             let comparison = if opcode == "OP_INSPECTOUTPUTVALUE" {
-                format!("0 {opcode} {operand} OP_EQUALVERIFY")
+                format!("0 {opcode} {operand} OP_NUMEQUALVERIFY")
             } else {
-                format!("0 {opcode} {operand} OP_ROT OP_EQUALVERIFY OP_EQUALVERIFY")
+                format!("0 {opcode} {operand} OP_ROT OP_EQUALVERIFY OP_NUMEQUALVERIFY")
             };
             let expected = comparison.split_whitespace().collect::<Vec<_>>();
             assert!(

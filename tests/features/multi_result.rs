@@ -54,9 +54,17 @@ fn contract_instances_return_versioned_scripts() {
             let asm = arkade_asm_tokens(&output, "spend");
             assert!(asm.windows(2).any(|w| w == ["<CONTRACT:C()>", OP_1]));
             if comparison.contains(" == ") {
-                assert_eq!(asm.iter().filter(|op| *op == OP_EQUALVERIFY).count(), 2);
+                assert_eq!(
+                    [OP_EQUALVERIFY, OP_NUMEQUALVERIFY]
+                        .map(|opcode| asm.iter().filter(|op| *op == opcode).count()),
+                    [1, 1]
+                );
             } else {
-                assert_eq!(asm.iter().filter(|op| *op == OP_EQUAL).count(), 2);
+                assert_eq!(
+                    [OP_EQUAL, OP_NUMEQUAL]
+                        .map(|opcode| asm.iter().filter(|op| *op == opcode).count()),
+                    [1, 1]
+                );
                 assert!(asm.iter().any(|op| op == OP_BOOLAND));
             }
             assert_eq!(output.functions.len(), 1);

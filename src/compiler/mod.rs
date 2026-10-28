@@ -69,6 +69,8 @@ enum StackItem {
 const MAX_STACK_ITEMS: usize = 1000;
 /// Bytes the VM allows in a script (`txscript.MaxScriptSize`).
 const MAX_SCRIPT_SIZE: usize = 10_000;
+/// Bytes the VM allows in one stack element (`txscript.MaxScriptElementSize`).
+const MAX_ELEMENT_SIZE: usize = 520;
 
 fn integer_op(value: usize) -> Op {
     use crate::opcodes::Opcode::*;
@@ -526,10 +528,11 @@ pub(crate) fn emit(
                 &contract.functions,
                 options.optimize,
             )
-            .map(|(inputs, ops)| ArkadeCovenant {
+            .map(|(inputs, ops, costs)| ArkadeCovenant {
                 inputs,
                 asm: ops.iter().map(|(op, _)| op.spell()).collect(),
                 source_map: source_map(&ops, &entry_source, &messages),
+                costs,
             })
             .map_err(|error| error.at(function.span))?,
         );
@@ -584,13 +587,15 @@ pub(crate) fn expanded_placeholder_params(
 }
 
 /// Build an `ArkadeCovenant` for a public function.
+/// Compute budgets are deployment-configurable; compare the reported counts with the target
+/// emulator's limits rather than enforcing defaults here.
 fn covenant_for(
     function: &Function,
     constructor_parameters: &[Parameter],
     structs: &[crate::models::StructDefinition],
     functions: &[Function],
     optimize: bool,
-) -> Result<(Vec<FunctionInput>, Vec<Spanned>)> {
+) -> Result<(Vec<FunctionInput>, Vec<Spanned>, Vec<crate::models::Cost>)> {
     let inputs = function_inputs(&function.parameters);
     let references =
         crate::validator::references::referenced_parameters(&function.statements, functions);
@@ -701,7 +706,37 @@ fn covenant_for(
             function.name
         ).into());
     }
-    Ok((inputs, ops))
+    if ops
+        .iter()
+        .any(|(op, _)| op.pushes_more_than(MAX_ELEMENT_SIZE))
+    {
+        return Err(format!(
+            "function '{}' pushes a value above the VM element limit of {MAX_ELEMENT_SIZE}",
+            function.name
+        )
+        .into());
+    }
+    let mut executions = most_executions(&ops, &mut 0);
+    // Conditional opcodes execute even inside skipped branches.
+    for (op, _) in &ops {
+        if let Op::Opcode(opcode @ (If | Else | EndIf)) = op {
+            *executions.entry(*opcode).or_default() += 1;
+        }
+    }
+    let cost = |name: &str, used| crate::models::Cost {
+        name: name.to_string(),
+        used,
+    };
+    let mut costs = vec![
+        cost("script bytes (min)", size),
+        cost("stack items (peak)", peak),
+    ];
+    let mut executions: Vec<_> = executions.into_iter().collect();
+    executions.sort_unstable_by_key(|(opcode, _)| opcode.name());
+    for (opcode, count) in executions {
+        costs.push(cost(opcode.name(), count));
+    }
+    Ok((inputs, ops, costs))
 }
 
 /// Runs of `ops` from one statement, located in `source`.
@@ -761,6 +796,38 @@ fn require_messages(
             _ => {}
         }
     }
+}
+
+/// An upper bound on executions of each non-conditional opcode from `position` to the
+/// enclosing `Else` or `EndIf`. Correlated branch conditions are counted independently.
+fn most_executions(
+    ops: &[Spanned],
+    position: &mut usize,
+) -> std::collections::HashMap<Opcode, usize> {
+    let mut counts = std::collections::HashMap::new();
+    while let Some((op, _)) = ops.get(*position) {
+        match op {
+            Op::Opcode(Else | EndIf) => break,
+            Op::Opcode(If) => {
+                *position += 1;
+                let mut branch = most_executions(ops, position);
+                if matches!(ops.get(*position), Some((Op::Opcode(Else), _))) {
+                    *position += 1;
+                    for (opcode, count) in most_executions(ops, position) {
+                        let longest = branch.entry(opcode).or_default();
+                        *longest = (*longest).max(count);
+                    }
+                }
+                for (opcode, count) in branch {
+                    *counts.entry(opcode).or_default() += count;
+                }
+            }
+            Op::Opcode(opcode) => *counts.entry(*opcode).or_default() += 1,
+            _ => {}
+        }
+        *position += 1;
+    }
+    counts
 }
 
 fn function_inputs(params: &[Parameter]) -> Vec<FunctionInput> {

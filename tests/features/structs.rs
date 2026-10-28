@@ -1,8 +1,8 @@
 use crate::common::compile_unoptimized as compile;
 use arkade_compiler::opcodes::{
-    OP_ADD, OP_BOOLAND, OP_CHECKSIG, OP_CHECKSIGFROMSTACK, OP_DUP, OP_ENDIF, OP_EQUAL,
-    OP_EQUALVERIFY, OP_GREATERTHANOREQUAL, OP_INSPECTASSETGROUPASSETID, OP_INSPECTINPUTOUTPOINT,
-    OP_LESSTHAN, OP_NOT, OP_PICK, OP_PUT, OP_ROLL, OP_SWAP, OP_VERIFY,
+    OP_ADD, OP_BOOLAND, OP_CHECKSIG, OP_CHECKSIGFROMSTACK, OP_DUP, OP_ENDIF, OP_GREATERTHANOREQUAL,
+    OP_INSPECTASSETGROUPASSETID, OP_INSPECTINPUTOUTPOINT, OP_LESSTHAN, OP_NOT, OP_NUMEQUAL,
+    OP_NUMEQUALVERIFY, OP_PICK, OP_PUT, OP_ROLL, OP_SWAP, OP_VERIFY,
 };
 
 #[test]
@@ -212,7 +212,9 @@ contract C(Pair left) {
     .expect("struct equality compares leaf by leaf");
     let asm = crate::common::arkade_asm_tokens(&output, "spend");
     assert_eq!(
-        asm.iter().filter(|token| *token == OP_EQUALVERIFY).count(),
+        asm.iter()
+            .filter(|token| *token == OP_NUMEQUALVERIFY)
+            .count(),
         4,
         "every leaf of the nested struct is verified: {asm:?}"
     );
@@ -263,11 +265,11 @@ fn struct_inequality_checks_the_final_leaf() {
     )
     .expect("only the final leaf differs");
     let asm = crate::common::arkade_asm_tokens(&output, "spend");
-    assert_eq!(asm.iter().filter(|token| *token == OP_EQUAL).count(), 4);
+    assert_eq!(asm.iter().filter(|token| *token == OP_NUMEQUAL).count(), 4);
     assert_eq!(asm.iter().filter(|token| *token == OP_BOOLAND).count(), 3);
     assert!(
         asm.windows(4)
-            .any(|tokens| tokens == [OP_EQUAL, OP_BOOLAND, OP_NOT, OP_VERIFY]),
+            .any(|tokens| tokens == [OP_NUMEQUAL, OP_BOOLAND, OP_NOT, OP_VERIFY]),
         "{asm:?}"
     );
 }
@@ -287,7 +289,7 @@ contract C() {
 "#,
     )
     .expect("helper parameter types stay inside the helper");
-    assert!(crate::common::arkade_asm(&after_call, "spend").contains(OP_EQUALVERIFY));
+    assert!(crate::common::arkade_asm(&after_call, "spend").contains(OP_NUMEQUALVERIFY));
 
     let after_block = compile(
         r#"
@@ -508,7 +510,7 @@ contract C() {
     let asm = &output.functions[0].arkade.as_ref().expect("covenant").asm;
     assert!(asm.iter().all(|token| !token.contains("policy.")));
     assert!(asm.iter().filter(|token| *token == OP_PICK).count() >= 2);
-    assert!(asm.iter().any(|token| token == OP_EQUAL));
+    assert!(asm.iter().any(|token| token == OP_NUMEQUAL));
 }
 
 #[test]
