@@ -49,7 +49,7 @@ struct Args {
     debug: bool,
 
     /// Print each covenant's script bytes, stack peak and opcode execution counts
-    #[arg(long)]
+    #[arg(long, conflicts_with = "check")]
     report: bool,
 }
 
