@@ -587,6 +587,8 @@ pub(crate) fn expanded_placeholder_params(
 }
 
 /// Build an `ArkadeCovenant` for a public function.
+/// Compute budgets are deployment-configurable; compare the reported counts with the target
+/// emulator's limits rather than enforcing defaults here.
 fn covenant_for(
     function: &Function,
     constructor_parameters: &[Parameter],
