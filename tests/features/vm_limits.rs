@@ -143,6 +143,41 @@ fn constant_expression_operands_are_checked_in_both_modes() {
 }
 
 #[test]
+fn mod_exp_constant_operands_fit_the_vms_64_byte_limit() {
+    for compile in [compile, crate::common::compile_unoptimized] {
+        for (hex, accepted) in [
+            (format!("7f{}", "ff".repeat(63)), true),
+            (format!("80{}", "00".repeat(63)), false),
+            (format!("01{}", "00".repeat(64)), false),
+        ] {
+            let value = format!("int(0x{hex})");
+            for (label, expression) in [
+                ("base", format!("modExp({value}, 1, n)")),
+                ("base", format!("modExp(-{value}, 1, n)")),
+                ("exponent", format!("modExp(n, {value}, 3)")),
+                ("modulus", format!("modExp(n, 2, {value})")),
+            ] {
+                let source = format!(
+                    "contract C() {{ function f(int n) {{ require({expression} >= 0); }} }}"
+                );
+                let result = compile(&source);
+                if accepted {
+                    result.expect("64-byte modExp operand");
+                } else {
+                    let error = result.expect_err("65-byte modExp operand").to_string();
+                    assert!(
+                        error.contains(&format!(
+                            "modExp {label} must fit in 64 Script-number bytes"
+                        )),
+                        "{error}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn pairing_only_accepts_the_bn254_curve() {
     for compile in [compile, crate::common::compile_unoptimized] {
         for curve in ["0", "1", "2", "1 + 1"] {

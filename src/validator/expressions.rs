@@ -392,6 +392,22 @@ pub(super) fn validate_binding_expression(
                     );
                 }
             }
+            if name == "modExp" {
+                for (operand, label) in operands.iter().zip(["base", "exponent", "modulus"]) {
+                    if operand.ty != ArkType::Int {
+                        continue;
+                    }
+                    if let Ok(value) =
+                        crate::compiler::constants::evaluate(operand, &mut |path| Err(path.key()))
+                    {
+                        if crate::compiler::Op::Push(value).pushes_more_than(64) {
+                            issues.push(ValidationIssue::error(format!(
+                                "function '{function_name}': modExp {label} must fit in 64 Script-number bytes"
+                            )).at(operand.span));
+                        }
+                    }
+                }
+            }
             let width = |index: usize| {
                 operands
                     .get(index)

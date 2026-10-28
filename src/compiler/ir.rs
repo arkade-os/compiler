@@ -128,7 +128,7 @@ impl Op {
         }
     }
 
-    pub(super) fn pushes_more_than(&self, limit: usize) -> bool {
+    pub(crate) fn pushes_more_than(&self, limit: usize) -> bool {
         let Self::Push(value) = self else {
             return false;
         };
