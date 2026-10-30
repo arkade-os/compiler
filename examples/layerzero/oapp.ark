@@ -111,19 +111,13 @@ contract OApp(
       "credit remoteSender mismatch"
     );
 
-    // Recipient output's scriptPubKey matches the CreditMessage's full 34-byte
-    // P2TR scriptPubKey field (0x5120 tag prefix + 32-byte x-only key, starting
-    // at LzReceive offset 145).
-    //
-    // OP_INSPECTOUTPUTSCRIPTPUBKEY returns the full scriptPubKey bytes as a
-    // single stack item (see docs/arkade-primitives-spec.md Phase 7 — the
-    // canonical Arkade convention is one-item `outScript(bytes)`, not the
-    // (program, version) two-item form some Liquid-style references describe).
-    // So both sides of this equality are 34 bytes.
-    require(
-      tx.outputs[1].scriptPubKey == substr(tx.inputs[0].packet(17), 145, 34),
-      "recipient pkScript mismatch"
-    );
+    // CreditMessage commits a serialized P2TR script: 0x5120 followed by the program.
+    require(substr(tx.inputs[0].packet(17), 145, 2) == 0x5120, "recipient must be P2TR");
+    ScriptPubKey recipientScript = {
+      program: substr(tx.inputs[0].packet(17), 147, 32),
+      version: 1
+    };
+    require(tx.outputs[1].script == recipientScript, "recipient pkScript mismatch");
 
     // Recipient output receives exactly CreditMessage.amount USDT0.
     require(
@@ -145,7 +139,7 @@ contract OApp(
     // OP_INSPECTOUTPUTSCRIPTPUBKEY == OP_PUSHCURRENTINPUTINDEX
     // OP_INSPECTINPUTSCRIPTPUBKEY check).
     require(
-      tx.outputs[0].scriptPubKey == tx.input.current.scriptPubKey,
+      tx.outputs[0].script == tx.input.current.script,
       "oapp state must continue"
     );
     require(tx.outputs[0].assets.lookup(oappCtrlAssetIdTxid, oappCtrlAssetIdGidx) == 1, "oapp control missing");
@@ -197,7 +191,7 @@ contract OApp(
       "send marker asset missing"
     );
     require(
-      tx.outputs[1].scriptPubKey == new SendMarker(
+      tx.outputs[1].script == new SendMarker(
         sendMarkerScriptHash, endpointCtrlAssetIdTxid, endpointCtrlAssetIdGidx
       ),
       "send marker pkScript not canonical"
@@ -208,7 +202,7 @@ contract OApp(
     // OApp state continues at output 0: recursive covenant via the spent
     // input's own pkScript (see receive() for rationale).
     require(
-      tx.outputs[0].scriptPubKey == tx.input.current.scriptPubKey,
+      tx.outputs[0].script == tx.input.current.script,
       "oapp state must continue"
     );
     require(tx.outputs[0].assets.lookup(oappCtrlAssetIdTxid, oappCtrlAssetIdGidx) == 1, "oapp control missing");

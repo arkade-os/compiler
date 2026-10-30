@@ -13,7 +13,7 @@ After publication, install and pin the compiler with `npm install --save-exact @
 ```ts
 import { compile, version } from "@arkade-os/compiler";
 
-const artifact = await compile({
+const { artifact, diagnostics } = await compile({
     entry: "contracts/main.ark",
     files: {
         "contracts/main.ark": `import "../shared/fees.ark";
@@ -28,21 +28,20 @@ contract Vault(int minimum) {
     },
 });
 
+if (artifact === null) throw new Error(diagnostics.map(d => d.message).join("\n"));
 console.log(await version(), artifact.contractName);
-for (const warning of artifact.warnings) console.warn(warning);
+for (const d of diagnostics) console.warn(`${d.severity}: ${d.message} (${d.file}:${d.start?.line})`);
 ```
 
 CommonJS consumers can use `const { compile, version } = require("@arkade-os/compiler")` with the same asynchronous API.
 
 ## API
 
-`compile(input: CompileInput, options?: CompileOptions): Promise<CompilerArtifact>` accepts an entry path and an object mapping relative `.ark` paths to source strings. Imports resolve relative to the importing file. The compiler normalizes paths and rejects source-root escapes, absolute paths, and duplicate normalized paths. Input and settings are captured when `compile` is called. Optimizations default to `true`; pass `{ optimize: false }` as the second argument to disable them. The artifact's `compiler.options` records the settings used.
+`compile(input: CompileInput, options?: CompileOptions): Promise<CompileResult>` accepts an entry path and an object mapping relative `.ark` paths to source strings. Imports resolve relative to the importing file. The compiler normalizes paths and rejects source-root escapes, absolute paths, and duplicate normalized paths. Input and settings are captured when `compile` is called. Optimizations default to `true`; pass `{ optimize: false }` as the second argument to disable them. The artifact's `compiler.options` records the settings used.
 
-The returned object preserves the compiler's JSON artifact, including constructor inputs, struct layouts, all spend groups and leaves, witness order and injected fields, source provenance, compiler version and settings, format version, timestamp, and fingerprint. Its additional `warnings: string[]` field retains compilation diagnostics; Rust's serialized artifacts omit warnings, and warnings do not participate in the fingerprint. The artifact is the compiler model, not an SDK `Program`. SDK conversion belongs to the separate SDK integration.
+The result is `{ artifact, debug, diagnostics }`. `artifact` is the compiler's JSON artifact, including constructor inputs, struct layouts, all spend groups and leaves, witness order and injected fields, source provenance, compiler version and settings, format version, timestamp, and fingerprint. `debug` is the debug file: each covenant's source map, linked to the artifact by its fingerprint. `diagnostics` lists every error and warning; warnings are not part of the artifact or its fingerprint. Source errors do not reject: `artifact` and `debug` are both `null` and `diagnostics` lists every error. `CompileResult` is a union on `artifact`, so checking it narrows `debug` too. The artifact is the compiler model, not an SDK `Program`. SDK conversion belongs to the separate SDK integration.
 
-`symbols(input: CompileInput): Promise<SourceSymbols>` returns parsed declarations, struct layouts, and directly imported members for editor tooling. Each symbol includes its name, kind, optional type, 1-based `[line, column]` position, optional `[startLine, endLine]` scope, and optional imported file path. This parses source without semantic validation, so a library can be the entry file. Missing or invalid imports contribute no imported symbols; an invalid entry file rejects with an `Error`.
-
-`check(input: CompileInput): Promise<Diagnostic[]>` runs the compiler's existing parse, validation, and type checks without emitting an artifact. It returns source errors and warnings as data, including independent errors in a failing file and the correct filenames for imported diagnostics. A library may be the entry. Each diagnostic has `severity: "error" | "warning"`, `message`, `file`, optional `code`, and optional `span: { start, end }` containing UTF-8 byte offsets into that file. Missing optional fields are omitted. A successful check does not guarantee that assembly generation will succeed.
+`check(input: CompileInput, options?: CompileOptions): Promise<Diagnostic[]>` returns the diagnostics `compile` would, without an artifact, except that a library entry is not an error. It reports independent errors in a failing file, the files of imported diagnostics, and, when those pass, code generation's first error. Each diagnostic has `severity: "error" | "warning"`, `code` (the pass that raised it, or `null`), `message`, `file`, and 1-based `start` and `end` `{ line, column }` positions, or `null` when it has no location. Columns count UTF-16 code units, as editors such as Monaco and VS Code do.
 
 ```ts
 import { check } from "@arkade-os/compiler";
@@ -51,10 +50,14 @@ const diagnostics = await check({
     entry: "main.ark",
     files: { "main.ark": "contract C() { function spend() { require(missing); } }" },
 });
-for (const diagnostic of diagnostics) console.log(diagnostic.severity, diagnostic.file, diagnostic.message);
+for (const d of diagnostics) console.log(d.severity, `${d.file}:${d.start?.line}`, d.message);
 ```
 
-`version(): Promise<string>` reports the installed WASM compiler version. All four functions initialize WASM lazily and share initialization across concurrent calls. A failed initialization can be retried by calling any function again. Invalid JavaScript inputs reject with a `TypeError`; initialization failures reject with their original error. Compilation and symbol parsing failures reject with an `Error` containing the original compiler diagnostic, while `check` returns source failures as diagnostics.
+`symbolAt(input: CompileInput, position: Position): Promise<SymbolInfo | null>` returns the name at a 1-based `{ line, column }` of the entry file, for hover, go to definition and highlighting: its `name`, `kind`, `type`, the location it was found `at`, its `definition`, and its `references`, each `{ file, start, end }`. It returns `null` when no name is there.
+
+`completionsAt(input: CompileInput, position: Position): Promise<Completions>` returns the names usable at a position: `symbols`, `members` (a library's or contract's names under its own), and `structs` with their fields. Files that fail validation still get symbols, but a file that does not parse gives none.
+
+`version(): Promise<string>` reports the installed WASM compiler version. All functions initialize WASM lazily and share initialization across concurrent calls. A failed initialization can be retried by calling any function again. Invalid JavaScript inputs, including non-positive or non-integer positions, reject with a `TypeError`; initialization failures reject with their original error.
 
 ## Runtime selection
 
@@ -64,11 +67,11 @@ Node.js 22.12 or newer is supported. Browser production bundles are tested with 
 
 Compilation currently runs synchronously inside WASM after initialization; the Promise API does not move compilation off the JavaScript thread. Applications needing background compilation can import this package in a worker. Other runtimes, including Expo, require separate verification.
 
-The static playground consumes the browser assets from a locally packed package in a module worker. Its build script generates examples, builds and packs the compiler, and extracts `dist/browser/` into `playground/pkg/`. All compiler calls use the public package API; npm publication is not required to build or deploy it. The playground requests structured diagnostics after compilation failures and maps UTF-8 spans to Monaco positions. Failed initialization can be retried by compiling again.
+The static playground consumes the browser assets from a locally packed package in a module worker. Its build script generates examples, builds and packs the compiler, and extracts `dist/browser/` into `playground/pkg/`. All compiler calls use the public package API; npm publication is not required to build or deploy it. The playground marks diagnostics at their positions, lints as you type with `check`, and drives hover, go to definition and completion with `symbolAt` and `completionsAt`, dropping results that arrive after an edit. Failed initialization can be retried by compiling again.
 
 ## Worker example
 
-The repository's [compiler-client.js](https://github.com/arkade-os/compiler/blob/master/playground/compiler-client.js) and [compiler-worker.js](https://github.com/arkade-os/compiler/blob/master/playground/compiler-worker.js) are a tested consumer example. Copy both into the same directory in your application. In a bundler such as Vite, change the worker's compiler import to `import { compile, check, symbols, version } from "@arkade-os/compiler"`. Then call the client:
+The repository's [compiler-client.js](https://github.com/arkade-os/compiler/blob/master/playground/compiler-client.js) and [compiler-worker.js](https://github.com/arkade-os/compiler/blob/master/playground/compiler-worker.js) are a tested consumer example. Copy both into the same directory in your application. In a bundler such as Vite, change the worker's compiler import to `import { compile, check, symbolAt, completionsAt, version } from "@arkade-os/compiler"`. Then call the client:
 
 ```js
 import { compile, check } from "./compiler-client.js";

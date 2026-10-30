@@ -1,8 +1,8 @@
 use crate::common::compile_unoptimized as compile;
 use arkade_compiler::opcodes::{
-    OP_0, OP_1, OP_BOOLAND, OP_CHECKSIG, OP_CHECKSIGFROMSTACK, OP_EQUAL, OP_EQUALVERIFY,
-    OP_GREATERTHAN, OP_GREATERTHANOREQUAL, OP_LESSTHAN, OP_LESSTHANOREQUAL, OP_NOT, OP_PICK,
-    OP_PUSHCURRENTINPUTINDEX, OP_ROLL, OP_VERIFY,
+    OP_0, OP_1, OP_BOOLAND, OP_CHECKSIG, OP_CHECKSIGFROMSTACK, OP_EQUAL, OP_GREATERTHAN,
+    OP_GREATERTHANOREQUAL, OP_LESSTHAN, OP_LESSTHANOREQUAL, OP_NOT, OP_NUMEQUAL, OP_NUMEQUALVERIFY,
+    OP_NUMNOTEQUAL, OP_PICK, OP_PUSHCURRENTINPUTINDEX, OP_ROLL, OP_VERIFY,
 };
 
 fn compile_asm(source: &str) -> Vec<String> {
@@ -22,8 +22,8 @@ fn contains_tokens(asm: &[String], expected: &[&str]) -> bool {
 #[test]
 fn integer_comparisons_emit_all_boolean_operators() {
     let cases: [(&str, &[&str]); 6] = [
-        ("==", &["<left>", "<right>", OP_EQUAL]),
-        ("!=", &["<left>", "<right>", OP_EQUAL, OP_NOT]),
+        ("==", &["<left>", "<right>", OP_NUMEQUAL]),
+        ("!=", &["<left>", "<right>", OP_NUMNOTEQUAL]),
         (">=", &["<left>", "<right>", OP_GREATERTHANOREQUAL]),
         (">", &["<left>", "<right>", OP_GREATERTHAN]),
         ("<=", &["<left>", "<right>", OP_LESSTHANOREQUAL]),
@@ -69,13 +69,17 @@ fn declared_scalar_types_compare_directly() {
         let output = compile(&source)
             .unwrap_or_else(|error| panic!("{scalar_type} compile failed: {error}"));
         let asm = crate::common::arkade_asm_tokens(&output, "compare");
+        let (equal, not_equal): (&[&str], &[&str]) = match scalar_type {
+            "int" | "bool" => (&[OP_NUMEQUAL], &[OP_NUMNOTEQUAL]),
+            _ => (&[OP_EQUAL], &[OP_EQUAL, OP_NOT]),
+        };
         assert!(
-            contains_tokens(&asm, &[OP_0, OP_PICK, "OP_2", OP_PICK, OP_EQUAL]),
-            "{scalar_type} equality must emit OP_EQUAL: {asm:?}"
+            contains_tokens(&asm, &[&[OP_0, OP_PICK, "OP_2", OP_PICK], equal].concat()),
+            "{scalar_type} equality must emit {equal:?}: {asm:?}"
         );
         assert!(
-            contains_tokens(&asm, &[OP_0, OP_ROLL, OP_1, OP_ROLL, OP_EQUAL, OP_NOT]),
-            "{scalar_type} inequality must emit OP_EQUAL OP_NOT: {asm:?}"
+            contains_tokens(&asm, &[&[OP_0, OP_ROLL, OP_1, OP_ROLL], not_equal].concat()),
+            "{scalar_type} inequality must emit {not_equal:?}: {asm:?}"
         );
         assert!(
             output
@@ -100,11 +104,17 @@ fn active_input_index_comparison_preserves_operand_order() {
     );
 
     assert!(
-        contains_tokens(&asm, &[OP_0, OP_PICK, OP_PUSHCURRENTINPUTINDEX, OP_EQUAL]),
+        contains_tokens(
+            &asm,
+            &[OP_0, OP_PICK, OP_PUSHCURRENTINPUTINDEX, OP_NUMEQUAL]
+        ),
         "reversed comparison must emit the variable first: {asm:?}"
     );
     assert!(
-        contains_tokens(&asm, &[OP_PUSHCURRENTINPUTINDEX, OP_1, OP_ROLL, OP_EQUAL]),
+        contains_tokens(
+            &asm,
+            &[OP_PUSHCURRENTINPUTINDEX, OP_1, OP_ROLL, OP_NUMEQUAL]
+        ),
         "property-first comparison must emit the property first: {asm:?}"
     );
     assert!(
@@ -173,8 +183,8 @@ fn true_on_comparison_rhs_is_not_treated_as_a_bare_requirement() {
     );
 
     assert!(
-        contains_tokens(&asm, &[OP_0, OP_1, OP_EQUAL]),
-        "explicit comparison must emit both operands and OP_EQUAL: {asm:?}"
+        contains_tokens(&asm, &[OP_0, OP_1, OP_NUMEQUAL]),
+        "explicit comparison must emit both operands and OP_NUMEQUAL: {asm:?}"
     );
 }
 
@@ -193,13 +203,13 @@ fn boolean_calls_can_be_compared_or_required_directly() {
 
     assert!(
         asm.iter().filter(|token| *token == OP_CHECKSIG).count() == 2
-            && asm.iter().filter(|token| *token == OP_EQUAL).count() == 2,
+            && asm.iter().filter(|token| *token == OP_NUMEQUAL).count() == 1,
         "checkSig result must be comparable: {asm:?}"
     );
     assert!(
         contains_tokens(
             &asm,
-            &[OP_CHECKSIGFROMSTACK, "OP_3", OP_ROLL, OP_EQUAL, OP_NOT]
+            &[OP_CHECKSIGFROMSTACK, "OP_3", OP_ROLL, OP_NUMNOTEQUAL]
         ),
         "checkSigFromStack result must support inequality: {asm:?}"
     );
@@ -248,7 +258,7 @@ fn comparison_results_can_be_compared_as_boolean_operands() {
     assert!(
         contains_tokens(
             &asm,
-            &["<left>", "<right>", OP_LESSTHAN, "<expected>", OP_EQUAL]
+            &["<left>", "<right>", OP_LESSTHAN, "<expected>", OP_NUMEQUAL]
         ),
         "nested comparison must leave a boolean for the outer comparison: {asm:?}"
     );
@@ -259,7 +269,7 @@ fn constructor_and_introspection_results_use_general_comparisons() {
     let source = r#"
 import "single_sig.ark";
 
-contract Compare(pubkey owner, bytes expectedScript, bytes32 expectedTxid) {
+contract Compare(pubkey owner, ScriptPubKey expectedScript, bytes32 expectedTxid) {
     function compare() {
         require(expectedScript == new SingleSig(owner));
         require(expectedTxid == tx.id);
@@ -284,9 +294,9 @@ contract Compare(pubkey owner, bytes expectedScript, bytes32 expectedTxid) {
 
     assert!(
         asm.windows(3).any(|window| {
-            window[0] == "<expectedScript>"
-                && window[1].contains("CONTRACT:SingleSig(")
-                && window[2] == OP_EQUAL
+            window[0] == "<expectedScript.version>"
+                && window[1] == "<expectedScript.program>"
+                && window[2].contains("CONTRACT:SingleSig(")
         }),
         "constructor comparison must preserve the reversed operand order: {asm:?}"
     );
@@ -340,7 +350,9 @@ fn array_equality_compares_every_element() {
         }",
     );
     assert_eq!(
-        asm.iter().filter(|token| *token == OP_EQUALVERIFY).count(),
+        asm.iter()
+            .filter(|token| *token == OP_NUMEQUALVERIFY)
+            .count(),
         3,
         "every element pair must be verified: {asm:?}"
     );
@@ -374,7 +386,7 @@ fn array_inequality_negates_the_folded_comparison() {
         }",
     );
     assert_eq!(
-        asm.iter().filter(|token| *token == OP_EQUAL).count(),
+        asm.iter().filter(|token| *token == OP_NUMEQUAL).count(),
         2,
         "both element pairs are compared: {asm:?}"
     );
@@ -435,7 +447,9 @@ fn composite_comparisons_resolve_inferred_locals() {
         }";
     let asm = compile_asm(source);
     assert_eq!(
-        asm.iter().filter(|token| *token == OP_EQUALVERIFY).count(),
+        asm.iter()
+            .filter(|token| *token == OP_NUMEQUALVERIFY)
+            .count(),
         6
     );
     assert_eq!(asm.iter().filter(|token| *token == OP_BOOLAND).count(), 2);
@@ -471,11 +485,11 @@ fn logical_expressions_short_circuit_and_match_truth_tables() {
                 "OP_NIP" => {
                     stack.remove(stack.len() - 2);
                 }
-                "OP_EQUAL" | "OP_GREATERTHAN" | "OP_LESSTHAN" | "OP_DIV" => {
+                "OP_NUMEQUAL" | "OP_GREATERTHAN" | "OP_LESSTHAN" | "OP_DIV" => {
                     let right = stack.pop().unwrap();
                     let left = stack.pop().unwrap();
                     stack.push(match token.as_str() {
-                        "OP_EQUAL" => i64::from(left == right),
+                        "OP_NUMEQUAL" => i64::from(left == right),
                         "OP_GREATERTHAN" => i64::from(left > right),
                         "OP_LESSTHAN" => i64::from(left < right),
                         _ => left / right,
@@ -542,7 +556,11 @@ contract C(pubkey owner, bytes32 hash) {
 "#,
     )
     .expect("logical calls and bindings");
-    assert!(output.warnings.is_empty(), "{:?}", output.warnings);
+    assert_eq!(output.warnings.len(), 3, "{:?}", output.warnings);
+    assert!(output
+        .warnings
+        .iter()
+        .all(|warning| warning.contains("invalid non-empty signature")));
     assert_eq!(output.functions.len(), 1);
     assert_eq!(
         crate::common::arkade_inputs(&output, "compare"),

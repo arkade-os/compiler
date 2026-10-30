@@ -40,7 +40,7 @@ contract Bitwise(bytes zero) {
 		{"matching operands", []byte{0xab, 0xcd}, 5, 0, ""},
 		{"wrong low byte", []byte{0xab, 0xce}, 5, 0, "OP_EQUALVERIFY failed"},
 		{"mismatched length", []byte{0xab, 0xcd, 0xef}, 5, 0, "mismatched operand sizes"},
-		{"wrong shift result", []byte{0xab, 0xcd}, 4, 0, "OP_EQUALVERIFY failed"},
+		{"wrong shift result", []byte{0xab, 0xcd}, 4, 0, "OP_NUMEQUALVERIFY failed"},
 		{"negative shift count", []byte{0xab, 0xcd}, 5, -1, "negative shift count"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

@@ -31,9 +31,9 @@ contract Sized(pubkey[2] owners) {
         output
             .parameters
             .iter()
-            .map(|p| (p.name.as_str(), p.param_type.as_str()))
+            .map(|p| (p.name.as_str(), p.param_type.to_string()))
             .collect::<Vec<_>>(),
-        vec![("owners", "pubkey[2]")],
+        vec![("owners", "pubkey[2]".to_string())],
         "constructor inputs keep one entry per source parameter, sized"
     );
 

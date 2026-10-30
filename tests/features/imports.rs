@@ -212,7 +212,7 @@ fn libraries_reject_invalid_declarations_and_helpers() {
         ("library Helper { function value() int { return secret; } }", "binding 'secret' is undefined"),
         ("library Helper { function value(int x) int { if (x > 0) { return x; } } }", "must return a value on every path"),
         ("library Helper { function sha256(int x) int { return x; } }", "reserved"),
-        ("library Helper { function check() { require(tx.outputs[0].scriptPubKey == new Helper()); } }", "library 'Helper' cannot be instantiated"),
+        ("library Helper { function check() { require(tx.outputs[0].script == new Helper()); } }", "library 'Helper' cannot be instantiated"),
     ] {
         let error = project("main.ark", &[
             ("main.ark", r#"import "helper.ark"; contract Main(int secret) { function spend() { require(true); } }"#),
@@ -461,7 +461,7 @@ fn constructors_require_visible_contracts_and_matching_signatures() {
         ("Main(owner)", true),
     ] {
         let source = format!(
-            r#"import "other.ark"; contract Main(pubkey owner) {{ function spend() {{ require(tx.outputs[0].scriptPubKey == new {call}); }} }}"#
+            r#"import "other.ark"; contract Main(pubkey owner) {{ function spend() {{ require(tx.outputs[0].script == new {call}); }} }}"#
         );
         let result = project(
             "main.ark",
@@ -605,7 +605,7 @@ fn qualified_constants_in_builtin_operands_and_transaction_indices_match_literal
             require(tx.outputs[Limits.INDEX].assets.length >= Limits.INDEX);
             require(tx.outputs[Limits.INDEX].assets[Limits.INDEX].amount >= Limits.VALUE);
             require(tx.inputs[Limits.INDEX].assets.lookup(txid, Limits.INDEX) >= Limits.VALUE);
-            require(tx.outputs[Limits.INDEX].scriptPubKey == new Limits(Limits.VALUE));
+            require(tx.outputs[Limits.INDEX].script == new Limits(Limits.VALUE));
         }
     }"#;
     let helper = "contract Limits(int value) { const int INDEX = 0; const int VALUE = 7; const int WIDTH = 8; const int PACKET = 16; }";
@@ -655,7 +655,7 @@ fn computed_constants_and_array_sizes_keep_their_defining_import_scope() {
             function exit(signature sig) tapscript { require(older(72)); require(checkSig(sig, keys[1])); }
         }
     "#).unwrap();
-    assert_eq!(output.parameters[0].param_type, "pubkey[2]");
+    assert_eq!(output.parameters[0].param_type.to_string(), "pubkey[2]");
     assert_eq!(
         arkade_asm_tokens(&output, "spend"),
         arkade_asm_tokens(&literal, "spend")

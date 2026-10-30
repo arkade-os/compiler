@@ -86,7 +86,7 @@ contract StabilityOffer(
 
 //     if (takeFeeSats > 330) {
 //       require(
-//         tx.outputs[0].scriptPubKey == new StabilityVault(
+//         tx.outputs[0].script == new StabilityVault(
 //           seekerPk, providerPk, oraclePk, ticker,
 //           targetUSD, totalCollateral, fundingRatePerSec, tx.offchainTime,
 //           collateralRatioPct, seekerExitFee
@@ -94,11 +94,11 @@ contract StabilityOffer(
 //         "invalid vault output"
 //       );
 //       require(tx.outputs[0].value >= totalCollateral, "insufficient vault collateral");
-//       require(tx.outputs[1].scriptPubKey == new SingleSig(providerPk), "output 1 not provider");
+//       require(tx.outputs[1].script == new SingleSig(providerPk), "output 1 not provider");
 //       require(tx.outputs[1].value >= takeFeeSats, "provider underpaid take fee");
 //       if (remainingCapacity > 0) {
 //         require(
-//           tx.outputs[2].scriptPubKey == new StabilityOffer(
+//           tx.outputs[2].script == new StabilityOffer(
 //             providerPk, oraclePk, ticker,
 //             fundingRatePerSec, remainingCapacity, collateralRatioPct,
 //             seekerExitFee, takeFee
@@ -109,7 +109,7 @@ contract StabilityOffer(
 //       }
 //     } else {
 //       require(
-//         tx.outputs[0].scriptPubKey == new StabilityVault(
+//         tx.outputs[0].script == new StabilityVault(
 //           seekerPk, providerPk, oraclePk, ticker,
 //           targetUSD, totalCollateral, fundingRatePerSec, tx.offchainTime,
 //           collateralRatioPct, seekerExitFee
@@ -120,7 +120,7 @@ contract StabilityOffer(
 //       require(tx.outputs[0].value >= dustVaultValue, "insufficient vault collateral");
 //       if (remainingCapacity > 0) {
 //         require(
-//           tx.outputs[1].scriptPubKey == new StabilityOffer(
+//           tx.outputs[1].script == new StabilityOffer(
 //             providerPk, oraclePk, ticker,
 //             fundingRatePerSec, remainingCapacity, collateralRatioPct,
 //             seekerExitFee, takeFee

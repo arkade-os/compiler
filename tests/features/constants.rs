@@ -493,7 +493,7 @@ contract Vault(pubkey[Vault.N] keys) {
 }"#;
     let output = compile(source).unwrap();
     let literal = compile(&source.replace("[N]", "[2]").replace("[Vault.N]", "[2]")).unwrap();
-    assert_eq!(output.parameters[0].param_type, "pubkey[2]");
+    assert_eq!(output.parameters[0].param_type.to_string(), "pubkey[2]");
     assert_eq!(
         arkade_asm_tokens(&output, "spend"),
         arkade_asm_tokens(&literal, "spend")

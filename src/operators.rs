@@ -2,7 +2,7 @@
 //! checks, constant folding and code generation read these properties
 //! instead of matching operator text.
 
-use crate::opcodes::*;
+use crate::opcodes::Opcode::{self, *};
 
 /// What an operator takes and gives, which decides how it is checked.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -67,26 +67,26 @@ impl BinaryOperator {
 
     /// Symbol, class, and the opcodes emitted after both operands. Logical
     /// operators emit none here: they lower to a branch.
-    fn describe(self) -> (&'static str, OperatorClass, &'static [&'static str]) {
+    fn describe(self) -> (&'static str, OperatorClass, &'static [Opcode]) {
         use OperatorClass::*;
         match self {
-            Self::Mul => ("*", Arithmetic, &[OP_MUL]),
-            Self::Div => ("/", Arithmetic, &[OP_DIV]),
+            Self::Mul => ("*", Arithmetic, &[Mul]),
+            Self::Div => ("/", Arithmetic, &[Div]),
             // Truncated: the result takes the sign of the dividend.
-            Self::Rem => ("%", Arithmetic, &[OP_MOD]),
-            Self::Add => ("+", Arithmetic, &[OP_ADD]),
-            Self::Sub => ("-", Arithmetic, &[OP_SUB]),
-            Self::Shl => ("<<", Shift, &[OP_LSHIFT]),
-            Self::Shr => (">>", Shift, &[OP_RSHIFT]),
-            Self::BitAnd => ("&", Bytewise, &[OP_AND]),
-            Self::BitXor => ("^", Bytewise, &[OP_XOR]),
-            Self::BitOr => ("|", Bytewise, &[OP_OR]),
-            Self::Eq => ("==", Equality, &[OP_EQUAL]),
-            Self::Ne => ("!=", Equality, &[OP_EQUAL, OP_NOT]),
-            Self::Lt => ("<", Ordering, &[OP_LESSTHAN]),
-            Self::Le => ("<=", Ordering, &[OP_LESSTHANOREQUAL]),
-            Self::Gt => (">", Ordering, &[OP_GREATERTHAN]),
-            Self::Ge => (">=", Ordering, &[OP_GREATERTHANOREQUAL]),
+            Self::Rem => ("%", Arithmetic, &[Mod]),
+            Self::Add => ("+", Arithmetic, &[Add]),
+            Self::Sub => ("-", Arithmetic, &[Sub]),
+            Self::Shl => ("<<", Shift, &[LShift]),
+            Self::Shr => (">>", Shift, &[RShift]),
+            Self::BitAnd => ("&", Bytewise, &[And]),
+            Self::BitXor => ("^", Bytewise, &[Xor]),
+            Self::BitOr => ("|", Bytewise, &[Or]),
+            Self::Eq => ("==", Equality, &[Equal]),
+            Self::Ne => ("!=", Equality, &[Equal, Not]),
+            Self::Lt => ("<", Ordering, &[LessThan]),
+            Self::Le => ("<=", Ordering, &[LessThanOrEqual]),
+            Self::Gt => (">", Ordering, &[GreaterThan]),
+            Self::Ge => (">=", Ordering, &[GreaterThanOrEqual]),
             Self::And => ("&&", Logical, &[]),
             Self::Or => ("||", Logical, &[]),
         }
@@ -100,8 +100,18 @@ impl BinaryOperator {
         self.describe().1
     }
 
-    pub fn opcodes(self) -> &'static [&'static str] {
+    pub fn opcodes(self) -> &'static [Opcode] {
         self.describe().2
+    }
+
+    /// The opcodes applying the operator; `numeric` operands are compared as numbers, since
+    /// `OP_EQUAL` compares bytes and so accepts a non-minimal encoding of an equal number.
+    pub fn opcodes_for(self, numeric: bool) -> &'static [Opcode] {
+        match self {
+            Self::Eq if numeric => &[NumEqual],
+            Self::Ne if numeric => &[NumNotEqual],
+            _ => self.opcodes(),
+        }
     }
 
     /// Whether the result is a `bool` comparing its operands.
@@ -132,11 +142,11 @@ pub enum UnaryOperator {
 
 impl UnaryOperator {
     /// Symbol, operand and result type, and opcode.
-    fn describe(self) -> (&'static str, &'static str, &'static str) {
+    fn describe(self) -> (&'static str, &'static str, Opcode) {
         match self {
-            Self::Neg => ("-", "int", OP_NEGATE),
-            Self::Not => ("!", "bool", OP_NOT),
-            Self::Invert => ("~", "bytes", OP_INVERT),
+            Self::Neg => ("-", "int", Negate),
+            Self::Not => ("!", "bool", Not),
+            Self::Invert => ("~", "bytes", Invert),
         }
     }
 
@@ -148,7 +158,7 @@ impl UnaryOperator {
         self.describe().1
     }
 
-    pub fn opcode(self) -> &'static str {
+    pub fn opcode(self) -> Opcode {
         self.describe().2
     }
 }

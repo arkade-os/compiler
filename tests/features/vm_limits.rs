@@ -1,0 +1,338 @@
+use arkade_compiler::compile;
+
+fn compile_error(source: &str) -> String {
+    compile(source).expect_err(source).to_string()
+}
+
+#[test]
+fn constant_operands_outside_the_vm_domain_do_not_compile() {
+    for (body, expected) in [
+        (
+            "require(size(digest(d, 9)) == 32);",
+            "digest hashType must be 1 to 5, got 9",
+        ),
+        (
+            "require(sighash(7) == h);",
+            "sighash hashType must be 0 to 3 or 129 to 131, got 7",
+        ),
+        (
+            "require(size(tx.packet(300)) > 0);",
+            "tx.packet packet type must be 0 to 255, got 300",
+        ),
+        (
+            "require(checkTime(-5));",
+            "checkTime timestamp must be at least 0, got -5",
+        ),
+        (
+            "require(modExp(n, 2, 0) == 1);",
+            "modExp modulus must be at least 1, got 0",
+        ),
+        (
+            "require(modExp(n, -1, 7) == 1);",
+            "modExp exponent must be at least 0, got -1",
+        ),
+        (
+            "require(size(num2bin(n, 521)) == 521);",
+            "num2bin size must be 0 to 520, got 521",
+        ),
+        (
+            "require(checkSigFromStack(s, h, sha160x));",
+            "checkSigFromStack message must be 32 bytes, got 20",
+        ),
+        (
+            "require(merkleRoot(0x00, 0x01, 0x0000, h) == h);",
+            "merkleRoot proof must be a multiple of 32 bytes, got 2",
+        ),
+    ] {
+        let source = format!(
+            "contract C(bytes32 h) {{ function f(bytes d, signature s, bytes20 sha160x, int n) {{ {body} require(size(d) + n + size(sha160x) > 0 && checkSig(s, h)); }} }}"
+        );
+        let error = compile_error(&source);
+        assert!(error.contains(expected), "{body}: {error}");
+    }
+}
+
+#[test]
+fn constant_operands_inside_the_vm_domain_compile() {
+    for body in [
+        "require(size(digest(d, 4)) == 32);",
+        "require(sighash(131) == h);",
+        "require(size(tx.packet(255)) > 0);",
+        "require(checkSigFromStack(s, h, h));",
+        "require(merkleRoot(0x00, 0x01, d, h) == h);",
+    ] {
+        let source = format!(
+            "contract C(bytes32 h) {{ function f(bytes d, signature s) {{ {body} require(size(d) > 0 && checkSig(s, h)); }} }}"
+        );
+        compile(&source).unwrap_or_else(|error| panic!("{body}: {error}"));
+    }
+}
+
+#[test]
+fn nonnegative_operand_domains_accept_integers_beyond_i128() {
+    let large = "170141183460469231731687303715884105728";
+    for compile in [compile, crate::common::compile_unoptimized] {
+        for body in [
+            format!("require(!checkTime({large}));"),
+            format!("require(modExp(n, {large}, 3) == 1);"),
+            format!("require(modExp(n, 2, {large}) == 4);"),
+            format!("require(modExp(n, 2, --{large}) == 4);"),
+        ] {
+            let source =
+                format!("contract C() {{ function f(int n) {{ {body} require(n > 0); }} }}");
+            compile(&source).unwrap_or_else(|error| panic!("{body}: {error}"));
+        }
+        for body in [
+            format!("require(checkTime(-{large}));"),
+            format!("require(modExp(n, -{large}, 3) == 1);"),
+            format!("require(modExp(n, 2, -{large}) == 4);"),
+            format!("require(size(digest(d, {large})) > 0);"),
+        ] {
+            let source = format!("contract C() {{ function f(int n, bytes d) {{ {body} require(n + size(d) > 0); }} }}");
+            assert!(compile(&source).is_err(), "{body}");
+        }
+    }
+}
+
+#[test]
+fn constant_expression_operands_are_checked_in_both_modes() {
+    for compile in [compile, crate::common::compile_unoptimized] {
+        for (body, expected) in [
+            (
+                "require(size(digest(d, 4 + 5)) > 0);",
+                "digest hashType must be 1 to 5, got 9",
+            ),
+            (
+                "require(sighash(4 - 4 + 7) == h);",
+                "sighash hashType must be 0 to 3 or 129 to 131, got 7",
+            ),
+            (
+                "require(size(tx.packet(128 * 2)) > 0);",
+                "tx.packet packet type must be 0 to 255, got 256",
+            ),
+            (
+                "require(size(num2bin(n, 520 + 1)) > 0);",
+                "num2bin size must be 0 to 520, got 521",
+            ),
+            (
+                "require(checkTime(0 - 1));",
+                "checkTime timestamp must be at least 0, got -1",
+            ),
+            (
+                "require(modExp(n, 2 - 3, 7) == 1);",
+                "modExp exponent must be at least 0, got -1",
+            ),
+            (
+                "require(modExp(n, 2, 1 - 1) == 1);",
+                "modExp modulus must be at least 1, got 0",
+            ),
+        ] {
+            let source = format!("contract C(bytes32 h) {{ function f(bytes d, int n) {{ {body} require(size(d) + n > 0); }} }}");
+            let error = compile(&source).expect_err(body).to_string();
+            assert!(error.contains(expected), "{body}: {error}");
+        }
+        for body in [
+            "require(size(digest(d, 2 + 3)) > 0);",
+            "require(size(digest(d, n)) > 0);",
+            "require(size(num2bin(n, 500 + 20)) > 0);",
+        ] {
+            let source = format!("contract C() {{ function f(bytes d, int n) {{ {body} require(size(d) + n > 0); }} }}");
+            compile(&source).unwrap_or_else(|error| panic!("{body}: {error}"));
+        }
+    }
+}
+
+#[test]
+fn mod_exp_constant_operands_fit_the_vms_64_byte_limit() {
+    for compile in [compile, crate::common::compile_unoptimized] {
+        for (hex, accepted) in [
+            (format!("7f{}", "ff".repeat(63)), true),
+            (format!("80{}", "00".repeat(63)), false),
+            (format!("01{}", "00".repeat(64)), false),
+        ] {
+            let value = format!("int(0x{hex})");
+            for (label, expression) in [
+                ("base", format!("modExp({value}, 1, n)")),
+                ("base", format!("modExp(-{value}, 1, n)")),
+                ("exponent", format!("modExp(n, {value}, 3)")),
+                ("modulus", format!("modExp(n, 2, {value})")),
+            ] {
+                let source = format!(
+                    "contract C() {{ function f(int n) {{ require({expression} >= 0); }} }}"
+                );
+                let result = compile(&source);
+                if accepted {
+                    result.expect("64-byte modExp operand");
+                } else {
+                    let error = result.expect_err("65-byte modExp operand").to_string();
+                    assert!(
+                        error.contains(&format!(
+                            "modExp {label} must fit in 64 Script-number bytes"
+                        )),
+                        "{error}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn pairing_only_accepts_the_bn254_curve() {
+    for compile in [compile, crate::common::compile_unoptimized] {
+        for curve in ["0", "1", "2", "1 + 1"] {
+            let source = format!("contract C() {{ function f(ECPoint[1] p, G2Point[1] q) {{ require(ecPairing(p, q, {curve})); }} }}");
+            if matches!(curve, "0" | "1") {
+                let error = compile(&source).expect_err(curve).to_string();
+                assert!(
+                    error.contains(&format!("ecPairing curveId must be 2, got {curve}")),
+                    "{error}"
+                );
+            } else {
+                compile(&source).unwrap_or_else(|error| panic!("{curve}: {error}"));
+            }
+        }
+        for curve in [0, 1, 2] {
+            let source = format!("contract C() {{ function f(ECPoint p, ECPoint q, int k) {{ ECPoint sum = ecAdd(p, q, {curve}); ECPoint product = ecMul(p, k, {curve}); require(sum.x == product.x); }} }}");
+            compile(&source).unwrap_or_else(|error| panic!("{curve}: {error}"));
+        }
+    }
+}
+
+fn signatures(keys: usize, body: &str) -> String {
+    format!(
+        "contract C(pubkey[{keys}] keys) {{ function f(signature[{keys}] sigs, int n) {{ {body} }} }}"
+    )
+}
+
+const EACH_KEY: &str = "for (i, key) in keys { require(checkSig(sigs[i], key)); }";
+
+#[test]
+fn opcode_counts_do_not_enforce_emulator_compute_limits() {
+    let count = |source: &str, opcode: &str| {
+        let output = compile(source).unwrap();
+        output.functions[0]
+            .arkade
+            .as_ref()
+            .unwrap()
+            .costs
+            .iter()
+            .find(|cost| cost.name == opcode)
+            .unwrap()
+            .used
+    };
+    for keys in [50, 51] {
+        assert_eq!(
+            count(
+                &signatures(keys, &format!("require(n > 0); {EACH_KEY}")),
+                "OP_CHECKSIGVERIFY"
+            ),
+            keys
+        );
+    }
+    // The first key uses OP_CHECKSIG; the rest use OP_CHECKSIGADD.
+    for keys in [51, 52] {
+        assert_eq!(
+            count(
+                &signatures(keys, "require(n > 0); require(checkMultisig(keys, sigs));"),
+                "OP_CHECKSIGADD"
+            ),
+            keys - 1
+        );
+    }
+    let branches = format!("if (n > 0) {{ {EACH_KEY} }} else {{ {EACH_KEY} }}");
+    assert_eq!(count(&signatures(30, &branches), "OP_CHECKSIGVERIFY"), 30);
+    assert_eq!(
+        count(
+            &signatures(30, &format!("require(n > 0); {EACH_KEY} {EACH_KEY}")),
+            "OP_CHECKSIGVERIFY"
+        ),
+        60
+    );
+}
+
+#[test]
+fn pushes_above_the_vm_element_size_do_not_compile() {
+    let source = |bytes: usize| {
+        format!(
+            "contract C(bytes32 h) {{ function f() {{ require(sha256(0x{}) == h); }} }}",
+            "ab".repeat(bytes)
+        )
+    };
+    compile(&source(520)).unwrap();
+    let error = compile_error(&source(521));
+    assert!(
+        error.contains("pushes a value above the VM element limit of 520"),
+        "{error}"
+    );
+}
+
+#[test]
+fn numeric_pushes_respect_the_element_limit_and_sign_byte() {
+    for compile in [compile, crate::common::compile_unoptimized] {
+        for (hex, accepted) in [
+            (format!("7f{}", "ff".repeat(519)), true),
+            (format!("80{}", "00".repeat(519)), false),
+            (format!("01{}", "00".repeat(520)), false),
+        ] {
+            for sign in ["", "-"] {
+                let source = format!(
+                    "contract C() {{ function f(int n) {{ require(n == {sign}int(0x{hex})); }} }}"
+                );
+                let result = compile(&source);
+                if accepted {
+                    result.expect("520-byte numeric push");
+                } else {
+                    let error = result.expect_err("521-byte numeric push").to_string();
+                    assert!(
+                        error.contains("above the VM element limit of 520"),
+                        "{error}"
+                    );
+                }
+            }
+        }
+        let source = format!(
+            "contract C() {{ function f(int n) {{ require(n == {}); }} }}",
+            "9".repeat(10_000)
+        );
+        let error = compile(&source)
+            .expect_err("oversized decimal literal")
+            .to_string();
+        assert!(
+            error.contains("above the VM element limit of 520"),
+            "{error}"
+        );
+    }
+}
+
+#[test]
+fn signature_checks_that_may_be_false_warn() {
+    let warnings = |body: &str| {
+        let source = format!(
+            "contract C(pubkey a, pubkey b) {{ function f(signature x, signature y, int n) {{ require(n > 0); {body} }} }}"
+        );
+        compile(&source)
+            .unwrap_or_else(|error| panic!("{body}: {error}"))
+            .warnings
+            .iter()
+            .filter(|warning| warning.contains("invalid non-empty signature"))
+            .count()
+    };
+    for (body, expected) in [
+        ("require(checkSig(x, a)); require(checkSig(y, b));", 0),
+        ("require(checkSig(x, a) && checkSig(y, b));", 0),
+        (
+            "bool ok = checkSig(x, a); require(ok && checkSig(y, b));",
+            0,
+        ),
+        ("require(checkSig(x, a) || checkSig(y, b));", 2),
+        (
+            "if (checkSig(x, a)) { require(n > 1); } require(checkSig(y, b));",
+            1,
+        ),
+        ("require(!checkSig(x, a) && checkSig(y, b));", 1),
+        ("require(checkSig(x, a) == checkSig(y, b));", 2),
+    ] {
+        assert_eq!(warnings(body), expected, "{body}");
+    }
+}

@@ -15,6 +15,7 @@ pub(crate) fn parse_named_tapscript(
     pair: Pair<Rule>,
     constants: &[Constant],
 ) -> Result<crate::models::NamedTapscript, String> {
+    let declaration = pair.as_span().into();
     let mut inner = pair.into_inner().peekable();
     if inner
         .peek()
@@ -25,11 +26,9 @@ pub(crate) fn parse_named_tapscript(
             return Err(format!("tapscript functions cannot be {visibility}"));
         }
     }
-    let name = inner
-        .next()
-        .ok_or("Missing tapscript name")?
-        .as_str()
-        .to_string();
+    let name = inner.next().ok_or("Missing tapscript name")?;
+    let span = name.as_span().into();
+    let name = name.as_str().to_string();
     let params = inner.next().ok_or("Missing tapscript parameter list")?;
     let inputs = parse_parameters(params)?;
     let block = inner.next().ok_or("Missing tapscript body")?;
@@ -62,6 +61,8 @@ pub(crate) fn parse_named_tapscript(
     }
     Ok(crate::models::NamedTapscript {
         name,
+        span,
+        declaration,
         inputs,
         items,
     })

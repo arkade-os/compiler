@@ -77,34 +77,52 @@ try {
     const esm = await import(pathToFileURL(entry).href);
     assert.equal(esm.compile, commonjs.compile);
     assert.equal(require.cache[wasmPath], undefined, 'importing the package initializes WASM');
-    const [artifact, compilerVersion, ...concurrent] = await Promise.all([
+    const [result, compilerVersion, ...concurrent] = await Promise.all([
         esm.compile(input), commonjs.version(), ...Array.from({ length: 12 }, () => commonjs.compile(input)),
     ]);
+    const { artifact } = result;
+    const wasm = require(wasmPath);
+    const files = JSON.stringify(input.files);
     assert.equal(compilerVersion, manifest.version);
     assert.equal(artifact.compiler.version, manifest.version);
     assert.deepEqual(artifact.compiler.options, { optimize: true });
-    for (const result of concurrent) assert.deepEqual(normalized(result), normalized(artifact));
-    const raw = JSON.parse(require(wasmPath).compile_sources_with_diagnostics(input.entry, JSON.stringify(input.files)));
-    assert.deepEqual(normalized(artifact), normalized({ ...JSON.parse(raw.artifact), warnings: raw.warnings }));
-    const unoptimized = await esm.compile(input, { optimize: false });
-    const rawUnoptimized = JSON.parse(require(wasmPath).compile_sources_with_diagnostics(input.entry, JSON.stringify(input.files), false));
-    assert.deepEqual(normalized(unoptimized), normalized({ ...JSON.parse(rawUnoptimized.artifact), warnings: rawUnoptimized.warnings }));
+    for (const other of concurrent) assert.deepEqual(normalized(other.artifact), normalized(artifact));
+    const raw = JSON.parse(wasm.compile_sources_with_diagnostics(input.entry, files));
+    assert.deepEqual(normalized(artifact), normalized(JSON.parse(raw.artifact)));
+    assert.deepEqual(result.debug, JSON.parse(raw.debug));
+    assert.deepEqual(result.diagnostics, raw.diagnostics);
+    assert.deepEqual(Object.keys(result).sort(), ['artifact', 'debug', 'diagnostics']);
+    assert.equal(result.debug.artifactFingerprint, artifact.fingerprint);
+    assert(result.debug.functions.spend.sourceMap.length > 0);
+    const unoptimized = (await esm.compile(input, { optimize: false })).artifact;
+    const rawUnoptimized = JSON.parse(wasm.compile_sources_with_diagnostics(input.entry, files, false));
+    assert.deepEqual(normalized(unoptimized), normalized(JSON.parse(rawUnoptimized.artifact)));
     assert.equal(unoptimized.compiler.options.optimize, false);
     assert.notEqual(unoptimized.fingerprint, artifact.fingerprint);
-    const sourceSymbols = await esm.symbols(input);
-    assert.deepEqual(sourceSymbols, JSON.parse(require(wasmPath).symbols(input.entry, JSON.stringify(input.files))));
-    assert(sourceSymbols.symbols.some(symbol => symbol.name === 'Vault' && symbol.kind === 'contract'));
-    assert(sourceSymbols.symbols.some(symbol => symbol.name === 'Policy' && symbol.file === 'shared/policy.ark'));
-    assert(sourceSymbols.members.Fees.some(symbol => symbol.name === 'check' && symbol.type === undefined));
+    const position = { line: 6, column: 27 };
+    const symbol = await esm.symbolAt(input, position);
+    assert.deepEqual(symbol, JSON.parse(wasm.symbol_at(input.entry, files, position.line, position.column)));
+    assert.deepEqual([symbol.name, symbol.kind, symbol.type], ['sig', 'parameter', 'signature']);
+    assert.deepEqual(symbol.definition, { file: input.entry, start: { line: 3, column: 58 }, end: { line: 3, column: 61 } });
+    assert.equal(symbol.references.length, 1);
+    assert.equal(await esm.symbolAt(input, { line: 1, column: 1 }), null);
+    const completions = await esm.completionsAt(input, { line: 4, column: 1 });
+    assert.deepEqual(completions, JSON.parse(wasm.completions_at(input.entry, files, 4, 1)));
+    assert(completions.symbols.some(symbol => symbol.name === 'values' && symbol.type === 'int[2]'));
+    assert.deepEqual(completions.members.Fees, [{ name: 'check', kind: 'function', type: null }]);
+    assert.deepEqual(completions.structs, [{ name: 'Policy', fields: [{ name: 'owner', type: 'pubkey' }, { name: 'limits', type: 'int[2]' }] }]);
+    assert.deepEqual(await esm.completionsAt({ entry: 'missing.ark', files: {} }, { line: 1, column: 1 }), { symbols: [], structs: [], members: {} });
     const diagnostics = await esm.check(diagnosticInput);
-    assert.deepEqual(diagnostics, JSON.parse(require(wasmPath).check(diagnosticInput.entry, JSON.stringify(diagnosticInput.files))));
+    assert.deepEqual(diagnostics, JSON.parse(wasm.check_sources(diagnosticInput.entry, JSON.stringify(diagnosticInput.files))));
     assert.equal(diagnostics.length, 2);
+    const diagnosticLine = diagnosticInput.files['main.ark'].split('\r\n')[1];
     for (const [index, diagnostic] of diagnostics.entries()) {
+        const name = ['missing', 'other'][index];
         assert.equal(diagnostic.severity, 'error');
         assert.equal(diagnostic.file, 'main.ark');
         assert.equal(diagnostic.code, 'validation');
-        const bytes = Buffer.from(diagnosticInput.files['main.ark']);
-        assert.equal(bytes.subarray(diagnostic.span.start, diagnostic.span.end).toString(), ['missing', 'other'][index]);
+        assert.deepEqual(diagnostic.start, { line: 2, column: diagnosticLine.indexOf(name) + 1 });
+        assert.deepEqual(diagnostic.end, { line: 2, column: diagnosticLine.indexOf(name) + 1 + name.length });
     }
     assert((await esm.check(input)).some(d => d.severity === 'warning' && d.message.includes('unused')));
     assert.deepEqual(await esm.check(standalone), []);
@@ -113,23 +131,24 @@ try {
         'main.ark': 'import "bad.ark"; contract C() { function spend() { require(true); } }',
         'bad.ark': 'library Bad { function bad() { require(missing); } }',
     } });
-    assert(importedDiagnostics.some(d => d.file === 'bad.ark' && d.severity === 'error' && d.span));
+    assert(importedDiagnostics.some(d => d.file === 'bad.ark' && d.severity === 'error' && d.start));
     const [importedSyntax] = await esm.check({ entry: 'main.ark', files: {
         'main.ark': 'import "bad.ark"; contract C() { function spend() { require(true); } }',
         'bad.ark': '// é 🐴\nlibrary Broken(',
     } });
     assert.equal(importedSyntax.file, 'bad.ark');
     assert.equal(importedSyntax.severity, 'error');
-    assert.equal(Buffer.from('// é 🐴\nlibrary Broken(').subarray(importedSyntax.span.start, importedSyntax.span.end).toString(), '(');
+    assert.deepEqual(importedSyntax.start, { line: 2, column: 15 });
     for (const invalid of [invalidSource, { entry: '/main.ark', files: {} }, { entry: 'missing.ark', files: {} }]) {
         const [diagnostic] = await esm.check(invalid);
         assert.equal(diagnostic.severity, 'error');
         assert.equal(typeof diagnostic.message, 'string');
-        assert(!Object.hasOwn(diagnostic, 'code'));
+        assert.equal(diagnostic.code, null);
     }
     assert.match(artifact.fingerprint, /^sha256:[0-9a-f]{64}$/);
     assert.equal(artifact.formatVersion, 1);
-    assert(artifact.warnings.some(warning => warning.includes("constructor parameter 'unused'")));
+    assert(!Object.hasOwn(artifact, 'warnings'));
+    assert(result.diagnostics.some(d => d.severity === 'warning' && d.message.includes("constructor parameter 'unused'")));
     assert.deepEqual(artifact.constructorInputs, [{ name: 'policy', type: 'Policy' }, { name: 'backupKey', type: 'pubkey' }, { name: 'unused', type: 'int' }]);
     assert.deepEqual(artifact.structs, [{ name: 'Policy', fields: [{ name: 'owner', type: 'pubkey' }, { name: 'limits', type: 'int[2]' }] }]);
     assert.deepEqual(artifact.source, { entry: input.entry, files: { 'contracts/main.ark': input.files['contracts/main.ark'], 'shared/policy.ark': input.files['shared/policy.ark'] } });
@@ -139,40 +158,55 @@ try {
     assert.deepEqual(spend.leaves[0].witness.map(field => [field.name, field.injected]), [['serverSig', true], ['emulatorSig', true]]);
     assert(spend.leaves[0].asm.includes('<EMULATOR_KEY:spend>'));
     assert(spend.leaves[1].asm.some(token => token.includes('spend')));
-    const exit = await esm.compile(standalone);
+    const exitResult = await esm.compile(standalone);
+    const exit = exitResult.artifact;
     assert.equal(exit.functions.length, 1);
     assert.equal(exit.functions[0].arkade, undefined);
     assert.deepEqual(exit.functions[0].leaves[0].witness, [{ name: 'sig', type: 'signature', encoding: 'schnorr-64' }]);
-    assert.deepEqual(exit.warnings, []);
-    assert.deepEqual(normalized(await esm.compile(artifact.source)), normalized(artifact));
+    assert.deepEqual(exitResult.diagnostics, []);
+    assert.deepEqual(normalized((await esm.compile(artifact.source)).artifact), normalized(artifact));
+    const at = { line: 1, column: 1 };
+    const calls = [esm.compile, esm.check, input => esm.symbolAt(input, at), input => esm.completionsAt(input, at)];
     for (const bad of [null, {}, Object.assign([], standalone), { entry: 1, files: {} }, { entry: 'main.ark', files: [] }, { entry: 'main.ark', files: { 'main.ark': 1 } }]) {
-        await assert.rejects(esm.compile(bad), TypeError);
-        await assert.rejects(esm.symbols(bad), TypeError);
-        await assert.rejects(esm.check(bad), TypeError);
+        for (const call of calls) await assert.rejects(call(bad), TypeError);
     }
     for (const options of [null, true, [], { optimize: 'false' }, { optimize: 0 }]) {
         await assert.rejects(esm.compile(input, options), TypeError);
+        await assert.rejects(esm.check(input, options), TypeError);
     }
-    await assert.rejects(esm.compile(invalidSource), /Parse error/);
-    await assert.rejects(esm.symbols(invalidSource), /Parse error/);
-    await assert.rejects(esm.symbols({ entry: 'missing.ark', files: {} }), /not found/);
-    await assert.rejects(esm.compile({ ...input, files: { 'contracts/main.ark': input.files['contracts/main.ark'] } }), /policy\.ark.*not found/);
-    await assert.rejects(esm.compile({ entry: '../main.ark', files: {} }), /escapes the source root/);
-    await assert.rejects(esm.compile({ entry: '/main.ark', files: {} }), /relative \.ark path/);
-    await assert.rejects(esm.compile({ entry: '/main.ark', files: { '/main.ark': standalone.files['exit.ark'] } }), /relative \.ark path/);
-    await assert.rejects(esm.compile({ entry: 'main.ark', files: { 'main.ark': standalone.files['exit.ark'], '/extra.ark': '' } }), /relative \.ark path/);
-    await assert.rejects(esm.compile({ entry: 'main.ark', files: { 'main.ark': 'import "/extra.ark"; contract C() { function spend() { require(true); } }' } }), /relative \.ark path/);
-    await assert.rejects(esm.compile({ entry: 'main.ark', files: { 'main.ark': standalone.files['exit.ark'], './main.ark': standalone.files['exit.ark'] } }), /duplicate source path/);
+    for (const bad of [undefined, null, {}, { line: 0, column: 1 }, { line: 1, column: -1 }, { line: 1.5, column: 1 }, { line: '1', column: 1 }]) {
+        await assert.rejects(esm.symbolAt(input, bad), TypeError);
+        await assert.rejects(esm.completionsAt(input, bad), TypeError);
+    }
+    // Source errors are diagnostics with a null artifact, not rejections.
+    const errorOf = async input => {
+        const { artifact, debug, diagnostics } = await esm.compile(input);
+        assert.equal(artifact, null);
+        assert.equal(debug, null);
+        assert(diagnostics.some(d => d.severity === 'error'));
+        return diagnostics.map(d => d.message).join('\n');
+    };
+    const parseFailure = await esm.compile(invalidSource);
+    assert.match(await errorOf(invalidSource), /expected/);
+    assert.equal(await esm.symbolAt(invalidSource, { line: 1, column: 10 }), null);
+    assert.match(await errorOf({ ...input, files: { 'contracts/main.ark': input.files['contracts/main.ark'] } }), /policy\.ark.*not found/);
+    assert.match(await errorOf({ entry: '../main.ark', files: {} }), /escapes the source root/);
+    assert.match(await errorOf({ entry: '/main.ark', files: {} }), /relative \.ark path/);
+    assert.match(await errorOf({ entry: '/main.ark', files: { '/main.ark': standalone.files['exit.ark'] } }), /relative \.ark path/);
+    assert.match(await errorOf({ entry: 'main.ark', files: { 'main.ark': standalone.files['exit.ark'], '/extra.ark': '' } }), /relative \.ark path/);
+    assert.match(await errorOf({ entry: 'main.ark', files: { 'main.ark': 'import "/extra.ark"; contract C() { function spend() { require(true); } }' } }), /relative \.ark path/);
+    assert.match(await errorOf({ entry: 'main.ark', files: { 'main.ark': standalone.files['exit.ark'], './main.ark': standalone.files['exit.ark'] } }), /duplicate source path/);
+    assert.match(await errorOf({ entry: 'library.ark', files: { 'library.ark': 'library L {}' } }), /not a library/);
     const snapshot = structuredClone(standalone);
     const pending = esm.compile(snapshot);
     snapshot.entry = 'missing.ark';
     snapshot.files['exit.ark'] = 'invalid';
-    assert.equal((await pending).contractName, 'Exit');
+    assert.equal((await pending).artifact.contractName, 'Exit');
     const options = { optimize: false };
     const pendingOptions = esm.compile(input, options);
     options.optimize = true;
-    assert.equal((await pendingOptions).compiler.options.optimize, false);
-    for (const call of [esm.compile, esm.check, esm.symbols]) {
+    assert.equal((await pendingOptions).artifact.compiler.options.optimize, false);
+    for (const call of calls) {
         let entryReads = 0, fileReads = 0, sourceReads = 0;
         const files = { get 'exit.ark'() { sourceReads++; return standalone.files['exit.ark']; } };
         await call({
@@ -190,27 +224,38 @@ try {
         WebAssembly.Module = function () { throw failure; };
         await assert.rejects(compile(${JSON.stringify(standalone)}), error => error === failure);
         WebAssembly.Module = original;
-        assert.equal((await compile(${JSON.stringify(standalone)})).contractName, 'Exit');
+        assert.equal((await compile(${JSON.stringify(standalone)})).artifact.contractName, 'Exit');
     `]);
 
-    const typecheck = `import { compile, check, symbols, version, type CompileInput, type CompileOptions, type CompilerArtifact, type SourceSymbols, type Diagnostic } from '@arkade-os/compiler';
+    const typecheck = `import { compile, check, symbolAt, completionsAt, version, type CompileInput, type CompileOptions, type CompileResult, type CompilerArtifact, type Completions, type DebugInfo, type Diagnostic, type Position, type SymbolInfo } from '@arkade-os/compiler';
 const input: CompileInput = { entry: 'main.ark', files: { 'main.ark': '' } };
-const result: Promise<CompilerArtifact> = compile(input);
+const result: Promise<CompileResult> = compile(input);
 const options: CompileOptions = { optimize: false };
-const detailed: Promise<CompilerArtifact> = compile(input, options);
-const table: Promise<SourceSymbols> = symbols(input);
-const diagnostics: Promise<Diagnostic[]> = check(input);
+const detailed: Promise<CompileResult> = compile(input, options);
+const position: Position = { line: 1, column: 1 };
+const symbol: Promise<SymbolInfo | null> = symbolAt(input, position);
+const table: Promise<Completions> = completionsAt(input, position);
+const diagnostics: Promise<Diagnostic[]> = check(input, options);
 const compilerVersion: Promise<string> = version();
-void result; void detailed; void table; void diagnostics; void compilerVersion;
+void result; void detailed; void symbol; void table; void diagnostics; void compilerVersion;
 // @ts-expect-error Source content must be a string.
 compile({ entry: 'main.ark', files: { 'main.ark': 42 } });
 // @ts-expect-error Optimization must be a boolean.
 compile(input, { optimize: 'false' });
+// @ts-expect-error Positions are numbers.
+symbolAt(input, { line: '1', column: 1 });
+// @ts-expect-error A failed compile has no artifact.
+void (await compile(input)).artifact.contractName;
+declare const narrowed: CompileResult;
+if (narrowed.artifact !== null) {
+    const map: DebugInfo = narrowed.debug;
+    void map;
+}
 // @ts-expect-error Runtime source does not infer contract names.
-const name: 'Vault' = (await compile(input)).contractName;
+const name: 'Vault' = (await compile(input)).artifact!.contractName;
 `;
     writeFileSync(path.join(temporary, 'consumer.mts'), typecheck);
-    writeFileSync(path.join(temporary, 'consumer.cts'), typecheck.replace("(await compile(input)).contractName", "({} as CompilerArtifact).contractName"));
+    writeFileSync(path.join(temporary, 'consumer.cts'), typecheck.replace("void (await compile(input)).artifact.contractName", "void ({} as CompileResult).artifact.contractName").replace("(await compile(input)).artifact!.contractName", "({} as CompilerArtifact).contractName"));
     const tsc = path.join(directory, 'node_modules/typescript/bin/tsc');
     run(process.execPath, [tsc, '--noEmit', '--strict', '--target', 'ES2022', '--module', 'NodeNext', 'consumer.mts', 'consumer.cts']);
     run(process.execPath, [tsc, '--noEmit', '--strict', '--target', 'ES2022', '--module', 'ESNext', '--moduleResolution', 'bundler', '--customConditions', 'browser', 'consumer.mts']);
@@ -218,7 +263,7 @@ const name: 'Vault' = (await compile(input)).contractName;
     writeFileSync(path.join(temporary, 'index.html'), '<!doctype html><html lang="en"><title>Compiler test</title><script type="module" src="/main.js"></script></html>');
     writeFileSync(path.join(temporary, 'compiler-client.js'), readFileSync(path.join(directory, '../playground/compiler-client.js')));
     writeFileSync(path.join(temporary, 'compiler-worker.js'), readFileSync(path.join(directory, '../playground/compiler-worker.js'), 'utf8').replace("'./pkg/index.js'", "'@arkade-os/compiler'"));
-    writeFileSync(path.join(temporary, 'main.js'), "import { compile, check, symbols, version } from '@arkade-os/compiler'; import * as workerCompiler from './compiler-client.js'; window.compiler = { compile, check, symbols, version }; window.workerCompiler = workerCompiler;\n");
+    writeFileSync(path.join(temporary, 'main.js'), "import { compile, check, symbolAt, completionsAt, version } from '@arkade-os/compiler'; import * as workerCompiler from './compiler-client.js'; window.compiler = { compile, check, symbolAt, completionsAt, version }; window.workerCompiler = workerCompiler;\n");
     await build({ root: temporary, configFile: false, logLevel: 'warn', base: '/compiler-test/', build: { assetsInlineLimit: 0 } });
     assert(readdirSync(path.join(temporary, 'dist/assets')).some(file => file.endsWith('.wasm')), 'browser bundle missing WASM');
     server = await preview({ root: temporary, configFile: false, logLevel: 'warn', base: '/compiler-test/', preview: { host: '127.0.0.1', port: 0 } });
@@ -229,32 +274,35 @@ const name: 'Vault' = (await compile(input)).contractName;
     await page.goto(server.resolvedUrls.local[0]);
     await page.waitForFunction(() => window.compiler);
     assert.equal(requests.filter(url => url.endsWith('.wasm')).length, 0, 'browser import initializes WASM eagerly');
-    const browserResult = await page.evaluate(async input => {
-        const [compilerVersion, sourceSymbols, ...artifacts] = await Promise.all([window.compiler.version(), window.compiler.symbols(input), ...Array.from({ length: 12 }, () => window.compiler.compile(input))]);
-        return { compilerVersion, sourceSymbols, artifacts };
-    }, input);
+    const browserResult = await page.evaluate(async ({ input, position }) => {
+        const [compilerVersion, symbol, completions, ...results] = await Promise.all([
+            window.compiler.version(), window.compiler.symbolAt(input, position), window.compiler.completionsAt(input, { line: 4, column: 1 }),
+            ...Array.from({ length: 12 }, () => window.compiler.compile(input)),
+        ]);
+        return { compilerVersion, symbol, completions, results };
+    }, { input, position });
     assert.equal(browserResult.compilerVersion, manifest.version);
-    assert.deepEqual(browserResult.sourceSymbols, sourceSymbols);
-    for (const result of browserResult.artifacts) assert.deepEqual(normalized(result), normalized(artifact));
+    assert.deepEqual(browserResult.symbol, symbol);
+    assert.deepEqual(browserResult.completions, completions);
+    for (const result of browserResult.results) assert.deepEqual(normalized(result.artifact), normalized(artifact));
     assert.equal(requests.filter(url => url.endsWith('.wasm')).length, 1, 'concurrent browser initialization fetched WASM more than once');
     assert(requests.every(url => url.startsWith(server.resolvedUrls.local[0])), 'bundle fetched remote compiler assets');
-    assert.deepEqual(normalized(await page.evaluate(input => window.compiler.compile(input), standalone)), normalized(exit));
-    assert.deepEqual(normalized(await page.evaluate(input => window.compiler.compile(input, { optimize: false }), input)), normalized(unoptimized));
-    const browserError = await page.evaluate(async input => {
-        try { await window.compiler.compile(input); } catch (error) { return { name: error.name, message: error.message }; }
-    }, invalidSource);
-    assert.equal(browserError.name, 'Error');
-    assert.match(browserError.message, /Parse error/);
+    assert.deepEqual(normalized((await page.evaluate(input => window.compiler.compile(input), standalone)).artifact), normalized(exit));
+    assert.deepEqual(normalized((await page.evaluate(input => window.compiler.compile(input, { optimize: false }), input)).artifact), normalized(unoptimized));
+    assert.deepEqual(await page.evaluate(input => window.compiler.compile(input), invalidSource), parseFailure);
     assert.deepEqual(await page.evaluate(input => window.compiler.check(input), diagnosticInput), diagnostics);
-    const bundledWorker = await page.evaluate(async ({ input, diagnosticInput }) => ({
-        artifact: await window.workerCompiler.compile(input),
+    const bundledWorker = await page.evaluate(async ({ input, diagnosticInput, position }) => ({
+        result: await window.workerCompiler.compile(input),
         diagnostics: await window.workerCompiler.check(diagnosticInput),
-        symbols: await window.workerCompiler.symbols(input),
+        symbol: await window.workerCompiler.symbolAt(input, position),
+        completions: await window.workerCompiler.completionsAt(input, { line: 4, column: 1 }),
         version: await window.workerCompiler.version(),
-    }), { input, diagnosticInput });
-    assert.deepEqual(normalized(bundledWorker.artifact), normalized(artifact));
+    }), { input, diagnosticInput, position });
+    assert.deepEqual(normalized(bundledWorker.result.artifact), normalized(artifact));
+    assert.deepEqual(bundledWorker.result.debug, result.debug);
     assert.deepEqual(bundledWorker.diagnostics, diagnostics);
-    assert.deepEqual(bundledWorker.symbols, sourceSymbols);
+    assert.deepEqual(bundledWorker.symbol, symbol);
+    assert.deepEqual(bundledWorker.completions, completions);
     assert.equal(bundledWorker.version, manifest.version);
 
     const failedPage = await browser.newPage();
@@ -267,7 +315,7 @@ const name: 'Vault' = (await compile(input)).contractName;
     assert.equal(initializationError.name, 'TypeError');
     assert.match(initializationError.message, /fetch/i);
     await failedPage.unroute('**/*.wasm');
-    assert.equal((await failedPage.evaluate(input => window.compiler.compile(input), standalone)).contractName, 'Exit');
+    assert.equal((await failedPage.evaluate(input => window.compiler.compile(input), standalone)).artifact.contractName, 'Exit');
 
     const nativeUrl = `${server.resolvedUrls.local[0]}pr-previews/pr-1/`;
     const nativeContext = await browser.newContext();
@@ -289,13 +337,13 @@ const name: 'Vault' = (await compile(input)).contractName;
     });
     await nativePage.goto(nativeUrl);
     await nativePage.waitForFunction(() => window.compiler);
-    const nativeResult = await nativePage.evaluate(async input => ({
-        artifact: await window.compiler.compile(input, { optimize: false }),
-        symbols: await window.compiler.symbols(input),
+    const nativeResult = await nativePage.evaluate(async ({ input, position }) => ({
+        result: await window.compiler.compile(input, { optimize: false }),
+        symbol: await window.compiler.symbolAt(input, position),
         version: await window.compiler.version(),
-    }), input);
-    assert.deepEqual(normalized(nativeResult.artifact), normalized(unoptimized));
-    assert.deepEqual(nativeResult.symbols, sourceSymbols);
+    }), { input, position });
+    assert.deepEqual(normalized(nativeResult.result.artifact), normalized(unoptimized));
+    assert.deepEqual(nativeResult.symbol, symbol);
     assert.equal(nativeResult.version, manifest.version);
 
     const workerPage = await nativeContext.newPage();
@@ -309,22 +357,19 @@ const name: 'Vault' = (await compile(input)).contractName;
     assert.equal(workerFailure.name, 'TypeError');
     assert.match(workerFailure.message, /fetch/i);
     await nativeContext.unroute(wasmUrl);
-    const workerResult = await workerPage.evaluate(async ({ input, diagnosticInput }) => {
-        const [artifact, symbols, diagnostics, version] = await Promise.all([
-            window.compiler.compile(input, { optimize: false }), window.compiler.symbols(input),
-            window.compiler.check(diagnosticInput), window.compiler.version(),
+    const workerResult = await workerPage.evaluate(async ({ input, diagnosticInput, position }) => {
+        const [result, symbol, completions, diagnostics, version] = await Promise.all([
+            window.compiler.compile(input, { optimize: false }), window.compiler.symbolAt(input, position),
+            window.compiler.completionsAt(input, { line: 4, column: 1 }), window.compiler.check(diagnosticInput), window.compiler.version(),
         ]);
-        return { artifact, symbols, diagnostics, version };
-    }, { input, diagnosticInput });
-    assert.deepEqual(normalized(workerResult.artifact), normalized(unoptimized));
-    assert.deepEqual(workerResult.symbols, sourceSymbols);
+        return { result, symbol, completions, diagnostics, version };
+    }, { input, diagnosticInput, position });
+    assert.deepEqual(normalized(workerResult.result.artifact), normalized(unoptimized));
+    assert.deepEqual(workerResult.symbol, symbol);
+    assert.deepEqual(workerResult.completions, completions);
     assert.deepEqual(workerResult.diagnostics, diagnostics);
     assert.equal(workerResult.version, manifest.version);
-    const workerSourceError = await workerPage.evaluate(async input => {
-        try { await window.compiler.compile(input); } catch (error) { return { name: error.name, message: error.message }; }
-    }, invalidSource);
-    assert.equal(workerSourceError.name, 'Error');
-    assert.match(workerSourceError.message, /Parse error/);
+    assert.deepEqual(await workerPage.evaluate(input => window.compiler.compile(input), invalidSource), parseFailure);
     const ticks = await workerPage.evaluate(async input => {
         let ticks = 0;
         const timer = setInterval(() => ticks++, 0);

@@ -29,17 +29,17 @@ fn test_fuji_safe_contract() {
     // Verify parameters
     assert_eq!(output.parameters.len(), 11);
     assert_eq!(output.parameters[9].name, "treasuryBurnScript");
-    assert_eq!(output.parameters[9].param_type, "bytes32");
+    assert_eq!(output.parameters[9].param_type.to_string(), "ScriptPubKey");
     assert_eq!(output.parameters[10].name, "borrowerBurnScript");
-    assert_eq!(output.parameters[10].param_type, "bytes32");
+    assert_eq!(output.parameters[10].param_type.to_string(), "ScriptPubKey");
     assert_eq!(output.parameters[0].name, "assetCommitmentHash");
-    assert_eq!(output.parameters[0].param_type, "bytes");
+    assert_eq!(output.parameters[0].param_type.to_string(), "bytes");
     assert_eq!(output.parameters[1].name, "borrowAmount");
-    assert_eq!(output.parameters[1].param_type, "int");
+    assert_eq!(output.parameters[1].param_type.to_string(), "int");
     assert_eq!(output.parameters[2].name, "borrowerPk");
-    assert_eq!(output.parameters[2].param_type, "pubkey");
+    assert_eq!(output.parameters[2].param_type.to_string(), "pubkey");
     assert_eq!(output.parameters[3].name, "treasuryPk");
-    assert_eq!(output.parameters[3].param_type, "pubkey");
+    assert_eq!(output.parameters[3].param_type.to_string(), "pubkey");
 
     // 4 covenant functions + 1 standalone unilateral = 5 groups
     assert_eq!(
@@ -66,13 +66,13 @@ fn test_fuji_safe_contract() {
     for (function, script_read, value_read, inputs) in [
         (
             "claim",
-            "<treasuryBurnScript>",
+            "<treasuryBurnScript.version> <treasuryBurnScript.program>",
             "<borrowAmount>",
             &[("treasurySig", "signature")][..],
         ),
         (
             "liquidate",
-            "<treasuryBurnScript>",
+            "<treasuryBurnScript.version> <treasuryBurnScript.program>",
             "<borrowAmount>",
             &[
                 ("currentPrice", "int"),
@@ -82,7 +82,7 @@ fn test_fuji_safe_contract() {
         ),
         (
             "redeem",
-            "<borrowerBurnScript>",
+            "<borrowerBurnScript.version> <borrowerBurnScript.program>",
             "<borrowAmount>",
             &[("borrowerSig", "signature")][..],
         ),
@@ -91,7 +91,7 @@ fn test_fuji_safe_contract() {
             concat!(
                 "<CONTRACT:FujiSafe(<assetCommitmentHash>,<borrowAmount>,<borrowerPk>,<treasuryPk>,",
                 "<expirationTimeout>,<priceLevel>,<setupTimestamp>,<oraclePk>,<assetPair>,",
-                "<treasuryBurnScript>,<borrowerBurnScript>)>"
+                "<treasuryBurnScript.program>,<treasuryBurnScript.version>,<borrowerBurnScript.program>,<borrowerBurnScript.version>)> OP_1 OP_SWAP"
             ),
             "OP_SWAP",
             &[("treasurySig", "signature")][..],
@@ -109,10 +109,14 @@ fn test_fuji_safe_contract() {
         );
         let asm = crate::common::arkade_asm_tokens(&output, function);
         for (opcode, operand) in [
-            ("OP_INSPECTOUTPUTSCRIPTPUBKEY OP_DROP", script_read),
+            ("OP_INSPECTOUTPUTSCRIPTPUBKEY OP_SWAP", script_read),
             ("OP_INSPECTOUTPUTVALUE", value_read),
         ] {
-            let comparison = format!("0 {opcode} {operand} OP_EQUALVERIFY");
+            let comparison = if opcode == "OP_INSPECTOUTPUTVALUE" {
+                format!("0 {opcode} {operand} OP_NUMEQUALVERIFY")
+            } else {
+                format!("0 {opcode} {operand} OP_ROT OP_EQUALVERIFY OP_NUMEQUALVERIFY")
+            };
             let expected = comparison.split_whitespace().collect::<Vec<_>>();
             assert!(
                 asm.windows(expected.len()).any(|window| window

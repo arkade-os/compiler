@@ -43,15 +43,15 @@ fn test_threshold_multisig() {
 
     assert_eq!(output.parameters.len(), 5);
     assert_eq!(output.parameters[0].name, "signer");
-    assert_eq!(output.parameters[0].param_type, "pubkey");
+    assert_eq!(output.parameters[0].param_type.to_string(), "pubkey");
     assert_eq!(output.parameters[1].name, "signer1");
-    assert_eq!(output.parameters[1].param_type, "pubkey");
+    assert_eq!(output.parameters[1].param_type.to_string(), "pubkey");
     assert_eq!(output.parameters[2].name, "signer2");
-    assert_eq!(output.parameters[2].param_type, "pubkey");
+    assert_eq!(output.parameters[2].param_type.to_string(), "pubkey");
     assert_eq!(output.parameters[3].name, "signer3");
-    assert_eq!(output.parameters[3].param_type, "pubkey");
+    assert_eq!(output.parameters[3].param_type.to_string(), "pubkey");
     assert_eq!(output.parameters[4].name, "signer4");
-    assert_eq!(output.parameters[4].param_type, "pubkey");
+    assert_eq!(output.parameters[4].param_type.to_string(), "pubkey");
 
     assert_eq!(output.functions.len(), 3);
 
@@ -214,6 +214,16 @@ fn test_threshold_multisig_should_fail_on_m_greater_than_n() {
     assert!(
         result.is_err(),
         "Expected compilation to fail for m > n threshold multisig"
+    );
+}
+
+#[test]
+fn a_threshold_that_folds_above_the_key_count_fails_unoptimized() {
+    let code = "contract C(pubkey a, pubkey b, pubkey c) { function spend(signature sa, signature sb, signature sc) { require(checkMultisig([a, b, c], [sa, sb, sc], 2 + 2)); } }";
+    let error = compile(code).unwrap_err().to_string();
+    assert!(
+        error.contains("threshold must be between 1 and the number of public keys"),
+        "{error}"
     );
 }
 

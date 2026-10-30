@@ -138,19 +138,23 @@ fn fields_from_ark_type(
 ) -> Result<Vec<Field>, String> {
     arkade_compiler::models::flatten_parameter(
         &arkade_compiler::Parameter {
+            span: Default::default(),
             name: name.to_string(),
-            param_type: ark_type.to_string(),
+            param_type: ark_type.into(),
         },
         structs,
     )
     .map(|leaves| {
         leaves
             .into_iter()
-            .map(|leaf| Field {
-                name: leaf.emitted_name,
-                encoding: Encoding::from_ark_type(&leaf.leaf_type),
-                ark_type: leaf.leaf_type,
-                is_injected,
+            .map(|leaf| {
+                let ark_type = leaf.leaf_type.to_string();
+                Field {
+                    name: leaf.emitted_name,
+                    encoding: Encoding::from_ark_type(&ark_type),
+                    ark_type,
+                    is_injected,
+                }
             })
             .collect()
     })
@@ -161,7 +165,7 @@ pub fn build_ir(artifact: &ContractJson) -> Result<ContractIR, String> {
     let constructor_fields = artifact
         .parameters
         .iter()
-        .map(|p| fields_from_ark_type(&p.name, &p.param_type, false, &artifact.structs))
+        .map(|p| fields_from_ark_type(&p.name, &p.param_type.to_string(), false, &artifact.structs))
         .collect::<Result<Vec<_>, _>>()?
         .into_iter()
         .flatten()

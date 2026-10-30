@@ -1,8 +1,8 @@
 use arkade_compiler::compile_file;
 use arkade_compiler::opcodes::{
     OP_CAT, OP_CHECKSEQUENCEVERIFY, OP_CHECKSIG, OP_CHECKSIGFROMSTACK, OP_CHECKTIME, OP_DIV,
-    OP_DROP, OP_EQUAL, OP_INSPECTINPUTSCRIPTPUBKEY, OP_INSPECTNUMINPUTS, OP_MUL, OP_NOT,
-    OP_NUM2BIN, OP_PUSHCURRENTINPUTINDEX, OP_SHA256,
+    OP_EQUAL, OP_INSPECTINPUTSCRIPTPUBKEY, OP_INSPECTNUMINPUTS, OP_MUL, OP_NOT, OP_NUM2BIN,
+    OP_PUSHCURRENTINPUTINDEX, OP_SHA256,
 };
 use std::path::Path;
 
@@ -79,7 +79,7 @@ fn intent_finalize_and_cancel_are_opposite_clock_checks() {
         "{finalize}"
     );
     assert!(
-        finalize.contains(&format!("{OP_PUSHCURRENTINPUTINDEX} 0 OP_EQUALVERIFY")),
+        finalize.contains(&format!("{OP_PUSHCURRENTINPUTINDEX} 0 OP_NUMEQUALVERIFY")),
         "{finalize}"
     );
     assert_eq!(
@@ -87,12 +87,12 @@ fn intent_finalize_and_cancel_are_opposite_clock_checks() {
         1
     );
     assert!(
-        finalize.contains(&format!("{OP_INSPECTNUMINPUTS} 2 OP_EQUALVERIFY")),
+        finalize.contains(&format!("{OP_INSPECTNUMINPUTS} 2 OP_NUMEQUALVERIFY")),
         "{finalize}"
     );
     assert!(
         finalize.contains(&format!(
-            "1 {OP_INSPECTINPUTSCRIPTPUBKEY} {OP_DROP} {OP_PUSHCURRENTINPUTINDEX} {OP_INSPECTINPUTSCRIPTPUBKEY} {OP_DROP} {OP_EQUAL} {OP_NOT} OP_VERIFY"
+            "1 {OP_INSPECTINPUTSCRIPTPUBKEY} OP_SWAP {OP_PUSHCURRENTINPUTINDEX} {OP_INSPECTINPUTSCRIPTPUBKEY} OP_SWAP OP_ROT {OP_EQUAL} OP_ROT OP_ROT OP_NUMEQUAL OP_BOOLAND {OP_NOT} OP_VERIFY"
         )),
         "{finalize}"
     );

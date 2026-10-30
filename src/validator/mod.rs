@@ -22,7 +22,7 @@
 use crate::models::child_exprs;
 use crate::models::{
     AssignmentTarget, Contract, ContractJson, ExprKind, Expression, KeyExpr, LocatedStatement,
-    Requirement, Statement, TapItem,
+    Path, Requirement, Statement, TapItem, TypeName,
 };
 use crate::operators::{BinaryOperator, OperatorClass};
 use crate::types::{build_scope_with_structs, ArkType, Scope};
@@ -37,6 +37,7 @@ mod operands;
 mod output;
 pub(crate) mod references;
 mod shadowing;
+mod signatures;
 
 use assets::check_asset_id_operands;
 use bindings::check_binding_semantics;
@@ -235,18 +236,18 @@ pub(crate) fn validate_ast(contract: &Contract, require_entrypoint: bool) -> Vec
                     ts.name, p.name
                 )));
             }
-            if crate::models::array_type_parts(&p.param_type).is_some() {
+            if p.param_type.array_parts().is_some() {
                 issues.push(ValidationIssue::error(format!(
                     "tapscript '{}' input '{}' has array type '{}'; array witnesses are not \
                      supported in tapscript functions",
                     ts.name, p.name, p.param_type
                 )));
             }
-            if crate::models::is_builtin_struct(&p.param_type)
+            if p.param_type.is_builtin_struct()
                 || contract
                     .structs
                     .iter()
-                    .any(|definition| definition.name == p.param_type)
+                    .any(|definition| p.param_type.name() == Some(&definition.name))
             {
                 issues.push(ValidationIssue::error(format!(
                     "tapscript '{}' input '{}' has struct type '{}'; struct witnesses are not supported in tapscript functions",
@@ -285,6 +286,7 @@ pub(crate) fn validate_ast(contract: &Contract, require_entrypoint: bool) -> Vec
     check_binding_semantics(contract, &mut issues);
     check_asset_id_operands(contract, &mut issues);
     inspections::check_repeated_inspections(contract, &mut issues);
+    signatures::check_signature_results(contract, &mut issues);
 
     issues
 }
@@ -367,7 +369,7 @@ fn validate_local_types(
                 declared_type: Some(declared_type),
                 ..
             } => {
-                if !crate::models::is_builtin_struct(declared_type) {
+                if !declared_type.is_builtin_struct() {
                     validate_declared_type(
                         declared_type,
                         &format!("local declaration in function '{function_name}'"),
@@ -418,7 +420,7 @@ fn validate_struct_fields<'a>(
     }
     stack.push(&definition.name);
     for field in &definition.fields {
-        if !crate::models::is_builtin_struct(&field.param_type) {
+        if !field.param_type.is_builtin_struct() {
             validate_declared_type(
                 &field.param_type,
                 &format!("field '{}.{}'", definition.name, field.name),
@@ -426,10 +428,7 @@ fn validate_struct_fields<'a>(
                 issues,
             );
         }
-        let base = crate::models::array_type_parts(&field.param_type)
-            .map(|(base, _)| base)
-            .unwrap_or(&field.param_type);
-        if let Some(nested) = definitions.get(base) {
+        if let Some(nested) = definitions.get(field.param_type.base_name()) {
             validate_struct_fields(nested, definitions, stack, validated, issues);
         }
     }
@@ -437,13 +436,12 @@ fn validate_struct_fields<'a>(
 }
 
 fn validate_declared_type(
-    declared_type: &str,
+    declared_type: &crate::models::TypeName,
     context: &str,
     definitions: &HashMap<&str, &crate::models::StructDefinition>,
     issues: &mut Vec<ValidationIssue>,
 ) {
-    let array = crate::models::array_type_parts(declared_type);
-    let base = array.map(|(base, _)| base).unwrap_or(declared_type);
+    let base = declared_type.base_name();
     if !crate::models::is_builtin_type(base)
         && !crate::models::is_builtin_struct(base)
         && !definitions.contains_key(base)
@@ -762,6 +760,9 @@ contract Demo() {
 
     fn located(statement: Statement) -> LocatedStatement {
         LocatedStatement {
+            message: None,
+            names: Vec::new(),
+            branches: Vec::new(),
             span: crate::diagnostics::Span { start: 0, end: 0 },
             statement,
         }
@@ -769,32 +770,37 @@ contract Demo() {
 
     fn make_contract(name: &str) -> Contract {
         Contract {
+            span: Default::default(),
             name: name.to_string(),
             is_library: false,
             structs: vec![],
             parameters: vec![Parameter {
+                span: Default::default(),
                 name: "owner".to_string(),
-                param_type: "pubkey".to_string(),
+                param_type: "pubkey".into(),
             }],
             functions: vec![Function {
+                declaration: Default::default(),
                 name: "spend".to_string(),
                 span: crate::diagnostics::Span { start: 0, end: 0 },
                 parameters: vec![
                     Parameter {
+                        span: Default::default(),
                         name: "ownerSig".to_string(),
-                        param_type: "signature".to_string(),
+                        param_type: "signature".into(),
                     },
                     Parameter {
+                        span: Default::default(),
                         name: "flag".to_string(),
-                        param_type: "bool".to_string(),
+                        param_type: "bool".into(),
                     },
                 ],
                 statements: vec![located(Statement::Require(Requirement::Expression(
                     ExprKind::Builtin {
                         builtin: crate::builtins::find("checkSig").unwrap(),
                         args: vec![
-                            ExprKind::Variable("ownerSig".to_string()).into(),
-                            ExprKind::Variable("owner".to_string()).into(),
+                            ExprKind::Name(crate::models::Path::from_key("ownerSig")).into(),
+                            ExprKind::Name(crate::models::Path::from_key("owner")).into(),
                         ],
                     }
                     .into(),
@@ -825,13 +831,13 @@ contract Demo() {
         // "condition false" path with no require() → a trivially-passing spend.
         let mut contract = make_contract("BarePath");
         contract.functions[0].statements = vec![located(Statement::IfElse {
-            condition: ExprKind::Variable("flag".to_string()).into(),
+            condition: ExprKind::Name(crate::models::Path::from_key("flag")).into(),
             then_body: vec![located(Statement::Require(Requirement::Expression(
                 ExprKind::Builtin {
                     builtin: crate::builtins::find("checkSig").unwrap(),
                     args: vec![
-                        ExprKind::Variable("ownerSig".to_string()).into(),
-                        ExprKind::Variable("owner".to_string()).into(),
+                        ExprKind::Name(crate::models::Path::from_key("ownerSig")).into(),
+                        ExprKind::Name(crate::models::Path::from_key("owner")).into(),
                     ],
                 }
                 .into(),
@@ -853,15 +859,15 @@ contract Demo() {
                 ExprKind::Builtin {
                     builtin: crate::builtins::find("checkSig").unwrap(),
                     args: vec![
-                        ExprKind::Variable("ownerSig".to_string()).into(),
-                        ExprKind::Variable("owner".to_string()).into(),
+                        ExprKind::Name(crate::models::Path::from_key("ownerSig")).into(),
+                        ExprKind::Name(crate::models::Path::from_key("owner")).into(),
                     ],
                 }
                 .into(),
             )))
         };
         contract.functions[0].statements = vec![located(Statement::IfElse {
-            condition: ExprKind::Variable("flag".to_string()).into(),
+            condition: ExprKind::Name(crate::models::Path::from_key("flag")).into(),
             then_body: vec![req()],
             else_body: Some(vec![req()]),
         })];

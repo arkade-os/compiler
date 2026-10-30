@@ -298,7 +298,7 @@ input_introspection = {
 // opcodes and are used by invocation-marker contracts to pin themselves to
 // a specific consuming Arkade closure.
 input_introspection_property = {
-    "value" | "scriptPubKey" | "witnessVersion" | "sequence" | "outpoint" |
+    "value" | "witnessVersion" | "sequence" | "outpoint" |
     "arkadeScriptHash" | "arkadeWitnessHash" | "script"
 }
 
@@ -308,7 +308,7 @@ output_introspection = {
 }
 
 // Output introspection properties (excluding asset - use .assets.* API instead)
-output_introspection_property = { "value" | "scriptPubKey" | "witnessVersion" | "script" }
+output_introspection_property = { "value" | "witnessVersion" | "script" }
 
 // ─── Asset Groups ──────────────────────────────────────────────────────────────
 
@@ -371,19 +371,22 @@ tx_property_access = {
 
 // Body of tx property access - separated to control greediness
 tx_property_body = {
-    // Input.current syntax - first-class support for current input introspection.
-    // Same property set as tx.inputs[i].property (this *is* tx.inputs[i] for
-    // the current i); a property is required, there is no bare form.
-    ("input" ~ "." ~ "current" ~ "." ~ input_introspection_property) |
-    // Asset groups access: has, length, or an AssetGroup with an optional member
-    ("assetGroups" ~ (
-        "." ~ "has" ~ "(" ~ asset_id_txid_operand ~ "," ~ asset_id_gidx_operand ~ ")" |
-        "." ~ "length" |
-        asset_group_ref ~ asset_group_member?
-    )?) |
+    tx_input_current |
+    tx_asset_groups |
     // Standard property access
     (tx_property_part ~ tx_property_suffix*)
 }
+
+// Same property set as tx.inputs[i].property (this *is* tx.inputs[i] for
+// the current i); a property is required, there is no bare form.
+tx_input_current = { "input" ~ "." ~ "current" ~ "." ~ input_introspection_property }
+
+// Asset groups access: has, length, or an AssetGroup with an optional member
+tx_asset_groups = {
+    "assetGroups" ~ (asset_groups_has | asset_groups_length | asset_group_ref ~ asset_group_member?)?
+}
+asset_groups_has = { "." ~ "has" ~ "(" ~ asset_id_txid_operand ~ "," ~ asset_id_gidx_operand ~ ")" }
+asset_groups_length = { "." ~ "length" }
 
 // Suffix for tx property access - explicitly requires [ or .
 tx_property_suffix = {

@@ -117,7 +117,7 @@ contract RepaymentPool(
 //     int debitNext  = totalDebitOutstanding + amount;
 
 //     require(
-//       tx.outputs[0].scriptPubKey == new RepaymentPool(
+//       tx.outputs[0].script == new RepaymentPool(
 //         usdtAssetIdTxid, usdtAssetIdGidx, creditAssetIdTxid, creditAssetIdGidx, creditCtrlIdTxid, creditCtrlIdGidx, debitAssetIdTxid, debitAssetIdGidx, debitCtrlIdTxid, debitCtrlIdGidx, ticker,
 //         oraclePk, oracleMaxAgeSeconds, initRatioBps, liqThresholdBps, maturity, auctionWindow, auctionDiscountBps,
 //         usdtBalance, creditNext, debitNext
@@ -129,10 +129,10 @@ contract RepaymentPool(
 //     require(tx.outputs[0].assets.lookup(debitCtrlIdTxid, debitCtrlIdGidx) >= 1, "debit control not retained");
 
 //     require(tx.outputs[1].assets.lookup(creditAssetIdTxid, creditAssetIdGidx) >= amount, "credit not delivered");
-//     require(tx.outputs[1].scriptPubKey == new SingleSig(borrowerPk), "credit dest not borrower");
+//     require(tx.outputs[1].script == new SingleSig(borrowerPk), "credit dest not borrower");
 
 //     require(
-//       tx.outputs[2].scriptPubKey == new BondMint(
+//       tx.outputs[2].script == new BondMint(
 //         borrowerPk, debitAssetIdTxid, debitAssetIdGidx, debitCtrlIdTxid, debitCtrlIdGidx, amount, collateral, maturity, auctionWindow
 //       ),
 //       "invalid vault"
@@ -151,7 +151,7 @@ contract RepaymentPool(
 //     require(!checkTime(maturity), "matured; use acceptAuction");
 
 //     require(
-//       tx.inputs[vaultIdx].scriptPubKey == new BondMint(
+//       tx.inputs[vaultIdx].script == new BondMint(
 //         borrowerPk, debitAssetIdTxid, debitAssetIdGidx, debitCtrlIdTxid, debitCtrlIdGidx, mintedAmount, collateral, maturity, auctionWindow
 //       ),
 //       "vault input mismatch"
@@ -170,7 +170,7 @@ contract RepaymentPool(
 //     int debitNext = totalDebitOutstanding - mintedAmount;
 
 //     require(
-//       tx.outputs[0].scriptPubKey == new RepaymentPool(
+//       tx.outputs[0].script == new RepaymentPool(
 //         usdtAssetIdTxid, usdtAssetIdGidx, creditAssetIdTxid, creditAssetIdGidx, creditCtrlIdTxid, creditCtrlIdGidx, debitAssetIdTxid, debitAssetIdGidx, debitCtrlIdTxid, debitCtrlIdGidx, ticker,
 //         oraclePk, oracleMaxAgeSeconds, initRatioBps, liqThresholdBps, maturity, auctionWindow, auctionDiscountBps,
 //         usdtNext, totalCreditOutstanding, debitNext
@@ -182,7 +182,7 @@ contract RepaymentPool(
 //     require(tx.outputs[0].assets.lookup(debitCtrlIdTxid, debitCtrlIdGidx) >= 1, "debit control not retained");
 
 //     require(tx.outputs[1].value >= collateral, "collateral not returned");
-//     require(tx.outputs[1].scriptPubKey == new SingleSig(borrowerPk), "collateral dest not borrower");
+//     require(tx.outputs[1].script == new SingleSig(borrowerPk), "collateral dest not borrower");
 //   }
 
   // ROLL OUT — borrower co-spends their old BondMint to extinguish the
@@ -196,7 +196,7 @@ contract RepaymentPool(
 //     require(checkSig(borrowerSig, borrowerPk), "invalid borrower sig");
 
 //     require(
-//       tx.inputs[vaultIdx].scriptPubKey == new BondMint(
+//       tx.inputs[vaultIdx].script == new BondMint(
 //         borrowerPk, debitAssetIdTxid, debitAssetIdGidx, debitCtrlIdTxid, debitCtrlIdGidx, oldMintedAmount, collateral, maturity, auctionWindow
 //       ),
 //       "vault input mismatch"
@@ -215,7 +215,7 @@ contract RepaymentPool(
 //     int debitNext = totalDebitOutstanding - oldMintedAmount;
 
 //     require(
-//       tx.outputs[outIdxPool].scriptPubKey == new RepaymentPool(
+//       tx.outputs[outIdxPool].script == new RepaymentPool(
 //         usdtAssetIdTxid, usdtAssetIdGidx, creditAssetIdTxid, creditAssetIdGidx, creditCtrlIdTxid, creditCtrlIdGidx, debitAssetIdTxid, debitAssetIdGidx, debitCtrlIdTxid, debitCtrlIdGidx, ticker,
 //         oraclePk, oracleMaxAgeSeconds, initRatioBps, liqThresholdBps, maturity, auctionWindow, auctionDiscountBps,
 //         usdtNext, totalCreditOutstanding, debitNext
@@ -267,7 +267,7 @@ contract RepaymentPool(
 //     int debitNext = totalDebitOutstanding + newMintedAmount;
 
 //     require(
-//       tx.outputs[outIdxPool].scriptPubKey == new RepaymentPool(
+//       tx.outputs[outIdxPool].script == new RepaymentPool(
 //         usdtAssetIdTxid, usdtAssetIdGidx, creditAssetIdTxid, creditAssetIdGidx, creditCtrlIdTxid, creditCtrlIdGidx, debitAssetIdTxid, debitAssetIdGidx, debitCtrlIdTxid, debitCtrlIdGidx, ticker,
 //         oraclePk, oracleMaxAgeSeconds, initRatioBps, liqThresholdBps, maturity, auctionWindow, auctionDiscountBps,
 //         usdtBalance, creditNext, debitNext
@@ -281,7 +281,7 @@ contract RepaymentPool(
 //     require(tx.outputs[outIdxCredit].assets.lookup(creditAssetIdTxid, creditAssetIdGidx) >= newMintedAmount, "credit not delivered");
 
 //     require(
-//       tx.outputs[outIdxVault].scriptPubKey == new BondMint(
+//       tx.outputs[outIdxVault].script == new BondMint(
 //         borrowerPk, debitAssetIdTxid, debitAssetIdGidx, debitCtrlIdTxid, debitCtrlIdGidx, newMintedAmount, newCollateral, maturity, auctionWindow
 //       ),
 //       "invalid new vault"
@@ -307,7 +307,7 @@ contract RepaymentPool(
 //     require(checkSigFromStack(oracleSig, oraclePk, oracleMsg), "invalid oracle signature");
 
 //     require(
-//       tx.inputs[vaultIdx].scriptPubKey == new BondMint(
+//       tx.inputs[vaultIdx].script == new BondMint(
 //         borrowerPk, debitAssetIdTxid, debitAssetIdGidx, debitCtrlIdTxid, debitCtrlIdGidx, mintedAmount, collateral, maturity, auctionWindow
 //       ),
 //       "vault input mismatch"
@@ -335,7 +335,7 @@ contract RepaymentPool(
 //       int liquidationUsdt = mintedAmount * payRate / 10000;
 //       int usdtNext        = usdtBalance + liquidationUsdt;
 //       require(
-//         tx.outputs[0].scriptPubKey == new RepaymentPool(
+//         tx.outputs[0].script == new RepaymentPool(
 //           usdtAssetIdTxid, usdtAssetIdGidx, creditAssetIdTxid, creditAssetIdGidx, creditCtrlIdTxid, creditCtrlIdGidx, debitAssetIdTxid, debitAssetIdGidx, debitCtrlIdTxid, debitCtrlIdGidx, ticker,
 //           oraclePk, oracleMaxAgeSeconds, initRatioBps, liqThresholdBps, maturity, auctionWindow, auctionDiscountBps,
 //           usdtNext, totalCreditOutstanding, debitNext
@@ -346,16 +346,16 @@ contract RepaymentPool(
 //       require(tx.outputs[0].assets.lookup(creditCtrlIdTxid, creditCtrlIdGidx) >= 1, "credit control not retained");
 //       require(tx.outputs[0].assets.lookup(debitCtrlIdTxid, debitCtrlIdGidx) >= 1, "debit control not retained");
 //       require(tx.outputs[1].value >= collateralSold, "auctioneer underpaid");
-//       require(tx.outputs[1].scriptPubKey == new SingleSig(auctioneerPk), "output 1 not auctioneer");
+//       require(tx.outputs[1].script == new SingleSig(auctioneerPk), "output 1 not auctioneer");
 //       if (excess > 330) {
 //         require(tx.outputs[2].value >= excess, "borrower underpaid");
-//         require(tx.outputs[2].scriptPubKey == new SingleSig(borrowerPk), "output 2 not borrower");
+//         require(tx.outputs[2].script == new SingleSig(borrowerPk), "output 2 not borrower");
 //       }
 //     } else {
 //       int liquidationUsdt = collateralValue * payRate / 10000;
 //       int usdtNext        = usdtBalance + liquidationUsdt;
 //       require(
-//         tx.outputs[0].scriptPubKey == new RepaymentPool(
+//         tx.outputs[0].script == new RepaymentPool(
 //           usdtAssetIdTxid, usdtAssetIdGidx, creditAssetIdTxid, creditAssetIdGidx, creditCtrlIdTxid, creditCtrlIdGidx, debitAssetIdTxid, debitAssetIdGidx, debitCtrlIdTxid, debitCtrlIdGidx, ticker,
 //           oraclePk, oracleMaxAgeSeconds, initRatioBps, liqThresholdBps, maturity, auctionWindow, auctionDiscountBps,
 //           usdtNext, totalCreditOutstanding, debitNext
@@ -366,7 +366,7 @@ contract RepaymentPool(
 //       require(tx.outputs[0].assets.lookup(creditCtrlIdTxid, creditCtrlIdGidx) >= 1, "credit control not retained");
 //       require(tx.outputs[0].assets.lookup(debitCtrlIdTxid, debitCtrlIdGidx) >= 1, "debit control not retained");
 //       require(tx.outputs[1].value >= collateral, "auctioneer underpaid");
-//       require(tx.outputs[1].scriptPubKey == new SingleSig(auctioneerPk), "output 1 not auctioneer");
+//       require(tx.outputs[1].script == new SingleSig(auctioneerPk), "output 1 not auctioneer");
 //     }
 //   }
 
@@ -389,7 +389,7 @@ contract RepaymentPool(
 //     require(checkSigFromStack(oracleSig, oraclePk, oracleMsg), "invalid oracle signature");
 
 //     require(
-//       tx.inputs[vaultIdx].scriptPubKey == new BondMint(
+//       tx.inputs[vaultIdx].script == new BondMint(
 //         borrowerPk, debitAssetIdTxid, debitAssetIdGidx, debitCtrlIdTxid, debitCtrlIdGidx, mintedAmount, collateral, maturity, auctionWindow
 //       ),
 //       "vault input mismatch"
@@ -414,7 +414,7 @@ contract RepaymentPool(
 //       int auctionUsdt    = mintedAmount * payRate / 10000;
 //       int usdtNext       = usdtBalance + auctionUsdt;
 //       require(
-//         tx.outputs[0].scriptPubKey == new RepaymentPool(
+//         tx.outputs[0].script == new RepaymentPool(
 //           usdtAssetIdTxid, usdtAssetIdGidx, creditAssetIdTxid, creditAssetIdGidx, creditCtrlIdTxid, creditCtrlIdGidx, debitAssetIdTxid, debitAssetIdGidx, debitCtrlIdTxid, debitCtrlIdGidx, ticker,
 //           oraclePk, oracleMaxAgeSeconds, initRatioBps, liqThresholdBps, maturity, auctionWindow, auctionDiscountBps,
 //           usdtNext, totalCreditOutstanding, debitNext
@@ -425,16 +425,16 @@ contract RepaymentPool(
 //       require(tx.outputs[0].assets.lookup(creditCtrlIdTxid, creditCtrlIdGidx) >= 1, "credit control not retained");
 //       require(tx.outputs[0].assets.lookup(debitCtrlIdTxid, debitCtrlIdGidx) >= 1, "debit control not retained");
 //       require(tx.outputs[1].value >= collateralSold, "auctioneer underpaid");
-//       require(tx.outputs[1].scriptPubKey == new SingleSig(auctioneerPk), "output 1 not auctioneer");
+//       require(tx.outputs[1].script == new SingleSig(auctioneerPk), "output 1 not auctioneer");
 //       if (excess > 330) {
 //         require(tx.outputs[2].value >= excess, "borrower underpaid");
-//         require(tx.outputs[2].scriptPubKey == new SingleSig(borrowerPk), "output 2 not borrower");
+//         require(tx.outputs[2].script == new SingleSig(borrowerPk), "output 2 not borrower");
 //       }
 //     } else {
 //       int auctionUsdt = collateralValue * payRate / 10000;
 //       int usdtNext    = usdtBalance + auctionUsdt;
 //       require(
-//         tx.outputs[0].scriptPubKey == new RepaymentPool(
+//         tx.outputs[0].script == new RepaymentPool(
 //           usdtAssetIdTxid, usdtAssetIdGidx, creditAssetIdTxid, creditAssetIdGidx, creditCtrlIdTxid, creditCtrlIdGidx, debitAssetIdTxid, debitAssetIdGidx, debitCtrlIdTxid, debitCtrlIdGidx, ticker,
 //           oraclePk, oracleMaxAgeSeconds, initRatioBps, liqThresholdBps, maturity, auctionWindow, auctionDiscountBps,
 //           usdtNext, totalCreditOutstanding, debitNext
@@ -445,7 +445,7 @@ contract RepaymentPool(
 //       require(tx.outputs[0].assets.lookup(creditCtrlIdTxid, creditCtrlIdGidx) >= 1, "credit control not retained");
 //       require(tx.outputs[0].assets.lookup(debitCtrlIdTxid, debitCtrlIdGidx) >= 1, "debit control not retained");
 //       require(tx.outputs[1].value >= collateral, "auctioneer underpaid");
-//       require(tx.outputs[1].scriptPubKey == new SingleSig(auctioneerPk), "output 1 not auctioneer");
+//       require(tx.outputs[1].script == new SingleSig(auctioneerPk), "output 1 not auctioneer");
 //     }
 //   }
 
@@ -476,7 +476,7 @@ contract RepaymentPool(
 //     int creditNext = totalCreditOutstanding - amount;
 
 //     require(
-//       tx.outputs[0].scriptPubKey == new RepaymentPool(
+//       tx.outputs[0].script == new RepaymentPool(
 //         usdtAssetIdTxid, usdtAssetIdGidx, creditAssetIdTxid, creditAssetIdGidx, creditCtrlIdTxid, creditCtrlIdGidx, debitAssetIdTxid, debitAssetIdGidx, debitCtrlIdTxid, debitCtrlIdGidx, ticker,
 //         oraclePk, oracleMaxAgeSeconds, initRatioBps, liqThresholdBps, maturity, auctionWindow, auctionDiscountBps,
 //         usdtNext, creditNext, totalDebitOutstanding
@@ -488,7 +488,7 @@ contract RepaymentPool(
 //     require(tx.outputs[0].assets.lookup(debitCtrlIdTxid, debitCtrlIdGidx) >= 1, "debit control not retained");
 
 //     require(tx.outputs[1].assets.lookup(usdtAssetIdTxid, usdtAssetIdGidx) >= payout, "holder underpaid");
-//     require(tx.outputs[1].scriptPubKey == new SingleSig(holderPk), "redeem dest not holder");
+//     require(tx.outputs[1].script == new SingleSig(holderPk), "redeem dest not holder");
 //   }
 
   function disabled() {

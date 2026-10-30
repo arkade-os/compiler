@@ -81,7 +81,8 @@ func (f *testPrevOutFetcher) FetchVtxoPrevOutPkScript(outpoint wire.OutPoint) []
 	return tx.TxOut[outpoint.Index].PkScript
 }
 
-func compileArtifact(t *testing.T, source string) artifact {
+// compile writes the artifact for source to output and returns the compiler's messages.
+func compile(t *testing.T, source, output string) ([]byte, error) {
 	t.Helper()
 
 	compiler := os.Getenv("ARKADEC")
@@ -91,13 +92,18 @@ func compileArtifact(t *testing.T, source string) artifact {
 			t.Fatalf("compiler unavailable; run scripts/e2e.sh or set ARKADEC: %v", err)
 		}
 	}
-	output := filepath.Join(t.TempDir(), "artifact.json")
 	args := []string{source, "-o", output}
 	if os.Getenv("ARKADEC_NO_OPTIMIZE") != "" {
 		args = append(args, "--no-optimize")
 	}
-	cmd := exec.Command(compiler, args...)
-	if combined, err := cmd.CombinedOutput(); err != nil {
+	return exec.Command(compiler, args...).CombinedOutput()
+}
+
+func compileArtifact(t *testing.T, source string) artifact {
+	t.Helper()
+
+	output := filepath.Join(t.TempDir(), "artifact.json")
+	if combined, err := compile(t, source, output); err != nil {
 		t.Fatalf("compile %s: %v\n%s", source, err, combined)
 	}
 
@@ -229,6 +235,8 @@ func flattenInput(name, typeName string, structs []structDefinition) []string {
 	switch typeName {
 	case "AssetId":
 		return []string{name + ".txid", name + ".gidx"}
+	case "ScriptPubKey":
+		return []string{name + ".program", name + ".version"}
 	case "Outpoint":
 		return []string{name + ".txid", name + ".vout"}
 	case "ECPoint":

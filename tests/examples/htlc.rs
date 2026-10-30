@@ -25,13 +25,13 @@ fn test_htlc_contract() {
     // Verify parameters: sender, receiver, preimageHash (bytes20), refundTime
     assert_eq!(output.parameters.len(), 4);
     assert_eq!(output.parameters[0].name, "sender");
-    assert_eq!(output.parameters[0].param_type, "pubkey");
+    assert_eq!(output.parameters[0].param_type.to_string(), "pubkey");
     assert_eq!(output.parameters[1].name, "receiver");
-    assert_eq!(output.parameters[1].param_type, "pubkey");
+    assert_eq!(output.parameters[1].param_type.to_string(), "pubkey");
     assert_eq!(output.parameters[2].name, "preimageHash");
-    assert_eq!(output.parameters[2].param_type, "bytes20");
+    assert_eq!(output.parameters[2].param_type.to_string(), "bytes20");
     assert_eq!(output.parameters[3].name, "refundTime");
-    assert_eq!(output.parameters[3].param_type, "int");
+    assert_eq!(output.parameters[3].param_type.to_string(), "int");
 
     // 2 covenant groups (claim, refund) + 1 standalone unilateral = 3 groups
     assert_eq!(

@@ -56,7 +56,7 @@ fn test_threshold_oracle_constructor_array_is_one_grouped_input() {
         .iter()
         .find(|p| p.name == "oracles")
         .expect("constructorInputs keeps one entry per source parameter");
-    assert_eq!(oracles.param_type, "pubkey[3]");
+    assert_eq!(oracles.param_type.to_string(), "pubkey[3]");
 
     let param_names: Vec<&str> = output.parameters.iter().map(|p| p.name.as_str()).collect();
     assert!(

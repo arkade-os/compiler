@@ -2,7 +2,7 @@ use clap::Parser as ClapParser;
 use std::fs;
 use std::path::Path;
 
-use arkade_compiler::{compile_file_with_options, CompileOptions};
+use arkade_compiler::{analyze_file, compile_file_with_options, CompileOptions, Severity};
 
 /// Arkade Compiler CLI
 ///
@@ -33,6 +33,24 @@ struct Args {
     /// Disable constant folding, static branch removal, and assembly optimizations
     #[arg(long)]
     no_optimize: bool,
+
+    /// Report every error and warning, with its location, instead of writing an artifact;
+    /// exits with status 1 when there is an error
+    #[arg(long)]
+    check: bool,
+
+    /// With --check, print the diagnostics as a JSON array
+    #[arg(long, requires = "check")]
+    json: bool,
+
+    /// Also write the covenant source maps to a debug file next to the artifact
+    /// (`<name>.debug.json`)
+    #[arg(long, conflicts_with = "check")]
+    debug: bool,
+
+    /// Print each covenant's script bytes, stack peak and opcode execution counts
+    #[arg(long, conflicts_with = "check")]
+    report: bool,
 }
 
 /// Main function for the Arkade Compiler CLI
@@ -53,13 +71,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Err("Input file must have .ark extension".into());
     }
 
+    let options = CompileOptions {
+        optimize: !args.no_optimize,
+    };
+    if args.check {
+        check(file_path, args.json, options)?;
+        return Ok(());
+    }
+
     // Compile source code to JSON
-    let output = match compile_file_with_options(
-        file_path,
-        CompileOptions {
-            optimize: !args.no_optimize,
-        },
-    ) {
+    let output = match compile_file_with_options(file_path, options) {
         Ok(json) => json,
         Err(err) => {
             eprintln!("Compilation error: {err}");
@@ -70,6 +91,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Print any type-check warnings to stderr
     for w in &output.warnings {
         eprintln!("{w}");
+    }
+
+    if args.report {
+        print_report(&output);
     }
 
     // Determine output path
@@ -87,5 +112,81 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("Compilation successful. Output written to {output_path}");
 
+    if args.debug {
+        let debug_path = Path::new(&output_path).with_extension("debug.json");
+        fs::write(
+            &debug_path,
+            serde_json::to_string_pretty(&output.debug_info())?,
+        )?;
+        println!("Debug information written to {}", debug_path.display());
+    }
+
     Ok(())
+}
+
+/// Print every diagnostic of the file at `path`, and exit with status 1 if one is an error.
+fn check(
+    path: &Path,
+    json: bool,
+    options: CompileOptions,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let analysis = analyze_file(path);
+    let diagnostics = analysis.check(options);
+    // Files show relative to the working directory, as text and as JSON.
+    let cwd = std::env::current_dir().unwrap_or_default();
+    let shown = |file: &str| {
+        let file = Path::new(file);
+        file.strip_prefix(&cwd)
+            .unwrap_or(file)
+            .display()
+            .to_string()
+    };
+    if json {
+        let diagnostics: Vec<_> = diagnostics
+            .iter()
+            .map(|d| {
+                let mut json = arkade_compiler::diagnostics::to_json(d, analysis.source(&d.file));
+                json["file"] = shown(&d.file).into();
+                json
+            })
+            .collect();
+        println!("{}", serde_json::to_string_pretty(&diagnostics)?);
+    } else {
+        for d in &diagnostics {
+            let mut location = shown(&d.file);
+            let start = d.span.zip(analysis.source(&d.file));
+            if let Some((line, column)) = start.and_then(|(span, source)| {
+                arkade_compiler::diagnostics::position(source, span.start)
+            }) {
+                location.push_str(&format!(":{line}:{column}"));
+            }
+            let severity = match d.severity {
+                Severity::Error => "error",
+                Severity::Warning => "warning",
+            };
+            let code = d
+                .code
+                .as_deref()
+                .map(|code| format!("[{code}]"))
+                .unwrap_or_default();
+            println!("{location}: {severity}{code}: {}", d.message);
+        }
+    }
+    if diagnostics.iter().any(|d| d.severity == Severity::Error) {
+        std::process::exit(1);
+    }
+    Ok(())
+}
+
+/// One block per covenant with its resource usage.
+fn print_report(output: &arkade_compiler::models::ContractJson) {
+    for group in &output.functions {
+        let Some(covenant) = &group.arkade else {
+            continue;
+        };
+        println!("{}", group.name);
+        for cost in &covenant.costs {
+            println!("  {:<24} {:>6}", cost.name, cost.used);
+        }
+    }
 }

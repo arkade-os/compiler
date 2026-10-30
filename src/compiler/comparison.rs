@@ -1,18 +1,18 @@
 use super::*;
 use crate::models::*;
-use crate::opcodes::OP_ROLL;
+use crate::opcodes::Opcode::{NumEqualVerify, Roll};
 use crate::operators::{BinaryOperator, OperatorClass};
 use crate::types::{bind_local_type, ArkType};
 
 impl Generator {
-    pub(super) fn composite_type(&self, expression: &Expression) -> Option<String> {
+    pub(super) fn composite_type(&self, expression: &Expression) -> Option<TypeName> {
         match &expression.ty {
-            composite @ (ArkType::Array(..) | ArkType::Struct(_)) => Some(composite.as_str()),
+            composite @ (ArkType::Array(..) | ArkType::Struct(_)) => Some(composite.into()),
             _ => None,
         }
     }
 
-    pub(super) fn bind_type(&mut self, name: &str, ty: &str) {
+    pub(super) fn bind_type(&mut self, name: &str, ty: &TypeName) {
         bind_local_type(
             &mut self.scope,
             name,
@@ -27,41 +27,47 @@ impl Generator {
         left: &Expression,
         op: BinaryOperator,
         right: &Expression,
-        ty: &str,
-    ) -> Result<(), String> {
+        ty: &TypeName,
+    ) -> Result<()> {
         if op.class() != OperatorClass::Equality {
-            return Err(format!("'{op}' is not defined for '{ty}' values"));
+            return Err(format!("'{op}' is not defined for '{ty}' values").into());
         }
-        let width = self.value_leaves("", ty)?.len();
+        let leaves = crate::models::flatten_value(&Path::new(""), ty, &self.structs)?;
+        let width = leaves.len();
         self.emit_typed_value(left, ty)?;
         self.emit_typed_value(right, ty)?;
-        for remaining in (1..=width).rev() {
+        for (leaf, remaining) in leaves.iter().zip((1..=width).rev()) {
+            let numeric = crate::types::is_numeric(&leaf.leaf_type.ark_type());
+            let (equal, equal_verify) = match numeric {
+                true => (NumEqual, NumEqualVerify),
+                false => (Equal, EqualVerify),
+            };
             if op == BinaryOperator::Eq {
                 if remaining > 1 {
                     self.roll(remaining)?;
                 }
-                self.apply(OP_EQUALVERIFY, 2, 0)?;
+                self.apply(equal_verify, 2, 0)?;
             } else if remaining == width {
                 self.roll(width)?;
-                self.apply(OP_EQUAL, 2, 1)?;
+                self.apply(equal, 2, 1)?;
             } else {
                 self.roll(remaining + 1)?;
                 self.roll(2)?;
-                self.apply(OP_EQUAL, 2, 1)?;
-                self.apply(OP_BOOLAND, 2, 1)?;
+                self.apply(equal, 2, 1)?;
+                self.apply(BoolAnd, 2, 1)?;
             }
         }
         if op == BinaryOperator::Ne {
-            self.apply(OP_NOT, 1, 1)?;
-            self.apply(OP_VERIFY, 1, 0)?;
+            self.apply(Not, 1, 1)?;
+            self.apply(Verify, 1, 0)?;
         }
         Ok(())
     }
 
-    fn roll(&mut self, depth: usize) -> Result<(), String> {
+    fn roll(&mut self, depth: usize) -> Result<()> {
         self.push_integer_temporary(depth);
-        self.pop_temporaries(1, OP_ROLL)?;
-        self.asm.push(OP_ROLL.to_string());
+        self.pop_temporaries(1, Roll)?;
+        self.asm.push(Roll.into());
         Ok(())
     }
 }

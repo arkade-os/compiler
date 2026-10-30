@@ -1,5 +1,5 @@
 // Arkade Playground - Main Application
-import { compile, check, symbols, version } from './compiler-client.js';
+import { compile, check, symbolAt as compilerSymbolAt, completionsAt, version } from './compiler-client.js';
 import * as contracts from './contracts.js';
 import { generateBindings, AVAILABLE_TARGETS } from './codegen.js';
 
@@ -67,8 +67,12 @@ const bundledExamples = Object.fromEntries(
     })
 );
 
+// Saved with each snapshot so a later load can tell edited entries from stale bundled copies.
+const bundledSnapshot = JSON.parse(JSON.stringify({ projects, examples }));
+
 // Global state
 let editor = null;
+// Bumped by edits, source changes and compiles; compiler results from an earlier request are stale.
 let compileRequest = 0;
 let currentProject = null;
 let currentFile = null;
@@ -83,9 +87,9 @@ const STORAGE_KEY = 'arkade-playground';
 function saveToStorage() {
     const data = {
         projects: {},
-        examples: {}
+        examples: {},
+        defaults: bundledSnapshot
     };
-    // Only save user-created / modified entries
     for (const [id, proj] of Object.entries(projects)) {
         data.projects[id] = { name: proj.name, description: proj.description || '', files: proj.files };
     }
@@ -103,16 +107,37 @@ function loadFromStorage() {
         const raw = localStorage.getItem(STORAGE_KEY);
         if (!raw) return;
         const data = JSON.parse(raw);
+        // Snapshots without defaults cannot tell edits from stale copies, so their bundled
+        // entries take the current sources and the original snapshot is kept aside.
+        if (!data.defaults) localStorage.setItem(`${STORAGE_KEY}-legacy`, raw);
+        const base = data.defaults || data;
+        // Entries still equal to the bundled source they were saved with take the current one,
+        // or are dropped when the bundle no longer has them. Legacy snapshots only refresh.
         if (data.projects) {
             for (const [id, proj] of Object.entries(data.projects)) {
+                const was = base.projects?.[id]?.files || {};
+                const now = bundledSnapshot.projects[id]?.files || {};
+                for (const name of Object.keys(data.defaults ? { ...was, ...now } : now)) {
+                    if (proj.files[name] !== was[name]) continue;
+                    if (Object.hasOwn(now, name)) proj.files[name] = now[name];
+                    else delete proj.files[name];
+                }
                 projects[id] = proj;
             }
         }
         if (data.examples) {
             for (const [id, ex] of Object.entries(data.examples)) {
+                const now = bundledSnapshot.examples[id]?.code;
+                if (ex.code === base.examples?.[id]?.code) {
+                    if (now !== undefined) ex.code = now;
+                    else if (data.defaults) continue;
+                }
                 examples[id] = ex;
             }
         }
+        // Bundled entries the snapshot knew about but no longer holds were deleted by the user.
+        for (const id of Object.keys(data.defaults?.projects || {})) if (!Object.hasOwn(data.projects || {}, id)) delete projects[id];
+        for (const id of Object.keys(data.defaults?.examples || {})) if (!Object.hasOwn(data.examples || {}, id)) delete examples[id];
     } catch (e) {
         console.warn('Failed to load from localStorage:', e);
     }
@@ -278,8 +303,12 @@ async function shareContract() {
     let encoded;
     try {
         const { entry, files } = compilationSources();
-        const bundle = canonicalShareBundle((await compile({ entry, files })).source);
-        encoded = await compressCode(JSON.stringify(bundle));
+        const { artifact, diagnostics } = await compile({ entry, files });
+        if (artifact === null) {
+            showErrors(diagnostics, entry);
+            return;
+        }
+        encoded = await compressCode(JSON.stringify(canonicalShareBundle(artifact.source)));
     } catch (error) {
         showError(error.message);
         return;
@@ -772,12 +801,12 @@ function promptNewStandaloneFile() {
     if (name && name.trim()) createStandaloneFile(name.trim());
 }
 
-// Load the installed compiler version after the editor is ready.
+// Load the compiler and show its version after the editor is ready.
 async function initCompiler() {
     const request = compileRequest;
     try {
-        const ver = await version();
-        displayVersion(ver);
+        displayVersion(await version());
+        lint();
     } catch (err) {
         console.error('Failed to initialize compiler:', err);
         if (request === compileRequest) showError(`Failed to load compiler: ${err.message}`);
@@ -1025,6 +1054,29 @@ function selectProjectFile(projectId, fileName) {
     markDirty();
 }
 
+// Open the playground file `sourceFiles()` names `path`; false when there is none.
+function openSourcePath(path) {
+    const location = workspaceIndex().locations[path];
+    if (location?.example) selectExample(location.example);
+    else if (location) selectProjectFile(location.project, location.file);
+    return Boolean(location);
+}
+
+// Keep `source` as the text of the playground file `sourceFiles()` names `path`, one the editor
+// does not show.
+function storeSourcePath(path, source) {
+    const { files, locations } = workspaceIndex();
+    const location = locations[path];
+    if (!location || files[path] === source) return;
+    if (location.example) examples[location.example].code = source;
+    else projects[location.project].files[location.file] = source;
+    const tabId = location.example || `${location.project}:${location.file}`;
+    if (Object.hasOwn(fileContents, tabId)) fileContents[tabId] = source;
+    saveToStorage();
+    lastCompiledSource = null;
+    markDirty();
+}
+
 // Select a single-file example
 function selectExample(exampleId) {
     // Save current file content
@@ -1205,9 +1257,10 @@ function initMonaco() {
                 // Replace (the editor default) overwrites the rest of the word; Shift+Enter inserts instead.
                 const range = { insert, replace: { ...insert, endColumn: model.getWordAtPosition(position)?.endColumn ?? position.column } };
                 const before = model.getLineContent(position.lineNumber).slice(0, word.startColumn - 1);
-                const table = await symbolTable(position.lineNumber);
+                // A peek at another file shows its own text, so only the editor's file has names.
+                const table = model === editor.getModel() ? await symbolTable(position.lineNumber) : null;
                 if (model.isDisposed() || revision !== model.getVersionId()) return { suggestions: [] };
-                const suggestions = window.arkadeComplete(before, table, position.lineNumber).map(item => ({
+                const suggestions = window.arkadeComplete(before, table).map(item => ({
                     label: item.label,
                     kind: monaco.languages.CompletionItemKind[item.kind] || monaco.languages.CompletionItemKind.Text,
                     insertText: item.insertText,
@@ -1218,6 +1271,8 @@ function initMonaco() {
                 return { suggestions };
             }
         });
+
+        registerSymbolProviders();
 
         // Define theme
         monaco.editor.defineTheme('arkade-dark', window.arkadeTheme);
@@ -1246,13 +1301,17 @@ function initMonaco() {
             doCompile();
         });
 
+        editor.onDidChangeCursorPosition(({ position }) => {
+            markRuns(innermostRuns(sourceRuns(), position.lineNumber, position.column), 'cursor');
+        });
+
         // Mark dirty on change — no auto-compile
         editor.onDidChangeModelContent(() => {
             compileRequest++;
-            monaco.editor.setModelMarkers(editor.getModel(), 'arkade', []);
             if (editor.getValue() !== lastCompiledSource) {
                 markDirty();
             }
+            lint();
         });
 
         // Load shared contract from URL hash if present
@@ -1263,7 +1322,6 @@ function initMonaco() {
             }
         });
 
-        // Load the compiler version after the editor is ready.
         markDirty();
         initCompiler();
     });
@@ -1316,21 +1374,113 @@ function sourceFiles() {
     return { entry, files };
 }
 
-// Symbols of the current file per entry path, from the last source that parsed.
-const lastSymbols = {};
-
-// The line being typed rarely parses, so it is blanked; if the file still fails, reuse the last table.
-async function symbolTable(lineNumber) {
-    let entry;
+// The compiler's symbol at `position` in the editor's file, or null once the file has changed.
+async function symbolAt(model, position) {
+    if (model !== editor?.getModel()) return null;
+    const revision = model.getVersionId();
     try {
-        const sources = sourceFiles();
-        entry = sources.entry;
-        const lines = sources.files[entry].split('\n');
+        const symbol = await compilerSymbolAt(sourceFiles(), { line: position.lineNumber, column: position.column });
+        return !model.isDisposed() && revision === model.getVersionId() ? symbol : null;
+    } catch {
+        return null;
+    }
+}
+
+// The hover text for `symbol`: what it is, and where it is defined and used.
+function describeSymbol(symbol) {
+    const signature = `${symbol.kind} ${symbol.name}${symbol.type ? `: ${symbol.type}` : ''}`;
+    const { file, start } = symbol.definition;
+    const where = file === symbol.at.file ? `line ${start.line}` : `${file}:${start.line}`;
+    const uses = symbol.references.length;
+    return [signature, `Defined at ${where} · ${uses} reference${uses === 1 ? '' : 's'}`];
+}
+
+function registerSymbolProviders() {
+    const range = location => new monaco.Range(
+        location.start.line, location.start.column, location.end.line, location.end.column);
+    monaco.languages.registerHoverProvider('arkade', {
+        provideHover: async (model, position) => {
+            const symbol = await symbolAt(model, position);
+            if (!symbol?.at.start) return null;
+            const [signature, where] = describeSymbol(symbol);
+            return {
+                range: range(symbol.at),
+                contents: [{ value: '```arkade\n' + signature + '\n```' }, { value: where }],
+            };
+        },
+    });
+    // Going to a definition passes the opener only the definition's start, so its name's range is
+    // kept to select it.
+    const definitionRanges = new Map();
+    monaco.languages.registerDefinitionProvider('arkade', {
+        provideDefinition: async (model, position) => {
+            const symbol = await symbolAt(model, position);
+            if (!symbol?.definition.start) return null;
+            const { file } = symbol.definition;
+            if (file === symbol.at.file) return { uri: model.uri, range: range(symbol.definition) };
+            // Another file opens through the editor opener below; Monaco needs its model.
+            const source = sourceFiles().files[file];
+            if (source === undefined) return null;
+            const uri = monaco.Uri.from({ scheme: 'arkade', path: `/${file}` });
+            let other = monaco.editor.getModel(uri);
+            if (!other) {
+                other = monaco.editor.createModel(source, 'arkade', uri);
+                // A peek at the definition can edit its file.
+                other.onDidChangeContent(() => {
+                    storeSourcePath(file, other.getValue());
+                    lint();
+                });
+            } else if (other.getValue() !== source) other.setValue(source);
+            definitionRanges.set(uri.toString(), range(symbol.definition));
+            return { uri, range: range(symbol.definition) };
+        },
+    });
+    monaco.editor.registerEditorOpener?.({
+        openCodeEditor: (source, resource, selectionOrPosition) => {
+            if (resource.scheme !== 'arkade' || !openSourcePath(resource.path.slice(1))) return false;
+            const at = !selectionOrPosition ? null : monaco.Range.isIRange(selectionOrPosition)
+                ? monaco.Range.lift(selectionOrPosition) : monaco.Range.fromPositions(selectionOrPosition);
+            const name = definitionRanges.get(resource.toString());
+            const target = !at || (at.isEmpty() && name?.getStartPosition().equals(at.getStartPosition())) ? name : at;
+            if (target) {
+                editor.setSelection(target);
+                editor.revealRangeInCenter(target);
+            }
+            return true;
+        },
+    });
+    monaco.languages.registerDocumentHighlightProvider('arkade', {
+        provideDocumentHighlights: async (model, position) => {
+            const symbol = await symbolAt(model, position);
+            if (!symbol) return [];
+            return [symbol.definition, ...symbol.references]
+                .filter(location => location.file === symbol.at.file && location.start)
+                .map(location => ({ range: range(location) }));
+        },
+    });
+}
+
+// The last sources that gave the editor's file names, per entry path.
+const lastSources = {};
+
+// The line being typed rarely parses, so it is blanked; if the file still does not parse, which
+// leaves it no names, the names are those at the cursor's line in the last sources that gave some.
+// ponytail: lines added or removed above the cursor since shift those names a line or more; the
+// parser recovering from errors would give names in the current text.
+async function symbolTable(lineNumber) {
+    try {
+        const { entry, files } = sourceFiles();
+        const lines = files[entry].split('\n');
         lines[lineNumber - 1] = '';
-        sources.files[entry] = lines.join('\n');
-        lastSymbols[entry] = await symbols(sources);
-    } catch {}
-    return lastSymbols[entry] || null;
+        files[entry] = lines.join('\n');
+        const at = files => completionsAt({ entry, files }, { line: lineNumber, column: 1 });
+        const table = await at(files);
+        if (table.symbols.length) lastSources[entry] = files;
+        else if (lastSources[entry]) return await at(lastSources[entry]);
+        return table;
+    } catch {
+        return null;
+    }
 }
 
 // Compile the source code
@@ -1349,25 +1499,25 @@ async function doCompile() {
     }
     const request = ++compileRequest;
     try {
+        const { entry } = sources;
         const optimize = document.getElementById('optimize-toggle').checked;
-        const { warnings, ...artifact } = await compile(sources, { optimize });
+        const { artifact, debug, diagnostics } = await compile(sources, { optimize });
         if (request !== compileRequest) return;
+        markDiagnostics(diagnostics, entry);
+        if (artifact === null) {
+            showErrors(diagnostics, entry);
+            return;
+        }
         displayVersion(artifact.compiler.version);
         lastCompiledSource = source;
         displayJson(artifact);
-        displayAsm(artifact);
+        displayAsm(artifact, debug);
         displayBindings(artifact);
-        showSuccess(artifact, warnings.length);
-        showWarnings(warnings);
+        showSuccess(artifact, diagnostics.filter(d => d.severity === 'warning').length);
+        renderDiagnostics(diagnostics, entry);
         markCompiled();
     } catch (err) {
-        if (request !== compileRequest) return;
-        // Only recheck failures, avoiding a second semantic pass on successful compiles.
-        let diagnostics;
-        try { diagnostics = await check(sources); } catch {}
-        if (request !== compileRequest) return;
-        if (diagnostics?.some(d => d.severity === 'error')) showDiagnostics(diagnostics, sources);
-        else showError(err.message, sources.entry);
+        if (request === compileRequest) showError(err.message);
     }
 }
 
@@ -1403,13 +1553,15 @@ function syntaxHighlightJson(artifact) {
 }
 
 // Display Assembly output
-function displayAsm(artifact) {
+function displayAsm(artifact, debug) {
     const container = document.getElementById('asm-output');
+    linkAsmToSource(container);
     let html = '';
+    asmRuns = [];
     for (const group of artifact.functions) {
         if (group.arkade?.asm.length) {
             html += `<span class="asm-function">${group.name} <span class="asm-variant">(arkade covenant)</span></span>\n`;
-            html += highlightAsm(group.arkade.asm) + '\n\n';
+            html += covenantListing(group.arkade.asm, debug.functions[group.name]?.sourceMap) + '\n';
         }
         for (const leaf of group.leaves) {
             const label = leaf.name === group.name ? group.name : `${group.name}/${leaf.name}`;
@@ -1469,20 +1621,106 @@ function escapeHtml(text) {
     return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
+// The covenant source map ranges shown in the assembly tab, indexed by their `data-run`.
+let asmRuns = [];
+// They locate source only while the editor shows the source they were compiled from.
+const sourceRuns = () => (editor?.getValue() === lastCompiledSource ? asmRuns : []);
+let sourceDecorations = [];
+
 // Highlight assembly code
+function highlightToken(token) {
+    const text = escapeHtml(token);
+    if (token.startsWith('OP_')) return `<span class="asm-opcode">${text}</span>`;
+    if (token.startsWith('<') && token.endsWith('>')) return `<span class="asm-placeholder">${text}</span>`;
+    return text;
+}
+
 function highlightAsm(asm) {
     const tokens = Array.isArray(asm) ? asm : asm.split(' ');
-    return tokens
-        .map(token => {
-            const text = escapeHtml(token);
-            if (token.startsWith('OP_')) {
-                return `<span class="asm-opcode">${text}</span>`;
-            } else if (token.startsWith('<') && token.endsWith('>')) {
-                return `<span class="asm-placeholder">${text}</span>`;
-            }
-            return text;
-        })
-        .join(' ');
+    return tokens.map(highlightToken).join(' ');
+}
+
+// The covenant one source statement per line: its line number, its tokens and its
+// `require` message. Tokens the compiler adds itself get a line without a number.
+function covenantListing(asm, sourceMap = []) {
+    const lines = [];
+    let next = 0;
+    const unmapped = end => {
+        if (next < end) lines.push({ tokens: [next, end] });
+    };
+    for (const range of sourceMap) {
+        unmapped(range.asm[0]);
+        lines.push({ tokens: range.asm, range, run: asmRuns.push(range) - 1 });
+        next = range.asm[1];
+    }
+    unmapped(asm.length);
+    return lines.map(({ tokens, range, run }) => {
+        const code = asm.slice(tokens[0], tokens[1]).map(highlightToken).join(' ');
+        const message = range?.message
+            ? ` <span class="asm-comment">; ${escapeHtml(range.message)}</span>`
+            : '';
+        const attributes = range ? ` class="asm-line asm-run" data-run="${run}"` : ' class="asm-line"';
+        return `<div${attributes}><span class="asm-line-number">${range ? range.start[0] : ''}</span>`
+            + `<span class="asm-code">${code}${message}</span></div>`;
+    }).join('');
+}
+
+const before = (a, b) => a[0] < b[0] || (a[0] === b[0] && a[1] <= b[1]);
+
+// The runs of the narrowest statement containing `line`:`column`.
+function innermostRuns(runs, line, column) {
+    const at = [line, column];
+    const containing = runs
+        .map((range, run) => ({ range, run }))
+        .filter(({ range }) => before(range.start, at) && before(at, range.end));
+    if (!containing.length) return [];
+    const size = ({ range }) => (range.end[0] - range.start[0]) * 1e6 + range.end[1] - range.start[1];
+    const smallest = Math.min(...containing.map(size));
+    const innermost = containing.filter(entry => size(entry) === smallest);
+    return innermost.filter(({ range }) => range.start.join() === innermost[0].range.start.join())
+        .map(({ run }) => run);
+}
+
+function markRuns(runs, className) {
+    const container = document.getElementById('asm-output');
+    container.querySelectorAll(`.asm-run.${className}`).forEach(el => el.classList.remove(className));
+    for (const run of runs) {
+        container.querySelectorAll(`.asm-run[data-run="${run}"]`).forEach(el => el.classList.add(className));
+    }
+    if (className === 'cursor') container.querySelector('.asm-run.cursor')?.scrollIntoView?.({ block: 'nearest' });
+}
+
+function editorRange(range) {
+    return new monaco.Range(range.start[0], range.start[1], range.end[0], range.end[1]);
+}
+
+function linkAsmToSource(container) {
+    if (container.dataset.linked) return;
+    container.dataset.linked = 'true';
+    const hover = run => {
+        const range = sourceRuns()[run];
+        markRuns(range ? [run] : [], 'hover');
+        if (typeof monaco === 'undefined' || !editor?.deltaDecorations) return;
+        const decorations = range ? [{
+            range: editorRange(range),
+            options: { className: 'source-map-highlight' },
+        }] : [];
+        sourceDecorations = editor.deltaDecorations(sourceDecorations, decorations);
+        if (range) editor.revealRangeInCenterIfOutsideViewport(editorRange(range));
+    };
+    container.addEventListener('mouseover', event => {
+        const run = event.target.closest('.asm-run')?.dataset.run;
+        hover(run === undefined ? undefined : Number(run));
+    });
+    container.addEventListener('click', event => {
+        const range = sourceRuns()[event.target.closest('.asm-run')?.dataset.run];
+        if (!range || typeof monaco === 'undefined' || !editor) return;
+        const selection = editorRange(range);
+        editor.setSelection(selection);
+        editor.revealRangeInCenter(selection);
+        editor.focus();
+    });
+    container.addEventListener('mouseleave', () => hover(undefined));
 }
 
 // Show compilation success
@@ -1495,18 +1733,57 @@ function showSuccess(artifact, warningCount = 0) {
     statusEl.className = `compile-status ${warningCount ? 'warning' : 'success'}`;
 }
 
-function showWarnings(warnings) {
-    if (!warnings.length) return;
+// List `diagnostics` in the Diagnostics tab, one per line; those in the open file link to
+// their location. The badge counts errors, or warnings when there are none.
+function renderDiagnostics(diagnostics, entry) {
     const output = document.getElementById('errors-output');
     const count = document.getElementById('error-count');
-    output.textContent = warnings.join('\n');
-    output.classList.add('warning');
-    count.textContent = String(warnings.length);
-    count.classList.add('visible', 'warning');
+    const errors = diagnostics.filter(d => d.severity === 'error').length;
+    output.innerHTML = diagnostics.map(d => {
+        const location = d.file === entry && d.start
+            ? ` data-line="${d.start.line}" data-column="${d.start.column}"`
+            : '';
+        return `<div class="diagnostic ${d.severity}"${location}>${escapeHtml(formatDiagnostic(d))}</div>`;
+    }).join('');
+    output.classList.toggle('warning', errors === 0);
+    count.textContent = diagnostics.length ? String(errors || diagnostics.length) : '';
+    count.classList.toggle('visible', diagnostics.length > 0);
+    count.classList.toggle('warning', errors === 0);
+    if (!output.dataset.linked && output.addEventListener) {
+        output.dataset.linked = 'true';
+        output.addEventListener('click', event => {
+            const target = event.target.closest('.diagnostic[data-line]');
+            if (!target || !editor) return;
+            const position = { lineNumber: Number(target.dataset.line), column: Number(target.dataset.column) };
+            editor.setPosition(position);
+            editor.revealPositionInCenter(position);
+            editor.focus();
+        });
+    }
+}
+
+let lintTimer = null;
+
+// Diagnose the sources while typing, without touching the outputs of the last compile.
+function lint() {
+    clearTimeout(lintTimer);
+    lintTimer = setTimeout(async () => {
+        if (!editor) return;
+        const request = compileRequest;
+        try {
+            const sources = sourceFiles();
+            const optimize = document.getElementById('optimize-toggle').checked;
+            const diagnostics = await check(sources, { optimize });
+            if (request !== compileRequest) return;
+            const { entry } = sources;
+            markDiagnostics(diagnostics, entry);
+            renderDiagnostics(diagnostics, entry);
+        } catch {}
+    }, 300);
 }
 
 // Show error
-function showError(message, entry) {
+function showError(message, count = 1) {
     const statusEl = document.getElementById('compile-status');
     statusEl.innerHTML = `<i class="fas fa-times-circle"></i> Error`;
     statusEl.className = 'compile-status error';
@@ -1516,56 +1793,53 @@ function showError(message, entry) {
 
     errorsTab.textContent = message;
     errorsTab.classList.remove('warning');
-    errorCount.textContent = '1';
+    errorCount.textContent = String(count);
     errorCount.classList.remove('warning');
     errorCount.classList.add('visible');
 
     // Switch to errors tab
     switchTab('errors');
+}
 
-    // Highlight the line only when the error is located in the entry, the file in the editor.
-    const lineMatch = entry && message.startsWith(`${entry}: `)
-        && message.slice(entry.length + 2).match(/^(?:\w+ error: )?line (\d+)/);
-    if (lineMatch && editor) {
-        const lineNumber = parseInt(lineMatch[1], 10);
-        editor.revealLineInCenter(lineNumber);
-        editor.setSelection({
-            startLineNumber: lineNumber,
-            startColumn: 1,
-            endLineNumber: lineNumber,
-            endColumn: 1000
-        });
+function showErrors(diagnostics, entry) {
+    const errors = diagnostics.filter(d => d.severity === 'error');
+    showError('', errors.length);
+    renderDiagnostics(diagnostics, entry);
+
+    // Select the first error in the entry, the file in the editor.
+    const first = errors.find(d => d.file === entry && d.start);
+    if (first && editor) {
+        editor.revealLineInCenter(first.start.line);
+        editor.setSelection(markerRange(first));
     }
 }
 
-function showDiagnostics(diagnostics, { entry, files }) {
-    showError(diagnostics.map(d => `${d.file}: ${d.message}`).join('\n'));
-    document.getElementById('error-count').textContent = String(diagnostics.filter(d => d.severity === 'error').length);
-    const model = editor.getModel();
-    const bytes = new TextEncoder().encode(files[entry]);
-    const decoder = new TextDecoder();
-    const markers = diagnostics.filter(d => d.file === entry).map(d => {
-        const start = model.getPositionAt(decoder.decode(bytes.subarray(0, d.span?.start ?? 0)).length);
-        const end = model.getPositionAt(decoder.decode(bytes.subarray(0, d.span?.end ?? 0)).length);
-        return {
-            message: d.message,
-            code: d.code,
-            severity: d.severity === 'error' ? monaco.MarkerSeverity.Error : monaco.MarkerSeverity.Warning,
-            startLineNumber: start.lineNumber, startColumn: start.column,
-            endLineNumber: end.lineNumber, endColumn: end.column,
-        };
-    });
-    monaco.editor.setModelMarkers(model, 'arkade', markers);
-    const first = markers.find(marker => marker.severity === monaco.MarkerSeverity.Error);
-    if (first) {
-        editor.revealLineInCenter(first.startLineNumber);
-        editor.setSelection(first);
-    }
+function formatDiagnostic(d) {
+    const location = d.start ? `${d.file}:${d.start.line}:${d.start.column}` : d.file;
+    return `${d.severity}${d.code ? `[${d.code}]` : ''}: ${d.message} (${location})`;
+}
+
+function markerRange(d) {
+    return {
+        startLineNumber: d.start.line,
+        startColumn: d.start.column,
+        endLineNumber: d.end.line,
+        endColumn: d.end.column,
+    };
+}
+
+function markDiagnostics(diagnostics, entry) {
+    if (typeof monaco === 'undefined' || !editor?.getModel) return;
+    const markers = diagnostics.filter(d => d.file === entry && d.start).map(d => ({
+        ...markerRange(d),
+        severity: d.severity === 'error' ? monaco.MarkerSeverity.Error : monaco.MarkerSeverity.Warning,
+        message: d.code ? `[${d.code}] ${d.message}` : d.message,
+    }));
+    monaco.editor.setModelMarkers(editor.getModel(), 'arkade', markers);
 }
 
 // Clear errors
 function clearErrors() {
-    monaco.editor.setModelMarkers(editor.getModel(), 'arkade', []);
     const output = document.getElementById('errors-output');
     const count = document.getElementById('error-count');
     output.textContent = '';
@@ -1575,6 +1849,7 @@ function clearErrors() {
     const statusEl = document.getElementById('compile-status');
     statusEl.textContent = '';
     statusEl.className = 'compile-status';
+    markDiagnostics([]);
 }
 
 // Switch output tab

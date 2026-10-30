@@ -22,8 +22,7 @@ const (
 	futureTimeout = int64(4_102_444_800)
 )
 
-// p2trTo builds the scriptPubKey paying a 32-byte Taproot witness program —
-// the value the covenant compares an output against.
+// p2trTo serializes a Taproot witness program as a v1 output script.
 func p2trTo(program []byte) []byte {
 	return append([]byte{0x51, 0x20}, program...)
 }
@@ -48,15 +47,17 @@ func TestCompiledEscrow(t *testing.T) {
 	partyBProgram := bytes.Repeat([]byte{0xb2}, 32)
 
 	values := map[string][]byte{
-		"partyAPk":          schnorr.SerializePubKey(partyAKey.PubKey()),
-		"partyBPk":          schnorr.SerializePubKey(partyBKey.PubKey()),
-		"oraclePk":          schnorr.SerializePubKey(oracleKey.PubKey()),
-		"oracleMessageHash": oracleMessageHash[:],
-		"partyAScript":      partyAProgram,
-		"partyBScript":      partyBProgram,
-		"amount":            scriptInt(t, amount),
-		"timeoutAt":         scriptInt(t, pastTimeout),
-		"SERVER_EXIT_DELAY": scriptInt(t, exitDelay),
+		"partyAPk":             schnorr.SerializePubKey(partyAKey.PubKey()),
+		"partyBPk":             schnorr.SerializePubKey(partyBKey.PubKey()),
+		"oraclePk":             schnorr.SerializePubKey(oracleKey.PubKey()),
+		"oracleMessageHash":    oracleMessageHash[:],
+		"partyAScript.program": partyAProgram,
+		"partyAScript.version": scriptInt(t, 1),
+		"partyBScript.program": partyBProgram,
+		"partyBScript.version": scriptInt(t, 1),
+		"amount":               scriptInt(t, amount),
+		"timeoutAt":            scriptInt(t, pastTimeout),
+		"SERVER_EXIT_DELAY":    scriptInt(t, exitDelay),
 	}
 	pendingValues := make(map[string][]byte, len(values))
 	for key, value := range values {
@@ -165,7 +166,7 @@ func TestCompiledEscrow(t *testing.T) {
 			extra := fundingTx(complete.pkScript, amount)
 			requireVMResult(
 				t, withExtraInput(t, attested(amount, oracleMsg[:], oracleKey, toPartyB), extra),
-				emulatorKey.PubKey(), "OP_EQUALVERIFY failed",
+				emulatorKey.PubKey(), "OP_NUMEQUALVERIFY failed",
 			)
 		})
 	})
@@ -205,7 +206,7 @@ func TestCompiledEscrow(t *testing.T) {
 				{Value: amount, PkScript: p2trTo(partyBProgram)},
 			}
 			requireVMResult(
-				t, refund(cancel, 0, toPartyB), emulatorKey.PubKey(), "false stack entry",
+				t, refund(cancel, 0, toPartyB), emulatorKey.PubKey(), "OP_EQUALVERIFY failed",
 			)
 		})
 
@@ -223,7 +224,7 @@ func TestCompiledEscrow(t *testing.T) {
 			extra := fundingTx(cancel.pkScript, amount)
 			requireVMResult(
 				t, withExtraInput(t, refund(cancel, 0, toPartyA), extra),
-				emulatorKey.PubKey(), "OP_EQUALVERIFY failed",
+				emulatorKey.PubKey(), "OP_NUMEQUALVERIFY failed",
 			)
 		})
 	})

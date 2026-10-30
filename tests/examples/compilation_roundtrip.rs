@@ -6,7 +6,8 @@
 //! - `contractName` is non-empty.
 //! - `functions` (spend groups) array is non-empty.
 //! - Every leaf has non-empty `asm` and non-empty `witness`.
-//! - Every present `arkade` covenant has non-empty `asm`.
+//! - Every present `arkade` covenant has non-empty `asm` and a source map of
+//!   increasing runs inside it, and the debug file lists exactly those groups.
 //! - Every group has at least one leaf.
 //!
 //! These tests catch regressions where the compiler silently emits structurally
@@ -39,6 +40,7 @@ fn assert_output_invariants(output: &arkade_compiler::models::ContractJson, file
         "{filename}: functions (spend groups) array must not be empty"
     );
 
+    let debug = output.debug_info();
     for group in &output.functions {
         assert!(
             !group.leaves.is_empty(),
@@ -53,7 +55,34 @@ fn assert_output_invariants(output: &arkade_compiler::models::ContractJson, file
                 filename,
                 group.name
             );
+            assert!(
+                !arkade.source_map.is_empty(),
+                "{}: group '{}' arkade covenant must have a source map",
+                filename,
+                group.name
+            );
+            let mut previous_end = 0;
+            for range in &arkade.source_map {
+                assert!(
+                    previous_end <= range.asm[0]
+                        && range.asm[0] < range.asm[1]
+                        && range.asm[1] <= arkade.asm.len()
+                        && range.start <= range.end,
+                    "{}: group '{}' has a malformed source map range {:?}",
+                    filename,
+                    group.name,
+                    range
+                );
+                previous_end = range.asm[1];
+            }
         }
+        assert_eq!(
+            debug["functions"].get(&group.name).is_some(),
+            group.arkade.is_some(),
+            "{}: group '{}' must be in the debug file exactly when it has a covenant",
+            filename,
+            group.name
+        );
         for leaf in &group.leaves {
             assert!(
                 !leaf.asm.is_empty(),
@@ -96,7 +125,7 @@ fn fingerprint_identifies_artifact_content() {
     // This value pins the artifact's exact serialization, including field order.
     assert_eq!(
         fingerprint,
-        "sha256:64fc308645fcfd1da22b7f8930a509c0f1d30785e82969459e1d81826c07ce2b"
+        "sha256:6b773fb512fbd58dcd0f83dde87f75786c42d8dde9555c9474aea457f407a9d6"
     );
     assert_eq!(first.fingerprint, second.fingerprint);
     assert_ne!(
@@ -158,7 +187,7 @@ fn roundtrip_nft_mint() {
         assert!(arkade
             .inputs
             .iter()
-            .any(|input| input.name == destination && input.param_type == "bytes"));
+            .any(|input| input.name == destination && input.param_type == "ScriptPubKey"));
         assert!(!arkade
             .asm
             .iter()
@@ -209,7 +238,7 @@ fn roundtrip_non_interactive_swap() {
                 .find(|input| input.name == "takerScriptPubKey")
         })
         .expect("swap taker destination input");
-    assert_eq!(destination.param_type, "bytes");
+    assert_eq!(destination.param_type, "ScriptPubKey");
 }
 
 #[test]

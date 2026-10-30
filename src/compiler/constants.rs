@@ -1,33 +1,36 @@
+use crate::diagnostics::{CompileError, Span};
 use crate::models::{
-    AssignmentTarget, Constant, Contract, ExprKind, Expression, KeyExpr, LocatedStatement,
-    Requirement, Statement, TapItem,
+    ArraySize, AssignmentTarget, Constant, Contract, ExprKind, Expression, KeyExpr,
+    LocatedStatement, Path, Requirement, Statement, TapItem, TypeName,
 };
 use crate::operators::{BinaryOperator, OperatorClass, UnaryOperator};
 use std::collections::HashMap;
 
-/// Validate constant declarations and fold every reference to them into a literal.
+/// Validate constant declarations and fold every reference to them into a literal, returning
+/// the name and span of each reference folded in an expression.
 /// Runs before validation so no later stage ever observes a constant identifier.
-pub(crate) fn fold(contract: &mut Contract) -> Result<(), String> {
+pub(crate) fn fold(contract: &mut Contract) -> Result<Vec<(Path, Span)>, CompileError> {
     let values = collect(contract)?;
+    let mut uses = Vec::new();
     for parameter in contract
         .parameters
         .iter_mut()
         .chain(contract.structs.iter_mut().flat_map(|s| &mut s.fields))
     {
-        fold_type(&mut parameter.param_type, &values)?;
+        fold_type(&mut parameter.param_type, &values).map_err(at(parameter.span))?;
     }
     for function in contract.functions.iter_mut().filter(|f| !f.is_imported()) {
         for parameter in &mut function.parameters {
-            fold_type(&mut parameter.param_type, &values)?;
+            fold_type(&mut parameter.param_type, &values).map_err(at(parameter.span))?;
         }
         if let Some(return_type) = &mut function.return_type {
-            fold_type(return_type, &values)?;
+            fold_type(return_type, &values).map_err(at(function.span))?;
         }
-        fold_statements(&mut function.statements, &values)?;
+        fold_statements(&mut function.statements, &values, &mut uses)?;
     }
     for tapscript in &mut contract.tapscripts {
         for input in &mut tapscript.inputs {
-            fold_type(&mut input.param_type, &values)?;
+            fold_type(&mut input.param_type, &values).map_err(at(input.span))?;
         }
         for item in &mut tapscript.items {
             match item {
@@ -53,36 +56,54 @@ pub(crate) fn fold(contract: &mut Contract) -> Result<(), String> {
             }
         }
     }
-    Ok(())
+    Ok(uses)
 }
 
-fn collect(contract: &Contract) -> Result<HashMap<String, String>, String> {
+fn at(span: Span) -> impl Fn(String) -> CompileError {
+    move |message| CompileError::from(message).at(span)
+}
+
+/// An error about `constant`, located at it unless it was imported, which locates it in its
+/// own file.
+fn at_constant(constant: &Constant) -> impl Fn(String) -> CompileError + '_ {
+    move |message| match constant.name.contains('.') {
+        true => CompileError::from(message),
+        false => CompileError::from(message).at(constant.span),
+    }
+}
+
+fn collect(contract: &Contract) -> Result<HashMap<String, String>, CompileError> {
     let mut declarations = HashMap::new();
     for constant in &contract.constants {
         let Constant {
             name, const_type, ..
         } = constant;
+        let error = at_constant(constant);
         if matches!(name.as_str(), "true" | "false")
             || crate::models::RESERVED_NAMES.contains(&name.as_str())
             || crate::models::RESERVED_PLACEHOLDERS.contains(&name.as_str())
         {
-            return Err(format!("constant name '{name}' is reserved"));
+            return Err(error(format!("constant name '{name}' is reserved")));
         }
         if declarations.contains_key(name) {
-            return Err(format!("duplicate constant '{name}'"));
+            return Err(error(format!("duplicate constant '{name}'")));
         }
         if contract.parameters.iter().any(|p| p.name == *name) {
-            return Err(format!(
+            return Err(error(format!(
                 "constant '{name}' collides with constructor parameter '{name}'"
-            ));
+            )));
         }
         if contract.functions.iter().any(|f| f.name == *name)
             || contract.tapscripts.iter().any(|t| t.name == *name)
         {
-            return Err(format!("constant '{name}' collides with function '{name}'"));
+            return Err(error(format!(
+                "constant '{name}' collides with function '{name}'"
+            )));
         }
-        if !matches!(const_type.as_str(), "int" | "bool" | "bytes") {
-            return Err(format!("constant '{name}' must be int, bool or bytes"));
+        if !matches!(const_type.name(), Some("int" | "bool" | "bytes")) {
+            return Err(error(format!(
+                "constant '{name}' must be int, bool or bytes"
+            )));
         }
         declarations.insert(name.clone(), constant);
     }
@@ -91,7 +112,8 @@ fn collect(contract: &Contract) -> Result<HashMap<String, String>, String> {
     }
     let mut values = HashMap::new();
     for constant in &contract.constants {
-        resolve_value(&constant.name, &declarations, &mut values, &mut Vec::new())?;
+        resolve_value(&constant.name, &declarations, &mut values, &mut Vec::new())
+            .map_err(at_constant(constant))?;
     }
     for constant in contract.constants.iter().filter(|c| !c.name.contains('.')) {
         values.insert(
@@ -103,7 +125,7 @@ fn collect(contract: &Contract) -> Result<HashMap<String, String>, String> {
 }
 
 /// Threshold parsing and import exports need evaluated declarations.
-pub(crate) fn resolve(contract: &mut Contract) -> Result<(), String> {
+pub(crate) fn resolve(contract: &mut Contract) -> Result<(), CompileError> {
     let values = collect(contract)?;
     for constant in &mut contract.constants {
         constant.value.kind = ExprKind::Literal(values[&constant.name].clone());
@@ -133,7 +155,7 @@ fn resolve_value(
     }
     active.push(name.clone());
     // A nested failure already names the constant it came from; keep that one name.
-    let mut resolve = |name: &str| resolve_value(name, declarations, values, active);
+    let mut resolve = |path: &Path| resolve_value(&path.key(), declarations, values, active);
     let value = validate_expression(&constant.value, &mut resolve)
         .and_then(|_| evaluate(&constant.value, &mut resolve))
         .map_err(|error| match error.starts_with("constant '") {
@@ -141,7 +163,7 @@ fn resolve_value(
             false => format!("constant '{name}': {error}"),
         })?;
     active.pop();
-    if kind(&value) != constant.const_type {
+    if constant.const_type.name() != Some(kind(&value)) {
         return Err(format!(
             "constant '{name}' is not a valid '{}' literal",
             constant.const_type
@@ -173,11 +195,11 @@ fn integer(text: &str) -> Result<i128, String> {
 // Validate skipped operands without evaluating their arithmetic.
 fn validate_expression(
     expression: &Expression,
-    resolve: &mut impl FnMut(&str) -> Result<String, String>,
+    resolve: &mut impl FnMut(&Path) -> Result<String, String>,
 ) -> Result<&'static str, String> {
     match &expression.kind {
         ExprKind::Literal(text) => Ok(kind(text)),
-        ExprKind::Variable(name) | ExprKind::Property(name) => Ok(kind(&resolve(name)?)),
+        ExprKind::Name(path) => Ok(kind(&resolve(path)?)),
         ExprKind::Unary { op, value } => {
             let expected = match op {
                 UnaryOperator::Invert => {
@@ -236,12 +258,12 @@ fn validate_expression(
 
 pub(crate) fn evaluate(
     expression: &Expression,
-    resolve: &mut impl FnMut(&str) -> Result<String, String>,
+    resolve: &mut impl FnMut(&Path) -> Result<String, String>,
 ) -> Result<String, String> {
     let overflow = || "integer overflow in constant expression".to_string();
     match &expression.kind {
         ExprKind::Literal(text) => Ok(text.clone()),
-        ExprKind::Variable(name) | ExprKind::Property(name) => resolve(name),
+        ExprKind::Name(path) => resolve(path),
         ExprKind::Unary {
             op: UnaryOperator::Neg,
             value,
@@ -330,74 +352,80 @@ pub(crate) fn evaluate(
     }
 }
 
-fn fold_type(declared_type: &mut String, values: &HashMap<String, String>) -> Result<(), String> {
-    if let Some((base, size)) = declared_type
-        .strip_suffix(']')
-        .and_then(|ty| ty.split_once('['))
-    {
-        let value = values.get(size).map(String::as_str).unwrap_or(size);
-        let size = value
-            .parse::<usize>()
-            .ok()
-            .filter(|size| *size > 0)
-            .ok_or_else(|| {
-                format!("array size '{size}' must be a positive integer literal or int constant")
-            })?;
-        *declared_type = format!("{base}[{size}]");
-    }
+fn fold_type(declared_type: &mut TypeName, values: &HashMap<String, String>) -> Result<(), String> {
+    let TypeName::Array(_, size) = declared_type else {
+        return Ok(());
+    };
+    let length = match size {
+        ArraySize::Fixed(length) => Some(*length),
+        ArraySize::Const(name) => values
+            .get(name.as_str())
+            .and_then(|value| value.parse().ok()),
+    };
+    *size = ArraySize::Fixed(length.filter(|length| *length > 0).ok_or_else(|| {
+        let written = match size {
+            ArraySize::Fixed(length) => length.to_string(),
+            ArraySize::Const(name) => name.clone(),
+        };
+        format!("array size '{written}' must be a positive integer literal or int constant")
+    })?);
     Ok(())
 }
 
 fn fold_statements(
     statements: &mut [LocatedStatement],
     values: &HashMap<String, String>,
-) -> Result<(), String> {
+    uses: &mut Vec<(Path, Span)>,
+) -> Result<(), CompileError> {
     for statement in statements {
+        let at = at(statement.span);
         match &mut statement.statement {
             Statement::Call(expression) | Statement::Return(Some(expression)) => {
-                fold_expression(expression, values)
+                fold_expression(expression, values, uses)
             }
-            Statement::Declaration { declared_type, .. } => fold_type(declared_type, values)?,
+            Statement::Declaration { declared_type, .. } => {
+                fold_type(declared_type, values).map_err(at)?
+            }
             Statement::LetBinding {
                 declared_type,
                 value,
                 ..
             } => {
                 if let Some(declared_type) = declared_type {
-                    fold_type(declared_type, values)?;
+                    fold_type(declared_type, values).map_err(at)?;
                 }
-                fold_expression(value, values);
+                fold_expression(value, values, uses);
             }
             Statement::VarAssign { target, value } => {
                 if let AssignmentTarget::ArrayIndex { index, .. }
                 | AssignmentTarget::Access(index) = target
                 {
-                    fold_expression(index, values);
+                    fold_expression(index, values, uses);
                 }
-                fold_expression(value, values);
+                fold_expression(value, values, uses);
             }
-            Statement::Require(requirement) => fold_requirement(requirement, values),
+            Statement::Require(requirement) => fold_requirement(requirement, values, uses),
             Statement::IfElse {
                 condition,
                 then_body,
                 else_body,
             } => {
-                fold_expression(condition, values);
-                fold_statements(then_body, values)?;
+                fold_expression(condition, values, uses);
+                fold_statements(then_body, values, uses)?;
                 if let Some(body) = else_body {
-                    fold_statements(body, values)?;
+                    fold_statements(body, values, uses)?;
                 }
             }
             Statement::ForIn { iterable, body, .. } => {
-                fold_expression(iterable, values);
-                fold_statements(body, values)?;
+                fold_expression(iterable, values, uses);
+                fold_statements(body, values, uses)?;
             }
             Statement::ForCount { count, body } => {
-                fold_expression(count, values);
+                fold_expression(count, values, uses);
                 if let Ok(value) = evaluate(count, &mut |_| Err("runtime value".to_string())) {
                     count.kind = ExprKind::Literal(value);
                 }
-                fold_statements(body, values)?;
+                fold_statements(body, values, uses)?;
             }
             Statement::Return(None) => {}
         }
@@ -405,37 +433,46 @@ fn fold_statements(
     Ok(())
 }
 
-fn fold_requirement(requirement: &mut Requirement, values: &HashMap<String, String>) {
+fn fold_requirement(
+    requirement: &mut Requirement,
+    values: &HashMap<String, String>,
+    uses: &mut Vec<(Path, Span)>,
+) {
     match requirement {
-        Requirement::Expression(expression) => fold_expression(expression, values),
+        Requirement::Expression(expression) => fold_expression(expression, values, uses),
         Requirement::Comparison { left, right, .. } => {
-            fold_expression(left, values);
-            fold_expression(right, values);
+            fold_expression(left, values, uses);
+            fold_expression(right, values, uses);
         }
     }
 }
 
-fn fold_expression(expression: &mut Expression, values: &HashMap<String, String>) {
-    if let ExprKind::Variable(name) | ExprKind::Property(name) = &expression.kind {
-        if let Some(value) = values.get(name) {
+fn fold_expression(
+    expression: &mut Expression,
+    values: &HashMap<String, String>,
+    uses: &mut Vec<(Path, Span)>,
+) {
+    if let ExprKind::Name(path) = &expression.kind {
+        if let Some(value) = values.get(&path.key()) {
+            uses.push((path.clone(), expression.span));
             expression.kind = ExprKind::Literal(value.clone());
             return;
         }
     }
     if let ExprKind::Tunnel { policy, .. } = &mut expression.kind {
         for value in policy.iter_mut() {
-            if let Ok(literal) = evaluate(value, &mut |name| {
+            if let Ok(literal) = evaluate(value, &mut |path| {
                 values
-                    .get(name)
+                    .get(&path.key())
                     .cloned()
-                    .ok_or_else(|| format!("unknown constant '{name}'"))
+                    .ok_or_else(|| format!("unknown constant '{path}'"))
             }) {
                 value.kind = ExprKind::Literal(literal);
             }
         }
     }
     for child in crate::models::child_exprs_mut(expression) {
-        fold_expression(child, values);
+        fold_expression(child, values, uses);
     }
 }
 
