@@ -59,7 +59,7 @@ pub fn compile_sources(entry: &str, files: &str, optimize: Option<bool>) -> Resu
 
 /// Compile a virtual project and report every diagnostic with its position. Compilation
 /// errors are diagnostics, not a thrown error: the result is
-/// `{ artifact: string | null, debug: string | null, warnings: string[], diagnostics: Diagnostic[] }`,
+/// `{ artifact: string | null, debug: string | null, diagnostics: Diagnostic[] }`,
 /// where `debug` is the debug file JSON (`ContractJson::debug_info`) and each
 /// diagnostic has `severity`, `code`, `message`, `file` and, when located, 1-based `start` and
 /// `end` `{ line, column }` with columns counted in UTF-16 units, as editors count them.
@@ -78,11 +78,9 @@ pub fn compile_sources_with_diagnostics(
     let mut diagnostics = analysis.diagnostics();
     let mut artifact = None;
     let mut debug = None;
-    let mut warnings = Vec::new();
     if analysis.contract().is_some() {
         match analysis.compile(options) {
             Ok(output) => {
-                warnings = output.warnings.clone();
                 artifact = Some(
                     serde_json::to_string_pretty(&output)
                         .map_err(|e| format!("Serialization error: {e}"))?,
@@ -99,7 +97,6 @@ pub fn compile_sources_with_diagnostics(
     serde_json::to_string(&serde_json::json!({
         "artifact": artifact,
         "debug": debug,
-        "warnings": warnings,
         "diagnostics": diagnostics,
     }))
     .map_err(|e| format!("Serialization error: {e}"))
@@ -173,11 +170,8 @@ pub fn symbol_at(entry: &str, files: &str, line: usize, column: usize) -> Result
         return Ok("null".to_string());
     };
     let location = |file: &str, span: crate::diagnostics::Span| {
-        let position = |offset| {
-            let (line, column) = crate::diagnostics::position(analysis.source(file)?, offset)?;
-            Some(serde_json::json!({ "line": line, "column": column }))
-        };
-        serde_json::json!({ "file": file, "start": position(span.start), "end": position(span.end) })
+        let [start, end] = crate::diagnostics::range_json(analysis.source(file), Some(span));
+        serde_json::json!({ "file": file, "start": start, "end": end })
     };
     let index = symbols
         .definitions()

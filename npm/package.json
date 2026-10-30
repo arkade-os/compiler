@@ -10,20 +10,12 @@
     "directory": "npm"
   },
   "engines": { "node": ">=22.12.0" },
-  "main": "./dist/node/index.js",
-  "browser": "./dist/browser/index.js",
-  "types": "./dist/node/index.d.ts",
+  "types": "./dist/browser/index.d.ts",
   "exports": {
     ".": {
-      "browser": {
-        "types": "./dist/browser/index.d.ts",
-        "default": "./dist/browser/index.js"
-      },
-      "node": {
-        "types": "./dist/node/index.d.ts",
-        "default": "./dist/node/index.js"
-      },
       "types": "./dist/browser/index.d.ts",
+      "browser": "./dist/browser/index.js",
+      "node": "./dist/node/index.js",
       "default": "./dist/browser/index.js"
     }
   },
@@ -37,7 +29,6 @@
   },
   "devDependencies": {
     "playwright": "1.64.0",
-    "typescript": "5.9.3",
-    "vite": "8.3.4"
+    "typescript": "5.9.3"
   }
 }
