@@ -1246,7 +1246,6 @@ function initMonaco() {
         monaco.languages.registerCompletionItemProvider('arkade', {
             triggerCharacters: ['.'],
             provideCompletionItems: async (model, position) => {
-                const revision = model.getVersionId();
                 const word = model.getWordUntilPosition(position);
                 const insert = {
                     startLineNumber: position.lineNumber,
@@ -1259,7 +1258,8 @@ function initMonaco() {
                 const before = model.getLineContent(position.lineNumber).slice(0, word.startColumn - 1);
                 // A peek at another file shows its own text, so only the editor's file has names.
                 const table = model === editor.getModel() ? await symbolTable(position.lineNumber) : null;
-                if (model.isDisposed() || revision !== model.getVersionId()) return { suggestions: [] };
+                // A table from an earlier revision still serves, since Monaco filters it against the current word.
+                if (model.isDisposed()) return { suggestions: [] };
                 const suggestions = window.arkadeComplete(before, table).map(item => ({
                     label: item.label,
                     kind: monaco.languages.CompletionItemKind[item.kind] || monaco.languages.CompletionItemKind.Text,
