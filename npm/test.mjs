@@ -40,6 +40,8 @@ const standalone = {
     files: { 'exit.ark': 'contract Exit(pubkey owner) { function exit(signature sig) tapscript { require(older(serverExitDelay)); require(checkSig(sig, owner)); } }' },
 };
 const invalidSource = { entry: 'main.ark', files: { 'main.ark': 'contract Broken(' } };
+// Nesting deep enough to overflow the stack, which traps the WASM instance.
+const nested = { entry: 'main.ark', files: { 'main.ark': `contract C() { function f() { require(${'('.repeat(10000)}1${')'.repeat(10000)} == 1); } }` } };
 const diagnosticInput = {
     entry: 'main.ark',
     files: { 'main.ark': '// 🐴 café\r\ncontract Broken() { function spend() { require(missing); require(other); } }' },
@@ -216,6 +218,9 @@ try {
         assert.deepEqual([entryReads, fileReads, sourceReads], [1, 1, 1]);
         await assert.rejects(call({ get entry() { return 42; }, files }), TypeError);
     }
+    await assert.rejects(esm.symbolAt(nested, at), error => !(error instanceof TypeError));
+    assert.deepEqual(await esm.symbolAt(input, position), symbol);
+    assert.deepEqual(await esm.completionsAt(input, { line: 4, column: 1 }), completions);
     run(process.execPath, ['--input-type=module', '-e', `
         import assert from 'node:assert/strict';
         import { compile } from '@arkade-os/compiler';
@@ -383,6 +388,12 @@ const name: 'Vault' = (await compile(input)).artifact!.contractName;
     });
     assert.equal(cloneFailure, 'DataCloneError');
     assert.equal(await workerPage.evaluate(() => window.compiler.version()), manifest.version);
+    const recovered = await workerPage.evaluate(async ({ nested, input, position }) => ({
+        crash: await window.compiler.symbolAt(nested, { line: 1, column: 1 }).then(() => null, error => error.name),
+        symbol: await window.compiler.symbolAt(input, position),
+    }), { nested, input, position });
+    assert.notEqual(recovered.crash, null);
+    assert.deepEqual(recovered.symbol, symbol);
 
     // A worker script failure rejects every pending call and allows a new worker.
     const restartPage = await nativeContext.newPage();

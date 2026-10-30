@@ -7,6 +7,8 @@ self.onmessage = async ({ data: { id, method, args } }) => {
         if (!Object.hasOwn(methods, method)) throw new TypeError(`Unknown compiler method: ${method}`);
         self.postMessage({ id, result: await methods[method](...args) });
     } catch (error) {
-        self.postMessage({ id, error });
+        // A trap, such as a stack overflow, leaves this worker's instance unusable.
+        const crashed = error instanceof WebAssembly.RuntimeError || error instanceof RangeError || error?.name === 'InternalError';
+        self.postMessage({ id, error, crashed });
     }
 };

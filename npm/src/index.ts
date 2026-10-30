@@ -181,12 +181,18 @@ function serializePosition(position: Position): [number, number] {
 }
 
 async function call<T>(method: (wasm: Awaited<ReturnType<typeof load>>) => string): Promise<T> {
-    const wasm = await initialize();
+    const loading = initialize();
+    const wasm = await loading;
+    let output: string;
     try {
-        return JSON.parse(method(wasm));
+        output = method(wasm);
     } catch (error) {
-        throw error instanceof Error ? error : new Error(String(error));
+        // Compiler errors are strings; anything else is a trap that left the instance unusable.
+        if (typeof error === "string") throw new Error(error);
+        if (initialization === loading) initialization = undefined;
+        throw error;
     }
+    return JSON.parse(output);
 }
 
 /** Compile a virtual source project using the installed compiler. */

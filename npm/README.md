@@ -51,7 +51,7 @@ for (const d of diagnostics) console.log(d.severity, `${d.file}:${d.start?.line}
 
 `completionsAt(input: CompileInput, position: Position): Promise<Completions>` returns the names usable at a position: `symbols`, `members` (a library's or contract's names under its own), and `structs` with their fields. Files that fail validation still get symbols, but a file that does not parse gives none.
 
-`version(): Promise<string>` reports the installed WASM compiler version. All functions initialize WASM lazily and share initialization across concurrent calls. A failed initialization can be retried by calling any function again. Invalid JavaScript inputs, including non-positive, non-integer or above-32-bit positions, reject with a `TypeError`; initialization failures reject with their original error.
+`version(): Promise<string>` reports the installed WASM compiler version. All functions initialize WASM lazily and share initialization across concurrent calls. A failed initialization can be retried by calling any function again. A WASM trap, such as a stack overflow on deeply nested source, rejects with the trap; in Node the next call loads a new instance, while a browser realm keeps the broken one, so run the compiler in a worker and replace the worker, as the playground's `compiler-client.js` does. Invalid JavaScript inputs, including non-positive, non-integer or above-32-bit positions, reject with a `TypeError`; initialization failures reject with their original error.
 
 ## Runtime selection
 
