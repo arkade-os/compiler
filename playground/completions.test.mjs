@@ -38,6 +38,12 @@ const table = {
 };
 
 const top = labels('    require(', table);
+// ponytail: scrapes the compiler's builtin table from source; a language() export from the compiler would replace it.
+const builtinSource = fs.readFileSync(new URL('../src/builtins.rs', import.meta.url), 'utf8');
+const compilerBuiltins = [...builtinSource.slice(builtinSource.indexOf('const BUILTINS')).matchAll(/builtin\(\s*"(\w+)"/g)].map(match => match[1]);
+assert(compilerBuiltins.length > 20);
+for (const name of compilerBuiltins) assert(top.includes(name), `builtin '${name}' is not offered`);
+assert(labels('tx.inputs[0].assets.').includes('tryLookup'));
 for (const label of ['checkSig', 'substr', 'tx', 'owner', 'sig', 'group', 'spend', 'Point', 'Demo', 'Fees']) assert(top.includes(label), label);
 assert.deepEqual(labels('constructor.', table), []);
 assert.deepEqual(labels('toString.', { members: {} }), []);
