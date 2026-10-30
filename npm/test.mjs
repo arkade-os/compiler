@@ -325,8 +325,10 @@ const name: 'Vault' = (await compile(input)).artifact!.contractName;
     const nativeUrl = `${server.resolvedUrls.local[0]}pr-previews/pr-1/`;
     const nativeContext = await browser.newContext();
     const nativePage = await nativeContext.newPage();
+    const served = [];
     await nativeContext.route(`${nativeUrl}**`, route => {
         const file = route.request().url().slice(nativeUrl.length);
+        served.push(file);
         if (!file || file === 'worker.html') {
             const entry = file ? './compiler-client.js' : './pkg/index.js';
             return route.fulfill({ contentType: 'text/html', body: `<!doctype html><script type="module">import * as compiler from '${entry}'; window.compiler = compiler;</script>` });
@@ -342,6 +344,8 @@ const name: 'Vault' = (await compile(input)).artifact!.contractName;
     });
     await nativePage.goto(nativeUrl);
     await nativePage.waitForFunction(() => window.compiler);
+    // A failed dynamic import stays cached, so only the WASM fetch is lazy.
+    assert(served.includes('pkg/wasm/arkade_compiler.js') && !served.some(file => file.endsWith('.wasm')));
     const nativeResult = await nativePage.evaluate(async ({ input, position }) => ({
         result: await window.compiler.compile(input, { optimize: false }),
         symbol: await window.compiler.symbolAt(input, position),
