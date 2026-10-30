@@ -122,11 +122,23 @@ fn fingerprint_identifies_artifact_content() {
     assert_eq!(first.compiler.as_ref().unwrap().name, "arkadec");
     let fingerprint = first.fingerprint.as_deref().unwrap();
     assert!(fingerprint.starts_with("sha256:") && fingerprint.len() == 71);
-    // This value pins the artifact's exact serialization, including field order and the
-    // compiler version, so it changes with every version bump.
+    let mut pinned = first.clone();
+    pinned.fingerprint = None;
+    pinned.updated_at = None;
+    let digest = |artifact: &arkade_compiler::ContractJson| {
+        use sha2::Digest;
+        format!(
+            "sha256:{:x}",
+            sha2::Sha256::digest(serde_json::to_vec(artifact).unwrap())
+        )
+    };
+    assert_eq!(digest(&pinned), fingerprint);
+    // This value pins the artifact's exact serialization, including field order, with the
+    // compiler version fixed so releases leave it unchanged.
+    pinned.compiler.as_mut().unwrap().version = "0.0.0".into();
     assert_eq!(
-        fingerprint,
-        "sha256:c5a790ca2920f0ae4bf6d609dd09740670cd39602a7ccea39d075a8208532d39"
+        digest(&pinned),
+        "sha256:58926f26dbbea23f714e32421fa590786124bb78dfb78acc4ef6e251acf65f5b"
     );
     assert_eq!(first.fingerprint, second.fingerprint);
     assert_ne!(
