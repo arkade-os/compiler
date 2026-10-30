@@ -1,31 +1,40 @@
-// Run after ./playground/build.sh with node playground/imports.test.mjs.
+// Run after ./playground/build.sh, which builds ../npm/dist, with node playground/imports.test.mjs.
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import { deflateRawSync } from 'node:zlib';
 import * as contracts from './contracts.js';
-import { initSync, check_sources, compile_sources, compile_sources_with_diagnostics, completions_at, symbol_at } from './pkg/arkade_compiler.js';
+import { compile, check, completionsAt, symbolAt, version } from '../npm/dist/node/index.js';
+import { generateBindings } from './codegen.js';
 
-initSync({ module: fs.readFileSync(new URL('./pkg/arkade_compiler_bg.wasm', import.meta.url)) });
+const storage = new Map();
 const context = vm.createContext({
-    contracts, check_sources, compile_sources, compile_sources_with_diagnostics, completions_at, symbol_at,
+    contracts, compile, check, completionsAt, compilerSymbolAt: symbolAt, version,
     document: { addEventListener() {} },
-    localStorage: { setItem() {} },
+    localStorage: { getItem: key => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value) },
     location: { hash: '' },
     Blob, CompressionStream, DecompressionStream, TextEncoder, TextDecoder, btoa, atob,
-    console: { warn() {} },
+    console: { warn() {}, error() {} },
 });
+const artifactOf = async input => (await compile(input)).artifact;
 const source = fs.readFileSync(new URL('./main.js', import.meta.url), 'utf8');
 vm.runInContext(source.replace(/^import .*;$/gm, ''), context);
 
 const warningSource = 'contract HasWarnings(int value) { function spend() { require(true); } }';
-const detailed = JSON.parse(compile_sources_with_diagnostics('main.ark', JSON.stringify({ 'main.ark': warningSource }), false));
-const warningArtifact = JSON.parse(detailed.artifact);
-assert(detailed.warnings.some(warning => warning.startsWith('warning[validation]')));
+const detailed = await compile({ entry: 'main.ark', files: { 'main.ark': warningSource } }, { optimize: false });
+const warningArtifact = detailed.artifact;
+const warningDiagnostics = detailed.diagnostics.filter(d => d.severity === 'warning');
+assert(warningDiagnostics.length > 0 && warningDiagnostics.every(d => d.code === 'validation'));
+assert(!Object.hasOwn(detailed, 'warnings'));
 assert(!Object.hasOwn(warningArtifact, 'warnings'));
 assert.equal(warningArtifact.compiler.options.optimize, false);
 assert.equal(warningArtifact.formatVersion, 1);
 assert.match(warningArtifact.fingerprint, /^sha256:[0-9a-f]{64}$/);
+for (const target of ['typescript', 'go']) {
+    const bindings = generateBindings(warningArtifact, target);
+    assert.match(bindings, /HasWarnings/);
+    assert.match(bindings, /spend|Spend/);
+}
 
 const selections = vm.runInContext(`[
     ...Object.entries(projects).flatMap(([id, project]) => Object.keys(project.files).map(file => [id, file])),
@@ -38,9 +47,9 @@ for (const [project, file] of selections) {
         editor = { getValue: () => currentProject ? projects[currentProject].files[currentFile] : examples[currentFile].code };
         compilationSources();
     `, context);
-    const output = JSON.parse(compile_sources(input.entry, JSON.stringify(input.files)));
+    const output = await artifactOf(input);
     const bundle = output.source;
-    const rebuilt = JSON.parse(compile_sources(bundle.entry, JSON.stringify(bundle.files)));
+    const rebuilt = await artifactOf(bundle);
     rebuilt.updatedAt = output.updatedAt;
     assert.deepEqual(rebuilt, output);
 }
@@ -53,7 +62,7 @@ for (const [project, file] of selections.filter(([, file]) => file !== 'single_s
         editor = { getValue: () => currentProject ? projects[currentProject].files[currentFile] : examples[currentFile].code };
         compilationSources();
     `, context);
-    compile_sources(input.entry, JSON.stringify(input.files));
+    assert.notEqual(await artifactOf(input), null);
 }
 
 context.bundle = {
@@ -76,12 +85,12 @@ const sharedInput = vm.runInContext(`
     editor = { getValue: () => projects.shared.files[currentFile] };
     compilationSources();
 `, context);
-assert.equal(JSON.parse(compile_sources(sharedInput.entry, JSON.stringify(sharedInput.files))).contractName, 'Vault');
+assert.equal((await artifactOf(sharedInput)).contractName, 'Vault');
 
 // Compilation reads edits in dependencies, including files that are not selected.
 vm.runInContext(`projects.shared.files['shared/fees.ark'] = projects.shared.files['shared/fees.ark'].replace('VALUE = 7', 'VALUE = 8');`, context);
 const edited = vm.runInContext('compilationSources()', context);
-assert.match(JSON.parse(compile_sources(edited.entry, JSON.stringify(edited.files))).source.files['shared/shared/fees.ark'], /VALUE = 8/);
+assert.match((await artifactOf(edited)).source.files['shared/shared/fees.ark'], /VALUE = 8/);
 
 context.bundle = { entry: '<img>.ark', files: { '<img>.ark': 'contract Invalid() {}' } };
 await vm.runInContext(`compressCode(JSON.stringify(bundle)).then(encoded => { location.hash = '#project=' + encoded; });`, context);
@@ -145,7 +154,7 @@ const resharedInput = vm.runInContext(`
     editor = { getValue: () => projects[currentProject].files[currentFile] };
     compilationSources();
 `, context);
-context.bundle = JSON.parse(compile_sources(resharedInput.entry, JSON.stringify(resharedInput.files))).source;
+context.bundle = (await artifactOf(resharedInput)).source;
 assert.equal(context.bundle.entry, `${imported.project}/escrow/escrow.ark`);
 assert.equal(vm.runInContext('canonicalShareBundle(bundle).entry', context), 'escrow/escrow.ark');
 const fromReshare = vm.runInContext('resolveSharedBundle(bundle)', context);
@@ -173,7 +182,7 @@ assert.equal(vaultAgain.project, 'shared');
 assert.equal(vaultAgain.file, 'vault/main.ark');
 assert.equal(sharedFolderCount(), foldersBefore + 1);
 
-const elements = Object.fromEntries(['errors-output', 'error-count', 'compile-status', 'compile-btn'].map(id => {
+const elements = Object.fromEntries(['errors-output', 'error-count', 'compile-status', 'compile-btn', 'compiler-version', 'footer-version'].map(id => {
     const classes = new Set();
     return [id, {
         textContent: '',
@@ -189,37 +198,43 @@ const elements = Object.fromEntries(['errors-output', 'error-count', 'compile-st
 }));
 elements['optimize-toggle'] = { checked: false };
 context.document.getElementById = id => elements[id];
+context.document.querySelectorAll = () => [];
 context.warningSource = warningSource;
 context.renderedArtifact = null;
-vm.runInContext(`
-    wasmReady = true;
+const originalCompilationSources = vm.runInContext('compilationSources', context);
+const displayAsm = vm.runInContext('displayAsm', context);
+// A failed initialization is shown, and the next call retries it.
+context.version = async () => { throw new Error('Transient WASM failure'); };
+await vm.runInContext('initCompiler()', context);
+assert.match(elements['errors-output'].textContent, /Transient WASM failure/);
+context.version = version;
+await vm.runInContext(`
     editor = { getValue: () => warningSource };
     compilationSources = () => ({ entry: 'main.ark', files: { 'main.ark': warningSource } });
-    displayJson = json => { renderedArtifact = JSON.parse(json); };
+    displayJson = artifact => { renderedArtifact = artifact; };
     displayAsm = () => {};
     displayBindings = () => {};
     markCompiled = () => {};
     doCompile();
 `, context);
 assert.equal(context.renderedArtifact.fingerprint, warningArtifact.fingerprint);
-const warningDiagnostics = detailed.diagnostics.filter(d => d.severity === 'warning');
-assert.equal(warningDiagnostics.length, detailed.warnings.length);
+assert.equal(elements['compiler-version'].textContent, `v${await version()}`);
 for (const warning of warningDiagnostics) {
     assert.ok(elements['errors-output'].innerHTML.includes('class="diagnostic warning"'));
     assert.ok(elements['errors-output'].innerHTML.includes(warning.message), warning.message);
 }
 assert(elements['error-count'].classList.contains('warning'));
-assert.equal(elements['error-count'].textContent, String(detailed.warnings.length));
+assert.equal(elements['error-count'].textContent, String(warningDiagnostics.length));
 assert.equal(elements['compile-status'].className, 'compile-status warning');
 context.warningSource = 'contract Clean() { function spend() { require(true); } }';
-vm.runInContext('doCompile()', context);
+await vm.runInContext('doCompile()', context);
 assert.equal(elements['errors-output'].innerHTML, '');
 assert(!elements['error-count'].classList.contains('visible'));
 assert.equal(elements['compile-status'].className, 'compile-status success');
 
 // Every error is reported with its position, columns in UTF-16 units; nothing is thrown.
 const failingSource = 'contract Failing() {\n    function spend(int x) { require("é" == x); require(y == 1); }\n}';
-const failed = JSON.parse(compile_sources_with_diagnostics('main.ark', JSON.stringify({ './main.ark': failingSource })));
+const failed = await compile({ entry: 'main.ark', files: { './main.ark': failingSource } });
 assert.equal(failed.artifact, null);
 const errors = failed.diagnostics.filter(d => d.severity === 'error');
 assert(errors.length >= 2);
@@ -230,14 +245,13 @@ for (const error of errors) {
 const undefinedName = errors.find(d => d.message.includes("'y'"));
 assert.equal(undefinedName.start.column, failingSource.split('\n')[1].indexOf('y == 1') + 1);
 // Diagnosing while typing reports what compiling does, except that a library is not an error.
-assert.deepEqual(JSON.parse(check_sources('main.ark', JSON.stringify({ './main.ark': failingSource }))), failed.diagnostics);
-const library = JSON.stringify({ 'fees.ark': 'library Fees { function fee(int a) int { return a + 1; } }' });
-assert.deepEqual(JSON.parse(check_sources('fees.ark', library)), []);
-assert.match(JSON.parse(compile_sources_with_diagnostics('fees.ark', library)).diagnostics[0].message, /not a library/);
-context.document.querySelectorAll = () => [];
+assert.deepEqual(await check({ entry: 'main.ark', files: { './main.ark': failingSource } }), failed.diagnostics);
+const library = { entry: 'fees.ark', files: { 'fees.ark': 'library Fees { function fee(int a) int { return a + 1; } }' } };
+assert.deepEqual(await check(library), []);
+assert.match((await compile(library)).diagnostics[0].message, /not a library/);
 context.warningSource = failingSource;
 context.selected = null;
-vm.runInContext(`
+await vm.runInContext(`
     editor = { getValue: () => warningSource, revealLineInCenter() {}, setSelection: range => { selected = range; } };
     doCompile();
 `, context);
@@ -248,12 +262,12 @@ assert.match(elements['errors-output'].innerHTML, /data-line="2" data-column="\d
 assert.match(elements['errors-output'].innerHTML, /\(main\.ark:2:\d+\)/);
 
 // Assembly tokens link to the statement each comes from.
-const mapped = JSON.parse(compile_sources_with_diagnostics('main.ark', JSON.stringify({
+const mapped = await compile({ entry: 'main.ark', files: {
     'main.ark': 'contract M(pubkey k) {\n  function f(signature s, int n) {\n    require(n > 0);\n    if (n > 1) {\n      require(checkSig(s, k));\n    }\n  }\n}',
-})));
-const covenant = JSON.parse(mapped.artifact).functions[0].arkade;
+} });
+const covenant = mapped.artifact.functions[0].arkade;
 assert.equal(covenant.sourceMap, undefined);
-const sourceMap = JSON.parse(mapped.debug).functions.f.sourceMap;
+const sourceMap = mapped.debug.functions.f.sourceMap;
 context.covenant = covenant;
 context.sourceMap = sourceMap;
 const html = vm.runInContext('asmRuns = []; covenantListing(covenant.asm, sourceMap)', context);
@@ -275,74 +289,82 @@ vm.runInContext("editor = { getValue: () => 'edited' };", context);
 assert.equal(vm.runInContext('sourceRuns().length', context), 0);
 
 // Hover and go to definition read the compiler's symbol table.
-const symbolFiles = JSON.stringify({
+const symbolFiles = {
     'main.ark': 'import "fees.ark";\ncontract V(pubkey owner) {\n  function spend(signature sig, int amount) {\n    require(checkSig(sig, owner));\n    require(Fees.fee(amount) > amount);\n  }\n}',
     'fees.ark': 'library Fees {\n  function fee(int amount) int { return amount + 1; }\n}',
-});
-const symbolAtPosition = (line, column) => JSON.parse(symbol_at('main.ark', symbolFiles, line, column));
-const owner = symbolAtPosition(4, 28);
+};
+const symbolAtPosition = (line, column) => symbolAt({ entry: 'main.ark', files: symbolFiles }, { line, column });
+const owner = await symbolAtPosition(4, 28);
 assert.deepEqual([owner.name, owner.kind, owner.type], ['owner', 'parameter', 'pubkey']);
 assert.deepEqual(owner.definition.start, { line: 2, column: 19 });
 assert.deepEqual(owner.at.start, { line: 4, column: 27 });
 assert.equal(owner.references.length, 1);
 context.symbol = owner;
 assert.deepEqual([...vm.runInContext('describeSymbol(symbol)', context)], ['parameter owner: pubkey', 'Defined at line 2 · 1 reference']);
-const fee = symbolAtPosition(5, 18);
+const fee = await symbolAtPosition(5, 18);
 assert.deepEqual([fee.name, fee.kind, fee.type, fee.definition.file], ['fee', 'function', 'int', 'fees.ark']);
 context.symbol = fee;
 assert.equal(vm.runInContext('describeSymbol(symbol)[1]', context), 'Defined at fees.ark:2 · 1 reference');
-const amount = symbolAtPosition(3, 37);
+const amount = await symbolAtPosition(3, 37);
 assert.deepEqual([amount.name, amount.references.length], ['amount', 2]);
-assert.equal(symbolAtPosition(4, 1), null);
+assert.equal(await symbolAtPosition(4, 1), null);
 // The analysis symbol_at keeps for unchanged sources is redone after an edit to an imported file.
-context.lookupFiles = JSON.parse(symbolFiles);
+context.lookupFiles = structuredClone(symbolFiles);
+context.revision = 1;
 vm.runInContext(`
     projects.lookup = { name: 'Lookup', files: lookupFiles };
     [currentProject, currentFile] = ['lookup', 'main.ark'];
-    editor = { getModel: () => 'model', getValue: () => lookupFiles['main.ark'] };
+    lookupModel = { getVersionId: () => revision, isDisposed: () => false };
+    editor = { getModel: () => lookupModel, getValue: () => lookupFiles['main.ark'] };
 `, context);
-const feeDefinitionLine = () => vm.runInContext("symbolAt('model', { lineNumber: 5, column: 18 })", context).definition.start.line;
-assert.deepEqual([feeDefinitionLine(), feeDefinitionLine()], [2, 2]);
+const feeAt = () => vm.runInContext('symbolAt(lookupModel, { lineNumber: 5, column: 18 })', context);
+const feeDefinitionLine = async () => (await feeAt()).definition.start.line;
+assert.deepEqual([await feeDefinitionLine(), await feeDefinitionLine()], [2, 2]);
 context.lookupFiles['fees.ark'] = `\n${context.lookupFiles['fees.ark']}`;
-assert.equal(feeDefinitionLine(), 3);
+assert.equal(await feeDefinitionLine(), 3);
+// A lookup answered after an edit is dropped.
+const staleLookup = feeAt();
+context.revision++;
+assert.equal(await staleLookup, null);
 
 // Completion offers the names the compiler sees at the cursor.
-const completionFiles = JSON.stringify({
+const completionFiles = {
     'main.ark': 'import "fees.ark";\nstruct Point { int x; bytes32 y; }\ncontract V(Point p) {\n  function spend(int amount) {\n    if (amount > 1) {\n      int inner = amount;\n      require(inner > 0);\n    }\n    require(Fees.fee(amount) > p.x);\n  }\n}',
     'fees.ark': 'library Fees {\n  const int BASE = 1;\n  function fee(int amount) int { return amount + BASE; }\n}',
-});
-const completionsAt = line => JSON.parse(completions_at('main.ark', completionFiles, line, 1));
+};
+const completionsAtLine = line => completionsAt({ entry: 'main.ark', files: completionFiles }, { line, column: 1 });
 const names = table => table.symbols.map(symbol => symbol.name);
-assert.ok(names(completionsAt(7)).includes('inner'));
-assert.ok(!names(completionsAt(9)).includes('inner'));
-assert.deepEqual(completionsAt(9).symbols.find(symbol => symbol.name === 'amount'), { name: 'amount', kind: 'parameter', type: 'int' });
-assert.deepEqual(completionsAt(9).members.Fees.map(member => member.name).sort(), ['BASE', 'fee']);
-assert.deepEqual(completionsAt(9).structs, [{ name: 'Point', fields: [{ name: 'x', type: 'int' }, { name: 'y', type: 'bytes32' }] }]);
+assert.ok(names(await completionsAtLine(7)).includes('inner'));
+const atNine = await completionsAtLine(9);
+assert.ok(!names(atNine).includes('inner'));
+assert.deepEqual(atNine.symbols.find(symbol => symbol.name === 'amount'), { name: 'amount', kind: 'parameter', type: 'int' });
+assert.deepEqual(atNine.members.Fees.map(member => member.name).sort(), ['BASE', 'fee']);
+assert.deepEqual(atNine.structs, [{ name: 'Point', fields: [{ name: 'x', type: 'int' }, { name: 'y', type: 'bytes32' }] }]);
 // Fields can name a struct the entry does not import itself.
-const nestedStructs = JSON.parse(completions_at('main.ark', JSON.stringify({
+const nestedStructs = (await completionsAt({ entry: 'main.ark', files: {
     'main.ark': 'import "a.ark";\ncontract V(Segment s) {\n  function spend() {\n    require(s.from.x > 0);\n  }\n}',
     'a.ark': 'import "b.ark";\nstruct Segment { Point from; }',
     'b.ark': 'struct Point { int x; }',
-}), 4, 1)).structs.map(struct => struct.name);
+} }, { line: 4, column: 1 })).structs.map(struct => struct.name);
 assert.deepEqual(nestedStructs.sort(), ['Point', 'Segment']);
 // A tapscript's inputs are names in its body.
-const tapscriptNames = names(JSON.parse(completions_at('main.ark', JSON.stringify({
+const tapscriptNames = names(await completionsAt({ entry: 'main.ark', files: {
     'main.ark': 'contract V(pubkey owner) {\n  function spend(signature sig) {\n    require(checkSig(sig, owner));\n  }\n  function exit(signature ownerSig) tapscript {\n    require(checkSig(ownerSig, owner));\n  }\n}',
-}), 6, 1)));
+} }, { line: 6, column: 1 }));
 assert.ok(tapscriptNames.includes('ownerSig') && !tapscriptNames.includes('sig') && !tapscriptNames.includes('spend'));
 // An import that stops parsing leaves the entry its own names.
-vm.runInContext('wasmReady = true;', context);
-const tableNames = line => vm.runInContext(`symbolTable(${line})`, context).symbols.map(symbol => symbol.name);
+const tableNames = async line => (await vm.runInContext(`symbolTable(${line})`, context)).symbols.map(symbol => symbol.name);
 const lookupFees = context.lookupFiles['fees.ark'];
 context.lookupFiles['fees.ark'] = 'library Fees {';
-assert.ok(tableNames(5).includes('owner'));
+assert.ok((await tableNames(5)).includes('owner'));
 // An entry that still does not parse takes the names at the cursor's line in the last sources that gave some.
 context.lookupFiles['fees.ark'] = lookupFees;
-assert.ok(tableNames(5).includes('sig'));
+assert.ok((await tableNames(5)).includes('sig'));
 const lookupMain = context.lookupFiles['main.ark'];
 context.lookupFiles['main.ark'] = lookupMain.replace('owner));', 'owner);');
-assert.ok(tableNames(5).includes('sig'));
-assert.ok(tableNames(1).includes('owner') && !tableNames(1).includes('sig'));
+assert.ok((await tableNames(5)).includes('sig'));
+const firstLine = await tableNames(1);
+assert.ok(firstLine.includes('owner') && !firstLine.includes('sig'));
 context.lookupFiles['main.ark'] = lookupMain;
 
 // A definition in another file opens it, and a peek at it edits that file.
@@ -373,6 +395,72 @@ assert.equal(vm.runInContext('sourceRuns()', context), runs);
 assert(elements['compile-btn'].classList.contains('compiled'));
 vm.runInContext("storeSourcePath('htlc/htlc.ark', 'peeked');", context);
 assert.equal(vm.runInContext('examples.htlc.code', context), 'peeked');
+
+// A compile answered after an edit must not replace the current output.
+const finished = { ...mapped, artifact: { ...warningArtifact, contractName: 'Late' }, diagnostics: [] };
+let finish;
+const delayCompile = () => { context.compile = () => new Promise(resolve => { finish = resolve; }); };
+context.warningSource = 'contract Clean() { function spend() { require(true); } }';
+vm.runInContext('displayAsm = () => {};', context);
+await vm.runInContext('doCompile()', context);
+delayCompile();
+const delayed = vm.runInContext('doCompile()', context);
+vm.runInContext('compileRequest++;', context);
+const before = context.renderedArtifact;
+finish(finished);
+await delayed;
+assert.equal(context.renderedArtifact, before);
+
+// Renames, moves and dependency deletions invalidate work even when the editor text stays unchanged.
+context.compilationSources = originalCompilationSources;
+vm.runInContext(`
+    projects.race = { files: { 'main.ark': warningSource, 'dependency.ark': 'library Dependency {}' } };
+    projects.destination = { files: {} };
+    currentProject = 'race'; currentFile = 'main.ark';
+    updateFileTabs = renderFileTree = updateCurrentFileName = () => {};
+`, context);
+for (const mutation of [
+    "renameFileInFolder('race', 'main.ark', 'renamed.ark')",
+    "moveProjectFileToFolder('race', 'renamed.ark', 'destination')",
+    "deleteFileInFolder('race', 'dependency.ark')",
+]) {
+    delayCompile();
+    const pending = vm.runInContext('doCompile()', context);
+    vm.runInContext(mutation, context);
+    finish(finished);
+    await pending;
+    assert.equal(context.renderedArtifact, before, mutation);
+}
+
+// Saving unchanged sources, such as while sharing, must not cancel a current compile.
+delayCompile();
+const stillCurrent = vm.runInContext('doCompile()', context);
+vm.runInContext('compilationSources()', context);
+finish(finished);
+await stillCurrent;
+assert.equal(context.renderedArtifact.contractName, 'Late');
+context.compile = compile;
+
+// Storage failures remain visible and prevent compilation from using unsaved sources.
+const setItem = context.localStorage.setItem;
+context.localStorage.setItem = () => { throw new Error('Storage quota exceeded'); };
+context.warningSource += '\n// unsaved edit\n';
+await vm.runInContext(`
+    projects.race.files['main.ark'] = '';
+    currentProject = 'race'; currentFile = 'main.ark';
+    editor = { getValue: () => warningSource };
+    doCompile();
+`, context);
+assert.equal(elements['errors-output'].textContent, 'Storage quota exceeded');
+context.localStorage.setItem = setItem;
+
+// Assembly rendering takes the artifact and debug file and keeps covenant and leaf sections.
+elements['asm-output'] = { dataset: { linked: 'true' } };
+context.displayAsm = displayAsm;
+context.mappedResult = await compile({ entry: 'main.ark', files: { 'main.ark': warningSource } });
+vm.runInContext('displayAsm(mappedResult.artifact, mappedResult.debug)', context);
+assert.match(elements['asm-output'].innerHTML, /arkade covenant/);
+assert.match(elements['asm-output'].innerHTML, /tapscript leaf/);
 
 function loadStored(saved) {
     const store = { 'arkade-playground': JSON.stringify(saved) };
