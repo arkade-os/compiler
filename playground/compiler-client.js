@@ -34,7 +34,8 @@ function call(method, ...args) {
     });
 }
 
-// One worker serializes compiler work; a pool is only needed for parallel throughput.
+// ponytail: one worker serializes compiler work, so hover, lint and completion wait behind a long
+// compile; a pool, or a separate worker for editor queries, would run them in parallel.
 export const compile = (...args) => call('compile', ...args);
 export const check = (...args) => call('check', ...args);
 export const symbolAt = (...args) => call('symbolAt', ...args);
