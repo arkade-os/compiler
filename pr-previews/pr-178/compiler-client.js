@@ -35,5 +35,6 @@ function call(method, ...args) {
 // One worker serializes compiler work; a pool is only needed for parallel throughput.
 export const compile = (...args) => call('compile', ...args);
 export const check = (...args) => call('check', ...args);
-export const symbols = (...args) => call('symbols', ...args);
+export const symbolAt = (...args) => call('symbolAt', ...args);
+export const completionsAt = (...args) => call('completionsAt', ...args);
 export const version = () => call('version');
