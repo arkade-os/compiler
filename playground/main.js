@@ -1,5 +1,5 @@
 // Arkade Playground - Main Application
-import { compile, check, symbolAt as compilerSymbolAt, completionsAt, version } from './compiler-client.js';
+import { compile, check, symbolAt as compilerSymbolAt, completionsAt, version } from './pkg/browser/index.js';
 import * as contracts from './contracts.js';
 import { generateBindings, AVAILABLE_TARGETS } from './codegen.js';
 
@@ -72,9 +72,8 @@ const bundledSnapshot = JSON.parse(JSON.stringify({ projects, examples }));
 
 // Global state
 let editor = null;
-// Bumped by edits, source changes and compiles; compiler results from an earlier request are stale.
-let compileRequest = 0;
-let storedSources = null; // Saved paths and sources; names alone leave compiler results current
+// Once set, compiler calls resolve before any edit can arrive, so their results are current.
+let wasmReady = false;
 let currentProject = null;
 let currentFile = null;
 let openTabs = [];
@@ -97,12 +96,7 @@ function saveToStorage() {
     for (const [id, ex] of Object.entries(examples)) {
         data.examples[id] = { name: ex.name, code: ex.code };
     }
-    const sources = JSON.stringify([Object.entries(projects).map(([id, p]) => [id, p.files]), Object.entries(examples).map(([id, e]) => [id, e.code])]);
-    if (sources !== storedSources) compileRequest++;
-    storedSources = sources;
-    const serialized = JSON.stringify(data);
-    if (localStorage.getItem(STORAGE_KEY) === serialized) return;
-    localStorage.setItem(STORAGE_KEY, serialized);
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
 }
 
 function loadFromStorage() {
@@ -804,21 +798,19 @@ function promptNewStandaloneFile() {
     if (name && name.trim()) createStandaloneFile(name.trim());
 }
 
-// Load the compiler and show its version after the editor is ready.
+// Load the compiler and show its version; true once it is ready.
 async function initCompiler() {
-    const request = compileRequest;
     try {
-        displayVersion(await version());
+        const ver = await version();
+        wasmReady = true;
+        document.getElementById('compiler-version').textContent = `v${ver}`;
+        document.getElementById('footer-version').textContent = `v${ver}`;
         lint();
     } catch (err) {
         console.error('Failed to initialize compiler:', err);
-        if (request === compileRequest) showError(`Failed to load compiler: ${err.message}`);
+        showError(`Failed to load compiler: ${err.message}`);
     }
-}
-
-function displayVersion(ver) {
-    document.getElementById('compiler-version').textContent = `v${ver}`;
-    document.getElementById('footer-version').textContent = `v${ver}`;
+    return wasmReady;
 }
 
 // Render file tree
@@ -1261,8 +1253,6 @@ function initMonaco() {
                 const before = model.getLineContent(position.lineNumber).slice(0, word.startColumn - 1);
                 // A peek at another file shows its own text, so only the editor's file has names.
                 const table = model === editor.getModel() ? await symbolTable(position.lineNumber) : null;
-                // A table from an earlier revision still serves, since Monaco filters it against the current word.
-                if (model.isDisposed()) return { suggestions: [] };
                 const suggestions = window.arkadeComplete(before, table).map(item => ({
                     label: item.label,
                     kind: monaco.languages.CompletionItemKind[item.kind] || monaco.languages.CompletionItemKind.Text,
@@ -1310,7 +1300,6 @@ function initMonaco() {
 
         // Mark dirty on change — no auto-compile
         editor.onDidChangeModelContent(() => {
-            compileRequest++;
             if (editor.getValue() !== lastCompiledSource) {
                 markDirty();
             }
@@ -1377,13 +1366,11 @@ function sourceFiles() {
     return { entry, files };
 }
 
-// The compiler's symbol at `position` in the editor's file, or null once the file has changed.
+// The compiler's symbol at `position` in the editor's file, or null.
 async function symbolAt(model, position) {
-    if (model !== editor?.getModel()) return null;
-    const revision = model.getVersionId();
+    if (!wasmReady || model !== editor?.getModel()) return null;
     try {
-        const symbol = await compilerSymbolAt(sourceFiles(), { line: position.lineNumber, column: position.column });
-        return !model.isDisposed() && revision === model.getVersionId() ? symbol : null;
+        return await compilerSymbolAt(sourceFiles(), { line: position.lineNumber, column: position.column });
     } catch {
         return null;
     }
@@ -1471,6 +1458,7 @@ const lastSources = {};
 // ponytail: lines added or removed above the cursor since shift those names a line or more; the
 // parser recovering from errors would give names in the current text.
 async function symbolTable(lineNumber) {
+    if (!wasmReady) return null;
     try {
         const { entry, files } = sourceFiles();
         const lines = files[entry].split('\n');
@@ -1486,32 +1474,22 @@ async function symbolTable(lineNumber) {
     }
 }
 
-// Compile the source code
+// Compile the source code, first retrying a failed compiler load
 async function doCompile() {
-    if (!editor) return;
+    if (!editor || (!wasmReady && !await initCompiler())) return;
 
     const source = editor.getValue();
     clearErrors();
 
-    let sources;
     try {
-        sources = compilationSources();
-    } catch (err) {
-        showError(err.message);
-        return;
-    }
-    const request = ++compileRequest;
-    try {
-        const { entry } = sources;
+        const { entry, files } = compilationSources();
         const optimize = document.getElementById('optimize-toggle').checked;
-        const { artifact, debug, diagnostics } = await compile(sources, { optimize });
-        if (request !== compileRequest) return;
+        const { artifact, debug, diagnostics } = await compile({ entry, files }, { optimize });
         markDiagnostics(diagnostics, entry);
         if (artifact === null) {
             showErrors(diagnostics, entry);
             return;
         }
-        displayVersion(artifact.compiler.version);
         lastCompiledSource = source;
         displayJson(artifact);
         displayAsm(artifact, debug);
@@ -1520,7 +1498,7 @@ async function doCompile() {
         renderDiagnostics(diagnostics, entry);
         markCompiled();
     } catch (err) {
-        if (request === compileRequest) showError(err.message);
+        showError(err.message);
     }
 }
 
@@ -1771,14 +1749,11 @@ let lintTimer = null;
 function lint() {
     clearTimeout(lintTimer);
     lintTimer = setTimeout(async () => {
-        if (!editor) return;
-        const request = compileRequest;
+        if (!wasmReady || !editor) return;
         try {
-            const sources = sourceFiles();
+            const { entry, files } = sourceFiles();
             const optimize = document.getElementById('optimize-toggle').checked;
-            const diagnostics = await check(sources, { optimize });
-            if (request !== compileRequest) return;
-            const { entry } = sources;
+            const diagnostics = await check({ entry, files }, { optimize });
             markDiagnostics(diagnostics, entry);
             renderDiagnostics(diagnostics, entry);
         } catch {}

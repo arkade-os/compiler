@@ -30,7 +30,7 @@ COMPILER_VERSION="$(node -p "require('./package.json').version")"
 echo "[3/3] Installing packed browser assets..."
 rm -rf "$SCRIPT_DIR/pkg"
 mkdir -p "$SCRIPT_DIR/pkg"
-tar -xzf "arkade-os-compiler-$COMPILER_VERSION.tgz" -C "$SCRIPT_DIR/pkg" --strip-components=3 package/dist/browser
+tar -xzf "arkade-os-compiler-$COMPILER_VERSION.tgz" -C "$SCRIPT_DIR/pkg" --strip-components=2 package/dist/browser package/dist/wasm
 echo ""
 echo "To serve the playground locally:"
 echo "  cd playground && python3 -m http.server 8080"

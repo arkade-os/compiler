@@ -147,28 +147,9 @@ function initialize(): ReturnType<typeof load> {
     });
 }
 
+// The compiler validates the files it parses from this JSON.
 function serializeInput(input: CompileInput): { entry: string; files: string } {
-    const entry = input?.entry;
-    const sources = input?.files;
-    if (!input || typeof input !== "object" || Array.isArray(input)
-        || typeof entry !== "string"
-        || !sources || typeof sources !== "object" || Array.isArray(sources)) {
-        throw new TypeError("Expected { entry: string, files: Record<string, string> }");
-    }
-    const files = Object.entries(sources);
-    if (files.some(([, source]) => typeof source !== "string")) {
-        throw new TypeError("Every source file must contain a string");
-    }
-    return { entry, files: JSON.stringify(Object.fromEntries(files)) };
-}
-
-function optimization(options?: CompileOptions): boolean | undefined {
-    const optimize = options?.optimize;
-    if (options !== undefined && (!options || typeof options !== "object" || Array.isArray(options)
-        || (optimize !== undefined && typeof optimize !== "boolean"))) {
-        throw new TypeError("Compile options must be { optimize?: boolean }");
-    }
-    return optimize;
+    return { entry: input.entry, files: JSON.stringify(input.files) };
 }
 
 function serializePosition(position: Position): [number, number] {
@@ -200,7 +181,7 @@ async function call<T>(method: (wasm: Awaited<ReturnType<typeof load>>) => strin
 /** Compile a virtual source project using the installed compiler. */
 export async function compile(input: CompileInput, options?: CompileOptions): Promise<CompileResult> {
     const { entry, files } = serializeInput(input);
-    const optimize = optimization(options);
+    const optimize = options?.optimize;
     const { artifact, debug, diagnostics } = await call<{ artifact: string | null; debug: string | null; diagnostics: Diagnostic[] }>(
         wasm => wasm.compile_sources_with_diagnostics(entry, files, optimize));
     return artifact === null || debug === null
@@ -211,7 +192,7 @@ export async function compile(input: CompileInput, options?: CompileOptions): Pr
 /** Every diagnostic of a project without generating an artifact; a library entry is not an error. */
 export async function check(input: CompileInput, options?: CompileOptions): Promise<Diagnostic[]> {
     const { entry, files } = serializeInput(input);
-    const optimize = optimization(options);
+    const optimize = options?.optimize;
     return call(wasm => wasm.check_sources(entry, files, optimize));
 }
 

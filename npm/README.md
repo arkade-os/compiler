@@ -27,7 +27,7 @@ console.log(await version(), artifact.contractName);
 for (const d of diagnostics) console.warn(`${d.severity}: ${d.message} (${d.file}:${d.start?.line})`);
 ```
 
-CommonJS consumers can use `const { compile, version } = require("@arkade-os/compiler")` with the same asynchronous API.
+The package is ESM-only. CommonJS code can still load it with `require("@arkade-os/compiler")`, which Node.js 22.12 and newer support for ES modules.
 
 ## API
 
@@ -51,31 +51,17 @@ for (const d of diagnostics) console.log(d.severity, `${d.file}:${d.start?.line}
 
 `completionsAt(input: CompileInput, position: Position): Promise<Completions>` returns the names usable at a position: `symbols`, `members` (a library's or contract's names under its own), and `structs` with their fields. Files that fail validation still get symbols, but a file that does not parse gives none.
 
-`version(): Promise<string>` reports the installed WASM compiler version. All functions initialize WASM lazily and share initialization across concurrent calls. A failed initialization can be retried by calling any function again. A WASM trap, such as a stack overflow on deeply nested source, rejects with the trap; in Node the next call loads a new instance, while a browser realm keeps the broken one, so run the compiler in a worker and replace the worker, as the playground's `compiler-client.js` does. Invalid JavaScript inputs, including non-positive, non-integer or above-32-bit positions, reject with a `TypeError`; initialization failures reject with their original error.
+`version(): Promise<string>` reports the installed WASM compiler version. All functions initialize WASM lazily and share initialization across concurrent calls. A failed initialization can be retried by calling any function again. A WASM trap, such as a stack overflow on deeply nested source, rejects with the trap; in Node the next call loads a new instance, while a browser realm keeps the broken one, so reload the page, or run the compiler in a worker and replace the worker. Non-positive, non-integer or above-32-bit positions reject with a `TypeError`; initialization failures reject with their original error.
 
 ## Runtime selection
 
-Package exports automatically select the Node loader for Node.js ESM and CommonJS imports, and the browser loader for browser bundles. WebAssembly is portable across x86-64, aarch64, and other CPUs supported by the runtime, so there are no architecture-specific executables or downloads. Node loads assets from the installed package; browsers load assets from the application bundle. Importing the package alone does not initialize WASM.
+Package exports automatically select the Node loader for Node.js and the browser loader for browsers and bundlers; both share one WASM build. WebAssembly is portable across x86-64, aarch64, and other CPUs supported by the runtime, so there are no architecture-specific executables or downloads. Node loads assets from the installed package; browsers load assets from the application bundle. Importing the package alone does not initialize WASM.
 
-Node.js 22.12 or newer is supported. Browser production bundles are tested with Vite and Chromium, including deployment under a URL prefix. Bundlers must preserve and emit the package's `new URL(..., import.meta.url)` WASM asset references; serve `.wasm` files with the `application/wasm` content type. The compiler uses no remote release lookup. Loading a browser bundle's local WASM asset may make an HTTP request to the application's own origin.
+Node.js 22.12 or newer is supported. The unbundled browser entrypoint is tested in Chromium under a URL prefix. Bundlers must preserve and emit the package's `new URL(..., import.meta.url)` WASM asset references; serve `.wasm` files with the `application/wasm` content type. The compiler uses no remote release lookup. Loading a browser bundle's local WASM asset may make an HTTP request to the application's own origin.
 
 Compilation currently runs synchronously inside WASM after initialization; the Promise API does not move compilation off the JavaScript thread. Applications needing background compilation can import this package in a worker. Other runtimes, including Expo, require separate verification.
 
-The static playground consumes the browser assets from a locally packed package in a module worker. Its build script generates examples, builds and packs the compiler, and extracts `dist/browser/` into `playground/pkg/`. All compiler calls use the public package API; npm publication is not required to build or deploy it. The playground marks diagnostics at their positions, lints as you type with `check`, and drives hover, go to definition and completion with `symbolAt` and `completionsAt`, dropping results that arrive after an edit. Failed initialization can be retried by compiling again.
-
-## Worker example
-
-The repository's [compiler-client.js](https://github.com/arkade-os/compiler/blob/master/playground/compiler-client.js) and [compiler-worker.js](https://github.com/arkade-os/compiler/blob/master/playground/compiler-worker.js) are a tested consumer example. Copy both into the same directory in your application. In a bundler such as Vite, change the worker's compiler import to `import { compile, check, symbolAt, completionsAt, version } from "@arkade-os/compiler"`. Then call the client:
-
-```js
-import { compile, check } from "./compiler-client.js";
-
-const input = { entry: "main.ark", files: { "main.ark": "contract C() { function spend() { require(true); } }" } };
-console.log(await compile(input));
-console.log(await check(input));
-```
-
-The client creates one module worker lazily, matches concurrent requests to their responses, preserves compiler errors, and recreates the worker after a fatal worker error. Calls and results must be structured-cloneable. Compiler work runs on the worker thread, leaving the page responsive. The package itself has no worker-management API. For static applications, use a relative import to the copied browser entrypoint inside the worker; document import maps do not apply inside workers. Both the Vite worker bundle and the playground's static worker are tested under URL prefixes.
+The static playground imports the browser entrypoint of a locally packed package. Its build script generates examples, builds and packs the compiler, and extracts `dist/browser/` and `dist/wasm/` into `playground/pkg/`. All compiler calls use the public package API; npm publication is not required to build or deploy it. The playground marks diagnostics at their positions, lints as you type with `check`, and drives hover, go to definition and completion with `symbolAt` and `completionsAt`. Failed initialization can be retried by compiling again.
 
 ## Development and packing
 
@@ -90,6 +76,6 @@ npm test
 npm pack
 ```
 
-`npm test` installs a tarball into an isolated application, checks Node ESM/CommonJS and TypeScript declarations, and executes a production browser bundle. It also verifies relative imports, artifact and warning preservation, structured diagnostics, concurrent initialization, useful failures, initialization retry, and the worker example's responsiveness and restart behavior. To use an existing Chrome installation locally, run `PLAYWRIGHT_CHANNEL=chrome npm test`.
+`npm test` installs a tarball into an isolated application, checks that every function returns what the raw WASM bindings do under Node ESM, `require()` and Chromium, and checks the TypeScript declarations, concurrent initialization, initialization retry and recovery from a trap in Node. To use an existing Chrome installation locally, run `PLAYWRIGHT_CHANNEL=chrome npm test`.
 
 `npm pack` runs the release build through `prepack`; installing the tarball has no build lifecycle scripts or runtime dependencies. Generated `dist/`, license copies, dependencies, and tarballs are ignored. Package builds require the npm version to match `[workspace.package].version` in the root `Cargo.toml`. Bump both for a compiler release. Package CI builds and tests the tarball without publishing it; a `v<version>` tag builds, tests and publishes it, as the root README's release section describes.

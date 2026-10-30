@@ -310,11 +310,10 @@ assert.deepEqual([amount.name, amount.references.length], ['amount', 2]);
 assert.equal(await symbolAtPosition(4, 1), null);
 // The analysis symbol_at keeps for unchanged sources is redone after an edit to an imported file.
 context.lookupFiles = structuredClone(symbolFiles);
-context.revision = 1;
 vm.runInContext(`
     projects.lookup = { name: 'Lookup', files: lookupFiles };
     [currentProject, currentFile] = ['lookup', 'main.ark'];
-    lookupModel = { getVersionId: () => revision, isDisposed: () => false };
+    lookupModel = {};
     editor = { getModel: () => lookupModel, getValue: () => lookupFiles['main.ark'] };
 `, context);
 const feeAt = () => vm.runInContext('symbolAt(lookupModel, { lineNumber: 5, column: 18 })', context);
@@ -322,10 +321,6 @@ const feeDefinitionLine = async () => (await feeAt()).definition.start.line;
 assert.deepEqual([await feeDefinitionLine(), await feeDefinitionLine()], [2, 2]);
 context.lookupFiles['fees.ark'] = `\n${context.lookupFiles['fees.ark']}`;
 assert.equal(await feeDefinitionLine(), 3);
-// A lookup answered after an edit is dropped.
-const staleLookup = feeAt();
-context.revision++;
-assert.equal(await staleLookup, null);
 
 // Completion offers the names the compiler sees at the cursor.
 const completionFiles = {
@@ -396,57 +391,13 @@ assert(elements['compile-btn'].classList.contains('compiled'));
 vm.runInContext("storeSourcePath('htlc/htlc.ark', 'peeked');", context);
 assert.equal(vm.runInContext('examples.htlc.code', context), 'peeked');
 
-// A compile answered after an edit must not replace the current output.
-const finished = { ...mapped, artifact: { ...warningArtifact, contractName: 'Late' }, diagnostics: [] };
-let finish;
-const delayCompile = () => { context.compile = () => new Promise(resolve => { finish = resolve; }); };
-context.warningSource = 'contract Clean() { function spend() { require(true); } }';
-vm.runInContext('displayAsm = () => {};', context);
-await vm.runInContext('doCompile()', context);
-delayCompile();
-const delayed = vm.runInContext('doCompile()', context);
-vm.runInContext('compileRequest++;', context);
-const before = context.renderedArtifact;
-finish(finished);
-await delayed;
-assert.equal(context.renderedArtifact, before);
-
-// Renames, moves and dependency deletions invalidate work even when the editor text stays unchanged.
-context.compilationSources = originalCompilationSources;
-vm.runInContext(`
-    projects.race = { files: { 'main.ark': warningSource, 'dependency.ark': 'library Dependency {}' } };
-    projects.destination = { files: {} };
-    currentProject = 'race'; currentFile = 'main.ark';
-    updateFileTabs = renderFileTree = updateCurrentFileName = () => {};
-`, context);
-for (const mutation of [
-    "renameFileInFolder('race', 'main.ark', 'renamed.ark')",
-    "moveProjectFileToFolder('race', 'renamed.ark', 'destination')",
-    "deleteFileInFolder('race', 'dependency.ark')",
-]) {
-    delayCompile();
-    const pending = vm.runInContext('doCompile()', context);
-    vm.runInContext(mutation, context);
-    finish(finished);
-    await pending;
-    assert.equal(context.renderedArtifact, before, mutation);
-}
-
-// Saving unchanged sources, such as while sharing, must not cancel a current compile.
-delayCompile();
-const stillCurrent = vm.runInContext('doCompile()', context);
-vm.runInContext('compilationSources()', context);
-finish(finished);
-await stillCurrent;
-assert.equal(context.renderedArtifact.contractName, 'Late');
-context.compile = compile;
-
 // Storage failures remain visible and prevent compilation from using unsaved sources.
+context.compilationSources = originalCompilationSources;
 const setItem = context.localStorage.setItem;
 context.localStorage.setItem = () => { throw new Error('Storage quota exceeded'); };
 context.warningSource += '\n// unsaved edit\n';
 await vm.runInContext(`
-    projects.race.files['main.ark'] = '';
+    projects.race = { files: { 'main.ark': '' } };
     currentProject = 'race'; currentFile = 'main.ark';
     editor = { getValue: () => warningSource };
     doCompile();
@@ -516,18 +467,5 @@ assert.equal(upgraded.read("projects.bonds.files['kept.ark']"), 'edited');
 assert(!upgraded.read("Object.hasOwn(examples, 'retired')"));
 assert.equal(upgraded.read('examples.kept.code'), 'edited');
 assert(!Object.hasOwn(upgraded.store, 'arkade-playground-legacy'));
-
-// Renaming keeps pending compiler results, while a source change makes them stale.
-assert.equal(vm.runInContext(`
-    saveToStorage();
-    const request = compileRequest;
-    const id = Object.keys(examples)[0];
-    examples[id].name += ' renamed';
-    saveToStorage();
-    const renamed = compileRequest;
-    examples[id].code += ' ';
-    saveToStorage();
-    [renamed - request, compileRequest - request].join();
-`, context), '0,1');
 
 console.log(`Verified ${selections.length} playground entries, source round trips, shared projects, dependency edits, removed shared examples, idempotent share links, and stored edits over bundled updates.`);

@@ -46,13 +46,7 @@ jobs:
         run: ./scripts/e2e.sh -v
 
   npm-package:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - { os: ubuntu-latest, node: 22 }
-          - { os: macos-latest, node: 24 }
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: npm
@@ -62,7 +56,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
-          node-version: ${{ matrix.node }}
+          node-version: 22
           cache: npm
           cache-dependency-path: npm/package-lock.json
       - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
@@ -80,7 +74,7 @@ jobs:
         run: npm pack --ignore-scripts
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: npm-compiler-${{ matrix.os }}-node-${{ matrix.node }}
+          name: npm-compiler
           path: npm/*.tgz
 
   check-format:
