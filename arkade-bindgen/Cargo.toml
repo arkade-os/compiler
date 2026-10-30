@@ -6,6 +6,13 @@ description = "Multi-language SDK binding generator for Arkade contract artifact
 authors.workspace = true
 license.workspace = true
 repository.workspace = true
+homepage.workspace = true
+keywords = ["arkade", "bitcoin", "codegen", "typescript", "golang"]
+categories = [
+    "development-tools",
+    "command-line-utilities",
+    "cryptography::cryptocurrencies",
+]
 readme = "../README.md"
 include = ["src/**/*.rs", "LICENSE"]
 

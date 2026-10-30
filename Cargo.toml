@@ -8,6 +8,7 @@ edition = "2021"
 authors = ["tiero", "msinkec", "d4rp4t"]
 license = "MIT"
 repository = "https://github.com/arkade-os/compiler"
+homepage = "https://arkade-os.github.io/compiler"
 
 [package]
 name = "arkade-compiler"
@@ -17,6 +18,15 @@ description = "A compiler for Arkade Script - a language for creating Bitcoin Ta
 authors.workspace = true
 license.workspace = true
 repository.workspace = true
+homepage.workspace = true
+keywords = ["arkade", "bitcoin", "compiler", "tapscript", "wasm"]
+categories = [
+    "compilers",
+    "cryptography::cryptocurrencies",
+    "command-line-utilities",
+    "parser-implementations",
+    "wasm",
+]
 include = ["src/**/*.rs", "src/**/*.pest", "LICENSE"]
 
 [dependencies]
