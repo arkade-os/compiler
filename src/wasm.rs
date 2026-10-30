@@ -173,11 +173,8 @@ pub fn symbol_at(entry: &str, files: &str, line: usize, column: usize) -> Result
         return Ok("null".to_string());
     };
     let location = |file: &str, span: crate::diagnostics::Span| {
-        let position = |offset| {
-            let (line, column) = crate::diagnostics::position(analysis.source(file)?, offset)?;
-            Some(serde_json::json!({ "line": line, "column": column }))
-        };
-        serde_json::json!({ "file": file, "start": position(span.start), "end": position(span.end) })
+        let [start, end] = crate::diagnostics::range_json(analysis.source(file), Some(span));
+        serde_json::json!({ "file": file, "start": start, "end": end })
     };
     let index = symbols
         .definitions()

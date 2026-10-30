@@ -43,11 +43,7 @@ pub fn offset(source: &str, line: usize, column: usize) -> Option<usize> {
 /// `diagnostic` as JSON for tools: `severity`, `code`, `message`, `file`, and, when it is
 /// located and `source` is its file's text, `start` and `end` as `{ line, column }`.
 pub fn to_json(diagnostic: &Diagnostic, source: Option<&str>) -> serde_json::Value {
-    let at = |offset: usize| {
-        let (line, column) = position(source?, offset)?;
-        Some(serde_json::json!({ "line": line, "column": column }))
-    };
-    let span = diagnostic.span;
+    let [start, end] = range_json(source, diagnostic.span);
     serde_json::json!({
         "severity": match diagnostic.severity {
             Severity::Error => "error",
@@ -56,9 +52,19 @@ pub fn to_json(diagnostic: &Diagnostic, source: Option<&str>) -> serde_json::Val
         "code": diagnostic.code,
         "message": diagnostic.message,
         "file": diagnostic.file,
-        "start": span.and_then(|span| at(span.start)),
-        "end": span.and_then(|span| at(span.end)),
+        "start": start,
+        "end": end,
     })
+}
+
+/// `span`'s start and end in `source` as `{ line, column }`, both `null` unless both resolve.
+pub(crate) fn range_json(source: Option<&str>, span: Option<Span>) -> [serde_json::Value; 2] {
+    let at = |offset| {
+        let (line, column) = position(source?, offset)?;
+        Some(serde_json::json!({ "line": line, "column": column }))
+    };
+    span.and_then(|span| Some([at(span.start)?, at(span.end)?]))
+        .unwrap_or_default()
 }
 
 impl From<pest::Span<'_>> for Span {
@@ -231,6 +237,16 @@ mod tests {
         assert_eq!(position(source, source.find('x').unwrap()), Some((2, 4)));
         assert_eq!(offset(source, 2, 9), None);
         assert_eq!(offset(source, 9, 1), None);
+    }
+
+    #[test]
+    fn a_diagnostic_has_both_ends_or_neither() {
+        let diagnostic =
+            Diagnostic::error("main.ark", "bad").with_span(Some(Span { start: 1, end: 9 }));
+        let json = to_json(&diagnostic, Some("abc"));
+        assert!(json["start"].is_null() && json["end"].is_null());
+        let json = to_json(&diagnostic, Some("abc\ndefgh"));
+        assert_eq!(json["end"], serde_json::json!({ "line": 2, "column": 6 }));
     }
 
     #[test]

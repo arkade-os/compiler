@@ -21,6 +21,7 @@ export interface Diagnostic {
     code: string | null;
     message: string;
     file: string;
+    /** Set together with `end`, or both `null`. */
     start: Position | null;
     end: Position | null;
 }
@@ -39,6 +40,7 @@ export type SymbolKind = "contract" | "library" | "struct" | "constant" | "funct
 
 export interface Location {
     file: string;
+    /** Set together with `end`, or both `null`. */
     start: Position | null;
     end: Position | null;
 }
