@@ -74,6 +74,7 @@ const bundledSnapshot = JSON.parse(JSON.stringify({ projects, examples }));
 let editor = null;
 // Bumped by edits, source changes and compiles; compiler results from an earlier request are stale.
 let compileRequest = 0;
+let storedSources = null; // Saved paths and sources; names alone leave compiler results current
 let currentProject = null;
 let currentFile = null;
 let openTabs = [];
@@ -96,9 +97,11 @@ function saveToStorage() {
     for (const [id, ex] of Object.entries(examples)) {
         data.examples[id] = { name: ex.name, code: ex.code };
     }
+    const sources = JSON.stringify([Object.entries(projects).map(([id, p]) => [id, p.files]), Object.entries(examples).map(([id, e]) => [id, e.code])]);
+    if (sources !== storedSources) compileRequest++;
+    storedSources = sources;
     const serialized = JSON.stringify(data);
     if (localStorage.getItem(STORAGE_KEY) === serialized) return;
-    compileRequest++;
     localStorage.setItem(STORAGE_KEY, serialized);
 }
 

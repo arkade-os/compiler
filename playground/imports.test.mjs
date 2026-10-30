@@ -517,4 +517,17 @@ assert(!upgraded.read("Object.hasOwn(examples, 'retired')"));
 assert.equal(upgraded.read('examples.kept.code'), 'edited');
 assert(!Object.hasOwn(upgraded.store, 'arkade-playground-legacy'));
 
+// Renaming keeps pending compiler results, while a source change makes them stale.
+assert.equal(vm.runInContext(`
+    saveToStorage();
+    const request = compileRequest;
+    const id = Object.keys(examples)[0];
+    examples[id].name += ' renamed';
+    saveToStorage();
+    const renamed = compileRequest;
+    examples[id].code += ' ';
+    saveToStorage();
+    [renamed - request, compileRequest - request].join();
+`, context), '0,1');
+
 console.log(`Verified ${selections.length} playground entries, source round trips, shared projects, dependency edits, removed shared examples, idempotent share links, and stored edits over bundled updates.`);
