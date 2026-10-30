@@ -2,13 +2,7 @@
 
 Compile Arkade source projects in Node.js and browser applications. The package includes prebuilt WebAssembly, generated bindings, and TypeScript declarations. Consumers do not need Rust or wasm-pack, and compilation requires no wallet, provider, or Arkade network connection.
 
-This package is prepared for npm publication but is not published yet. To install a local build, run `npm pack` in this directory, then install the resulting tarball in your application:
-
-```sh
-npm install /path/to/arkade-os-compiler-0.1.0.tgz
-```
-
-After publication, install and pin the compiler with `npm install --save-exact @arkade-os/compiler@0.1.0`. Keep your application lockfile. Use a development dependency for build-time compilation, or a runtime dependency when your application compiles source at runtime.
+Install and pin the compiler with `npm install --save-exact @arkade-os/compiler`. Release candidates are published under the `next` dist-tag: `npm install --save-exact @arkade-os/compiler@next`. Each GitHub release also carries the package tarball, which installs without the registry (`npm install ./arkade-os-compiler-<version>.tgz`), as does a local build made with `npm pack` in this directory. Keep your application lockfile. Use a development dependency for build-time compilation, or a runtime dependency when your application compiles source at runtime.
 
 ```ts
 import { compile, version } from "@arkade-os/compiler";
@@ -98,4 +92,4 @@ npm pack
 
 `npm test` installs a tarball into an isolated application, checks Node ESM/CommonJS and TypeScript declarations, and executes a production browser bundle. It also verifies relative imports, artifact and warning preservation, structured diagnostics, concurrent initialization, useful failures, initialization retry, and the worker example's responsiveness and restart behavior. To use an existing Chrome installation locally, run `PLAYWRIGHT_CHANNEL=chrome npm test`.
 
-`npm pack` runs the release build through `prepack`; installing the tarball has no build lifecycle scripts or runtime dependencies. Generated `dist/`, license copies, dependencies, and tarballs are ignored. Package builds require the npm version to match `[workspace.package].version` in the root `Cargo.toml`. Bump both for a compiler release. Package CI builds and tests the tarball without publishing it. npm publication must be configured separately once organization permissions are available.
+`npm pack` runs the release build through `prepack`; installing the tarball has no build lifecycle scripts or runtime dependencies. Generated `dist/`, license copies, dependencies, and tarballs are ignored. Package builds require the npm version to match `[workspace.package].version` in the root `Cargo.toml`. Bump both for a compiler release. Package CI builds and tests the tarball without publishing it; a `v<version>` tag builds, tests and publishes it, as the root README's release section describes.
