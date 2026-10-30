@@ -174,7 +174,7 @@ try {
         await assert.rejects(esm.compile(input, options), TypeError);
         await assert.rejects(esm.check(input, options), TypeError);
     }
-    for (const bad of [undefined, null, {}, { line: 0, column: 1 }, { line: 1, column: -1 }, { line: 1.5, column: 1 }, { line: '1', column: 1 }]) {
+    for (const bad of [undefined, null, {}, { line: 0, column: 1 }, { line: 1, column: -1 }, { line: 1.5, column: 1 }, { line: '1', column: 1 }, { line: 2 ** 32 + 3, column: 1 }, { line: 1, column: 2 ** 32 }]) {
         await assert.rejects(esm.symbolAt(input, bad), TypeError);
         await assert.rejects(esm.completionsAt(input, bad), TypeError);
     }

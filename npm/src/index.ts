@@ -172,8 +172,10 @@ function optimization(options?: CompileOptions): boolean | undefined {
 function serializePosition(position: Position): [number, number] {
     const line = position?.line;
     const column = position?.column;
-    if (!Number.isInteger(line) || !Number.isInteger(column) || line < 1 || column < 1) {
-        throw new TypeError("Expected { line: number, column: number } with 1-based integers");
+    // The WASM exports take wasm32 `usize`, which wraps larger numbers.
+    if (!Number.isInteger(line) || !Number.isInteger(column) || line < 1 || column < 1
+        || line > 0xFFFFFFFF || column > 0xFFFFFFFF) {
+        throw new TypeError("Expected { line: number, column: number } with 1-based 32-bit integers");
     }
     return [line, column];
 }
