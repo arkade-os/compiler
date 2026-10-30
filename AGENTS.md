@@ -48,6 +48,8 @@ PEG alternative order changes parsing behavior. Review nearby alternatives and a
 
 Treat public artifact shapes in `src/models/mod.rs`, assembly generation in `src/compiler/`, dependencies in `Cargo.toml`, and deployment workflows as high-risk interfaces. Check downstream consumers and compatibility before changing them.
 
+Keep the compiler's public APIs aligned: a change to the Rust API in `src/lib.rs`, the WASM bindings in `src/wasm.rs`, or the npm wrapper in `npm/src/` must update the other layers, the playground, and their tests in the same change.
+
 Keep covenant assembly and L1 tapleaf assembly distinct in implementation and tests. Assert the affected spend group, covenant, leaves, witness shape, and critical opcodes when semantics change.
 
 Normalize or ignore the dynamic `updatedAt` field in artifact comparisons.

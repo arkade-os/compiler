@@ -245,7 +245,7 @@ pub(crate) fn compile_file(
 }
 
 pub(crate) fn relative_path(path: &str) -> Result<String, String> {
-    if Path::new(path).is_absolute() || path.contains('\\') || path.contains(':') {
+    if path.starts_with('/') || path.contains('\\') || path.contains(':') {
         return Err(format!(
             "source path '{path}' must be a relative .ark path using '/'"
         ));
@@ -282,7 +282,7 @@ fn normalize(path: &Path) -> Result<String, String> {
 }
 
 fn import_path(importer: &str, import: &str) -> Result<String, String> {
-    if Path::new(import).is_absolute() || import.contains('\\') || import.contains(':') {
+    if import.starts_with('/') || import.contains('\\') || import.contains(':') {
         return Err(format!(
             "import '{import}' must be a relative .ark path using '/'"
         ));
@@ -1053,5 +1053,42 @@ mod tests {
             error.starts_with("lib.ark: validation error: line 3, column 13: "),
             "{error}"
         );
+    }
+
+    #[test]
+    fn a_dependency_syntax_failure_keeps_its_file_and_span() {
+        let files = BTreeMap::from([
+            (
+                "main.ark".into(),
+                "import \"lib.ark\"; contract C() { function spend() { require(true); } }".into(),
+            ),
+            ("lib.ark".into(), "// é 🐴\nlibrary Broken(".into()),
+        ]);
+        let [diagnostic]: [_; 1] = super::check_sources("main.ark", &files).try_into().unwrap();
+        assert_eq!(diagnostic.file, "lib.ark");
+        assert_eq!(diagnostic.severity, Severity::Error);
+        let span = diagnostic.span.unwrap();
+        assert_eq!(&files["lib.ark"][span.start..span.end], "(");
+        let error = super::compile_sources("main.ark", &files, Default::default()).unwrap_err();
+        assert!(error.starts_with("lib.ark: Parse error:"), "{error}");
+    }
+
+    #[test]
+    fn a_dependency_loader_failure_keeps_its_file() {
+        let files = BTreeMap::from([
+            (
+                "main.ark".into(),
+                "import \"lib.ark\"; contract C() { function spend() { require(true); } }".into(),
+            ),
+            (
+                "lib.ark".into(),
+                "library AssetId { function value() int { return 1; } }".into(),
+            ),
+        ]);
+        let [diagnostic]: [_; 1] = super::check_sources("main.ark", &files).try_into().unwrap();
+        assert_eq!(diagnostic.file, "lib.ark");
+        assert_eq!(diagnostic.message, "contract name 'AssetId' is reserved");
+        let span = diagnostic.span.unwrap();
+        assert_eq!(&files["lib.ark"][span.start..span.end], "AssetId");
     }
 }

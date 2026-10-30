@@ -3,7 +3,7 @@ members = [".", "arkade-bindgen"]
 resolver = "2"
 
 [workspace.package]
-version = "0.1.0"
+version = "0.1.0-rc.1"
 edition = "2021"
 authors = ["tiero", "msinkec", "d4rp4t"]
 license = "MIT"

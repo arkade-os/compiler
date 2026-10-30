@@ -42,17 +42,17 @@ jobs:
         with:
           tool: wasm-pack@0.15.0
 
-      - name: Generate contracts.js
-        run: ./playground/generate_contracts.sh
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: npm/package-lock.json
 
-      - name: Build WASM package
-        run: wasm-pack build --target web --out-dir playground/pkg -- --features wasm
-
-      - name: Clean up WASM package artifacts
+      - name: Build and verify playground
         run: |
-          rm -f playground/pkg/.gitignore
-          rm -f playground/pkg/package.json
-          rm -f playground/pkg/README.md
+          ./playground/build.sh
+          node playground/imports.test.mjs
+          node playground/completions.test.mjs
 
       - name: Remove playground .gitignore so generated files are included
         run: rm playground/.gitignore

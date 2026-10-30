@@ -1,6 +1,6 @@
 #!/bin/bash
 # Build script for Arkade Playground
-# This script compiles the Rust compiler to WASM and sets up the playground
+# Build the compiler package and install its browser assets for the static playground.
 
 set -e
 
@@ -18,23 +18,19 @@ if ! command -v wasm-pack &> /dev/null; then
     exit 1
 fi
 
-# Generate contracts.js from examples/*.ark
-echo "[1/4] Generating contracts.js from examples..."
+echo "[1/3] Generating contracts.js from examples..."
 "$SCRIPT_DIR/generate_contracts.sh"
 
-# Build WASM package
-echo "[2/4] Building WASM package..."
-cd "$PROJECT_DIR"
-wasm-pack build --target web --out-dir playground/pkg -- --features wasm
+echo "[2/3] Packing @arkade-os/compiler..."
+cd "$PROJECT_DIR/npm"
+npm ci
+npm pack
+COMPILER_VERSION="$(node -p "require('./package.json').version")"
 
-# Clean up unnecessary files
-echo "[3/4] Cleaning up..."
-rm -f playground/pkg/.gitignore
-rm -f playground/pkg/package.json
-rm -f playground/pkg/README.md
-
-# Done
-echo "[4/4] Build complete!"
+echo "[3/3] Installing packed browser assets..."
+rm -rf "$SCRIPT_DIR/pkg"
+mkdir -p "$SCRIPT_DIR/pkg"
+tar -xzf "arkade-os-compiler-$COMPILER_VERSION.tgz" -C "$SCRIPT_DIR/pkg" --strip-components=3 package/dist/browser
 echo ""
 echo "To serve the playground locally:"
 echo "  cd playground && python3 -m http.server 8080"
