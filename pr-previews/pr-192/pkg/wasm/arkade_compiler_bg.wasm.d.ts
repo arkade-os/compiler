@@ -5,8 +5,8 @@ export const check_sources: (a: number, b: number, c: number, d: number, e: numb
 export const compile: (a: number, b: number) => [number, number, number, number];
 export const compile_sources: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
 export const compile_sources_with_diagnostics: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
+export const completions_at: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number, number];
 export const symbol_at: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number, number];
-export const symbols: (a: number, b: number, c: number, d: number) => [number, number, number, number];
 export const validate: (a: number, b: number) => [number, number, number];
 export const version: () => [number, number];
 export const init: () => void;

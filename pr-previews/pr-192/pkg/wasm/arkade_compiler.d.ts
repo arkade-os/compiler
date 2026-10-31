@@ -28,12 +28,20 @@ export function compile_sources(entry: string, files: string, optimize?: boolean
 /**
  * Compile a virtual project and report every diagnostic with its position. Compilation
  * errors are diagnostics, not a thrown error: the result is
- * `{ artifact: string | null, debug: string | null, warnings: string[], diagnostics: Diagnostic[] }`,
+ * `{ artifact: string | null, debug: string | null, diagnostics: Diagnostic[] }`,
  * where `debug` is the debug file JSON (`ContractJson::debug_info`) and each
  * diagnostic has `severity`, `code`, `message`, `file` and, when located, 1-based `start` and
  * `end` `{ line, column }` with columns counted in UTF-16 units, as editors count them.
  */
 export function compile_sources_with_diagnostics(entry: string, files: string, optimize?: boolean | null): string;
+
+/**
+ * The names usable at 1-based `line` and UTF-16 `column` of `entry`, for completion:
+ * `{ symbols, structs, members }`, where `members` lists a library's or contract's names
+ * under its own, and `structs` gives the fields of every struct analyzed, since a field's type
+ * can name a struct the entry does not see.
+ */
+export function completions_at(entry: string, files: string, line: number, column: number): string;
 
 /**
  * Initialize panic hook for better error messages in the browser console
@@ -46,12 +54,6 @@ export function init(): void;
  * `{ file, start, end }`, or `null` when no name is there.
  */
 export function symbol_at(entry: string, files: string, line: number, column: number): string;
-
-/**
- * Completion symbols for `entry` in a virtual project. `files` is a JSON object
- * mapping relative .ark paths to source text.
- */
-export function symbols(entry: string, files: string): string;
 
 /**
  * Validate Arkade Script source code without generating output
@@ -77,8 +79,8 @@ export interface InitOutput {
     readonly compile: (a: number, b: number) => [number, number, number, number];
     readonly compile_sources: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
     readonly compile_sources_with_diagnostics: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
+    readonly completions_at: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number, number];
     readonly symbol_at: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number, number];
-    readonly symbols: (a: number, b: number, c: number, d: number) => [number, number, number, number];
     readonly validate: (a: number, b: number) => [number, number, number];
     readonly version: () => [number, number];
     readonly init: () => void;
