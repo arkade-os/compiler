@@ -125,3 +125,12 @@ fn debug_writes_the_source_maps_next_to_the_artifact() {
         .unwrap()
         .is_empty());
 }
+
+#[test]
+fn builtins_prints_the_builtin_docs_without_a_file() {
+    let (status, stdout) = check(&["--builtins"], &[]);
+    assert_eq!(status, 0);
+    let docs: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(docs["functions"]["sha256"]["result"], "bytes32");
+    assert_eq!(docs["members"]["this.tunnel"]["result"], "bool");
+}

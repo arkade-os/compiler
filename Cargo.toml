@@ -27,7 +27,7 @@ categories = [
     "parser-implementations",
     "wasm",
 ]
-include = ["src/**/*.rs", "src/**/*.pest", "LICENSE"]
+include = ["src/**/*.rs", "src/**/*.pest", "src/**/*.json", "LICENSE"]
 
 [dependencies]
 pest = "2.7.8"
