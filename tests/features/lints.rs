@@ -391,6 +391,21 @@ fn findings_from_an_imported_helper_sit_at_the_call() {
 }
 
 #[test]
+fn a_requirement_that_folds_to_false_disables_the_function() {
+    for dead in ["1 > 2", "0xAB != 0xab", "!true", "1 + 1 == 3"] {
+        let source = format!(
+            "contract C(int n) {{ function f(int x) {{ require({dead}); require(x == n); }} }}"
+        );
+        assert!(
+            !diagnostics_with(&source, &Levels::default())
+                .iter()
+                .any(|d| d.lint == Some(Lint::AnyoneCanSpend)),
+            "{dead}"
+        );
+    }
+}
+
+#[test]
 fn a_disabled_branch_keeps_the_rest_of_the_function_linted() {
     let source = "contract C(int n) { function f(bool b, int x) { if (b) { require(false); } else { require(x == n); } } }";
     assert!(diagnostics_with(source, &Levels::default())

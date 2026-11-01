@@ -2,6 +2,8 @@ A `checkSigFromStack` message that is a witness parameter used nowhere else.
 
 The signature then proves only that someone signed some message, not that it is about this spend, so one signed message authorizes any spend, forever.
 
+The lint follows the witness only within the function it belongs to: a witness passed to a helper that checks it is not reported.
+
 Fix: derive the message from what the spend must match, such as the input's outpoint, the amount and the recipient.
 
 ```solidity

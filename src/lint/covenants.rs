@@ -411,23 +411,18 @@ fn hashes_name(expression: &Expression) -> bool {
             && matches!(args[0].kind, ExprKind::Name(_)))
 }
 
-/// `require(false)` or a comparison of two different literals, as in a disabled function.
+/// A requirement the constant folder evaluates to false, as in a disabled function.
 fn never_passes(requirement: &Requirement) -> bool {
-    let literal = |e: &Expression| match &e.kind {
-        ExprKind::Literal(value) => Some(value.clone()),
-        _ => None,
+    let condition = match requirement {
+        Requirement::Expression(value) => value.clone(),
+        Requirement::Comparison { left, op, right } => left.with_kind(ExprKind::BinaryOp {
+            left: Box::new(left.clone()),
+            op: *op,
+            right: Box::new(right.clone()),
+        }),
     };
-    match requirement {
-        Requirement::Expression(value) => literal(value).as_deref() == Some("false"),
-        Requirement::Comparison { left, op, right } => match (literal(left), literal(right)) {
-            (Some(left), Some(right)) => match op {
-                BinaryOperator::Eq => left != right,
-                BinaryOperator::Ne => left == right,
-                _ => false,
-            },
-            _ => false,
-        },
-    }
+    let mut no_names = |_: &crate::models::Path| Err(String::new());
+    crate::compiler::constants::evaluate(&condition, &mut no_names).as_deref() == Ok("false")
 }
 
 fn is_active_input(expression: &Expression) -> bool {
