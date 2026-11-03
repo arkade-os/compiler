@@ -326,8 +326,8 @@ pub(super) fn validate_binding_expression(
                 {
                     for (index, value) in elements.iter().enumerate() {
                         let actual = &value.ty;
-                        // A struct literal has no type of its own, so it is checked field by field;
-                        // signatures name only native structs.
+                        // A struct literal has no type of its own, so it is checked against the
+                        // element type; signatures name only native structs.
                         if matches!(&value.kind, ExprKind::StructLiteral(_)) {
                             super::functions::validate_value(
                                 &(&**element).into(),
