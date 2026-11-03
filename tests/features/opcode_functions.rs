@@ -598,6 +598,47 @@ fn test_ec_pairing_takes_aligned_point_arrays() {
         error.contains("ecPairing supports at most 16 pairs, got 17"),
         "{error}"
     );
+    let error = compile(
+        "contract C(G2Point[1] g2) { function f() { require(ecPairing([{x: 1, y: 2}], g2, 2)); } }",
+    )
+    .expect_err("point struct literals need a typed declaration")
+    .to_string();
+    assert!(
+        error.contains("struct literals may only initialize a typed struct declaration"),
+        "{error}"
+    );
+}
+
+#[test]
+fn test_ec_pairing_evaluates_computed_point_arrays_once() {
+    for compile in [arkade_compiler::compile, compile] {
+        let output = compile(
+            r#"
+            contract EllipticCurve(ECPoint[2] g1, G2Point[2] g2) {
+                private function points(int n) ECPoint[2] { require(n == 1234); return g1; }
+                private function lines(int n) G2Point[2] { require(n == 5678); return g2; }
+                function pair(int n) { require(ecPairing(points(n), lines(n), 2)); }
+                function second(int n) { require(ecPairing(g1, lines(n), 2)); }
+            }
+        "#,
+        )
+        .expect("ecPairing accepts helper results on either side");
+        for (function, markers) in [("pair", &["1234", "5678"][..]), ("second", &["5678"])] {
+            let asm = crate::common::arkade_asm_tokens(&output, function);
+            let evaluated: Vec<_> = asm
+                .iter()
+                .filter(|token| markers.contains(&token.as_str()))
+                .collect();
+            assert_eq!(
+                evaluated, markers,
+                "each helper runs once, G1 first: {asm:?}"
+            );
+            assert!(
+                contains_tokens(&asm, &["OP_2", "2", OP_ECPAIRING]),
+                "{asm:?}"
+            );
+        }
+    }
 }
 
 #[test]
