@@ -317,10 +317,22 @@ pub(super) fn validate_binding_expression(
                     None => ArkType::parse(declared),
                 };
                 // Composite operands are emitted field by field, so their type must be known;
-                // a struct literal operand has none and is rejected.
+                // a struct literal has none, so it is checked against a native struct
+                // parameter and rejected in any other position.
                 let known = actual != ArkType::Unknown
                     || matches!(expected, ArkType::Struct(_) | ArkType::Array(..))
                     || matches!(&operand.kind, ExprKind::StructLiteral(_));
+                if let (ExprKind::StructLiteral(_), ArkType::Struct(_)) = (&operand.kind, &expected)
+                {
+                    super::functions::validate_value(
+                        &(&expected).into(),
+                        operand,
+                        &[],
+                        &format!("function '{function_name}': {name} operand"),
+                        issues,
+                    );
+                    continue;
+                }
                 if let (ExprKind::ArrayLiteral(elements), ArkType::Array(element, length)) =
                     (&operand.kind, &expected)
                 {
