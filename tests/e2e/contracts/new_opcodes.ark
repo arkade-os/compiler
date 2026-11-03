@@ -54,6 +54,10 @@ contract Continuation() {
         require(ecPairing(points(g1), lines(g2), 2));
     }
 
+    function literalPairing(ECPoint[2] g1, G2Point[2] g2) {
+        require(ecPairing([g1[0], g1[1]], [g2[0], g2[1]], 2));
+    }
+
     function pairingProof(PairingProof[2] proofs, int index) {
         require(ecPairing(proofs[index].g1, proofs[index].g2, 2));
     }

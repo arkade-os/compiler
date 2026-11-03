@@ -598,6 +598,15 @@ fn test_ec_pairing_takes_aligned_point_arrays() {
         error.contains("ecPairing supports at most 16 pairs, got 17"),
         "{error}"
     );
+    let error = compile(
+        "contract C(G2Point[1] g2) { function f() { require(ecPairing([{x: 1, y: 2}], g2, 2)); } }",
+    )
+    .expect_err("point struct literals need a typed declaration")
+    .to_string();
+    assert!(
+        error.contains("struct literals may only initialize a typed struct declaration"),
+        "{error}"
+    );
 }
 
 #[test]
