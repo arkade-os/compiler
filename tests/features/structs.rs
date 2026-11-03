@@ -1,8 +1,8 @@
-use crate::common::compile_unoptimized as compile;
+use crate::common::{compile_unoptimized as compile, opcode_count_in_arkade};
 use arkade_compiler::opcodes::{
     OP_ADD, OP_BOOLAND, OP_CHECKSIG, OP_CHECKSIGFROMSTACK, OP_DUP, OP_ENDIF, OP_GREATERTHANOREQUAL,
-    OP_INSPECTASSETGROUPASSETID, OP_INSPECTINPUTOUTPOINT, OP_LESSTHAN, OP_NOT, OP_NUMEQUAL,
-    OP_NUMEQUALVERIFY, OP_PICK, OP_PUT, OP_ROLL, OP_SWAP, OP_VERIFY,
+    OP_INSPECTASSETGROUPASSETID, OP_INSPECTINPUTOUTPOINT, OP_LESSTHAN, OP_MOD, OP_NOT, OP_NUMEQUAL,
+    OP_NUMEQUALVERIFY, OP_PICK, OP_PUT, OP_ROLL, OP_SHA256, OP_SWAP, OP_VERIFY,
 };
 
 #[test]
@@ -196,6 +196,79 @@ contract C(Point point) {
         composite.contains("struct expressions are composite values"),
         "{composite}"
     );
+}
+
+#[test]
+fn computed_results_take_field_and_index_suffixes_evaluated_once() {
+    let source = r#"
+struct Point { int x; int y; }
+struct Shape { Point[2] points; }
+contract C() {
+    private function shape(bytes seed) Shape {
+        require(sha256(seed) != seed);
+        return { points: [{ x: 1, y: 2 }, { x: 3, y: 4 }] };
+    }
+    private function pair() int[2] { return [1, 2]; }
+    function spend(bytes seed, int i) {
+        Point corner = shape(seed).points[i % 2];
+        require(corner.y == 4);
+        require(pair()[1] == 2 && pair().length == 2);
+        require(tx.outputs[0].script.version == 1);
+    }
+}
+"#;
+    for output in [
+        arkade_compiler::compile(source).unwrap(),
+        compile(source).unwrap(),
+    ] {
+        // The helper and the runtime index are emitted once for both point fields.
+        for opcode in [OP_SHA256, OP_MOD] {
+            assert_eq!(opcode_count_in_arkade(&output, "spend", opcode), 1);
+        }
+    }
+}
+
+#[test]
+fn computed_result_accesses_reject_invalid_members_and_indexes() {
+    for (body, expected) in [
+        (
+            "require(shape().z == 1);",
+            "value of type 'Shape' has no field 'z'",
+        ),
+        (
+            "require(tx.outputs[0].script.foo == 1);",
+            "value of type 'ScriptPubKey' has no field 'foo'",
+        ),
+        (
+            "require(shape()[0] == 1);",
+            "value of type 'Shape' is not an array",
+        ),
+        (
+            "require(shape().points[2].x == 1);",
+            "array index '2' is out of range for 'Point[2]'",
+        ),
+        (
+            "int[3] ks = [0, 1, 2]; for (k, v) in ks { require(shape().points[k].x == v); }",
+            "array index '2' is out of range for 'Point[2]'",
+        ),
+        (
+            "require([1, 2][0] == 1);",
+            "cannot read a field or element of a literal",
+        ),
+        (
+            "for (i, p) in shape().points { require(p.x == i); }",
+            "unsupported loop iterable",
+        ),
+    ] {
+        let source = format!(
+            "struct Point {{ int x; int y; }} struct Shape {{ Point[2] points; }} contract C() {{
+                private function shape() Shape {{ return {{ points: [{{ x: 1, y: 2 }}, {{ x: 3, y: 4 }}] }}; }}
+                function spend() {{ {body} }}
+            }}"
+        );
+        let error = compile(&source).expect_err(body).to_string();
+        assert!(error.contains(expected), "{body}: {error}");
+    }
 }
 
 #[test]
