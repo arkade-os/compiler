@@ -145,6 +145,45 @@ fn lower_statement(
             let types::ArkType::Array(_, length) = iterable.ty else {
                 return Err("unsupported loop iterable".into());
             };
+            // A computed array is evaluated once into a binding scoped to the loop, which the
+            // unrolled iterations then read element by element. Nested loops start at distinct
+            // offsets, so their bindings never collide.
+            if iterable.binding_path().is_none() {
+                let name = format!("$for:{}", span.start);
+                let mut items = iterable.with_kind(ExprKind::Name(Path::new(&name)));
+                items.ty = iterable.ty.clone();
+                let located = |span, statement| LocatedStatement {
+                    span,
+                    names: Vec::new(),
+                    branches: Vec::new(),
+                    message: None,
+                    statement,
+                };
+                let body = [
+                    located(
+                        iterable.span,
+                        Statement::LetBinding {
+                            name,
+                            declared_type: Some((&iterable.ty).into()),
+                            value: iterable,
+                        },
+                    ),
+                    located(
+                        span,
+                        Statement::ForIn {
+                            index_var,
+                            value_var,
+                            iterable: items,
+                            body,
+                        },
+                    ),
+                ];
+                return Ok(Some(Lowered::Unrolled {
+                    span,
+                    iterations: vec![lower(&body, &mut scope.clone(), structs, fold)?],
+                    guarded: false,
+                }));
+            }
             let iterations = (0..length).map(|k| {
                 let mut substituted =
                     substitute_loop_body(&body, &index_var, &value_var, k, &iterable);
