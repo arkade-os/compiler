@@ -19,7 +19,8 @@ fn emit_native_struct_asm(value: &Expression, fields: &[(&str, &str)], asm: &mut
                 asm.push(Op::Read(path.clone().field(*field)));
             }
         }
-        // Validation checked the literal against `fields`, which are all scalars.
+        // ponytail: validation checked the literal against `fields`, which are all scalars for
+        // today's native struct parameters; one with struct fields needs recursive emission.
         ExprKind::StructLiteral(values) => {
             for (field, _) in fields {
                 let (_, value) = values
