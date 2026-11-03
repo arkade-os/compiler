@@ -155,6 +155,38 @@ impl Generator {
         Ok(())
     }
 
+    /// Emit a builtin call with argument `position` evaluated once into a local binding,
+    /// which `emit` then reads by name.
+    fn emit_with_bound_arg(
+        &mut self,
+        call: &Expression,
+        position: usize,
+        emit: fn(&mut Self, &Expression) -> Result<()>,
+    ) -> Result<()> {
+        let mut normalized = call.clone();
+        let ExprKind::Builtin { args, .. } = &mut normalized.kind else {
+            return Err("expected a builtin call".into());
+        };
+        let value = &mut args[position];
+        let baseline = self.stack.len();
+        let scope = self.scope.clone();
+        let pinned = std::mem::replace(&mut self.pinned_stack_len, baseline);
+        let ark_type = value.ty.clone();
+        let ty = TypeName::from(&ark_type);
+        let name = format!("$arg:{baseline}");
+        self.emit_typed_value(value, &ty)?;
+        self.bind_value(&name, &ty)?;
+        self.bind_type(&name, &ty);
+        *value = value.with_kind(ExprKind::Name(Path::new(name)));
+        value.ty = ark_type;
+        emit(self, &normalized)?;
+        self.discard_call_frame(baseline, 1)?;
+        self.last_reads.retain(|(_, index), _| *index < baseline);
+        self.scope = scope;
+        self.pinned_stack_len = pinned;
+        Ok(())
+    }
+
     pub(super) fn emit_multisig(&mut self, expression: &Expression) -> Result<()> {
         let ExprKind::Builtin { args, .. } = &expression.kind else {
             return Err("expected checkMultisig".into());
@@ -174,26 +206,7 @@ impl Generator {
         let literal_threshold = multisig_threshold(threshold, count)?;
         // Keys need indexed reads, so computed arrays are bound once.
         if !matches!(&keys.kind, ExprKind::ArrayLiteral(_)) && keys.binding_path().is_none() {
-            let baseline = self.stack.len();
-            let scope = self.scope.clone();
-            let pinned = std::mem::replace(&mut self.pinned_stack_len, baseline);
-            let ty = TypeName::from(&keys.ty);
-            let name = format!("$multisig:{baseline}");
-            self.emit_typed_value(keys, &ty)?;
-            self.bind_value(&name, &ty)?;
-            self.bind_type(&name, &ty);
-            let mut normalized = expression.clone();
-            let ExprKind::Builtin { args, .. } = &mut normalized.kind else {
-                unreachable!("checkMultisig is a builtin call")
-            };
-            args[0] = keys.with_kind(ExprKind::Name(Path::new(name)));
-            args[0].ty = keys.ty.clone();
-            self.emit_multisig(&normalized)?;
-            self.discard_call_frame(baseline, 1)?;
-            self.last_reads.retain(|(_, index), _| *index < baseline);
-            self.scope = scope;
-            self.pinned_stack_len = pinned;
-            return Ok(());
+            return self.emit_with_bound_arg(expression, 0, Self::emit_multisig);
         }
         // Signatures need no binding: array emission leaves sig[0] on top for the checks.
         let signatures_type = TypeName::array(TypeName::Named("signature".into()), count);
@@ -299,11 +312,15 @@ impl Generator {
         let ArkType::Array(_, pairs) = g1.ty else {
             return Err("ecPairing G1 points must be an ECPoint array".into());
         };
+        // Pairs need indexed reads, so computed arrays are bound once, G1 first.
+        if let Some(position) = [g1, g2]
+            .iter()
+            .position(|points| points.binding_path().is_none())
+        {
+            return self.emit_with_bound_arg(pairing, position, Self::emit_pairing);
+        }
         for index in 0..pairs {
             for (points, ty) in [(g1, "ECPoint"), (g2, "G2Point")] {
-                if points.binding_path().is_none() {
-                    return Err("ecPairing points must be array bindings; bind computed arrays with `let` first".into());
-                }
                 let index = Box::new(points.with_kind(ExprKind::Literal(index.to_string())));
                 let element = points.with_kind(match &points.kind {
                     ExprKind::Name(path) => ExprKind::ArrayIndex {

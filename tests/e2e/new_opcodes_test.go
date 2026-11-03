@@ -136,6 +136,8 @@ func TestECPairing(t *testing.T) {
 	}{
 		{name: "balanced pairs", function: "pairing", inputs: pairs("", g1, negG1)},
 		{name: "unbalanced pairs", function: "pairing", inputs: pairs("", g1, g1), wantErr: "OP_VERIFY failed"},
+		{name: "computed balanced pairs", function: "computedPairing", inputs: pairs("", g1, negG1)},
+		{name: "computed unbalanced pairs", function: "computedPairing", inputs: pairs("", g1, g1), wantErr: "OP_VERIFY failed"},
 		{name: "selected balanced proof", function: "pairingProof", inputs: proofs(negG1)},
 		{name: "selected unbalanced proof", function: "pairingProof", inputs: proofs(g1), wantErr: "OP_VERIFY failed"},
 	} {
