@@ -458,7 +458,7 @@ x = <expr>;                        // reassignment keeps the declared type
 scale[x + 1] = 10;                 // runtime index with bounds checking
 p.primary.weight = 5;
 if (<expr>) { ... } else { ... }
-for (i, item) in arr { ... }       // any fixed-size array, evaluated once; unrolled at compile time
+for (i, item) in arr { ... }       // unrolled at compile time; a helper result or literal is evaluated once
 for (COUNT) { ... }                // COUNT is a non-negative compile-time int expression
 ```
 
