@@ -586,6 +586,7 @@ contract Loops() {
     for (iterable, expected) in [
         ("[v, true]", "element 1: expected 'int', got 'bool'"),
         ("[{ x: v }]", "cannot infer the element type"),
+        ("[[v, 1], [2, v]]", "array literal of arrays"),
     ] {
         let error = compile(&format!(
             "struct P {{ int x; }} contract C() {{ function spend(int v) {{ for (i, w) in {iterable} {{ require(i >= 0); }} }} }}"
