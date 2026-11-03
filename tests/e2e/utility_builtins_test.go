@@ -1,10 +1,14 @@
 package e2e
 
 import (
+	"bytes"
 	"crypto/sha1"
+	"crypto/sha256"
+	"encoding/gob"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -120,6 +124,65 @@ contract Utility() {
 			deployment := fundingTx(instance.pkScript, 10_000)
 			spend := spendingPSBTWithWitness(t, deployment, instance, 10_000, instance.pkScript, covenantWitness(t, contract, group, values))
 			requireVMResult(t, spend, emulatorKey.PubKey(), "")
+		})
+	}
+}
+
+func TestStreamingSha256(t *testing.T) {
+	source := filepath.Join(t.TempDir(), "streaming.ark")
+	err := os.WriteFile(source, []byte(`
+contract Streaming() {
+    private function step(bytes ctx, bytes chunk) bytes {
+        return sha256Update(ctx, chunk);
+    }
+    function chunks(bytes first, bytes second, bytes last) {
+        bytes ctx = sha256Initialize(first);
+        ctx = step(ctx, second);
+        bytes32 digest = sha256Finalize(ctx, last);
+        require(digest == sha256(first + second + last));
+    }
+    function resume(bytes ctx, bytes last, bytes32 expected) {
+        require(sha256Finalize(ctx, last) == expected);
+    }
+}`), 0600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	contract := compileArtifact(t, source)
+	serverKey, emulatorKey := fixedPrivateKey(1), fixedPrivateKey(2)
+	spend := func(t *testing.T, function string, values map[string][]byte, wantErr string) {
+		group := covenantGroup(t, contract, function)
+		instance := instantiateGroup(t, contract, function, nil, serverKey.PubKey(), emulatorKey.PubKey())
+		deployment := fundingTx(instance.pkScript, 10_000)
+		ptx := spendingPSBTWithWitness(t, deployment, instance, 10_000, instance.pkScript, covenantWitness(t, contract, group, values))
+		requireVMResult(t, ptx, emulatorKey.PubKey(), wantErr)
+	}
+
+	for _, chunks := range [][3]string{{"", "", ""}, {"he", "l", "lo"}, {"a", strings.Repeat("b", 100), "c"}} {
+		t.Run(fmt.Sprintf("chunks/%d", len(chunks[1])), func(t *testing.T) {
+			spend(t, "chunks", map[string][]byte{"first": []byte(chunks[0]), "second": []byte(chunks[1]), "last": []byte(chunks[2])}, "")
+		})
+	}
+
+	// The emulator serializes a context as the gob encoding of its SHA-256 state.
+	state := sha256.New()
+	state.Write([]byte("hel"))
+	var ctx bytes.Buffer
+	if err := gob.NewEncoder(&ctx).Encode(state); err != nil {
+		t.Fatal(err)
+	}
+	digest := sha256.Sum256([]byte("hello"))
+	for _, tc := range []struct {
+		name     string
+		expected []byte
+		wantErr  string
+	}{
+		{"resumed digest", digest[:], ""},
+		{"wrong digest", make([]byte, 32), "false stack entry"},
+		{"short digest", digest[:31], "OP_EQUALVERIFY failed"},
+	} {
+		t.Run("resume/"+tc.name, func(t *testing.T) {
+			spend(t, "resume", map[string][]byte{"ctx": ctx.Bytes(), "last": []byte("lo"), "expected": tc.expected}, tc.wantErr)
 		})
 	}
 }

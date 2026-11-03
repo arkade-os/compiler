@@ -134,21 +134,22 @@ pub(crate) const BUILTINS: &[Builtin] = &[
         result: Some("bool"),
         lowering: Lowering::Multisig,
     },
+    // A streaming context is opaque VM state with no language-defined width.
     builtin(
         "sha256Initialize",
         &[("data", "bytes")],
-        "bytes32",
+        "bytes",
         &[Sha256Initialize],
     ),
     builtin(
         "sha256Update",
-        &[("ctx", "bytes32"), ("chunk", "bytes")],
-        "bytes32",
+        &[("ctx", "bytes"), ("chunk", "bytes")],
+        "bytes",
         &[Sha256Update],
     ),
     builtin(
         "sha256Finalize",
-        &[("ctx", "bytes32"), ("lastChunk", "bytes")],
+        &[("ctx", "bytes"), ("lastChunk", "bytes")],
         "bytes32",
         &[Sha256Finalize],
     ),
