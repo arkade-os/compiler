@@ -472,7 +472,9 @@ fn validate_binding_statements(
                         let before = issues.len();
                         validate_value_expression(iterable, function_name, scopes, issues);
                         match iterable.ty.clone() {
-                            // A literal takes its first element's type, which the rest must match.
+                            // ponytail: a literal takes its first element's type, which the
+                            // rest must match, so `[{ x: 1 }, p]` is rejected; join all
+                            // element types if such literals need to iterate.
                             ArkType::Array(element, _)
                                 if matches!(&iterable.kind, ExprKind::ArrayLiteral(_)) =>
                             {
