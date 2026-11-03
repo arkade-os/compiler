@@ -468,12 +468,35 @@ fn validate_binding_statements(
                         )));
                         ArkType::Unknown
                     }
-                    ExprKind::ArrayIndex { .. }
-                    | ExprKind::FieldAccess { .. }
-                    | ExprKind::IndexAccess { .. } => {
+                    _ => {
                         let before = issues.len();
                         validate_value_expression(iterable, function_name, scopes, issues);
                         match iterable.ty.clone() {
+                            // ponytail: a literal takes its first element's type, which the
+                            // rest must match, so `[{ x: 1 }, p]` is rejected; join all
+                            // element types if such literals need to iterate.
+                            ArkType::Array(element, _)
+                                if matches!(&iterable.kind, ExprKind::ArrayLiteral(_)) =>
+                            {
+                                if matches!(*element, ArkType::Array(..)) {
+                                    issues.push(ValidationIssue::error(format!(
+                                        "function '{function_name}': arrays contain scalars or structs, so a loop cannot iterate an array literal of arrays"
+                                    )));
+                                } else if *element != ArkType::Unknown {
+                                    super::functions::validate_value(
+                                        &TypeName::from(&iterable.ty),
+                                        iterable,
+                                        structs,
+                                        &format!("loop iterable in '{function_name}'"),
+                                        issues,
+                                    );
+                                } else if issues.len() == before {
+                                    issues.push(ValidationIssue::error(format!(
+                                        "function '{function_name}': cannot infer the element type of the loop's array literal; iterate a typed array, as in 'T[n] items = …'"
+                                    )));
+                                }
+                                *element
+                            }
                             ArkType::Array(element, _) => *element,
                             actual => {
                                 if issues.len() == before {
@@ -487,12 +510,6 @@ fn validate_binding_statements(
                                 ArkType::Unknown
                             }
                         }
-                    }
-                    _ => {
-                        issues.push(ValidationIssue::error(format!(
-                            "function '{function_name}': unsupported loop iterable"
-                        )));
-                        ArkType::Unknown
                     }
                 };
                 let mut frame = HashMap::new();

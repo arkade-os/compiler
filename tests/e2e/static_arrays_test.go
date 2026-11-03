@@ -2,6 +2,8 @@ package e2e
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"slices"
 	"testing"
 
@@ -143,6 +145,48 @@ func TestStaticArrays(t *testing.T) {
 			)
 
 			requireVMResult(t, signed, emulatorKey.PubKey(), testCase.wantErr)
+		})
+	}
+}
+
+func TestComputedLoopIterables(t *testing.T) {
+	source := filepath.Join(t.TempDir(), "loops.ark")
+	err := os.WriteFile(source, []byte(`
+struct Point { int x; int y; }
+contract Loops() {
+    private function values(int v) int[2] { require(v != 7); return [v, v + 1]; }
+    private function points(int v) Point[2] { return [{ x: v, y: v * 2 }, { x: v + 1, y: v * 3 }]; }
+    function spend(int v, int expected) {
+        int total = 0;
+        for (i, item) in values(v) { total = total + item * (i + 1); }
+        for (i, p) in points(v) { total = total + p.y - p.x * i; }
+        for (i, w) in [v, 5] { total = total + w * i; }
+        require(total == expected);
+    }
+}`), 0600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	contract := compileArtifact(t, source)
+	serverKey, emulatorKey := fixedPrivateKey(1), fixedPrivateKey(2)
+	group := covenantGroup(t, contract, "spend")
+	instance := instantiateGroup(t, contract, "spend", nil, serverKey.PubKey(), emulatorKey.PubKey())
+	deployment := fundingTx(instance.pkScript, 10_000)
+	// Each loop's terms differ when its elements or fields are read out of order.
+	total := func(v int64) int64 { return (v + (v+1)*2) + (2*v + 3*v - (v + 1)) + 5 }
+	for _, tc := range []struct {
+		name     string
+		v, delta int64
+		wantErr  string
+	}{
+		{"elements in order", 4, 0, ""},
+		{"wrong total", 4, 1, "false stack entry"},
+		{"helper requirement fails", 7, 0, "OP_VERIFY failed"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			values := map[string][]byte{"v": scriptInt(t, tc.v), "expected": scriptInt(t, total(tc.v)+tc.delta)}
+			spend := spendingPSBTWithWitness(t, deployment, instance, 10_000, instance.pkScript, covenantWitness(t, contract, group, values))
+			requireVMResult(t, spend, emulatorKey.PubKey(), tc.wantErr)
 		})
 	}
 }
