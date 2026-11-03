@@ -506,7 +506,7 @@ pub enum ExprKind {
     AssetLookup {
         source: AssetLookupSource,
         index: Box<Expression>,
-        asset_txid: Box<Expression>, // bytes32 reference
+        asset_txid: Box<Expression>, // bytes32 expression
         asset_gidx: Box<Expression>, // int reference or literal (0..65535)
     },
     /// Asset presence predicate: tx.inputs[i].assets.has(txid, gidx) or
