@@ -2,6 +2,8 @@ struct PairingProof { ECPoint[2] g1; G2Point[2] g2; }
 
 contract Continuation() {
     private function identity(AssetId id) AssetId { return id; }
+    private function points(ECPoint[2] g1) ECPoint[2] { return g1; }
+    private function lines(G2Point[2] g2) G2Point[2] { return g2; }
 
     function expiry(int expected) {
         require(this.expiry == expected);
@@ -46,6 +48,10 @@ contract Continuation() {
 
     function pairing(ECPoint[2] g1, G2Point[2] g2) {
         require(ecPairing(g1, g2, 2));
+    }
+
+    function computedPairing(ECPoint[2] g1, G2Point[2] g2) {
+        require(ecPairing(points(g1), lines(g2), 2));
     }
 
     function pairingProof(PairingProof[2] proofs, int index) {
