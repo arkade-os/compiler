@@ -8,7 +8,8 @@
 use std::collections::HashMap;
 
 use crate::models::{
-    AssignmentTarget, Contract, ExprKind, Expression, LocatedStatement, Path, Statement, TypeName,
+    AssignmentTarget, Contract, ExprKind, Expression, LocatedStatement, Path, Requirement,
+    Statement, TypeName,
 };
 use crate::operators::{BinaryOperator, OperatorClass, UnaryOperator};
 use crate::properties::{GroupIoProperty, GroupProperty};
@@ -279,6 +280,9 @@ impl Typing<'_> {
                     for value in requirement.expressions_mut() {
                         self.expression(value, scope);
                     }
+                    if let Requirement::Comparison { left, op, right } = requirement {
+                        type_compared_literal(left, *op, right);
+                    }
                 }
                 Statement::Declaration {
                     name,
@@ -351,6 +355,9 @@ impl Typing<'_> {
         for child in crate::models::child_exprs_mut(expression) {
             self.expression(child, scope);
         }
+        if let ExprKind::BinaryOp { left, op, right } = &mut expression.kind {
+            type_compared_literal(left, *op, right);
+        }
         if let Some(returns) = self.returns {
             if let ExprKind::Call {
                 name, return_type, ..
@@ -361,6 +368,34 @@ impl Typing<'_> {
             resolve_group_member(expression, scope);
         }
         expression.ty = infer_type(expression, scope);
+    }
+}
+
+/// A struct or array literal whose layout inference leaves unresolved takes the
+/// resolved type of the value it is tested for equality with, as an initializer
+/// takes its declared type; the validator checks the literal against that type.
+fn type_compared_literal(left: &mut Expression, op: BinaryOperator, right: &mut Expression) {
+    if op.class() != OperatorClass::Equality {
+        return;
+    }
+    fn resolved(ty: &ArkType) -> bool {
+        match ty {
+            ArkType::Array(element, _) => resolved(element),
+            ty => *ty != ArkType::Unknown,
+        }
+    }
+    let typed_by = |literal: &Expression, peer: &Expression| {
+        matches!(
+            (&literal.kind, &peer.ty),
+            (ExprKind::ArrayLiteral(_), ArkType::Array(..))
+                | (ExprKind::StructLiteral(_), ArkType::Struct(_))
+        ) && !resolved(&literal.ty)
+            && resolved(&peer.ty)
+    };
+    if typed_by(left, right) {
+        left.ty = right.ty.clone();
+    } else if typed_by(right, left) {
+        right.ty = left.ty.clone();
     }
 }
 
