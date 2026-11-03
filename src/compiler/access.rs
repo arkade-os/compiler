@@ -317,6 +317,11 @@ impl Generator {
             .iter()
             .position(|points| points.binding_path().is_none())
         {
+            if matches!(&args[position].kind, ExprKind::ArrayLiteral(points)
+                if points.iter().any(|point| matches!(point.kind, ExprKind::StructLiteral(_))))
+            {
+                return Err("struct literals may only initialize a typed struct declaration; composite values are not supported".into());
+            }
             return self.emit_with_bound_arg(pairing, position, Self::emit_pairing);
         }
         for index in 0..pairs {
