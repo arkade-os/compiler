@@ -468,15 +468,29 @@ fn validate_binding_statements(
                         )));
                         ArkType::Unknown
                     }
-                    // Each unrolled iteration reads the iterable again, so it must be a binding.
-                    ExprKind::ArrayIndex { .. }
-                    | ExprKind::FieldAccess { .. }
-                    | ExprKind::IndexAccess { .. }
-                        if iterable.binding_path().is_some() =>
-                    {
+                    _ => {
                         let before = issues.len();
                         validate_value_expression(iterable, function_name, scopes, issues);
                         match iterable.ty.clone() {
+                            // A literal takes its first element's type, which the rest must match.
+                            ArkType::Array(element, _)
+                                if matches!(&iterable.kind, ExprKind::ArrayLiteral(_)) =>
+                            {
+                                if *element != ArkType::Unknown {
+                                    super::functions::validate_value(
+                                        &TypeName::from(&iterable.ty),
+                                        iterable,
+                                        structs,
+                                        &format!("loop iterable in '{function_name}'"),
+                                        issues,
+                                    );
+                                } else if issues.len() == before {
+                                    issues.push(ValidationIssue::error(format!(
+                                        "function '{function_name}': cannot infer the element type of the loop's array literal; iterate a typed array, as in 'T[n] items = …'"
+                                    )));
+                                }
+                                *element
+                            }
                             ArkType::Array(element, _) => *element,
                             actual => {
                                 if issues.len() == before {
@@ -490,12 +504,6 @@ fn validate_binding_statements(
                                 ArkType::Unknown
                             }
                         }
-                    }
-                    _ => {
-                        issues.push(ValidationIssue::error(format!(
-                            "function '{function_name}': unsupported loop iterable"
-                        )));
-                        ArkType::Unknown
                     }
                 };
                 let mut frame = HashMap::new();
