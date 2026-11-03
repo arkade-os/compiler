@@ -248,6 +248,10 @@ fn computed_result_accesses_reject_invalid_members_and_indexes() {
             "array index '2' is out of range for 'Point[2]'",
         ),
         (
+            "int[3] ks = [0, 1, 2]; for (k, v) in ks { require(shape().points[k].x == v); }",
+            "array index '2' is out of range for 'Point[2]'",
+        ),
+        (
             "require([1, 2][0] == 1);",
             "cannot read a field or element of a literal",
         ),
