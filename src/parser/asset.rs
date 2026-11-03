@@ -18,13 +18,6 @@ pub(crate) fn parse_asset_group_id_operands(
         .next()
         .ok_or("asset id requires (txid, gidx) operands")?;
 
-    if txid_pair.as_rule() != Rule::general_expression
-        || gidx_pair.as_rule() != Rule::general_expression
-        || operands.next().is_some()
-    {
-        return Err("asset id requires (txid, gidx) operands".to_string());
-    }
-
     Ok((
         parse_general_expression(txid_pair)?,
         parse_general_expression(gidx_pair)?,

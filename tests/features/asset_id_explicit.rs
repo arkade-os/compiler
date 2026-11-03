@@ -447,6 +447,10 @@ fn txid_operands_accept_bytes32_expressions_at_every_site() {
             ("sha256(data)", "OP_SHA256"),
             ("id(data)", "OP_CAT OP_SHA256"),
             ("ids[1].txid", "<ids.1.txid>"),
+            (
+                "id(bytes(tx.inputs[1].assets.lookup(ids[0].txid, 1)))",
+                "OP_CAT OP_SHA256",
+            ),
         ] {
             let output = compile_site(site, txid, "2")
                 .unwrap_or_else(|error| panic!("{site} with {txid}: {error}"));
