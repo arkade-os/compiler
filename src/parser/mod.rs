@@ -118,7 +118,9 @@ fn rule_term(rule: &Rule) -> Option<String> {
         | Rule::invert_op
         | Rule::mul_op
         | Rule::div_op
-        | Rule::rem_op => "an operator",
+        | Rule::rem_op
+        // Field and index suffixes are postfix operators.
+        | Rule::binding_suffix => "an operator",
         Rule::asset_lookup_source
         | Rule::tx_introspection_property
         | Rule::tx_property_body
@@ -1205,6 +1207,43 @@ contract C() {
                 if builtin.name == "substr"
                     && matches!(&args[0].kind, ExprKind::FieldAccess { field, .. } if field == "data")
                     && matches!(&args[1].kind, ExprKind::Name(path) if path.key() == "p.offset")
+        ));
+    }
+
+    #[test]
+    fn parses_field_and_index_suffixes_on_computed_values() {
+        let source = "contract C() { function spend(int i) {
+            require(make(i).points[i].x == tx.outputs[0].script.version);
+            require((p).x == 1);
+        } }";
+        let contract = parse(source).unwrap();
+        let statements = &contract.functions[0].statements;
+        let Statement::Require(Requirement::Comparison { left, right, .. }) =
+            &statements[0].statement
+        else {
+            panic!("{:?}", statements[0].statement);
+        };
+        let span = left.span;
+        assert_eq!(&source[span.start..span.end], "make(i).points[i].x");
+        let ExprKind::FieldAccess { value: element, .. } = &left.kind else {
+            panic!("{left:?}");
+        };
+        let ExprKind::IndexAccess { value: points, .. } = &element.kind else {
+            panic!("{element:?}");
+        };
+        let ExprKind::FieldAccess { value: call, .. } = &points.kind else {
+            panic!("{points:?}");
+        };
+        assert!(matches!(&call.kind, ExprKind::Call { name, .. } if name == "make"));
+        let ExprKind::FieldAccess { value: script, .. } = &right.kind else {
+            panic!("{right:?}");
+        };
+        assert!(matches!(&script.kind, ExprKind::OutputIntrospection { .. }));
+        // A grouped binding keeps its binding path.
+        assert!(matches!(
+            &statements[1].statement,
+            Statement::Require(Requirement::Comparison { left, .. })
+                if matches!(&left.kind, ExprKind::Name(path) if path.key() == "p.x")
         ));
     }
 

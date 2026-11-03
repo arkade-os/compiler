@@ -72,6 +72,9 @@ impl Generator {
     }
 
     pub(super) fn emit_access_value(&mut self, value: &Expression, ty: &TypeName) -> Result<()> {
+        if value.binding_path().is_none() {
+            return self.emit_computed_access(value, ty);
+        }
         let mut indices = Vec::new();
         let name = self.access_indices(value, &mut indices)?;
         let length = name
@@ -115,6 +118,36 @@ impl Generator {
             self.apply(Add, 2, 1)?;
             self.apply(Pick, 1, 1)?;
         }
+        Ok(())
+    }
+
+    /// Bind an access's computed root once, then read the access from that binding.
+    // ponytail: the read leaves are copied and the whole root dropped after, one copy and drop
+    // more than a move; consume the final reads if script size matters.
+    fn emit_computed_access(&mut self, value: &Expression, ty: &TypeName) -> Result<()> {
+        let baseline = self.stack.len();
+        let scope = self.scope.clone();
+        let pinned = std::mem::replace(&mut self.pinned_stack_len, baseline);
+        let mut access = value.clone();
+        let mut root = &mut access;
+        while matches!(
+            root.kind,
+            ExprKind::FieldAccess { .. } | ExprKind::IndexAccess { .. }
+        ) {
+            // An access's first child is the value it reads from.
+            root = crate::models::child_exprs_mut(root).swap_remove(0);
+        }
+        let root_type = TypeName::from(&root.ty);
+        let name = Path::new(format!("$access:{baseline}"));
+        self.emit_typed_value(root, &root_type)?;
+        self.bind_value(&name.root, &root_type)?;
+        self.bind_type(&name.root, &root_type);
+        root.kind = ExprKind::Name(name);
+        self.emit_access_value(&access, ty)?;
+        self.discard_call_frame(baseline, self.width(ty)?)?;
+        self.last_reads.retain(|(_, index), _| *index < baseline);
+        self.scope = scope;
+        self.pinned_stack_len = pinned;
         Ok(())
     }
 

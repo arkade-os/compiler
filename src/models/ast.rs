@@ -554,7 +554,7 @@ pub enum ExprKind {
         value: Box<Expression>,
         field: String,
     },
-    /// An array nested inside an indexed value.
+    /// An element of a nested or computed array.
     IndexAccess {
         value: Box<Expression>,
         index: Box<Expression>,

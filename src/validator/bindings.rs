@@ -468,9 +468,12 @@ fn validate_binding_statements(
                         )));
                         ArkType::Unknown
                     }
+                    // Each unrolled iteration reads the iterable again, so it must be a binding.
                     ExprKind::ArrayIndex { .. }
                     | ExprKind::FieldAccess { .. }
-                    | ExprKind::IndexAccess { .. } => {
+                    | ExprKind::IndexAccess { .. }
+                        if iterable.binding_path().is_some() =>
+                    {
                         let before = issues.len();
                         validate_value_expression(iterable, function_name, scopes, issues);
                         match iterable.ty.clone() {
