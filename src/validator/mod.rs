@@ -571,10 +571,13 @@ fn check_unused(contract: &Contract, issues: &mut Vec<ValidationIssue>) {
             }
         }
         for input in tapscript.inputs.iter().filter(|i| !used.contains(&i.name)) {
-            issues.push(ValidationIssue::error(format!(
-                "input '{}' in tapscript '{}' is never used",
-                input.name, tapscript.name
-            )));
+            issues.push(
+                ValidationIssue::error(format!(
+                    "input '{}' in tapscript '{}' is never used",
+                    input.name, tapscript.name
+                ))
+                .at(input.span),
+            );
         }
         contract_used.extend(used.into_iter().map(String::as_str));
     }
@@ -601,10 +604,13 @@ fn check_unused(contract: &Contract, issues: &mut Vec<ValidationIssue>) {
         .iter()
         .filter(|p| !contract_used.contains(p.name.as_str()))
     {
-        issues.push(ValidationIssue::warning(format!(
-            "constructor parameter '{}' is never used",
-            parameter.name
-        )));
+        issues.push(
+            ValidationIssue::warning(format!(
+                "constructor parameter '{}' is never used",
+                parameter.name
+            ))
+            .at(parameter.span),
+        );
     }
 }
 

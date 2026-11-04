@@ -148,3 +148,24 @@ fn an_unknown_tapscript_operand_is_located_at_the_operand() {
         );
     }
 }
+
+#[test]
+fn unused_parameters_and_tapscript_inputs_point_at_their_name() {
+    let source = "contract C(pubkey owner, int exit) {\n  function spend(signature sig) { require(checkSig(sig, owner)); }\n}\n";
+    let files = std::collections::BTreeMap::from([("main.ark".to_string(), source.to_string())]);
+    let [warning]: [_; 1] = arkade_compiler::check("main.ark", &files)
+        .try_into()
+        .unwrap();
+    let span = warning.span.unwrap();
+    assert_eq!(&source[span.start..span.end], "exit");
+
+    let source = "contract S(pubkey owner) { function spend() { require(true); } function spend(signature sig, bytes extra) tapscript { require(checkSig(sig, owner)); } }";
+    let files = std::collections::BTreeMap::from([("main.ark".to_string(), source.to_string())]);
+    let diagnostics = arkade_compiler::check("main.ark", &files);
+    let input = diagnostics
+        .iter()
+        .find(|d| d.message.contains("input 'extra'"))
+        .unwrap();
+    let span = input.span.unwrap();
+    assert_eq!(&source[span.start..span.end], "extra");
+}

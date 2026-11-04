@@ -114,7 +114,7 @@ library Fees {
     assert_eq!(output.structs.len(), 1);
     assert_eq!(
         output.warnings,
-        ["warning[validation]: constructor parameter 'amount' is never used (vault.ark)"]
+        ["warning[validation]: line 2, column 35: constructor parameter 'amount' is never used (vault.ark)"]
     );
     let asm = arkade_asm_tokens(&output, "spend");
     assert!(asm.contains(&"OP_INSPECTOUTPUTVALUE".to_string()));
