@@ -1000,3 +1000,51 @@ fn rename_reaches_every_file_that_sees_the_name() {
     }
     client.stop();
 }
+
+#[test]
+fn a_code_action_imports_an_unknown_name() {
+    let (dir, vault, _) = workspace();
+    let root = dir.path().canonicalize().unwrap();
+    std::fs::write(
+        root.join("lib/types.ark"),
+        "struct Owner {\n  pubkey key;\n}\n",
+    )
+    .unwrap();
+    let mut client = Client::start(&root);
+    let text = VAULT
+        .replace("import \"lib/rules.ark\";\n", "")
+        .replace("pubkey owner", "Owner holder, pubkey owner");
+    let diagnostics = client.open(&vault, &text);
+    let titles = |client: &mut Client, diagnostic: &Value| -> Vec<(String, Value)> {
+        let range = diagnostic["range"].clone();
+        let params = json!({ "textDocument": { "uri": vault }, "range": range, "context": { "diagnostics": [diagnostic] } });
+        let actions = client.request("textDocument/codeAction", params);
+        let actions = actions.as_array().unwrap().iter();
+        actions
+            .map(|a| {
+                (
+                    a["title"].as_str().unwrap().to_string(),
+                    a["edit"]["changes"][vault.as_str()][0]["newText"].clone(),
+                )
+            })
+            .collect()
+    };
+    let [diagnostic] = diagnostics.try_into().unwrap();
+    assert_eq!(
+        titles(&mut client, &diagnostic),
+        [(
+            "Import Owner from lib/types.ark".to_string(),
+            json!("import \"lib/types.ark\";\n")
+        )]
+    );
+    let text = format!("import \"lib/types.ark\";\n{text}");
+    let [diagnostic] = client.change(&vault, &text).try_into().unwrap();
+    assert_eq!(
+        titles(&mut client, &diagnostic),
+        [(
+            "Import Rules from lib/rules.ark".to_string(),
+            json!("import \"lib/rules.ark\";\n")
+        )]
+    );
+    client.stop();
+}

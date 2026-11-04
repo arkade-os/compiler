@@ -2,7 +2,7 @@
 //! `check` for diagnostics and `analyze` with its symbol table for everything else.
 
 use std::collections::hash_map::DefaultHasher;
-use std::collections::{BTreeMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::error::Error;
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
@@ -22,19 +22,21 @@ use lsp_types::notification::{
     DidSaveTextDocument, Notification as _, PublishDiagnostics,
 };
 use lsp_types::request::{
-    Completion, DocumentHighlightRequest, DocumentSymbolRequest, GotoDefinition, HoverRequest,
-    PrepareRenameRequest, References, RegisterCapability, Rename, Request as _,
+    CodeActionRequest, Completion, DocumentHighlightRequest, DocumentSymbolRequest, GotoDefinition,
+    HoverRequest, PrepareRenameRequest, References, RegisterCapability, Rename, Request as _,
 };
 use lsp_types::{
-    CompletionItem, CompletionItemKind, CompletionList, CompletionOptions, CompletionParams,
-    CompletionTextEdit, Diagnostic, DiagnosticRelatedInformation, DiagnosticSeverity,
-    DidChangeWatchedFilesRegistrationOptions, DocumentHighlight, DocumentHighlightParams,
-    DocumentSymbol, DocumentSymbolParams, FileSystemWatcher, GlobPattern, GotoDefinitionParams,
-    Hover, HoverContents, HoverParams, HoverProviderCapability, InitializeParams, InsertTextFormat,
-    Location, MarkupContent, MarkupKind, NumberOrString, OneOf, Position, PublishDiagnosticsParams,
-    Range, ReferenceParams, Registration, RegistrationParams, RenameOptions, RenameParams,
-    ServerCapabilities, SymbolKind, TextDocumentPositionParams, TextDocumentSyncKind,
-    TextDocumentSyncOptions, TextEdit, Url,
+    CodeAction, CodeActionKind, CodeActionOrCommand, CodeActionParams,
+    CodeActionProviderCapability, CompletionItem, CompletionItemKind, CompletionList,
+    CompletionOptions, CompletionParams, CompletionTextEdit, Diagnostic,
+    DiagnosticRelatedInformation, DiagnosticSeverity, DidChangeWatchedFilesRegistrationOptions,
+    DocumentHighlight, DocumentHighlightParams, DocumentSymbol, DocumentSymbolParams,
+    FileSystemWatcher, GlobPattern, GotoDefinitionParams, Hover, HoverContents, HoverParams,
+    HoverProviderCapability, InitializeParams, InsertTextFormat, Location, MarkupContent,
+    MarkupKind, NumberOrString, OneOf, Position, PublishDiagnosticsParams, Range, ReferenceParams,
+    Registration, RegistrationParams, RenameOptions, RenameParams, ServerCapabilities, SymbolKind,
+    TextDocumentPositionParams, TextDocumentSyncKind, TextDocumentSyncOptions, TextEdit, Url,
+    WorkspaceEdit,
 };
 use project::{
     first_line, import_line, import_path, offset, range, utf16_len, Analyzed, Cache, Project,
@@ -59,6 +61,7 @@ pub fn run(connection: Connection) -> Result<()> {
         references_provider: Some(OneOf::Left(true)),
         document_highlight_provider: Some(OneOf::Left(true)),
         hover_provider: Some(HoverProviderCapability::Simple(true)),
+        code_action_provider: Some(CodeActionProviderCapability::Simple(true)),
         rename_provider: Some(OneOf::Right(RenameOptions {
             prepare_provider: Some(true),
             work_done_progress_options: Default::default(),
@@ -300,6 +303,8 @@ impl Server {
                     }),
                 }
             }),
+            CodeActionRequest::METHOD => serde_json::from_value::<CodeActionParams>(params)
+                .map(|p| serde_json::json!(self.code_actions(p))),
             PrepareRenameRequest::METHOD => serde_json::from_value(params)
                 .map(|p| serde_json::json!(self.prepare_rename(at(p)))),
             method => {
@@ -613,6 +618,47 @@ impl Server {
         (fields, false)
     }
 
+    /// For each diagnostic naming an unknown name, an import of each file declaring it. O(log
+    /// names) per diagnostic.
+    fn code_actions(&self, params: CodeActionParams) -> Vec<CodeActionOrCommand> {
+        let uri = params.text_document.uri;
+        let Some(project) = self.project(&uri) else {
+            return Vec::new();
+        };
+        let imported: HashSet<String> = project.imports().into_iter().map(|(f, _)| f).collect();
+        let mut actions = Vec::new();
+        for diagnostic in params.context.diagnostics {
+            let at = offset(project.source(), diagnostic.range.start).unwrap_or_default();
+            let name = quoted(&diagnostic.message)
+                .filter(|_| diagnostic.message.starts_with("unknown"))
+                .unwrap_or_else(|| {
+                    let rest = &project.source()[at..];
+                    &rest[..rest.len() - rest.trim_start_matches(identifier).len()]
+                });
+            for id in self.index.exporters(name) {
+                let Some(file) = project.relative(&self.index.file(id).path) else {
+                    continue;
+                };
+                if file == project.entry || imported.contains(&file) {
+                    continue;
+                }
+                let import = importing(&project, &file).additional_text_edits;
+                let changes = HashMap::from([(uri.clone(), import.unwrap_or_default())]);
+                actions.push(CodeActionOrCommand::CodeAction(CodeAction {
+                    title: format!("Import {name} from {file}"),
+                    kind: Some(CodeActionKind::QUICKFIX),
+                    diagnostics: Some(vec![diagnostic.clone()]),
+                    edit: Some(WorkspaceEdit {
+                        changes: Some(changes),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                }));
+            }
+        }
+        actions
+    }
+
     /// The entry's analysis for completion at `cursor`, and the cursor's offset in its text. A
     /// half-typed line rarely parses, so the entry is then analyzed with that line blank.
     fn typing(&self, project: &Project, cursor: Position) -> Option<(Rc<Analyzed>, usize)> {
@@ -696,6 +742,17 @@ impl Server {
         }
         items
     }
+}
+
+/// The first name quoted in `message` with `'` or a backtick.
+fn quoted(message: &str) -> Option<&str> {
+    let start = message.find(['\'', '`'])? + 1;
+    let length = message[start..].find(['\'', '`'])?;
+    Some(&message[start..start + length])
+}
+
+fn identifier(c: char) -> bool {
+    c.is_ascii_alphanumeric() || c == '_'
 }
 
 /// How many names from files not imported completion offers at once.
