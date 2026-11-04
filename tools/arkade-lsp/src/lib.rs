@@ -26,13 +26,13 @@ use lsp_types::request::{
 };
 use lsp_types::{
     CompletionItem, CompletionItemKind, CompletionList, CompletionOptions, CompletionParams,
-    CompletionTextEdit, Diagnostic, DiagnosticSeverity, DidChangeWatchedFilesRegistrationOptions,
-    DocumentHighlight, DocumentHighlightParams, DocumentSymbol, DocumentSymbolParams,
-    FileSystemWatcher, GlobPattern, GotoDefinitionParams, Hover, HoverContents, HoverParams,
-    HoverProviderCapability, InitializeParams, InsertTextFormat, Location, MarkupContent,
-    MarkupKind, NumberOrString, OneOf, Position, PublishDiagnosticsParams, Range, ReferenceParams,
-    Registration, RegistrationParams, ServerCapabilities, SymbolKind, TextDocumentPositionParams,
-    TextDocumentSyncKind, TextDocumentSyncOptions, TextEdit, Url,
+    CompletionTextEdit, Diagnostic, DiagnosticRelatedInformation, DiagnosticSeverity,
+    DidChangeWatchedFilesRegistrationOptions, DocumentHighlight, DocumentHighlightParams,
+    DocumentSymbol, DocumentSymbolParams, FileSystemWatcher, GlobPattern, GotoDefinitionParams,
+    Hover, HoverContents, HoverParams, HoverProviderCapability, InitializeParams, InsertTextFormat,
+    Location, MarkupContent, MarkupKind, NumberOrString, OneOf, Position, PublishDiagnosticsParams,
+    Range, ReferenceParams, Registration, RegistrationParams, ServerCapabilities, SymbolKind,
+    TextDocumentPositionParams, TextDocumentSyncKind, TextDocumentSyncOptions, TextEdit, Url,
 };
 use project::{
     first_line, import_line, import_path, offset, range, utf16_len, Analyzed, Cache, Project,
@@ -321,12 +321,10 @@ impl Server {
             .iter()
             .cloned()
             .map(|diagnostic| {
-                let (range, message) = if diagnostic.file == project.entry {
+                let (range, message, related) = if diagnostic.file == project.entry {
                     let range = diagnostic.span.map(|span| range(source, span));
-                    (
-                        range.unwrap_or_else(|| first_line(source)),
-                        diagnostic.message,
-                    )
+                    let range = range.unwrap_or_else(|| first_line(source));
+                    (range, diagnostic.message, None)
                 } else {
                     // A dependency's problem shows on the import that reaches it.
                     let via = project.via(&diagnostic.file);
@@ -334,20 +332,18 @@ impl Server {
                         .iter()
                         .find(|(file, _)| Some(file.as_str()) == via)
                         .or(imports.first());
-                    let at = diagnostic.span.and_then(|span| {
-                        let source = project.files.get(&diagnostic.file)?;
-                        let start = range(source, span).start;
-                        Some(format!(":{}:{}", start.line + 1, start.character + 1))
+                    let at = diagnostic.span.zip(project.files.get(&diagnostic.file));
+                    let at = at.map(|(span, source)| range(source, span));
+                    let related = project.uri(&diagnostic.file).map(|uri| {
+                        vec![DiagnosticRelatedInformation {
+                            location: Location::new(uri, at.unwrap_or_default()),
+                            message: diagnostic.message.clone(),
+                        }]
                     });
-                    let message = format!(
-                        "{}{}: {}",
-                        diagnostic.file,
-                        at.unwrap_or_default(),
-                        diagnostic.message
-                    );
                     (
                         import.map_or_else(|| first_line(source), |(_, range)| *range),
-                        message,
+                        format!("{}: {}", diagnostic.file, diagnostic.message),
+                        related,
                     )
                 };
                 Diagnostic {
@@ -359,6 +355,7 @@ impl Server {
                     code: diagnostic.code.map(NumberOrString::String),
                     source: Some("arkade".to_string()),
                     message,
+                    related_information: related,
                     ..Default::default()
                 }
             })

@@ -900,5 +900,21 @@ fn a_transitive_dependency_error_shows_on_the_import_reaching_it() {
     );
     let [import] = client.open(&vault, &text).try_into().unwrap();
     assert_eq!(range(&import), (1, 0, 24));
+    assert!(import["message"]
+        .as_str()
+        .unwrap()
+        .starts_with("lib/deep.ark: "));
+    let [related] = import["relatedInformation"]
+        .as_array()
+        .unwrap()
+        .clone()
+        .try_into()
+        .unwrap();
+    let deep = Url::from_file_path(root.join("lib/deep.ark")).unwrap();
+    assert_eq!(related["location"]["uri"], json!(deep));
+    assert_eq!(
+        related["location"]["range"]["start"],
+        json!({ "line": 2, "character": 35 })
+    );
     client.stop();
 }
