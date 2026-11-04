@@ -1,5 +1,5 @@
-//! Language server for Arkade Script. Every answer comes from the compiler's own analysis:
-//! `check` for diagnostics and `analyze` with its symbol table for everything else.
+//! Language server for Arkade Script. Every answer comes from the compiler's own analysis of a
+//! document's import closure, cached per closure version, over an index of the workspace.
 
 use std::collections::hash_map::DefaultHasher;
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
