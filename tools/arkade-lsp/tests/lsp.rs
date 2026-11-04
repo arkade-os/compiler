@@ -3,6 +3,7 @@ use std::thread::JoinHandle;
 
 use lsp_server::{Connection, Message, Notification, Request, RequestId};
 use lsp_types::Url;
+use proptest::prelude::*;
 use serde_json::{json, Value};
 
 const RULES: &str = r#"library Rules {
@@ -548,4 +549,79 @@ fn a_file_outside_a_workspace_folder_loads_only_its_imports() {
     assert_eq!(client.open(&vault, VAULT), Vec::<Value>::new());
     assert_eq!(import_paths(&mut client, &vault), ["lib/rules.ark"]);
     client.stop();
+}
+
+/// Whether every `range` in `value` lies inside the text of the `uri` that encloses it.
+fn ranges_inside(value: &Value, text: &str, open: (&Url, &str)) -> bool {
+    let text = match value.get("uri").and_then(|uri| uri.as_str()) {
+        Some(uri) if uri == open.0.as_str() => open.1.to_string(),
+        Some(uri) => {
+            let path = Url::parse(uri).unwrap().to_file_path().unwrap();
+            std::fs::read_to_string(path).unwrap()
+        }
+        None => text.to_string(),
+    };
+    let inside = |position: &Value| {
+        let lines: Vec<&str> = text.split('\n').collect();
+        let line = position["line"].as_u64().unwrap() as usize;
+        let character = position["character"].as_u64().unwrap();
+        line < lines.len()
+            && character <= lines[line].trim_end_matches('\r').encode_utf16().count() as u64
+    };
+    let range_ok = value.get("range").is_none_or(|range| {
+        let at = |p: &Value| (p["line"].as_u64(), p["character"].as_u64());
+        inside(&range["start"]) && inside(&range["end"]) && at(&range["start"]) <= at(&range["end"])
+    });
+    let children: Box<dyn Iterator<Item = &Value>> = match value {
+        Value::Array(items) => Box::new(items.iter()),
+        Value::Object(fields) => {
+            Box::new(fields.iter().filter(|(k, _)| *k != "range").map(|(_, v)| v))
+        }
+        _ => Box::new(std::iter::empty()),
+    };
+    range_ok
+        && children
+            .into_iter()
+            .all(|child| ranges_inside(child, &text, open))
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(64))]
+
+    #[test]
+    fn every_position_is_answered_inside_the_document(
+        chunks in prop::collection::vec(prop_oneof![
+            Just(VAULT.to_string()),
+            prop::sample::select(vec![
+                "ł", "żó", "🐴", "😀", "\r\n", "\n", " ", "owner", "Rules.", "Rules", "exit",
+                "import \"lib/rules.ark\";", "(", ")", "{", "}", ";", "\"", ".", "// ",
+            ]).prop_map(str::to_string),
+            "\\PC{0,4}",
+        ], 0..12),
+        positions in prop::collection::vec((0u32..40, 0u32..120), 1..6),
+    ) {
+        let text = chunks.concat();
+        let (dir, vault, _) = workspace();
+        let mut client = Client::start(&dir.path().canonicalize().unwrap());
+        client.notify(
+            "textDocument/didOpen",
+            json!({ "textDocument": { "uri": vault, "languageId": "arkade", "version": 1, "text": text } }),
+        );
+        for (line, character) in positions {
+            let at = json!({ "textDocument": { "uri": vault }, "position": { "line": line, "character": character } });
+            let mut references = at.clone();
+            references["context"] = json!({ "includeDeclaration": true });
+            for (method, params) in [
+                ("textDocument/completion", at.clone()),
+                ("textDocument/hover", at.clone()),
+                ("textDocument/definition", at.clone()),
+                ("textDocument/references", references),
+                ("textDocument/documentHighlight", at.clone()),
+            ] {
+                let result = client.request(method, params);
+                prop_assert!(ranges_inside(&result, &text, (&vault, &text)), "{method} {line}:{character} {result}");
+            }
+        }
+        client.stop();
+    }
 }

@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 6d05dbd7a0e3ecfcb5b56e1c0c97851909674103ec4a55a3da91015e62e661d7 # shrinks to chunks = ["import \"lib/rules.ark\";\n\ncontract Vault(pubkey owner, int exit) {\n  function spend(signature ownerSig) {\n    Rules.preservesValue();\n    require(checkSig(ownerSig, owner));\n  }\n\n  function unilateral(signature ownerSig) tapscript {\n    require(older(exit));\n    require(checkSig(ownerSig, owner));\n  }\n}\n", "import \"lib/rules.ark\";\n\ncontract Vault(pubkey owner, int exit) {\n  function spend(signature ownerSig) {\n    Rules.preservesValue();\n    require(checkSig(ownerSig, owner));\n  }\n\n  function unilateral(signature ownerSig) tapscript {\n    require(older(exit));\n    require(checkSig(ownerSig, owner));\n  }\n}\n", "AὛ0 ", "0⁴a𑵧", "import \"lib/rules.ark\";\n\ncontract Vault(pubkey owner, int exit) {\n  function spend(signature ownerSig) {\n    Rules.preservesValue();\n    require(checkSig(ownerSig, owner));\n  }\n\n  function unilateral(signature ownerSig) tapscript {\n    require(older(exit));\n    require(checkSig(ownerSig, owner));\n  }\n}\n"], positions = [(26, 6)]
