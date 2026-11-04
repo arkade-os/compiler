@@ -59,6 +59,12 @@ impl Client {
     }
 
     fn request(&mut self, method: &str, params: Value) -> Value {
+        let response = self.call(method, params);
+        assert!(response.error.is_none(), "{:?}", response.error);
+        response.result.unwrap_or(Value::Null)
+    }
+
+    fn call(&mut self, method: &str, params: Value) -> lsp_server::Response {
         self.next_id += 1;
         let id = RequestId::from(self.next_id);
         let request = Request::new(id.clone(), method.to_string(), params);
@@ -66,8 +72,7 @@ impl Client {
         loop {
             if let Message::Response(response) = self.connection.receiver.recv().unwrap() {
                 assert_eq!(response.id, id);
-                assert!(response.error.is_none(), "{:?}", response.error);
-                return response.result.unwrap_or(Value::Null);
+                return response;
             }
         }
     }
@@ -938,5 +943,60 @@ fn diagnostics_carry_the_document_version() {
         json!({ "textDocument": { "uri": vault, "version": 8 }, "contentChanges": [{ "text": VAULT }] }),
     );
     assert_eq!(version(), json!(8));
+    client.stop();
+}
+
+#[test]
+fn rename_reaches_every_file_that_sees_the_name() {
+    let (dir, vault, rules) = workspace();
+    let root = dir.path().canonicalize().unwrap();
+    let other = VAULT.replace("Vault", "Other");
+    std::fs::write(root.join("other.ark"), &other).unwrap();
+    let other = Url::from_file_path(root.join("other.ark")).unwrap();
+    let mut client = Client::start(&root);
+    client.open(&vault, VAULT);
+    let at = |line: u32, character: u32| json!({ "textDocument": { "uri": vault }, "position": { "line": line, "character": character } });
+    let prepared = client.request("textDocument/prepareRename", at(5, 33));
+    assert_eq!(prepared["start"], json!({ "line": 5, "character": 31 }));
+    assert_eq!(prepared["end"], json!({ "line": 5, "character": 36 }));
+
+    let rename = |client: &mut Client, line, character, name: &str| {
+        let mut params = at(line, character);
+        params["newName"] = json!(name);
+        client.call("textDocument/rename", params)
+    };
+    let starts = |edit: &Value, uri: &Url| -> Vec<(u64, u64)> {
+        let mut starts: Vec<_> = edit["changes"][uri.as_str()]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|e| {
+                (
+                    e["range"]["start"]["line"].as_u64().unwrap(),
+                    e["range"]["start"]["character"].as_u64().unwrap(),
+                )
+            })
+            .collect();
+        starts.sort();
+        starts
+    };
+    let owner = rename(&mut client, 5, 33, "key").result.unwrap();
+    assert_eq!(starts(&owner, &vault), [(2, 22), (5, 31), (10, 31)]);
+    assert_eq!(owner["changes"].as_object().unwrap().len(), 1);
+
+    let function = rename(&mut client, 4, 14, "keepsValue").result.unwrap();
+    assert_eq!(starts(&function, &vault), [(4, 10)]);
+    assert_eq!(starts(&function, &rules), [(1, 11)]);
+    assert_eq!(starts(&function, &other), [(4, 10)]);
+
+    for (name, why) in [
+        ("exit", "'exit' is already defined there"),
+        ("1x", "'1x' is not an identifier"),
+        ("tx", "renaming to 'tx' fails: "),
+    ] {
+        let error = rename(&mut client, 5, 33, name).error.unwrap();
+        assert_eq!(error.code, -32803);
+        assert!(error.message.starts_with(why), "{}", error.message);
+    }
     client.stop();
 }

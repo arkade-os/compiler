@@ -10,6 +10,7 @@ use std::rc::Rc;
 
 mod index;
 mod project;
+mod rename;
 
 use arkade_compiler::models::ExprKind;
 use arkade_compiler::symbols::{Definition, SymbolKind as Kind};
@@ -22,7 +23,7 @@ use lsp_types::notification::{
 };
 use lsp_types::request::{
     Completion, DocumentHighlightRequest, DocumentSymbolRequest, GotoDefinition, HoverRequest,
-    References, RegisterCapability, Request as _,
+    PrepareRenameRequest, References, RegisterCapability, Rename, Request as _,
 };
 use lsp_types::{
     CompletionItem, CompletionItemKind, CompletionList, CompletionOptions, CompletionParams,
@@ -31,8 +32,9 @@ use lsp_types::{
     DocumentSymbol, DocumentSymbolParams, FileSystemWatcher, GlobPattern, GotoDefinitionParams,
     Hover, HoverContents, HoverParams, HoverProviderCapability, InitializeParams, InsertTextFormat,
     Location, MarkupContent, MarkupKind, NumberOrString, OneOf, Position, PublishDiagnosticsParams,
-    Range, ReferenceParams, Registration, RegistrationParams, ServerCapabilities, SymbolKind,
-    TextDocumentPositionParams, TextDocumentSyncKind, TextDocumentSyncOptions, TextEdit, Url,
+    Range, ReferenceParams, Registration, RegistrationParams, RenameOptions, RenameParams,
+    ServerCapabilities, SymbolKind, TextDocumentPositionParams, TextDocumentSyncKind,
+    TextDocumentSyncOptions, TextEdit, Url,
 };
 use project::{
     first_line, import_line, import_path, offset, range, utf16_len, Analyzed, Cache, Project,
@@ -57,6 +59,10 @@ pub fn run(connection: Connection) -> Result<()> {
         references_provider: Some(OneOf::Left(true)),
         document_highlight_provider: Some(OneOf::Left(true)),
         hover_provider: Some(HoverProviderCapability::Simple(true)),
+        rename_provider: Some(OneOf::Right(RenameOptions {
+            prepare_provider: Some(true),
+            work_done_progress_options: Default::default(),
+        })),
         completion_provider: Some(CompletionOptions {
             trigger_characters: Some(vec![".".into(), "\"".into(), "/".into()]),
             ..Default::default()
@@ -258,6 +264,17 @@ impl Server {
             (params.text_document.uri, params.position)
         }
         let params = request.params;
+        if request.method == Rename::METHOD {
+            let renamed = serde_json::from_value::<RenameParams>(params).map_err(|e| e.to_string());
+            let renamed = renamed.map(|p| self.rename(at(p.text_document_position), &p.new_name));
+            return match renamed {
+                Ok(Ok(edit)) => Response::new_ok(request.id, edit),
+                Ok(Err(error)) => {
+                    Response::new_err(request.id, ErrorCode::RequestFailed as i32, error)
+                }
+                Err(error) => Response::new_err(request.id, ErrorCode::InvalidParams as i32, error),
+            };
+        }
         let result = match request.method.as_str() {
             DocumentSymbolRequest::METHOD => serde_json::from_value::<DocumentSymbolParams>(params)
                 .map(|p| serde_json::json!(self.document_symbols(&p.text_document.uri))),
@@ -283,6 +300,8 @@ impl Server {
                     }),
                 }
             }),
+            PrepareRenameRequest::METHOD => serde_json::from_value(params)
+                .map(|p| serde_json::json!(self.prepare_rename(at(p)))),
             method => {
                 return Response::new_err(
                     request.id,

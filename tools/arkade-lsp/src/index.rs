@@ -178,22 +178,32 @@ impl Index {
         }
     }
 
-    /// The files that open documents depend on through `dirty`, including those themselves, in
-    /// breadth-first order. O(affected files and their import edges).
+    /// The open files among `dirty` and the files importing them, directly or not. O(those
+    /// files and their import edges).
     pub fn affected(&self, dirty: impl IntoIterator<Item = FileId>) -> Vec<FileId> {
+        let affected = self.importing(dirty).into_iter();
+        affected
+            .filter(|id| self.file(*id).open.is_some())
+            .collect()
+    }
+
+    /// `id` and every file importing it, directly or not. O(those files and their import edges).
+    pub fn dependents(&self, id: FileId) -> Vec<FileId> {
+        self.importing([id])
+    }
+
+    /// `files` and the files importing them, directly or not, in breadth-first order.
+    fn importing(&self, files: impl IntoIterator<Item = FileId>) -> Vec<FileId> {
         let mut seen = HashSet::new();
-        let mut queue: VecDeque<FileId> = dirty.into_iter().collect();
-        let mut open = Vec::new();
+        let mut queue: VecDeque<FileId> = files.into_iter().collect();
+        let mut found = Vec::new();
         while let Some(id) = queue.pop_front() {
-            if !seen.insert(id) {
-                continue;
+            if seen.insert(id) {
+                found.push(id);
+                queue.extend(&self.importers[id.0 as usize]);
             }
-            if self.file(id).open.is_some() {
-                open.push(id);
-            }
-            queue.extend(&self.importers[id.0 as usize]);
         }
-        open
+        found
     }
 
     /// `entry`'s import closure in breadth-first order, each file with the importer that reached

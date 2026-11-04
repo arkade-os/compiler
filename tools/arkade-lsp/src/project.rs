@@ -80,6 +80,11 @@ impl Project {
             .collect()
     }
 
+    /// The indexed file named `file` relative to the root.
+    pub fn id(&self, index: &Index, file: &str) -> Option<FileId> {
+        index.get(&self.root.join(file))
+    }
+
     /// `path` relative to the root, when under it.
     pub fn relative(&self, path: &Path) -> Option<String> {
         relative(&self.root, path)
