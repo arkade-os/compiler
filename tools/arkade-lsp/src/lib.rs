@@ -1,9 +1,12 @@
 //! Language server for Arkade Script. Every answer comes from the compiler's own analysis:
 //! `check` for diagnostics and `analyze` with its symbol table for everything else.
 
+use std::collections::hash_map::DefaultHasher;
 use std::collections::{BTreeMap, HashSet, VecDeque};
 use std::error::Error;
+use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 
 mod index;
 mod project;
@@ -22,14 +25,14 @@ use lsp_types::request::{
     References, RegisterCapability, Request as _,
 };
 use lsp_types::{
-    CompletionItem, CompletionItemKind, CompletionOptions, CompletionParams, CompletionTextEdit,
-    Diagnostic, DiagnosticSeverity, DidChangeWatchedFilesRegistrationOptions, DocumentHighlight,
-    DocumentHighlightParams, DocumentSymbol, DocumentSymbolParams, FileSystemWatcher, GlobPattern,
-    GotoDefinitionParams, Hover, HoverContents, HoverParams, HoverProviderCapability,
-    InitializeParams, InsertTextFormat, Location, MarkupContent, MarkupKind, NumberOrString, OneOf,
-    Position, PublishDiagnosticsParams, Range, ReferenceParams, Registration, RegistrationParams,
-    ServerCapabilities, SymbolKind, TextDocumentPositionParams, TextDocumentSyncKind,
-    TextDocumentSyncOptions, TextEdit, Url,
+    CompletionItem, CompletionItemKind, CompletionList, CompletionOptions, CompletionParams,
+    CompletionTextEdit, Diagnostic, DiagnosticSeverity, DidChangeWatchedFilesRegistrationOptions,
+    DocumentHighlight, DocumentHighlightParams, DocumentSymbol, DocumentSymbolParams,
+    FileSystemWatcher, GlobPattern, GotoDefinitionParams, Hover, HoverContents, HoverParams,
+    HoverProviderCapability, InitializeParams, InsertTextFormat, Location, MarkupContent,
+    MarkupKind, NumberOrString, OneOf, Position, PublishDiagnosticsParams, Range, ReferenceParams,
+    Registration, RegistrationParams, ServerCapabilities, SymbolKind, TextDocumentPositionParams,
+    TextDocumentSyncKind, TextDocumentSyncOptions, TextEdit, Url,
 };
 use project::{
     first_line, import_line, import_path, offset, range, utf16_len, Analyzed, Cache, Project,
@@ -271,8 +274,15 @@ impl Server {
             }
             HoverRequest::METHOD => serde_json::from_value::<HoverParams>(params)
                 .map(|p| serde_json::json!(self.hover(at(p.text_document_position_params)))),
-            Completion::METHOD => serde_json::from_value::<CompletionParams>(params)
-                .map(|p| serde_json::json!(self.completion(at(p.text_document_position)))),
+            Completion::METHOD => serde_json::from_value::<CompletionParams>(params).map(|p| {
+                match self.completion(at(p.text_document_position)) {
+                    (items, false) => serde_json::json!(items),
+                    (items, true) => serde_json::json!(CompletionList {
+                        is_incomplete: true,
+                        items
+                    }),
+                }
+            }),
             method => {
                 return Response::new_err(
                     request.id,
@@ -295,7 +305,7 @@ impl Server {
         Project::new(&self.index, *self.documents.get(uri)?)
     }
 
-    fn analyze(&self, project: &Project) -> std::rc::Rc<Analyzed> {
+    fn analyze(&self, project: &Project) -> Rc<Analyzed> {
         self.cache.analyze(project)
     }
 
@@ -495,20 +505,21 @@ impl Server {
     }
 
     /// Import paths inside an import's quotes; elsewhere the names visible at the cursor, members
-    /// after `Name.`, and names from files not imported yet, with the import that brings them.
-    fn completion(&self, (uri, cursor): (Url, Position)) -> Vec<CompletionItem> {
+    /// after `Name.`, and names from files not imported yet, with the import that brings them;
+    /// and whether some were left out.
+    fn completion(&self, (uri, cursor): (Url, Position)) -> (Vec<CompletionItem>, bool) {
         let Some(project) = self.project(&uri) else {
-            return Vec::new();
+            return (Vec::new(), false);
         };
         let source = project.source();
         let Some(at) = offset(source, cursor) else {
-            return Vec::new();
+            return (Vec::new(), false);
         };
         let before = &source[source[..at].rfind('\n').map_or(0, |i| i + 1)..at];
         if before.trim_start().starts_with("import") && before.matches('"').count() == 1 {
             let typed = before.rfind('"').map_or(0, |i| i + 1);
             let start = Position::new(cursor.line, utf16_len(&before[..typed]));
-            return project
+            let paths = project
                 .workspace(&self.index)
                 .filter(|(file, _)| *file != project.entry)
                 .map(|(file, _)| {
@@ -524,56 +535,42 @@ impl Server {
                     }
                 })
                 .collect();
+            return (paths, false);
         }
+        let typed = &before[word_start(before)..];
         let prefix = &before[..word_start(before)];
         let owner = prefix
             .trim_end()
             .strip_suffix('.')
             .map(|before| &before[word_start(before)..]);
-        let imported: HashSet<String> = project.imports().into_iter().map(|(f, _)| f).collect();
-        let workspace: BTreeMap<String, String> = project
-            .workspace(&self.index)
-            .map(|(name, file)| (name, file.text.as_deref().unwrap_or_default().to_string()))
-            .collect();
-        let others: Vec<String> = workspace
-            .keys()
-            .filter(|file| **file != project.entry && !imported.contains(*file))
-            .map(|file| format!("import \"{}\";", import_path(project.directory(), file)))
-            .collect();
-        let Some((analysis, at)) = visible_while_typing(&project, &workspace, cursor, &others)
-            .or_else(|| visible_while_typing(&project, &project.sources(), cursor, &[]))
-        else {
-            return Vec::new();
+        let Some((analysis, at)) = self.typing(&project, cursor) else {
+            return (Vec::new(), false);
         };
         let symbols = analysis.symbols();
         let visible = symbols.visible_at(&project.entry, at);
-        let item = |label: &str, definition: &Definition| {
-            let mut item = completion_item(label, definition);
-            if definition.file != project.entry && !imported.contains(&definition.file) {
-                let path = import_path(project.directory(), &definition.file);
-                let line = Position::new(import_line(source) as u32, 0);
-                let edit = TextEdit::new(Range::new(line, line), format!("import \"{path}\";\n"));
-                item.additional_text_edits = Some(vec![edit]);
-                item.detail = Some(format!("import from {}", definition.file));
-            }
-            item
-        };
-        let offered = |d: &&Definition| !matches!(d.kind, Kind::Tapscript | Kind::Field);
         let Some(owner) = owner else {
-            return visible
+            let mut items: Vec<_> = visible
                 .iter()
                 .filter(|(name, d)| !name.contains('.') && offered(d))
-                .map(|(name, d)| item(name, d))
+                .map(|(name, d)| completion_item(name, d))
                 .collect();
+            let names = visible.iter().map(|(name, _)| *name).collect();
+            let (offers, incomplete) = self.offers(&project, typed, &names);
+            items.extend(offers);
+            return (items, incomplete);
         };
         let members: Vec<_> = visible
             .iter()
             .filter_map(|(name, d)| Some((name.strip_prefix(owner)?.strip_prefix('.')?, d)))
             .filter(|(_, d)| offered(d))
-            .map(|(name, d)| item(name, d))
+            .map(|(name, d)| completion_item(name, d))
             .collect();
         if !members.is_empty() {
-            return members;
+            return (members, false);
+        }
+        let members = self.unimported_members(&project, owner);
+        if !members.is_empty() {
+            return (members, false);
         }
         // A binding of struct type offers the struct's fields.
         let Some(ty) = visible
@@ -582,21 +579,126 @@ impl Server {
             .and_then(|(_, d)| d.ty.as_ref())
             .map(ToString::to_string)
         else {
-            return Vec::new();
+            return (Vec::new(), false);
         };
         let Some(structure) = visible
             .iter()
             .find(|(name, d)| *name == ty && d.kind == Kind::Struct)
         else {
-            return Vec::new();
+            return (Vec::new(), false);
         };
-        symbols
+        let fields = symbols
             .definitions()
             .iter()
             .filter(|d| d.kind == Kind::Field && d.file == structure.1.file)
             .filter(|d| d.owner.as_deref() == Some(structure.0))
             .map(|d| completion_item(&d.name, d))
-            .collect()
+            .collect();
+        (fields, false)
+    }
+
+    /// The entry's analysis for completion at `cursor`, and the cursor's offset in its text. A
+    /// half-typed line rarely parses, so the entry is then analyzed with that line blank.
+    fn typing(&self, project: &Project, cursor: Position) -> Option<(Rc<Analyzed>, usize)> {
+        let parsed = |analysis: &Analyzed| {
+            let definitions = analysis.symbols().definitions().iter();
+            definitions.into_iter().any(|d| d.file == project.entry)
+        };
+        let analysis = self.analyze(project);
+        if parsed(&analysis) {
+            return Some((analysis, offset(project.source(), cursor)?));
+        }
+        let mut lines: Vec<&str> = project.source().split('\n').collect();
+        *lines.get_mut(cursor.line as usize)? = "";
+        let text = lines.join("\n");
+        let at = offset(&text, Position::new(cursor.line, 0))?;
+        let mut hasher = DefaultHasher::new();
+        (project.key.1, cursor.line).hash(&mut hasher);
+        let analysis = self.cache.get((project.key.0, hasher.finish()), || {
+            let mut files = project.sources();
+            files.insert(project.entry.clone(), text);
+            arkade_compiler::analyze(&project.entry, &files)
+        });
+        parsed(&analysis).then_some((analysis, at))
+    }
+
+    /// Names declared by files the entry does not import, starting with `typed`, each with the
+    /// import that brings it, and whether more were left out. O(log names + `OFFERS`).
+    fn offers(
+        &self,
+        project: &Project,
+        typed: &str,
+        visible: &HashSet<&str>,
+    ) -> (Vec<CompletionItem>, bool) {
+        let exported = self.index.exported(typed, OFFERS);
+        let incomplete = exported.len() == OFFERS;
+        let imported: HashSet<String> = project.imports().into_iter().map(|(f, _)| f).collect();
+        let offers = exported
+            .into_iter()
+            .filter(|(name, _)| !visible.contains(name));
+        let offers = offers.filter_map(|(name, id)| {
+            let file = self.index.file(id);
+            let relative = project.relative(&file.path)?;
+            if relative == project.entry || imported.contains(&relative) {
+                return None;
+            }
+            let declaration = file.declarations.iter().find(|d| d.name == name)?;
+            Some(CompletionItem {
+                label: name.to_string(),
+                kind: Some(item_kind(declaration.kind)),
+                ..importing(project, &relative)
+            })
+        });
+        (offers.collect(), incomplete)
+    }
+
+    /// Members of `owner`, declared by files the entry does not import, as their importers see
+    /// them, from each file's own cached analysis. O(those files' closures).
+    fn unimported_members(&self, project: &Project, owner: &str) -> Vec<CompletionItem> {
+        let imported: HashSet<String> = project.imports().into_iter().map(|(f, _)| f).collect();
+        let mut items = Vec::new();
+        for id in self.index.exporters(owner) {
+            let Some(relative) = project.relative(&self.index.file(id).path) else {
+                continue;
+            };
+            let library = Project::new(&self.index, id);
+            let Some(library) = library.filter(|_| !imported.contains(&relative)) else {
+                continue;
+            };
+            let analysis = self.analyze(&library);
+            let exports = analysis.symbols().exports(&library.entry);
+            let members = exports
+                .into_iter()
+                .filter_map(|(name, d)| Some((name.strip_prefix(owner)?.strip_prefix('.')?, d)))
+                .filter(|(_, d)| offered(d));
+            let import = importing(project, &relative);
+            items.extend(members.map(|(name, d)| CompletionItem {
+                additional_text_edits: import.additional_text_edits.clone(),
+                detail: import.detail.clone(),
+                ..completion_item(name, d)
+            }));
+        }
+        items
+    }
+}
+
+/// How many names from files not imported completion offers at once.
+const OFFERS: usize = 100;
+
+/// Whether completion offers names of this kind; a tapscript or field is not written bare.
+fn offered(definition: &&Definition) -> bool {
+    !matches!(definition.kind, Kind::Tapscript | Kind::Field)
+}
+
+/// A completion item's import of `file` into the entry, and its detail naming the file.
+fn importing(project: &Project, file: &str) -> CompletionItem {
+    let path = import_path(project.directory(), file);
+    let line = Position::new(import_line(project.source()) as u32, 0);
+    let edit = TextEdit::new(Range::new(line, line), format!("import \"{path}\";\n"));
+    CompletionItem {
+        detail: Some(format!("import from {file}")),
+        additional_text_edits: Some(vec![edit]),
+        ..Default::default()
     }
 }
 
@@ -652,58 +754,27 @@ fn constant_value(analysis: &Analysis, project: &Project, constant: &Definition)
     }
 }
 
-/// The analysis with `imports` inserted where an import edit would put them, and the cursor's
-/// offset in it. A half-typed line rarely parses, so it is retried blank.
-fn visible_while_typing(
-    project: &Project,
-    files: &BTreeMap<String, String>,
-    cursor: Position,
-    imports: &[String],
-) -> Option<(Analysis, usize)> {
-    let source = project.source();
-    let at = import_line(source);
-    let attempt = |blank: bool| {
-        let mut lines: Vec<&str> = source.split('\n').collect();
-        let line = cursor.line as usize;
-        if blank {
-            *lines.get_mut(line)? = "";
-        }
-        let at = at.min(lines.len());
-        lines.splice(at..at, imports.iter().map(String::as_str));
-        let text = lines.join("\n");
-        let shifted = line + if line >= at { imports.len() } else { 0 };
-        let column = if blank { 0 } else { cursor.character };
-        let offset = offset(&text, Position::new(shifted as u32, column))?;
-        let mut files = files.clone();
-        files.insert(project.entry.clone(), text);
-        let analysis = arkade_compiler::analyze(&project.entry, &files);
-        let parsed = analysis
-            .symbols()
-            .definitions()
-            .iter()
-            .any(|d| d.file == project.entry);
-        parsed.then_some((analysis, offset))
-    };
-    attempt(false).or_else(|| attempt(true))
-}
-
 fn completion_item(label: &str, definition: &Definition) -> CompletionItem {
     let function = definition.kind == Kind::Function;
     CompletionItem {
         label: label.to_string(),
-        kind: Some(match definition.kind {
-            Kind::Function | Kind::Tapscript => CompletionItemKind::FUNCTION,
-            Kind::Constant => CompletionItemKind::CONSTANT,
-            Kind::Struct => CompletionItemKind::STRUCT,
-            Kind::Library => CompletionItemKind::MODULE,
-            Kind::Contract => CompletionItemKind::CLASS,
-            Kind::Field => CompletionItemKind::FIELD,
-            Kind::Parameter | Kind::Variable => CompletionItemKind::VARIABLE,
-        }),
+        kind: Some(item_kind(definition.kind)),
         detail: definition.ty.as_ref().map(ToString::to_string),
         insert_text: function.then(|| format!("{label}($0)")),
         insert_text_format: function.then_some(InsertTextFormat::SNIPPET),
         ..Default::default()
+    }
+}
+
+fn item_kind(kind: Kind) -> CompletionItemKind {
+    match kind {
+        Kind::Function | Kind::Tapscript => CompletionItemKind::FUNCTION,
+        Kind::Constant => CompletionItemKind::CONSTANT,
+        Kind::Struct => CompletionItemKind::STRUCT,
+        Kind::Library => CompletionItemKind::MODULE,
+        Kind::Contract => CompletionItemKind::CLASS,
+        Kind::Field => CompletionItemKind::FIELD,
+        Kind::Parameter | Kind::Variable => CompletionItemKind::VARIABLE,
     }
 }
 

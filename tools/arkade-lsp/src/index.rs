@@ -1,10 +1,11 @@
 //! Every `.ark` file the server knows, read from disk once and then kept current from the editor
-//! and the file watcher: its text, version and imports, and its importers.
+//! and the file watcher: its text, version, imports and declared names, and its importers.
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 
+use arkade_compiler::symbols::SymbolKind;
 use arkade_compiler::Span;
 use lsp_types::Url;
 
@@ -13,6 +14,11 @@ const MAX_ENTRIES: usize = 20_000;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct FileId(pub u32);
+
+pub struct Declaration {
+    pub name: String,
+    pub kind: SymbolKind,
+}
 
 pub struct File {
     pub path: PathBuf,
@@ -23,6 +29,7 @@ pub struct File {
     /// The client's URI and version while the editor has the file open.
     pub open: Option<(Url, i32)>,
     pub imports: Vec<FileId>,
+    pub declarations: Vec<Declaration>,
 }
 
 #[derive(Default)]
@@ -31,6 +38,8 @@ pub struct Index {
     files: Vec<File>,
     by_path: HashMap<PathBuf, FileId>,
     importers: Vec<Vec<FileId>>,
+    /// Each declared name, lowercased for prefix search, with its spelling and file.
+    exports: BTreeSet<(String, String, FileId)>,
     clock: u64,
 }
 
@@ -66,6 +75,28 @@ impl Index {
         files
             .filter(|(_, file)| file.text.is_some())
             .map(|(i, file)| (FileId(i as u32), file))
+    }
+
+    /// Up to `limit` declared names starting with `prefix`, ignoring case, each with its file.
+    /// O(log names + limit).
+    pub fn exported(&self, prefix: &str, limit: usize) -> Vec<(&str, FileId)> {
+        let prefix = prefix.to_lowercase();
+        let from = (prefix.clone(), String::new(), FileId(0));
+        let names = self.exports.range(from..);
+        let names = names.take_while(|(lower, _, _)| lower.starts_with(&prefix));
+        names
+            .take(limit)
+            .map(|(_, name, id)| (name.as_str(), *id))
+            .collect()
+    }
+
+    /// The files declaring `name`. O(log names + their count).
+    pub fn exporters(&self, name: &str) -> Vec<FileId> {
+        let named = self.exported(name, usize::MAX).into_iter();
+        named
+            .filter(|(n, _)| *n == name)
+            .map(|(_, id)| id)
+            .collect()
     }
 
     /// The deepest workspace folder holding `path`, or its directory outside every folder.
@@ -190,6 +221,7 @@ impl Index {
             version: 0,
             open: None,
             imports: Vec::new(),
+            declarations: Vec::new(),
         });
         self.importers.push(Vec::new());
         self.by_path.insert(path.to_path_buf(), id);
@@ -215,8 +247,17 @@ impl Index {
             });
             imports.push(file);
         }
+        let declarations = arkade_compiler::declarations(source);
+        let declarations: Vec<_> = declarations
+            .into_iter()
+            .map(|(name, kind, _)| Declaration { name, kind })
+            .collect();
 
         let file = &mut self.files[id.0 as usize];
+        let names = |declarations: &[Declaration]| -> BTreeSet<String> {
+            declarations.iter().map(|d| d.name.clone()).collect()
+        };
+        let (old_names, new_names) = (names(&file.declarations), names(&declarations));
         let targets = |imports: &[FileId]| -> Vec<FileId> {
             let mut targets = imports.to_vec();
             targets.sort();
@@ -227,12 +268,21 @@ impl Index {
         file.text = text;
         file.version = self.clock;
         file.imports = imports;
+        file.declarations = declarations;
         if old != now {
             for target in &old {
                 self.importers[target.0 as usize].retain(|importer| *importer != id);
             }
             for target in &now {
                 self.importers[target.0 as usize].push(id);
+            }
+        }
+        if old_names != new_names {
+            for name in old_names {
+                self.exports.remove(&(name.to_lowercase(), name, id));
+            }
+            for name in new_names {
+                self.exports.insert((name.to_lowercase(), name, id));
             }
         }
         new

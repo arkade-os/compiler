@@ -754,3 +754,59 @@ fn a_burst_of_edits_publishes_once_before_waiting_requests() {
     send(Notification::new("exit".into(), Value::Null).into());
     server.join().unwrap().unwrap();
 }
+
+#[test]
+fn completion_offers_each_file_declaring_a_name() {
+    let (dir, vault, _) = workspace();
+    let root = dir.path().canonicalize().unwrap();
+    std::fs::create_dir(root.join("vendor")).unwrap();
+    std::fs::write(root.join("vendor/rules.ark"), RULES).unwrap();
+    let mut client = Client::start(&root);
+    let unimported = VAULT.replace("import \"lib/rules.ark\";\n", "");
+    client.open(
+        &vault,
+        &unimported.replace("    Rules.preservesValue();", "    Ru"),
+    );
+    let complete = |client: &mut Client, character: u32| {
+        client.request(
+            "textDocument/completion",
+            json!({ "textDocument": { "uri": vault }, "position": { "line": 3, "character": character } }),
+        )
+    };
+    let details = |items: Value| -> Vec<(String, String)> {
+        let items = items.as_array().unwrap().iter();
+        let mut details: Vec<_> = items
+            .filter(|i| {
+                !i["detail"].is_null() && i["detail"].as_str().unwrap().starts_with("import")
+            })
+            .map(|i| {
+                (
+                    i["label"].as_str().unwrap().to_string(),
+                    i["detail"].as_str().unwrap().to_string(),
+                )
+            })
+            .collect();
+        details.sort();
+        details
+    };
+    let from = |file: &str| format!("import from {file}");
+    assert_eq!(
+        details(complete(&mut client, 6)),
+        [
+            ("Rules".to_string(), from("lib/rules.ark")),
+            ("Rules".to_string(), from("vendor/rules.ark"))
+        ]
+    );
+    client.change(
+        &vault,
+        &unimported.replace("    Rules.preservesValue();", "    Rules."),
+    );
+    assert_eq!(
+        details(complete(&mut client, 10)),
+        [
+            ("preservesValue".to_string(), from("lib/rules.ark")),
+            ("preservesValue".to_string(), from("vendor/rules.ark"))
+        ]
+    );
+    client.stop();
+}

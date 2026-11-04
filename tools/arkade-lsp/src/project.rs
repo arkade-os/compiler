@@ -61,6 +61,11 @@ impl Project {
             .collect()
     }
 
+    /// `path` relative to the root, when under it.
+    pub fn relative(&self, path: &Path) -> Option<String> {
+        relative(&self.root, path)
+    }
+
     /// Every indexed file under the root, by relative path. O(workspace).
     pub fn workspace<'a>(&self, index: &'a Index) -> impl Iterator<Item = (String, &'a File)> {
         let root = self.root.clone();
@@ -127,19 +132,26 @@ impl Cache {
     /// The analysis of `project`, reused while no file of its closure changed. O(`CACHED`) on a
     /// hit.
     pub fn analyze(&self, project: &Project) -> Rc<Analyzed> {
+        self.get(project.key, || {
+            arkade_compiler::analyze(&project.entry, &project.sources())
+        })
+    }
+
+    /// The analysis cached under `key`, or `analyze`'s, cached.
+    pub fn get(&self, key: (FileId, u64), analyze: impl FnOnce() -> Analysis) -> Rc<Analyzed> {
         let mut cached = self.0.borrow_mut();
-        if let Some(at) = cached.iter().position(|(key, _)| *key == project.key) {
+        if let Some(at) = cached.iter().position(|(cached, _)| *cached == key) {
             let hit = cached.remove(at).expect("position");
             cached.push_front(hit.clone());
             return hit.1;
         }
         drop(cached);
         let analysis = Rc::new(Analyzed {
-            analysis: arkade_compiler::analyze(&project.entry, &project.sources()),
+            analysis: analyze(),
             diagnostics: OnceCell::new(),
         });
         let mut cached = self.0.borrow_mut();
-        cached.push_front((project.key, analysis.clone()));
+        cached.push_front((key, analysis.clone()));
         cached.truncate(CACHED);
         analysis
     }
