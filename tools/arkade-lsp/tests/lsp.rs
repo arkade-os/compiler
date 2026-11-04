@@ -439,3 +439,18 @@ fn references_and_highlights_cover_covenants_and_tapscripts() {
     assert_eq!(starts(&highlights), [(8, 32), (10, 21)]);
     client.stop();
 }
+
+#[test]
+fn completion_after_a_multibyte_character() {
+    let (dir, vault, _) = workspace();
+    let mut client = Client::start(&dir.path().canonicalize().unwrap());
+    let text = VAULT.replace("    Rules.preservesValue();", "    // łowner");
+    client.open(&vault, &text);
+    let line = "    // łowner";
+    let items = client.request(
+        "textDocument/completion",
+        json!({ "textDocument": { "uri": vault }, "position": { "line": 4, "character": line.encode_utf16().count() } }),
+    );
+    assert!(items.is_array());
+    client.stop();
+}

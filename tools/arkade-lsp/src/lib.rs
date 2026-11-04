@@ -598,7 +598,8 @@ fn publish(uri: Url, diagnostics: Vec<Diagnostic>) -> Notification {
     )
 }
 
+/// The byte offset where the identifier ending `text` starts, always on a char boundary.
 fn word_start(text: &str) -> usize {
-    text.rfind(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
-        .map_or(0, |i| i + 1)
+    text.trim_end_matches(|c: char| c.is_ascii_alphanumeric() || c == '_')
+        .len()
 }
