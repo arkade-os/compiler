@@ -1,7 +1,7 @@
 //! Language server for Arkade Script. Every answer comes from the compiler's own analysis:
 //! `check` for diagnostics and `analyze` with its symbol table for everything else.
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashSet, VecDeque};
 use std::error::Error;
 use std::path::{Path, PathBuf};
 
@@ -65,7 +65,15 @@ pub fn run(connection: Connection) -> Result<()> {
     if server.watching {
         connection.sender.send(watch_request().into())?;
     }
-    for message in &connection.receiver {
+    let mut queued = VecDeque::new();
+    loop {
+        let message = match queued.pop_front() {
+            Some(message) => message,
+            None => match connection.receiver.recv() {
+                Ok(message) => message,
+                Err(_) => return Ok(()),
+            },
+        };
         match message {
             Message::Request(request) => {
                 if connection.handle_shutdown(&request)? {
@@ -79,15 +87,32 @@ pub fn run(connection: Connection) -> Result<()> {
                 connection.sender.send(response.into())?;
             }
             Message::Notification(notification) => {
-                let messages = guarded(&mut server, |s| s.notify(notification));
-                for message in messages.unwrap_or_default() {
+                let burst = burst(&connection, notification, &mut queued);
+                for message in server.notify(burst) {
                     connection.sender.send(message.into())?;
                 }
             }
             Message::Response(_) => {}
         }
     }
-    Ok(())
+}
+
+/// `first` and the notifications already waiting after it; waiting requests go to `queued`, to
+/// be answered once the burst is published.
+fn burst(
+    connection: &Connection,
+    first: Notification,
+    queued: &mut VecDeque<Message>,
+) -> Vec<Notification> {
+    let mut burst = vec![first];
+    while let Ok(message) = connection.receiver.try_recv() {
+        match message {
+            Message::Notification(notification) => burst.push(notification),
+            Message::Request(_) => queued.push_back(message),
+            Message::Response(_) => {}
+        }
+    }
+    burst
 }
 
 /// `handle` on the server, or the panic's message after it panicked. The analysis cache is reset
@@ -134,11 +159,16 @@ impl Server {
         }
     }
 
-    /// Apply `notification` and publish diagnostics for the open documents it affects.
-    fn notify(&mut self, notification: Notification) -> Vec<Notification> {
+    /// Apply `notifications`, then publish diagnostics once for the open documents they affect.
+    /// A notification that panics is skipped.
+    fn notify(&mut self, notifications: Vec<Notification>) -> Vec<Notification> {
         let mut published = Vec::new();
-        let dirty = self.apply(notification, &mut published);
-        published.extend(self.publish(dirty));
+        let mut dirty = Vec::new();
+        for notification in notifications {
+            let applied = guarded(self, |s| s.apply(notification, &mut published));
+            dirty.extend(applied.unwrap_or_default());
+        }
+        published.extend(guarded(self, |s| s.publish(dirty)).unwrap_or_default());
         published
     }
 

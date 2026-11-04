@@ -712,3 +712,45 @@ fn an_edit_republishes_only_the_documents_it_reaches() {
     client.notify("exit", Value::Null);
     client.server.join().unwrap().unwrap();
 }
+
+#[test]
+fn a_burst_of_edits_publishes_once_before_waiting_requests() {
+    let (dir, vault, _) = workspace();
+    let root = Url::from_directory_path(dir.path().canonicalize().unwrap()).unwrap();
+    let (server, connection) = Connection::memory();
+    let send = |message: Message| connection.sender.send(message).unwrap();
+    let initialize = json!({ "capabilities": {}, "rootUri": root });
+    send(Request::new(1.into(), "initialize".into(), initialize).into());
+    send(Notification::new("initialized".into(), json!({})).into());
+    let document = json!({ "uri": vault, "languageId": "arkade", "version": 1, "text": "broken" });
+    send(
+        Notification::new(
+            "textDocument/didOpen".into(),
+            json!({ "textDocument": document }),
+        )
+        .into(),
+    );
+    for version in 2..5 {
+        let text = if version == 4 { VAULT } else { "still broken" };
+        let change = json!({ "textDocument": { "uri": vault, "version": version }, "contentChanges": [{ "text": text }] });
+        send(Notification::new("textDocument/didChange".into(), change).into());
+    }
+    let at =
+        json!({ "textDocument": { "uri": vault }, "position": { "line": 5, "character": 33 } });
+    send(Request::new(2.into(), "textDocument/hover".into(), at).into());
+    let server = std::thread::spawn(move || arkade_lsp::run(server).map_err(|e| e.to_string()));
+
+    let mut received = Vec::new();
+    loop {
+        match connection.receiver.recv().unwrap() {
+            Message::Response(r) if r.id == 2.into() => break,
+            Message::Response(_) => {}
+            Message::Notification(n) => received.push(n.params["diagnostics"].clone()),
+            Message::Request(r) => panic!("{r:?}"),
+        }
+    }
+    assert_eq!(received, [json!([])]);
+    send(Request::new(3.into(), "shutdown".into(), Value::Null).into());
+    send(Notification::new("exit".into(), Value::Null).into());
+    server.join().unwrap().unwrap();
+}
