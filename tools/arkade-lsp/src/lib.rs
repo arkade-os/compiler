@@ -56,10 +56,16 @@ pub fn run(connection: Connection) -> Result<()> {
                 if connection.handle_shutdown(&request)? {
                     return Ok(());
                 }
-                connection.sender.send(server.request(request).into())?;
+                let id = request.id.clone();
+                let response =
+                    guarded(&mut server, |s| s.request(request)).unwrap_or_else(|panic| {
+                        Response::new_err(id, ErrorCode::InternalError as i32, panic)
+                    });
+                connection.sender.send(response.into())?;
             }
             Message::Notification(notification) => {
-                for message in server.notify(notification) {
+                let messages = guarded(&mut server, |s| s.notify(notification));
+                for message in messages.unwrap_or_default() {
                     connection.sender.send(message.into())?;
                 }
             }
@@ -67,6 +73,22 @@ pub fn run(connection: Connection) -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// `handle` on the server, or the panic's message after it panicked. The analysis cache is reset
+/// then, since the panic may have interrupted a borrow of it.
+fn guarded<T>(
+    server: &mut Server,
+    handle: impl FnOnce(&mut Server) -> T,
+) -> std::result::Result<T, String> {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| handle(server))).map_err(|panic| {
+        server.cache = Cache::default();
+        let message = panic
+            .downcast_ref::<&str>()
+            .map(|s| s.to_string())
+            .or_else(|| panic.downcast_ref::<String>().cloned());
+        format!("internal error: {}", message.unwrap_or_default())
+    })
 }
 
 struct Server {
