@@ -685,3 +685,30 @@ fn closing_a_library_falls_back_to_its_file() {
     assert_eq!(client.diagnostics(&vault), Vec::<Value>::new());
     client.stop();
 }
+
+#[test]
+fn an_edit_republishes_only_the_documents_it_reaches() {
+    let (dir, vault, rules) = workspace();
+    let root = dir.path().canonicalize().unwrap();
+    let other = Url::from_file_path(root.join("other.ark")).unwrap();
+    let mut client = Client::start(&root);
+    client.open(&rules, RULES);
+    client.open(&vault, VAULT);
+    client.open(&other, &RULES.replace("Rules", "Other"));
+    client.notify(
+        "textDocument/didChange",
+        json!({ "textDocument": { "uri": rules, "version": 2 }, "contentChanges": [{ "text": format!("{RULES}\n") }] }),
+    );
+    client.next_id += 1;
+    let id = RequestId::from(client.next_id);
+    let request = Request::new(id, "shutdown".to_string(), Value::Null);
+    client.connection.sender.send(request.into()).unwrap();
+    let mut published = Vec::new();
+    while let Message::Notification(n) = client.connection.receiver.recv().unwrap() {
+        published.push(n.params["uri"].as_str().unwrap().to_string());
+    }
+    published.sort();
+    assert_eq!(published, [rules.to_string(), vault.to_string()]);
+    client.notify("exit", Value::Null);
+    client.server.join().unwrap().unwrap();
+}

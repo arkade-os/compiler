@@ -132,7 +132,21 @@ impl Server {
         }
     }
 
+    /// Apply `notification` and publish diagnostics for the open documents it affects.
     fn notify(&mut self, notification: Notification) -> Vec<Notification> {
+        let mut published = Vec::new();
+        let dirty = self.apply(notification, &mut published);
+        published.extend(self.publish(dirty));
+        published
+    }
+
+    /// Apply `notification` to the index; the files whose text changed. A closed document's
+    /// cleared diagnostics go to `published`.
+    fn apply(
+        &mut self,
+        notification: Notification,
+        published: &mut Vec<Notification>,
+    ) -> Vec<FileId> {
         fn parse<N: lsp_types::notification::Notification>(n: Notification) -> Option<N::Params> {
             serde_json::from_value(n.params).ok()
         }
@@ -146,6 +160,7 @@ impl Server {
                 let id =
                     (self.index).open(&path, document.uri.clone(), document.version, document.text);
                 self.documents.insert(document.uri, id);
+                vec![id]
             }
             DidChangeTextDocument::METHOD => {
                 let Some(mut params) = parse::<DidChangeTextDocument>(notification) else {
@@ -156,7 +171,7 @@ impl Server {
                 };
                 let document = params.text_document;
                 let path = path_of(&document.uri);
-                (self.index).open(&path, document.uri, document.version, change.text);
+                vec![(self.index).open(&path, document.uri, document.version, change.text)]
             }
             DidCloseTextDocument::METHOD => {
                 let Some(params) = parse::<DidCloseTextDocument>(notification) else {
@@ -164,41 +179,43 @@ impl Server {
                 };
                 let uri = params.text_document.uri;
                 self.documents.remove(&uri);
-                self.index.close(&path_of(&uri));
-                let mut published = self.publish_open();
+                let closed = self.index.close(&path_of(&uri));
                 published.push(publish(uri, Vec::new()));
-                return published;
+                closed.into_iter().collect()
             }
             DidSaveTextDocument::METHOD if !self.watching => {
                 let Some(params) = parse::<DidSaveTextDocument>(notification) else {
                     return Vec::new();
                 };
                 let path = path_of(&params.text_document.uri);
-                if let Some(directory) = path.parent() {
-                    self.index.rescan(directory);
-                }
+                path.parent()
+                    .map(|directory| self.index.rescan(directory))
+                    .unwrap_or_default()
             }
             DidChangeWatchedFiles::METHOD => {
                 let Some(params) = parse::<DidChangeWatchedFiles>(notification) else {
                     return Vec::new();
                 };
-                for change in params.changes {
-                    if let Ok(path) = change.uri.to_file_path() {
-                        self.index.refresh(&path);
-                    }
-                }
+                let paths = params.changes.into_iter();
+                let paths = paths.filter_map(|change| change.uri.to_file_path().ok());
+                paths.filter_map(|path| self.index.refresh(&path)).collect()
             }
-            _ => return Vec::new(),
+            _ => Vec::new(),
         }
-        self.publish_open()
     }
 
-    /// Diagnostics for every open document, since importers depend on the edited file.
-    fn publish_open(&self) -> Vec<Notification> {
-        self.documents
-            .keys()
-            .map(|uri| publish(uri.clone(), self.diagnostics(uri)))
-            .collect()
+    /// Diagnostics for each open document reaching a `dirty` file through its imports. O(the
+    /// affected subgraph), plus one analysis per affected document.
+    fn publish(&self, dirty: Vec<FileId>) -> Vec<Notification> {
+        let affected = self.index.affected(dirty);
+        let uris = affected
+            .into_iter()
+            .filter_map(|id| self.index.file(id).open.clone());
+        uris.map(|(uri, _)| {
+            let diagnostics = self.diagnostics(&uri);
+            publish(uri, diagnostics)
+        })
+        .collect()
     }
 
     fn request(&self, request: Request) -> Response {

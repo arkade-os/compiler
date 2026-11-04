@@ -1,7 +1,7 @@
 //! Every `.ark` file the server knows, read from disk once and then kept current from the editor
 //! and the file watcher: its text, version and imports, and its importers.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 
@@ -145,6 +145,24 @@ impl Index {
                 pending.push((new, read(&path)));
             }
         }
+    }
+
+    /// The files that open documents depend on through `dirty`, including those themselves, in
+    /// breadth-first order. O(affected files and their import edges).
+    pub fn affected(&self, dirty: impl IntoIterator<Item = FileId>) -> Vec<FileId> {
+        let mut seen = HashSet::new();
+        let mut queue: VecDeque<FileId> = dirty.into_iter().collect();
+        let mut open = Vec::new();
+        while let Some(id) = queue.pop_front() {
+            if !seen.insert(id) {
+                continue;
+            }
+            if self.file(id).open.is_some() {
+                open.push(id);
+            }
+            queue.extend(&self.importers[id.0 as usize]);
+        }
+        open
     }
 
     fn insert(&mut self, path: &Path) -> FileId {
