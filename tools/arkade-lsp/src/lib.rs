@@ -215,7 +215,7 @@ impl Server {
                 let uri = params.text_document.uri;
                 self.documents.remove(&uri);
                 let closed = self.index.close(&path_of(&uri));
-                published.push(publish(uri, Vec::new()));
+                published.push(publish(uri, Vec::new(), None));
                 closed.into_iter().collect()
             }
             DidSaveTextDocument::METHOD if !self.watching => {
@@ -246,9 +246,9 @@ impl Server {
         let uris = affected
             .into_iter()
             .filter_map(|id| self.index.file(id).open.clone());
-        uris.map(|(uri, _)| {
+        uris.map(|(uri, version)| {
             let diagnostics = self.diagnostics(&uri);
-            publish(uri, diagnostics)
+            publish(uri, diagnostics, Some(version))
         })
         .collect()
     }
@@ -819,10 +819,10 @@ fn path_of(uri: &Url) -> PathBuf {
     })
 }
 
-fn publish(uri: Url, diagnostics: Vec<Diagnostic>) -> Notification {
+fn publish(uri: Url, diagnostics: Vec<Diagnostic>, version: Option<i32>) -> Notification {
     Notification::new(
         PublishDiagnostics::METHOD.to_string(),
-        PublishDiagnosticsParams::new(uri, diagnostics, None),
+        PublishDiagnosticsParams::new(uri, diagnostics, version),
     )
 }
 

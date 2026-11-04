@@ -918,3 +918,25 @@ fn a_transitive_dependency_error_shows_on_the_import_reaching_it() {
     );
     client.stop();
 }
+
+#[test]
+fn diagnostics_carry_the_document_version() {
+    let (dir, vault, _) = workspace();
+    let client = Client::start(&dir.path().canonicalize().unwrap());
+    let version = || loop {
+        if let Message::Notification(n) = client.connection.receiver.recv().unwrap() {
+            return n.params["version"].clone();
+        }
+    };
+    client.notify(
+        "textDocument/didOpen",
+        json!({ "textDocument": { "uri": vault, "languageId": "arkade", "version": 7, "text": VAULT } }),
+    );
+    assert_eq!(version(), json!(7));
+    client.notify(
+        "textDocument/didChange",
+        json!({ "textDocument": { "uri": vault, "version": 8 }, "contentChanges": [{ "text": VAULT }] }),
+    );
+    assert_eq!(version(), json!(8));
+    client.stop();
+}
