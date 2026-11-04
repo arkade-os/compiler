@@ -264,7 +264,7 @@ impl Server {
     }
 
     fn analyze(&self, project: &Project) -> std::rc::Rc<Analysis> {
-        self.cache.analyze(&project.entry, &project.files)
+        self.cache.analyze(project)
     }
 
     fn diagnostics(&self, uri: &Url) -> Vec<Diagnostic> {
@@ -273,7 +273,7 @@ impl Server {
         };
         let source = project.source();
         let imports = project.imports();
-        arkade_compiler::check(&project.entry, &project.files)
+        arkade_compiler::check(&project.entry, &project.sources())
             .into_iter()
             .map(|diagnostic| {
                 let (range, message) = if diagnostic.file == project.entry {
@@ -474,11 +474,10 @@ impl Server {
             let typed = before.rfind('"').map_or(0, |i| i + 1);
             let start = Position::new(cursor.line, utf16_len(&before[..typed]));
             return project
-                .files
-                .keys()
-                .filter(|file| **file != project.entry)
-                .map(|file| {
-                    let path = import_path(project.directory(), file);
+                .workspace(&self.index)
+                .filter(|(file, _)| *file != project.entry)
+                .map(|(file, _)| {
+                    let path = import_path(project.directory(), &file);
                     CompletionItem {
                         label: path.clone(),
                         kind: Some(CompletionItemKind::FILE),
@@ -497,14 +496,17 @@ impl Server {
             .strip_suffix('.')
             .map(|before| &before[word_start(before)..]);
         let imported: HashSet<String> = project.imports().into_iter().map(|(f, _)| f).collect();
-        let others: Vec<String> = project
-            .files
+        let workspace: BTreeMap<String, String> = project
+            .workspace(&self.index)
+            .map(|(name, file)| (name, file.text.as_deref().unwrap_or_default().to_string()))
+            .collect();
+        let others: Vec<String> = workspace
             .keys()
             .filter(|file| **file != project.entry && !imported.contains(*file))
             .map(|file| format!("import \"{}\";", import_path(project.directory(), file)))
             .collect();
-        let Some((analysis, at)) = visible_while_typing(&project, cursor, &others)
-            .or_else(|| visible_while_typing(&project, cursor, &[]))
+        let Some((analysis, at)) = visible_while_typing(&project, &workspace, cursor, &others)
+            .or_else(|| visible_while_typing(&project, &project.sources(), cursor, &[]))
         else {
             return Vec::new();
         };
@@ -619,6 +621,7 @@ fn constant_value(analysis: &Analysis, project: &Project, constant: &Definition)
 /// offset in it. A half-typed line rarely parses, so it is retried blank.
 fn visible_while_typing(
     project: &Project,
+    files: &BTreeMap<String, String>,
     cursor: Position,
     imports: &[String],
 ) -> Option<(Analysis, usize)> {
@@ -636,7 +639,7 @@ fn visible_while_typing(
         let shifted = line + if line >= at { imports.len() } else { 0 };
         let column = if blank { 0 } else { cursor.character };
         let offset = offset(&text, Position::new(shifted as u32, column))?;
-        let mut files = project.files.clone();
+        let mut files = files.clone();
         files.insert(project.entry.clone(), text);
         let analysis = arkade_compiler::analyze(&project.entry, &files);
         let parsed = analysis

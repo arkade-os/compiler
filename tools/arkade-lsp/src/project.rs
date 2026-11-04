@@ -2,43 +2,71 @@
 //! compiler byte spans and LSP positions.
 
 use std::cell::RefCell;
-use std::collections::BTreeMap;
-use std::path::{Component, Path};
+use std::collections::hash_map::DefaultHasher;
+use std::collections::{BTreeMap, VecDeque};
+use std::hash::{Hash, Hasher};
+use std::path::{Component, Path, PathBuf};
 use std::rc::Rc;
+use std::sync::Arc;
 
 use arkade_compiler::diagnostics::{offset as byte_offset, position as compiler_position};
 use arkade_compiler::{Analysis, Span};
 use lsp_types::{Position, Range, Url};
 
-use crate::index::{import_statements, FileId, Index};
+use crate::index::{import_statements, File, FileId, Index};
 
-/// One document as an entry, with the indexed files under its workspace root, keyed by paths
-/// relative to the root.
+/// One document as an entry with its import closure, keyed by paths relative to its workspace
+/// root.
 pub struct Project {
     pub entry: String,
-    pub files: BTreeMap<String, String>,
+    pub files: BTreeMap<String, Arc<str>>,
+    /// The entry and a hash of each closure file's id and version.
+    pub key: (FileId, u64),
+    root: PathBuf,
     uris: BTreeMap<String, Url>,
 }
 
 impl Project {
+    /// O(closure): its files' texts are shared, not copied.
     pub fn new(index: &Index, id: FileId) -> Option<Self> {
         let path = &index.file(id).path;
         let root = index.root(path);
         let entry = relative(&root, path)?;
         let mut files = BTreeMap::new();
         let mut uris = BTreeMap::new();
-        for (_, file) in index.files() {
-            let Some(name) = relative(&root, &file.path) else {
+        let mut hasher = DefaultHasher::new();
+        for (member, _) in index.closure(id) {
+            let file = index.file(member);
+            (member, file.version).hash(&mut hasher);
+            let (Some(name), Some(text)) = (relative(&root, &file.path), &file.text) else {
                 continue;
             };
-            let uri = match &file.open {
-                Some((uri, _)) => Some(uri.clone()),
-                None => Url::from_file_path(&file.path).ok(),
-            };
-            uris.extend(uri.map(|uri| (name.clone(), uri)));
-            files.insert(name, file.text.as_deref().unwrap_or_default().to_string());
+            uris.extend(uri(file).map(|uri| (name.clone(), uri)));
+            files.insert(name, text.clone());
         }
-        Some(Self { entry, files, uris })
+        Some(Self {
+            entry,
+            files,
+            key: (id, hasher.finish()),
+            root,
+            uris,
+        })
+    }
+
+    /// The closure's texts as the compiler takes them.
+    pub fn sources(&self) -> BTreeMap<String, String> {
+        let files = self.files.iter();
+        files
+            .map(|(name, text)| (name.clone(), text.to_string()))
+            .collect()
+    }
+
+    /// Every indexed file under the root, by relative path. O(workspace).
+    pub fn workspace<'a>(&self, index: &'a Index) -> impl Iterator<Item = (String, &'a File)> {
+        let root = self.root.clone();
+        index
+            .files()
+            .filter_map(move |(_, file)| Some((relative(&root, &file.path)?, file)))
     }
 
     pub fn source(&self) -> &str {
@@ -65,24 +93,39 @@ impl Project {
     }
 }
 
-/// The entry and files last analyzed, and their analysis.
-type Analyzed = (String, BTreeMap<String, String>, Rc<Analysis>);
+const CACHED: usize = 32;
 
-/// The last analysis, reused while the entry and files are unchanged.
+/// An analysis and its project's key.
+type Cached = ((FileId, u64), Rc<Analysis>);
+
+/// Analyses by entry and closure fingerprint, most recently used first.
 #[derive(Default)]
-pub struct Cache(RefCell<Option<Analyzed>>);
+pub struct Cache(RefCell<VecDeque<Cached>>);
 
 impl Cache {
-    pub fn analyze(&self, entry: &str, files: &BTreeMap<String, String>) -> Rc<Analysis> {
+    /// The analysis of `project`, reused while no file of its closure changed. O(`CACHED`) on a
+    /// hit.
+    pub fn analyze(&self, project: &Project) -> Rc<Analysis> {
         let mut cached = self.0.borrow_mut();
-        if let Some((e, f, analysis)) = cached.as_ref() {
-            if e == entry && f == files {
-                return analysis.clone();
-            }
+        if let Some(at) = cached.iter().position(|(key, _)| *key == project.key) {
+            let hit = cached.remove(at).expect("position");
+            cached.push_front(hit.clone());
+            return hit.1;
         }
-        let analysis = Rc::new(arkade_compiler::analyze(entry, files));
-        *cached = Some((entry.to_string(), files.clone(), analysis.clone()));
+        drop(cached);
+        let analysis = Rc::new(arkade_compiler::analyze(&project.entry, &project.sources()));
+        let mut cached = self.0.borrow_mut();
+        cached.push_front((project.key, analysis.clone()));
+        cached.truncate(CACHED);
         analysis
+    }
+}
+
+/// The client's URI of `file` while open, its file URI otherwise.
+pub fn uri(file: &File) -> Option<Url> {
+    match &file.open {
+        Some((uri, _)) => Some(uri.clone()),
+        None => Url::from_file_path(&file.path).ok(),
     }
 }
 
@@ -169,4 +212,36 @@ fn relative(root: &Path, path: &Path) -> Option<String> {
         .map(|c| c.as_os_str().to_str())
         .collect();
     Some(parts?.join("/"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_cache_follows_each_entry_closure() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        let library = "library L { function f() { require(true); } }";
+        std::fs::write(root.join("l.ark"), library).unwrap();
+        let entry = "import \"l.ark\";\ncontract A() { function f() { L.f(); } }";
+        std::fs::write(root.join("a.ark"), entry).unwrap();
+        std::fs::write(
+            root.join("b.ark"),
+            "contract B() { function f() { require(true); } }",
+        )
+        .unwrap();
+        let mut index = Index::new(vec![root.clone()]);
+        let [a, b, l] = ["a.ark", "b.ark", "l.ark"].map(|f| index.get(&root.join(f)).unwrap());
+        let cache = Cache::default();
+        let analyze = |index: &Index, id| cache.analyze(&Project::new(index, id).unwrap());
+
+        let first = analyze(&index, a);
+        analyze(&index, b);
+        assert!(Rc::ptr_eq(&first, &analyze(&index, a)));
+        index.set(b, Some("contract B() {}".into()));
+        assert!(Rc::ptr_eq(&first, &analyze(&index, a)));
+        index.set(l, Some(library.replace("true", "false").into()));
+        assert!(!Rc::ptr_eq(&first, &analyze(&index, a)));
+    }
 }

@@ -165,6 +165,23 @@ impl Index {
         open
     }
 
+    /// `entry`'s import closure in breadth-first order, each file with the importer that reached
+    /// it first. O(closure and its import edges).
+    pub fn closure(&self, entry: FileId) -> Vec<(FileId, Option<FileId>)> {
+        let mut seen = HashSet::from([entry]);
+        let mut closure = vec![(entry, None)];
+        let mut next = 0;
+        while let Some(&(id, _)) = closure.get(next) {
+            next += 1;
+            for &import in &self.file(id).imports {
+                if seen.insert(import) {
+                    closure.push((import, Some(id)));
+                }
+            }
+        }
+        closure
+    }
+
     fn insert(&mut self, path: &Path) -> FileId {
         let id = FileId(self.files.len() as u32);
         self.files.push(File {
