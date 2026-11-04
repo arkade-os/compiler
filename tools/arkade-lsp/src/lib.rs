@@ -23,8 +23,8 @@ use lsp_types::notification::{
 };
 use lsp_types::request::{
     CodeActionRequest, Completion, DocumentHighlightRequest, DocumentSymbolRequest, GotoDefinition,
-    HoverRequest, PrepareRenameRequest, References, RegisterCapability, Rename, Request as _,
-    WorkspaceSymbolRequest,
+    HoverRequest, InlayHintRequest, PrepareRenameRequest, References, RegisterCapability, Rename,
+    Request as _, WorkspaceSymbolRequest,
 };
 use lsp_types::{
     CodeAction, CodeActionKind, CodeActionOrCommand, CodeActionParams,
@@ -33,11 +33,12 @@ use lsp_types::{
     DiagnosticRelatedInformation, DiagnosticSeverity, DidChangeWatchedFilesRegistrationOptions,
     DocumentHighlight, DocumentHighlightParams, DocumentSymbol, DocumentSymbolParams,
     FileSystemWatcher, GlobPattern, GotoDefinitionParams, Hover, HoverContents, HoverParams,
-    HoverProviderCapability, InitializeParams, InsertTextFormat, Location, MarkupContent,
-    MarkupKind, NumberOrString, OneOf, Position, PublishDiagnosticsParams, Range, ReferenceParams,
-    Registration, RegistrationParams, RenameOptions, RenameParams, ServerCapabilities, SymbolKind,
-    TextDocumentPositionParams, TextDocumentSyncKind, TextDocumentSyncOptions, TextEdit, Url,
-    WorkspaceEdit, WorkspaceSymbol, WorkspaceSymbolParams,
+    HoverProviderCapability, InitializeParams, InlayHint, InlayHintLabel, InlayHintParams,
+    InsertTextFormat, Location, MarkupContent, MarkupKind, NumberOrString, OneOf, Position,
+    PublishDiagnosticsParams, Range, ReferenceParams, Registration, RegistrationParams,
+    RenameOptions, RenameParams, ServerCapabilities, SymbolKind, TextDocumentPositionParams,
+    TextDocumentSyncKind, TextDocumentSyncOptions, TextEdit, Url, WorkspaceEdit, WorkspaceSymbol,
+    WorkspaceSymbolParams,
 };
 use project::{
     first_line, import_line, import_path, offset, range, utf16_len, Analyzed, Cache, Project,
@@ -64,6 +65,7 @@ pub fn run(connection: Connection) -> Result<()> {
         hover_provider: Some(HoverProviderCapability::Simple(true)),
         code_action_provider: Some(CodeActionProviderCapability::Simple(true)),
         workspace_symbol_provider: Some(OneOf::Left(true)),
+        inlay_hint_provider: Some(OneOf::Left(true)),
         rename_provider: Some(OneOf::Right(RenameOptions {
             prepare_provider: Some(true),
             work_done_progress_options: Default::default(),
@@ -311,6 +313,8 @@ impl Server {
                 serde_json::from_value::<WorkspaceSymbolParams>(params)
                     .map(|p| serde_json::json!(self.workspace_symbols(&p.query)))
             }
+            InlayHintRequest::METHOD => serde_json::from_value::<InlayHintParams>(params)
+                .map(|p| serde_json::json!(self.inlay_hints(&p.text_document.uri, p.range))),
             PrepareRenameRequest::METHOD => serde_json::from_value(params)
                 .map(|p| serde_json::json!(self.prepare_rename(at(p)))),
             method => {
@@ -622,6 +626,42 @@ impl Server {
             .map(|d| completion_item(&d.name, d))
             .collect();
         (fields, false)
+    }
+
+    /// The folded value of each constant declared in `within`, at the end of its line, unless
+    /// the declaration already spells it.
+    fn inlay_hints(&self, uri: &Url, within: Range) -> Vec<InlayHint> {
+        let Some(project) = self.project(uri) else {
+            return Vec::new();
+        };
+        let analysis = self.analyze(&project);
+        let source = project.source();
+        let constants = analysis.symbols().definitions().iter();
+        let constants = constants.filter(|d| d.kind == Kind::Constant && d.file == project.entry);
+        let hints = constants.filter_map(|constant| {
+            let value = constant_value(&analysis, &project, constant)?;
+            let rest = &source[constant.span.end..];
+            let line = rest[..rest.find('\n').unwrap_or(rest.len())].trim_end_matches('\r');
+            let end = constant.span.end + line.len();
+            let initializer = line
+                .trim()
+                .trim_start_matches('=')
+                .trim_end_matches(';')
+                .trim();
+            let position = range(source, Span { start: end, end }).start;
+            let inside = within.start <= position && position <= within.end;
+            (initializer != value && inside).then(|| InlayHint {
+                position,
+                label: InlayHintLabel::String(format!("= {value}")),
+                kind: None,
+                text_edits: None,
+                tooltip: None,
+                padding_left: Some(true),
+                padding_right: None,
+                data: None,
+            })
+        });
+        hints.collect()
     }
 
     /// Up to `OFFERS` structs, contracts and libraries whose names start with `query`, ignoring

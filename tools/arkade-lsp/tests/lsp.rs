@@ -1072,3 +1072,34 @@ fn workspace_symbols_come_from_the_index() {
     assert_eq!(names, [json!("Rules"), json!("Vault")]);
     client.stop();
 }
+
+#[test]
+fn inlay_hints_show_folded_constants() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().canonicalize().unwrap();
+    let main = "contract Vault(pubkey owner) {\n  const int DAY = 144;\n  const int EXIT = DAY * 7;\r\n  const int FEE = EXIT / 2;\n\n  function spend(signature sig) {\n    require(tx.outputs[0].value >= FEE);\n    require(checkSig(sig, owner));\n  }\n}\n";
+    std::fs::write(root.join("vault.ark"), main).unwrap();
+    let uri = Url::from_file_path(root.join("vault.ark")).unwrap();
+    let mut client = Client::start(&root);
+    client.open(&uri, main);
+    let mut hints = |end: u32| {
+        let range = json!({ "start": { "line": 0, "character": 0 }, "end": { "line": end, "character": 0 } });
+        let hints = client.request(
+            "textDocument/inlayHint",
+            json!({ "textDocument": { "uri": uri }, "range": range }),
+        );
+        let hints = hints.as_array().unwrap().iter();
+        hints
+            .map(|h| (h["position"].clone(), h["label"].clone()))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        hints(9),
+        [
+            (json!({ "line": 2, "character": 27 }), json!("= 1008")),
+            (json!({ "line": 3, "character": 27 }), json!("= 504"))
+        ]
+    );
+    assert_eq!(hints(3).len(), 1);
+    client.stop();
+}
