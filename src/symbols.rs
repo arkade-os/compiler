@@ -112,6 +112,17 @@ impl Symbols {
         visible
     }
 
+    /// The names a file importing `file` sees, as written there (such as `Fees.DELAY`), with their
+    /// definitions, sorted by name.
+    pub fn exports(&self, file: &str) -> Vec<(&str, &Definition)> {
+        let exports = self.exports.get(file).into_iter().flatten();
+        let mut exports: Vec<_> = exports
+            .map(|(name, &id)| (name.as_str(), &self.definitions[id]))
+            .collect();
+        exports.sort_by_key(|(name, _)| *name);
+        exports
+    }
+
     /// Record `contract`, typed, as `file`; `constants` are the constant references folded away.
     pub(crate) fn collect(
         &mut self,

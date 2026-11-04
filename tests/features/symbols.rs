@@ -395,3 +395,17 @@ contract C(pubkey owner) {
         ]
     );
 }
+
+#[test]
+fn exports_are_what_an_importer_sees() {
+    let library = "library Fees {\n    const int DELAY = 144;\n    function calculate(int amount) int { return amount * 2; }\n    private function helper() int { return 1; }\n}";
+    let files = BTreeMap::from([("fees.ark".to_string(), library.to_string())]);
+    let analysis = analyze("fees.ark", &files);
+    let names: Vec<_> = analysis
+        .symbols()
+        .exports("fees.ark")
+        .into_iter()
+        .map(|(name, _)| name)
+        .collect();
+    assert_eq!(names, ["Fees", "Fees.DELAY", "Fees.calculate"]);
+}
