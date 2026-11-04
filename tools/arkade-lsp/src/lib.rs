@@ -3,31 +3,33 @@
 
 use std::collections::{BTreeMap, HashSet};
 use std::error::Error;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
+mod index;
 mod project;
 
 use arkade_compiler::models::ExprKind;
 use arkade_compiler::symbols::{Definition, SymbolKind as Kind};
 use arkade_compiler::{Analysis, Severity, Span};
+use index::{FileId, Index};
 use lsp_server::{Connection, ErrorCode, Message, Notification, Request, Response};
 use lsp_types::notification::{
-    DidChangeTextDocument, DidCloseTextDocument, DidOpenTextDocument, Notification as _,
-    PublishDiagnostics,
+    DidChangeTextDocument, DidChangeWatchedFiles, DidCloseTextDocument, DidOpenTextDocument,
+    DidSaveTextDocument, Notification as _, PublishDiagnostics,
 };
 use lsp_types::request::{
     Completion, DocumentHighlightRequest, DocumentSymbolRequest, GotoDefinition, HoverRequest,
-    References, Request as _,
+    References, RegisterCapability, Request as _,
 };
 use lsp_types::{
     CompletionItem, CompletionItemKind, CompletionOptions, CompletionParams, CompletionTextEdit,
-    Diagnostic, DiagnosticSeverity, DidChangeTextDocumentParams, DidCloseTextDocumentParams,
-    DidOpenTextDocumentParams, DocumentHighlight, DocumentHighlightParams, DocumentSymbol,
-    DocumentSymbolParams, GotoDefinitionParams, Hover, HoverContents, HoverParams,
-    HoverProviderCapability, InitializeParams, InsertTextFormat, Location, MarkupContent,
-    MarkupKind, NumberOrString, OneOf, Position, PublishDiagnosticsParams, Range, ReferenceParams,
-    ServerCapabilities, SymbolKind, TextDocumentPositionParams, TextDocumentSyncKind, TextEdit,
-    Url,
+    Diagnostic, DiagnosticSeverity, DidChangeWatchedFilesRegistrationOptions, DocumentHighlight,
+    DocumentHighlightParams, DocumentSymbol, DocumentSymbolParams, FileSystemWatcher, GlobPattern,
+    GotoDefinitionParams, Hover, HoverContents, HoverParams, HoverProviderCapability,
+    InitializeParams, InsertTextFormat, Location, MarkupContent, MarkupKind, NumberOrString, OneOf,
+    Position, PublishDiagnosticsParams, Range, ReferenceParams, Registration, RegistrationParams,
+    ServerCapabilities, SymbolKind, TextDocumentPositionParams, TextDocumentSyncKind,
+    TextDocumentSyncOptions, TextEdit, Url,
 };
 use project::{first_line, import_line, import_path, offset, range, utf16_len, Cache, Project};
 
@@ -36,7 +38,15 @@ type Result<T> = std::result::Result<T, Box<dyn Error + Send + Sync>>;
 /// Serve one client until it sends `shutdown` and `exit`.
 pub fn run(connection: Connection) -> Result<()> {
     let capabilities = ServerCapabilities {
-        text_document_sync: Some(TextDocumentSyncKind::FULL.into()),
+        text_document_sync: Some(
+            TextDocumentSyncOptions {
+                open_close: Some(true),
+                change: Some(TextDocumentSyncKind::FULL),
+                save: Some(true.into()),
+                ..Default::default()
+            }
+            .into(),
+        ),
         document_symbol_provider: Some(OneOf::Left(true)),
         definition_provider: Some(OneOf::Left(true)),
         references_provider: Some(OneOf::Left(true)),
@@ -50,6 +60,9 @@ pub fn run(connection: Connection) -> Result<()> {
     };
     let params = connection.initialize(serde_json::to_value(capabilities)?)?;
     let mut server = Server::new(serde_json::from_value(params)?);
+    if server.watching {
+        connection.sender.send(watch_request().into())?;
+    }
     for message in &connection.receiver {
         match message {
             Message::Request(request) => {
@@ -92,58 +105,96 @@ fn guarded<T>(
 }
 
 struct Server {
-    roots: Vec<PathBuf>,
-    documents: BTreeMap<Url, String>,
+    index: Index,
+    documents: BTreeMap<Url, FileId>,
     cache: Cache,
+    /// Whether the client reports file changes; otherwise a save rescans its directory.
+    watching: bool,
 }
 
 impl Server {
     #[allow(deprecated)]
     fn new(params: InitializeParams) -> Self {
+        let watching = params
+            .capabilities
+            .workspace
+            .and_then(|workspace| workspace.did_change_watched_files)
+            .and_then(|watch| watch.dynamic_registration)
+            .unwrap_or(false);
         let folders = params.workspace_folders.unwrap_or_default();
         let uris = folders.into_iter().map(|f| f.uri).chain(params.root_uri);
+        let roots = uris.filter_map(|uri| uri.to_file_path().ok()).collect();
         Self {
-            roots: uris.filter_map(|uri| uri.to_file_path().ok()).collect(),
+            index: Index::new(roots),
             documents: BTreeMap::new(),
             cache: Cache::default(),
+            watching,
         }
     }
 
     fn notify(&mut self, notification: Notification) -> Vec<Notification> {
+        fn parse<N: lsp_types::notification::Notification>(n: Notification) -> Option<N::Params> {
+            serde_json::from_value(n.params).ok()
+        }
         match notification.method.as_str() {
             DidOpenTextDocument::METHOD => {
-                let Ok(params) =
-                    serde_json::from_value::<DidOpenTextDocumentParams>(notification.params)
-                else {
+                let Some(params) = parse::<DidOpenTextDocument>(notification) else {
                     return Vec::new();
                 };
                 let document = params.text_document;
-                self.documents.insert(document.uri, document.text);
+                let path = path_of(&document.uri);
+                let id =
+                    (self.index).open(&path, document.uri.clone(), document.version, document.text);
+                self.documents.insert(document.uri, id);
             }
             DidChangeTextDocument::METHOD => {
-                let Ok(mut params) =
-                    serde_json::from_value::<DidChangeTextDocumentParams>(notification.params)
-                else {
+                let Some(mut params) = parse::<DidChangeTextDocument>(notification) else {
                     return Vec::new();
                 };
                 let Some(change) = params.content_changes.pop() else {
                     return Vec::new();
                 };
-                self.documents.insert(params.text_document.uri, change.text);
+                let document = params.text_document;
+                let path = path_of(&document.uri);
+                (self.index).open(&path, document.uri, document.version, change.text);
             }
             DidCloseTextDocument::METHOD => {
-                let Ok(params) =
-                    serde_json::from_value::<DidCloseTextDocumentParams>(notification.params)
-                else {
+                let Some(params) = parse::<DidCloseTextDocument>(notification) else {
                     return Vec::new();
                 };
                 let uri = params.text_document.uri;
                 self.documents.remove(&uri);
-                return vec![publish(uri, Vec::new())];
+                self.index.close(&path_of(&uri));
+                let mut published = self.publish_open();
+                published.push(publish(uri, Vec::new()));
+                return published;
+            }
+            DidSaveTextDocument::METHOD if !self.watching => {
+                let Some(params) = parse::<DidSaveTextDocument>(notification) else {
+                    return Vec::new();
+                };
+                let path = path_of(&params.text_document.uri);
+                if let Some(directory) = path.parent() {
+                    self.index.rescan(directory);
+                }
+            }
+            DidChangeWatchedFiles::METHOD => {
+                let Some(params) = parse::<DidChangeWatchedFiles>(notification) else {
+                    return Vec::new();
+                };
+                for change in params.changes {
+                    if let Ok(path) = change.uri.to_file_path() {
+                        self.index.refresh(&path);
+                    }
+                }
             }
             _ => return Vec::new(),
         }
-        // Importers depend on the edited file, so every open document is checked again.
+        self.publish_open()
+    }
+
+    /// Diagnostics for every open document, since importers depend on the edited file.
+    fn publish_open(&self) -> Vec<Notification> {
         self.documents
             .keys()
             .map(|uri| publish(uri.clone(), self.diagnostics(uri)))
@@ -192,7 +243,7 @@ impl Server {
     }
 
     fn project(&self, uri: &Url) -> Option<Project> {
-        Project::new(uri, &self.roots, &self.documents)
+        Project::new(&self.index, *self.documents.get(uri)?)
     }
 
     fn analyze(&self, project: &Project) -> std::rc::Rc<Analysis> {
@@ -611,6 +662,38 @@ fn symbol_kind(kind: Kind) -> SymbolKind {
         Kind::Field => SymbolKind::FIELD,
         Kind::Parameter | Kind::Variable => SymbolKind::VARIABLE,
     }
+}
+
+/// The request registering a watcher of every `.ark` file.
+fn watch_request() -> Request {
+    let options = DidChangeWatchedFilesRegistrationOptions {
+        watchers: vec![FileSystemWatcher {
+            glob_pattern: GlobPattern::String("**/*.ark".to_string()),
+            kind: None,
+        }],
+    };
+    let registration = Registration {
+        id: "arkade-watch".to_string(),
+        method: DidChangeWatchedFiles::METHOD.to_string(),
+        register_options: serde_json::to_value(options).ok(),
+    };
+    Request::new(
+        "arkade-watch".to_string().into(),
+        RegisterCapability::METHOD.to_string(),
+        RegistrationParams {
+            registrations: vec![registration],
+        },
+    )
+}
+
+/// The file behind `uri`; an unsaved document gets a path no workspace file has.
+fn path_of(uri: &Url) -> PathBuf {
+    uri.to_file_path().unwrap_or_else(|()| {
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        std::hash::Hash::hash(uri.as_str(), &mut hasher);
+        let name = format!("untitled-{:x}.ark", std::hash::Hasher::finish(&hasher));
+        Path::new("/arkade-untitled").join(name)
+    })
 }
 
 fn publish(uri: Url, diagnostics: Vec<Diagnostic>) -> Notification {

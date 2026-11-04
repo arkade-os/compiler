@@ -625,3 +625,63 @@ proptest! {
         client.stop();
     }
 }
+
+#[test]
+fn watched_files_update_importers() {
+    let (dir, vault, rules) = workspace();
+    let root = dir.path().canonicalize().unwrap();
+    let watching =
+        json!({ "workspace": { "didChangeWatchedFiles": { "dynamicRegistration": true } } });
+    let client = Client::start_with(
+        json!({ "capabilities": watching, "rootUri": Url::from_directory_path(&root).unwrap() }),
+    );
+    let Message::Request(register) = client.connection.receiver.recv().unwrap() else {
+        panic!("expected the watcher registration");
+    };
+    assert_eq!(register.method, "client/registerCapability");
+    assert_eq!(client.open(&vault, VAULT), Vec::<Value>::new());
+
+    std::fs::write(
+        root.join("lib/rules.ark"),
+        RULES.replace("tx.inputs[0].value", "missing"),
+    )
+    .unwrap();
+    let changes = json!({ "changes": [{ "uri": rules, "type": 2 }] });
+    client.notify("workspace/didChangeWatchedFiles", changes);
+    assert_eq!(client.diagnostics(&vault).len(), 1);
+    client.stop();
+}
+
+#[test]
+fn a_save_rescans_its_directory_without_a_watcher() {
+    let (dir, vault, rules) = workspace();
+    let root = dir.path().canonicalize().unwrap();
+    let client = Client::start(&root);
+    assert_eq!(client.open(&vault, VAULT), Vec::<Value>::new());
+    std::fs::write(
+        root.join("lib/rules.ark"),
+        RULES.replace("tx.inputs[0].value", "missing"),
+    )
+    .unwrap();
+    client.notify(
+        "textDocument/didSave",
+        json!({ "textDocument": { "uri": rules } }),
+    );
+    assert_eq!(client.diagnostics(&vault).len(), 1);
+    client.stop();
+}
+
+#[test]
+fn closing_a_library_falls_back_to_its_file() {
+    let (dir, vault, rules) = workspace();
+    let client = Client::start(&dir.path().canonicalize().unwrap());
+    client.open(&vault, VAULT);
+    client.open(&rules, &RULES.replace("tx.inputs[0].value", "missing"));
+    assert_eq!(client.diagnostics(&vault).len(), 1);
+    client.notify(
+        "textDocument/didClose",
+        json!({ "textDocument": { "uri": rules } }),
+    );
+    assert_eq!(client.diagnostics(&vault), Vec::<Value>::new());
+    client.stop();
+}
