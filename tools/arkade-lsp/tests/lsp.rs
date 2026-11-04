@@ -1048,3 +1048,27 @@ fn a_code_action_imports_an_unknown_name() {
     );
     client.stop();
 }
+
+#[test]
+fn workspace_symbols_come_from_the_index() {
+    let (dir, _, rules) = workspace();
+    let mut client = Client::start(&dir.path().canonicalize().unwrap());
+    let symbols = client.request("workspace/symbol", json!({ "query": "ru" }));
+    let [symbol] = symbols.as_array().unwrap().clone().try_into().unwrap();
+    assert_eq!(symbol["name"], "Rules");
+    assert_eq!(symbol["location"]["uri"], json!(rules));
+    assert_eq!(
+        symbol["location"]["range"]["start"],
+        json!({ "line": 0, "character": 8 })
+    );
+    let all = client.request("workspace/symbol", json!({ "query": "" }));
+    let mut names: Vec<_> = all
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| s["name"].clone())
+        .collect();
+    names.sort_by_key(ToString::to_string);
+    assert_eq!(names, [json!("Rules"), json!("Vault")]);
+    client.stop();
+}

@@ -24,6 +24,7 @@ use lsp_types::notification::{
 use lsp_types::request::{
     CodeActionRequest, Completion, DocumentHighlightRequest, DocumentSymbolRequest, GotoDefinition,
     HoverRequest, PrepareRenameRequest, References, RegisterCapability, Rename, Request as _,
+    WorkspaceSymbolRequest,
 };
 use lsp_types::{
     CodeAction, CodeActionKind, CodeActionOrCommand, CodeActionParams,
@@ -36,7 +37,7 @@ use lsp_types::{
     MarkupKind, NumberOrString, OneOf, Position, PublishDiagnosticsParams, Range, ReferenceParams,
     Registration, RegistrationParams, RenameOptions, RenameParams, ServerCapabilities, SymbolKind,
     TextDocumentPositionParams, TextDocumentSyncKind, TextDocumentSyncOptions, TextEdit, Url,
-    WorkspaceEdit,
+    WorkspaceEdit, WorkspaceSymbol, WorkspaceSymbolParams,
 };
 use project::{
     first_line, import_line, import_path, offset, range, utf16_len, Analyzed, Cache, Project,
@@ -62,6 +63,7 @@ pub fn run(connection: Connection) -> Result<()> {
         document_highlight_provider: Some(OneOf::Left(true)),
         hover_provider: Some(HoverProviderCapability::Simple(true)),
         code_action_provider: Some(CodeActionProviderCapability::Simple(true)),
+        workspace_symbol_provider: Some(OneOf::Left(true)),
         rename_provider: Some(OneOf::Right(RenameOptions {
             prepare_provider: Some(true),
             work_done_progress_options: Default::default(),
@@ -305,6 +307,10 @@ impl Server {
             }),
             CodeActionRequest::METHOD => serde_json::from_value::<CodeActionParams>(params)
                 .map(|p| serde_json::json!(self.code_actions(p))),
+            WorkspaceSymbolRequest::METHOD => {
+                serde_json::from_value::<WorkspaceSymbolParams>(params)
+                    .map(|p| serde_json::json!(self.workspace_symbols(&p.query)))
+            }
             PrepareRenameRequest::METHOD => serde_json::from_value(params)
                 .map(|p| serde_json::json!(self.prepare_rename(at(p)))),
             method => {
@@ -616,6 +622,26 @@ impl Server {
             .map(|d| completion_item(&d.name, d))
             .collect();
         (fields, false)
+    }
+
+    /// Up to `OFFERS` structs, contracts and libraries whose names start with `query`, ignoring
+    /// case. O(log names + `OFFERS`), plus reading each one's position.
+    fn workspace_symbols(&self, query: &str) -> Vec<WorkspaceSymbol> {
+        let declared = self.index.exported(query, OFFERS).into_iter();
+        let declared = declared.filter_map(|(name, id)| {
+            let file = self.index.file(id);
+            let declaration = file.declarations.iter().find(|d| d.name == name)?;
+            let span = range(file.text.as_deref()?, declaration.span);
+            Some(WorkspaceSymbol {
+                name: name.to_string(),
+                kind: symbol_kind(declaration.kind),
+                tags: None,
+                container_name: None,
+                location: OneOf::Left(Location::new(project::uri(file)?, span)),
+                data: None,
+            })
+        });
+        declared.collect()
     }
 
     /// For each diagnostic naming an unknown name, an import of each file declaring it. O(log

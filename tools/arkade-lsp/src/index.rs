@@ -18,6 +18,7 @@ pub struct FileId(pub u32);
 pub struct Declaration {
     pub name: String,
     pub kind: SymbolKind,
+    pub span: Span,
 }
 
 pub struct File {
@@ -260,7 +261,7 @@ impl Index {
         let declarations = arkade_compiler::declarations(source);
         let declarations: Vec<_> = declarations
             .into_iter()
-            .map(|(name, kind, _)| Declaration { name, kind })
+            .map(|(name, kind, span)| Declaration { name, kind, span })
             .collect();
 
         let file = &mut self.files[id.0 as usize];
