@@ -454,3 +454,49 @@ fn completion_after_a_multibyte_character() {
     assert!(items.is_array());
     client.stop();
 }
+
+#[test]
+fn an_import_followed_by_a_quoted_comment() {
+    let (dir, vault, rules) = workspace();
+    let root = dir.path().canonicalize().unwrap();
+    std::fs::write(
+        root.join("lib/other.ark"),
+        "library Other {\n  function f() { require(true); }\n}\n",
+    )
+    .unwrap();
+    let mut client = Client::start(&root);
+    let text = VAULT.replace(
+        "import \"lib/rules.ark\";",
+        "import \"lib/other.ark\";\nimport \"lib/rules.ark\"; // see \"docs\"",
+    );
+    client.open(&vault, &text);
+    assert_eq!(client.definition(&vault, 1, 10)["uri"], json!(rules));
+    client.change(
+        &vault,
+        &text.replace("\n\ncontract", "\nimport \"\ncontract"),
+    );
+    assert_eq!(client.definition(&vault, 1, 10)["uri"], json!(rules));
+
+    let typing = text.replace("    Rules.preservesValue();", "    Ru");
+    client.change(&vault, &typing);
+    let items = client.request(
+        "textDocument/completion",
+        json!({ "textDocument": { "uri": vault }, "position": { "line": 5, "character": 6 } }),
+    );
+    let item = items
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|i| i["label"] == "Rules")
+        .unwrap();
+    assert_eq!(item["additionalTextEdits"], Value::Null);
+
+    client.change(&vault, &text);
+    client.notify(
+        "textDocument/didOpen",
+        json!({ "textDocument": { "uri": rules, "languageId": "arkade", "version": 1, "text": RULES.replace("tx.inputs[0].value", "missing") } }),
+    );
+    let [import] = client.diagnostics(&vault).try_into().unwrap();
+    assert_eq!(range(&import), (1, 0, 23));
+    client.stop();
+}

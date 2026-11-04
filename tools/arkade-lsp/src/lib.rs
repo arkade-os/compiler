@@ -313,9 +313,9 @@ impl Server {
         let project = self.project(&uri)?;
         let at = offset(project.source(), cursor)?;
         let import = project.imports().into_iter().find(|(_, statement)| {
-            statement.start.line == cursor.line
-                && statement.start.character <= cursor.character
-                && cursor.character <= statement.end.character
+            let at = (cursor.line, cursor.character);
+            (statement.start.line, statement.start.character) <= at
+                && at <= (statement.end.line, statement.end.character)
         });
         if let Some((file, _)) = import {
             return Some(Location::new(project.uri(&file)?, Range::default()));

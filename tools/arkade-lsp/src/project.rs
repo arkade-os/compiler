@@ -73,27 +73,45 @@ impl Project {
         Path::new(&self.entry).parent().unwrap_or(Path::new(""))
     }
 
-    /// Each import statement of the entry: the file it names and the statement's range.
+    /// Each import statement of the entry: the file it names and the statement's range, from the
+    /// compiler's parse, or from the import lines while the header does not parse.
     pub fn imports(&self) -> Vec<(String, Range)> {
-        let mut imports = Vec::new();
-        for (index, line) in self.source().split('\n').enumerate() {
-            let statement = line.trim();
-            let (Some(start), Some(end)) = (statement.find('"'), statement.rfind('"')) else {
-                continue;
-            };
-            if !statement.starts_with("import") || start == end {
-                continue;
-            }
-            let Some(file) = join(self.directory(), &statement[start + 1..end]) else {
-                continue;
-            };
-            let indent = utf16_len(&line[..line.len() - line.trim_start().len()]);
-            let at = |character| Position::new(index as u32, character);
-            let range = Range::new(at(indent), at(indent + utf16_len(statement)));
-            imports.push((file, range));
-        }
-        imports
+        let source = self.source();
+        let statements = arkade_compiler::imports(source)
+            .unwrap_or_else(|| import_lines(source))
+            .into_iter();
+        statements
+            .filter_map(|(path, span)| Some((join(self.directory(), &path)?, range(source, span))))
+            .collect()
     }
+}
+
+/// Lines starting with `import`: the path up to the first closing quote and the statement up to
+/// its `;`, or its closing quote without one.
+fn import_lines(source: &str) -> Vec<(String, Span)> {
+    let mut imports = Vec::new();
+    let mut start = 0;
+    for line in source.split('\n') {
+        let at = start + line.len() - line.trim_start().len();
+        start += line.len() + 1;
+        let Some(rest) = line.trim_start().strip_prefix("import") else {
+            continue;
+        };
+        let Some((before, quoted)) = rest.split_once('"') else {
+            continue;
+        };
+        let Some((path, after)) = quoted.split_once('"') else {
+            continue;
+        };
+        if !before.trim().is_empty() {
+            continue;
+        }
+        let tail = after.trim_start();
+        let semicolon = tail.starts_with(';').then(|| after.len() - tail.len() + 1);
+        let end = at + "import".len() + rest.len() - after.len() + semicolon.unwrap_or(0);
+        imports.push((path.to_string(), Span { start: at, end }));
+    }
+    imports
 }
 
 /// The entry and files last analyzed, and their analysis.
