@@ -691,3 +691,23 @@ fn imports_are_read_from_the_header_while_the_body_is_broken() {
         None
     );
 }
+
+#[test]
+fn declarations_are_read_up_to_the_first_broken_one() {
+    use arkade_compiler::symbols::SymbolKind;
+    let source = "import \"a.ark\";\nstruct P { int a; }\nstruct Q { int\nlibrary L {";
+    let names: Vec<_> = arkade_compiler::declarations(source)
+        .into_iter()
+        .map(|(name, kind, span)| (name, kind, &source[span.start..span.end]))
+        .collect();
+    assert_eq!(
+        names,
+        [
+            ("P".to_string(), SymbolKind::Struct, "P"),
+            ("Q".to_string(), SymbolKind::Struct, "Q")
+        ]
+    );
+    let contract = "contract Vault(pubkey owner) { function f( }";
+    let [(name, kind, _)] = arkade_compiler::declarations(contract).try_into().unwrap();
+    assert_eq!((name.as_str(), kind), ("Vault", SymbolKind::Contract));
+}

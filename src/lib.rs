@@ -154,6 +154,12 @@ pub fn imports(source: &str) -> Option<Vec<(String, Span)>> {
     parser::header_imports(source)
 }
 
+/// Each struct, contract or library `source` declares: its name, kind and the name's span, read
+/// from the top of the file up to the first declaration that does not parse.
+pub fn declarations(source: &str) -> Vec<(String, symbols::SymbolKind, Span)> {
+    parser::declarations(source)
+}
+
 /// Every parse, validation and type diagnostic for `entry`, without writing
 /// an artifact. Unlike the `compile_*` functions, this does not stop at the
 /// first error: independent problems in `entry` each get their own entry.
