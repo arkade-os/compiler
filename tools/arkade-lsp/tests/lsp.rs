@@ -810,3 +810,72 @@ fn completion_offers_each_file_declaring_a_name() {
     );
     client.stop();
 }
+
+/// Keystroke-to-publish and completion latency over 2500 libraries and 20 open contracts; run
+/// with `cargo test --release -p arkade-lsp --test lsp -- --ignored --nocapture`.
+#[test]
+#[ignore]
+fn benchmark_a_large_workspace() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().canonicalize().unwrap();
+    std::fs::create_dir(root.join("lib")).unwrap();
+    for i in 0..2500 {
+        let library = format!("library L{i} {{\n  function f{i}() {{\n    require(tx.outputs[0].value >= {i});\n  }}\n}}\n");
+        std::fs::write(root.join(format!("lib/l{i}.ark")), library).unwrap();
+    }
+    let contract = |j: usize, k: usize| {
+        format!("import \"lib/l{j}.ark\";\nimport \"lib/l{}.ark\";\n\ncontract C{j}(pubkey owner) {{\n  function spend(signature sig) {{\n    L{j}.f{j}();\n    require(tx.outputs[0].value >= {k});\n    require(checkSig(sig, owner));\n  }}\n}}\n", j + 100)
+    };
+    let mut client = Client::start(&root);
+    let uris: Vec<Url> = (0..20)
+        .map(|j| {
+            let path = root.join(format!("c{j}.ark"));
+            std::fs::write(&path, contract(j, 0)).unwrap();
+            Url::from_file_path(path).unwrap()
+        })
+        .collect();
+    for (j, uri) in uris.iter().enumerate() {
+        client.open(uri, &contract(j, 0));
+    }
+    // Answered after every publish so far, which leaves none stale.
+    client.request(
+        "textDocument/documentSymbol",
+        json!({ "textDocument": { "uri": uris[0] } }),
+    );
+    let median = |mut samples: Vec<f64>| {
+        samples.sort_by(f64::total_cmp);
+        samples[samples.len() / 2]
+    };
+    let mut keystrokes = Vec::new();
+    for k in 1..=30 {
+        let start = std::time::Instant::now();
+        let text = match k % 2 {
+            0 => contract(3, k),
+            _ => contract(3, k).replace("sig, owner", "sig, ownr"),
+        };
+        let diagnostics = client.change(&uris[3], &text);
+        keystrokes.push(start.elapsed().as_secs_f64() * 1e3);
+        assert_eq!(diagnostics.len(), k % 2, "{diagnostics:?}");
+    }
+    let typing = contract(3, 0).replace("    L3.f3();", "    L");
+    client.change(&uris[3], &typing);
+    let mut completions = Vec::new();
+    for _ in 0..30 {
+        let start = std::time::Instant::now();
+        let items = client.request(
+            "textDocument/completion",
+            json!({ "textDocument": { "uri": uris[3] }, "position": { "line": 5, "character": 5 } }),
+        );
+        completions.push(start.elapsed().as_secs_f64() * 1e3);
+        let items = items.get("items").unwrap_or(&items).as_array().unwrap();
+        assert!(items.iter().any(|i| i["label"] == "L3"));
+    }
+    let (keystroke, completion) = (median(keystrokes), median(completions));
+    println!(
+        "keystroke → publish: median {keystroke:.1} ms; completion: median {completion:.1} ms"
+    );
+    if !cfg!(debug_assertions) {
+        assert!(keystroke < 20.0 && completion < 20.0);
+    }
+    client.stop();
+}
