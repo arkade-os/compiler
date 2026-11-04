@@ -31,7 +31,9 @@ use lsp_types::{
     ServerCapabilities, SymbolKind, TextDocumentPositionParams, TextDocumentSyncKind,
     TextDocumentSyncOptions, TextEdit, Url,
 };
-use project::{first_line, import_line, import_path, offset, range, utf16_len, Cache, Project};
+use project::{
+    first_line, import_line, import_path, offset, range, utf16_len, Analyzed, Cache, Project,
+};
 
 type Result<T> = std::result::Result<T, Box<dyn Error + Send + Sync>>;
 
@@ -263,7 +265,7 @@ impl Server {
         Project::new(&self.index, *self.documents.get(uri)?)
     }
 
-    fn analyze(&self, project: &Project) -> std::rc::Rc<Analysis> {
+    fn analyze(&self, project: &Project) -> std::rc::Rc<Analyzed> {
         self.cache.analyze(project)
     }
 
@@ -273,8 +275,11 @@ impl Server {
         };
         let source = project.source();
         let imports = project.imports();
-        arkade_compiler::check(&project.entry, &project.sources())
-            .into_iter()
+        let analyzed = self.analyze(&project);
+        analyzed
+            .diagnostics()
+            .iter()
+            .cloned()
             .map(|diagnostic| {
                 let (range, message) = if diagnostic.file == project.entry {
                     let range = diagnostic.span.map(|span| range(source, span));

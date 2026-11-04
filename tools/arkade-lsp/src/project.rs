@@ -1,7 +1,7 @@
 //! The files the compiler sees for one open document, their imports, and conversions between
 //! compiler byte spans and LSP positions.
 
-use std::cell::RefCell;
+use std::cell::{OnceCell, RefCell};
 use std::collections::hash_map::DefaultHasher;
 use std::collections::{BTreeMap, VecDeque};
 use std::hash::{Hash, Hasher};
@@ -10,7 +10,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use arkade_compiler::diagnostics::{offset as byte_offset, position as compiler_position};
-use arkade_compiler::{Analysis, Span};
+use arkade_compiler::{Analysis, Diagnostic, Span};
 use lsp_types::{Position, Range, Url};
 
 use crate::index::{import_statements, File, FileId, Index};
@@ -95,8 +95,29 @@ impl Project {
 
 const CACHED: usize = 32;
 
+/// One analysis of a project, and the diagnostics derived from it on first use.
+pub struct Analyzed {
+    analysis: Analysis,
+    diagnostics: OnceCell<Vec<Diagnostic>>,
+}
+
+impl Analyzed {
+    /// Every diagnostic, code generation's included.
+    pub fn diagnostics(&self) -> &[Diagnostic] {
+        (self.diagnostics).get_or_init(|| self.analysis.check(Default::default()))
+    }
+}
+
+impl std::ops::Deref for Analyzed {
+    type Target = Analysis;
+
+    fn deref(&self) -> &Analysis {
+        &self.analysis
+    }
+}
+
 /// An analysis and its project's key.
-type Cached = ((FileId, u64), Rc<Analysis>);
+type Cached = ((FileId, u64), Rc<Analyzed>);
 
 /// Analyses by entry and closure fingerprint, most recently used first.
 #[derive(Default)]
@@ -105,7 +126,7 @@ pub struct Cache(RefCell<VecDeque<Cached>>);
 impl Cache {
     /// The analysis of `project`, reused while no file of its closure changed. O(`CACHED`) on a
     /// hit.
-    pub fn analyze(&self, project: &Project) -> Rc<Analysis> {
+    pub fn analyze(&self, project: &Project) -> Rc<Analyzed> {
         let mut cached = self.0.borrow_mut();
         if let Some(at) = cached.iter().position(|(key, _)| *key == project.key) {
             let hit = cached.remove(at).expect("position");
@@ -113,7 +134,10 @@ impl Cache {
             return hit.1;
         }
         drop(cached);
-        let analysis = Rc::new(arkade_compiler::analyze(&project.entry, &project.sources()));
+        let analysis = Rc::new(Analyzed {
+            analysis: arkade_compiler::analyze(&project.entry, &project.sources()),
+            diagnostics: OnceCell::new(),
+        });
         let mut cached = self.0.borrow_mut();
         cached.push_front((project.key, analysis.clone()));
         cached.truncate(CACHED);
@@ -241,7 +265,13 @@ mod tests {
         assert!(Rc::ptr_eq(&first, &analyze(&index, a)));
         index.set(b, Some("contract B() {}".into()));
         assert!(Rc::ptr_eq(&first, &analyze(&index, a)));
-        index.set(l, Some(library.replace("true", "false").into()));
-        assert!(!Rc::ptr_eq(&first, &analyze(&index, a)));
+        let broken = library.replace("require(true)", "require(missing)");
+        index.set(l, Some(broken.into()));
+        let analyzed = analyze(&index, a);
+        assert!(!Rc::ptr_eq(&first, &analyzed));
+        let sources = Project::new(&index, a).unwrap().sources();
+        let checked = arkade_compiler::check("a.ark", &sources);
+        assert_eq!(checked.len(), 1);
+        assert_eq!(analyzed.diagnostics(), checked);
     }
 }
