@@ -2,7 +2,7 @@
 //! compiler byte spans and LSP positions.
 
 use std::cell::RefCell;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::path::{Component, Path, PathBuf};
 use std::rc::Rc;
 
@@ -12,6 +12,7 @@ use lsp_types::{Position, Range, Url};
 
 // Whole-tree scan per request; keep an index of the workspace if large projects make this slow.
 const MAX_FILES: usize = 2000;
+const MAX_ENTRIES: usize = 20_000;
 
 /// One open document as an entry, with every `.ark` file under its workspace root, keyed by
 /// paths relative to the root; open documents replace their text on disk.
@@ -34,14 +35,18 @@ impl Project {
                 entry,
             });
         };
-        let root = roots
+        let folder = roots
             .iter()
             .filter(|root| path.starts_with(root))
-            .max_by_key(|root| root.components().count())
+            .max_by_key(|root| root.components().count());
+        let root = folder
             .cloned()
             .or_else(|| path.parent().map(Path::to_path_buf))?;
         let mut files = BTreeMap::new();
-        collect(&root, &root, &mut files);
+        // Without a workspace folder the parent may be any directory, such as the home directory.
+        if folder.is_some() {
+            collect(&root, &root, &mut files, &mut 0);
+        }
         for (uri, text) in documents {
             if let Some(relative) = uri.to_file_path().ok().and_then(|p| relative(&root, &p)) {
                 files.insert(relative, text.clone());
@@ -49,6 +54,7 @@ impl Project {
         }
         let entry = relative(&root, &path)?;
         files.insert(entry.clone(), text.clone());
+        load_imports(&root, &entry, &mut files);
         Some(Self {
             uri: uri.clone(),
             root,
@@ -77,13 +83,16 @@ impl Project {
     /// compiler's parse, or from the import lines while the header does not parse.
     pub fn imports(&self) -> Vec<(String, Range)> {
         let source = self.source();
-        let statements = arkade_compiler::imports(source)
-            .unwrap_or_else(|| import_lines(source))
-            .into_iter();
-        statements
+        import_statements(source)
+            .into_iter()
             .filter_map(|(path, span)| Some((join(self.directory(), &path)?, range(source, span))))
             .collect()
     }
+}
+
+/// Each import's path and statement, from the compiler's parse or, for a broken header, its lines.
+fn import_statements(source: &str) -> Vec<(String, Span)> {
+    arkade_compiler::imports(source).unwrap_or_else(|| import_lines(source))
 }
 
 /// Lines starting with `import`: the path up to the first closing quote and the statement up to
@@ -210,12 +219,17 @@ pub fn import_line(source: &str) -> usize {
         .unwrap_or(0)
 }
 
-fn collect(root: &Path, dir: &Path, files: &mut BTreeMap<String, String>) {
+/// Every `.ark` file under `dir`, sorted, skipping symlinked directories; at most `MAX_FILES`
+/// files and `MAX_ENTRIES` directory entries, counted in `visited`.
+fn collect(root: &Path, dir: &Path, files: &mut BTreeMap<String, String>, visited: &mut usize) {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return;
     };
-    for entry in entries.flatten() {
-        if files.len() >= MAX_FILES {
+    let mut entries: Vec<_> = entries.flatten().collect();
+    entries.sort_by_key(|entry| entry.file_name());
+    for entry in entries {
+        *visited += 1;
+        if files.len() >= MAX_FILES || *visited > MAX_ENTRIES {
             return;
         }
         let path = entry.path();
@@ -224,8 +238,8 @@ fn collect(root: &Path, dir: &Path, files: &mut BTreeMap<String, String>) {
         if name.starts_with('.') || name == "node_modules" || name == "target" {
             continue;
         }
-        if path.is_dir() {
-            collect(root, &path, files);
+        if entry.file_type().is_ok_and(|kind| kind.is_dir()) {
+            collect(root, &path, files, visited);
         } else if name.ends_with(".ark") {
             if let (Some(relative), Ok(text)) =
                 (relative(root, &path), std::fs::read_to_string(&path))
@@ -233,6 +247,26 @@ fn collect(root: &Path, dir: &Path, files: &mut BTreeMap<String, String>) {
                 files.insert(relative, text);
             }
         }
+    }
+}
+
+/// Read from disk each file of `entry`'s import closure that `files` lacks, whatever the caps.
+fn load_imports(root: &Path, entry: &str, files: &mut BTreeMap<String, String>) {
+    let mut pending = vec![entry.to_string()];
+    let mut seen = HashSet::new();
+    while let Some(file) = pending.pop() {
+        if !seen.insert(file.clone()) {
+            continue;
+        }
+        if !files.contains_key(&file) {
+            let Ok(text) = std::fs::read_to_string(root.join(&file)) else {
+                continue;
+            };
+            files.insert(file.clone(), text);
+        }
+        let directory = Path::new(&file).parent().unwrap_or(Path::new(""));
+        let imports = import_statements(&files[&file]);
+        pending.extend(imports.iter().filter_map(|(path, _)| join(directory, path)));
     }
 }
 

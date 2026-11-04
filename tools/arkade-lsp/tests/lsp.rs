@@ -35,6 +35,11 @@ struct Client {
 
 impl Client {
     fn start(root: &Path) -> Self {
+        let root = Url::from_directory_path(root).unwrap();
+        Self::start_with(json!({ "capabilities": {}, "rootUri": root }))
+    }
+
+    fn start_with(initialize: Value) -> Self {
         let (server, connection) = Connection::memory();
         let server = std::thread::spawn(move || arkade_lsp::run(server).map_err(|e| e.to_string()));
         let mut client = Client {
@@ -42,8 +47,7 @@ impl Client {
             server,
             next_id: 0,
         };
-        let root = Url::from_directory_path(root).unwrap();
-        client.request("initialize", json!({ "capabilities": {}, "rootUri": root }));
+        client.request("initialize", initialize);
         client.notify("initialized", json!({}));
         client
     }
@@ -498,5 +502,50 @@ fn an_import_followed_by_a_quoted_comment() {
     );
     let [import] = client.diagnostics(&vault).try_into().unwrap();
     assert_eq!(range(&import), (1, 0, 23));
+    client.stop();
+}
+
+fn import_paths(client: &mut Client, uri: &Url) -> Vec<String> {
+    client.change(uri, &format!("import \"\n{VAULT}"));
+    labels(&client.request(
+        "textDocument/completion",
+        json!({ "textDocument": { "uri": uri }, "position": { "line": 0, "character": 8 } }),
+    ))
+}
+
+#[test]
+fn the_workspace_scan_skips_symlinked_directories() {
+    let (dir, vault, _) = workspace();
+    let root = dir.path().canonicalize().unwrap();
+    std::os::unix::fs::symlink("..", root.join("lib/up")).unwrap();
+    std::os::unix::fs::symlink(".", root.join("here")).unwrap();
+    let mut client = Client::start(&root);
+    client.open(&vault, VAULT);
+    assert_eq!(import_paths(&mut client, &vault), ["lib/rules.ark"]);
+    client.stop();
+}
+
+#[test]
+fn the_import_closure_loads_past_the_file_cap() {
+    let (dir, vault, _) = workspace();
+    let root = dir.path().canonicalize().unwrap();
+    std::fs::create_dir(root.join("a")).unwrap();
+    for i in 0..2100 {
+        std::fs::write(root.join(format!("a/f{i:04}.ark")), "").unwrap();
+    }
+    let client = Client::start(&root);
+    assert_eq!(client.open(&vault, VAULT), Vec::<Value>::new());
+    client.stop();
+}
+
+#[test]
+fn a_file_outside_a_workspace_folder_loads_only_its_imports() {
+    let (dir, vault, _) = workspace();
+    let root = dir.path().canonicalize().unwrap();
+    std::fs::create_dir(root.join("deep")).unwrap();
+    std::fs::write(root.join("deep/other.ark"), RULES).unwrap();
+    let mut client = Client::start_with(json!({ "capabilities": {} }));
+    assert_eq!(client.open(&vault, VAULT), Vec::<Value>::new());
+    assert_eq!(import_paths(&mut client, &vault), ["lib/rules.ark"]);
     client.stop();
 }
