@@ -13,6 +13,9 @@ pragma_version = @{ pragma_version_part ~ "." ~ pragma_version_part ~ "." ~ prag
 pragma_constraint = { (">=" | "<=" | ">" | "<" | "=" | "^" | "~")? ~ pragma_version }
 pragma_stmt = { pragma_keyword ~ pragma_language ~ pragma_constraint+ ~ ("||" ~ pragma_constraint+)* ~ ";" }
 
+// The pragma and imports alone, so editors read imports while the rest of the file is broken.
+header = { SOI ~ pragma_stmt? ~ import_stmt* ~ !("import" | "pragma") }
+
 // Main entry point - must consume the entire input
 main = { SOI ~ pragma_stmt? ~ import_stmt* ~ struct_definition* ~ (contract | library)? ~ EOI }
 

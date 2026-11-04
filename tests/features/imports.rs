@@ -676,3 +676,18 @@ fn computed_constants_and_array_sizes_keep_their_defining_import_scope() {
         serde_json::to_value(output).unwrap()
     );
 }
+
+#[test]
+fn imports_are_read_from_the_header_while_the_body_is_broken() {
+    let source = "pragma arkade ^0.1.0;\nimport \"a.ark\"; // \"b.ark\"\nimport\n  \"c.ark\"\n;\ncontract C( {";
+    let imports = arkade_compiler::imports(source).unwrap();
+    let paths: Vec<_> = imports.iter().map(|(path, _)| path.as_str()).collect();
+    assert_eq!(paths, ["a.ark", "c.ark"]);
+    let span = imports[1].1;
+    assert_eq!(&source[span.start..span.end], "import\n  \"c.ark\"\n;");
+    assert_eq!(arkade_compiler::imports("contract C() {}"), Some(vec![]));
+    assert_eq!(
+        arkade_compiler::imports("pragma arkade;\nimport \"a.ark\";"),
+        None
+    );
+}

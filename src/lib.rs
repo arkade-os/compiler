@@ -141,6 +141,19 @@ pub fn analyze_file(path: impl AsRef<std::path::Path>) -> Analysis {
     imports::analyze_file(path.as_ref(), true)
 }
 
+/// Each import of `source`: its path as written and the span of its statement. `None` when the
+/// pragma and imports at the top do not parse; the rest of the file need not.
+///
+/// ```
+/// let source = "import \"lib/rules.ark\"; // see \"docs\"\ncontract C( {";
+/// let [(path, span)] = arkade_compiler::imports(source).unwrap().try_into().unwrap();
+/// assert_eq!((path.as_str(), &source[span.start..span.end]), ("lib/rules.ark", "import \"lib/rules.ark\";"));
+/// assert_eq!(arkade_compiler::imports("import \"lib/ru\ncontract C() {}"), None);
+/// ```
+pub fn imports(source: &str) -> Option<Vec<(String, Span)>> {
+    parser::header_imports(source)
+}
+
 /// Every parse, validation and type diagnostic for `entry`, without writing
 /// an artifact. Unlike the `compile_*` functions, this does not stop at the
 /// first error: independent problems in `entry` each get their own entry.

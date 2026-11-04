@@ -51,6 +51,11 @@ pub(crate) fn imports(
         .collect()
 }
 
+/// [`imports`] of the file's header alone; `None` when the header does not parse.
+pub(crate) fn header_imports(source: &str) -> Option<Vec<(String, crate::diagnostics::Span)>> {
+    imports(&ArkadeParser::parse(Rule::header, source).ok()?).ok()
+}
+
 /// Parse a source file, naming expected tokens in source terms instead of grammar rules.
 #[cfg(test)]
 pub(crate) fn parse_main(source: &str) -> Result<Pairs<'_, Rule>, String> {
