@@ -879,3 +879,26 @@ fn benchmark_a_large_workspace() {
     }
     client.stop();
 }
+
+#[test]
+fn a_transitive_dependency_error_shows_on_the_import_reaching_it() {
+    let (dir, vault, _) = workspace();
+    let root = dir.path().canonicalize().unwrap();
+    let broken = RULES
+        .replace("Rules", "Deep")
+        .replace("tx.inputs[0].value", "missing");
+    std::fs::write(root.join("lib/deep.ark"), broken).unwrap();
+    std::fs::write(
+        root.join("lib/middle.ark"),
+        "import \"deep.ark\";\nlibrary Middle {\n  function f() { require(true); }\n}\n",
+    )
+    .unwrap();
+    let client = Client::start(&root);
+    let text = VAULT.replace(
+        "import \"lib/rules.ark\";",
+        "import \"lib/rules.ark\";\nimport \"lib/middle.ark\";",
+    );
+    let [import] = client.open(&vault, &text).try_into().unwrap();
+    assert_eq!(range(&import), (1, 0, 24));
+    client.stop();
+}

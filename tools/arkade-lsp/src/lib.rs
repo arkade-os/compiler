@@ -328,11 +328,11 @@ impl Server {
                         diagnostic.message,
                     )
                 } else {
-                    // A dependency's problem shows on the import that reaches it; the first import
-                    // stands in for one reached through another file.
+                    // A dependency's problem shows on the import that reaches it.
+                    let via = project.via(&diagnostic.file);
                     let import = imports
                         .iter()
-                        .find(|(file, _)| *file == diagnostic.file)
+                        .find(|(file, _)| Some(file.as_str()) == via)
                         .or(imports.first());
                     let at = diagnostic.span.and_then(|span| {
                         let source = project.files.get(&diagnostic.file)?;

@@ -3,7 +3,7 @@
 
 use std::cell::{OnceCell, RefCell};
 use std::collections::hash_map::DefaultHasher;
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::hash::{Hash, Hasher};
 use std::path::{Component, Path, PathBuf};
 use std::rc::Rc;
@@ -22,6 +22,8 @@ pub struct Project {
     pub files: BTreeMap<String, Arc<str>>,
     /// The entry and a hash of each closure file's id and version.
     pub key: (FileId, u64),
+    /// For each dependency, the entry's import that first reaches it.
+    via: BTreeMap<String, String>,
     root: PathBuf,
     uris: BTreeMap<String, Url>,
 }
@@ -35,12 +37,23 @@ impl Project {
         let mut files = BTreeMap::new();
         let mut uris = BTreeMap::new();
         let mut hasher = DefaultHasher::new();
-        for (member, _) in index.closure(id) {
+        let mut direct = HashMap::new();
+        let mut via = BTreeMap::new();
+        for (member, parent) in index.closure(id) {
             let file = index.file(member);
             (member, file.version).hash(&mut hasher);
+            // Breadth-first, so a parent's direct import is known before its children.
+            let reached = match parent {
+                Some(parent) if parent != id => direct.get(&parent).copied(),
+                Some(_) => Some(member),
+                None => None,
+            };
+            direct.extend(reached.map(|import| (member, import)));
             let (Some(name), Some(text)) = (relative(&root, &file.path), &file.text) else {
                 continue;
             };
+            let import = reached.and_then(|import| relative(&root, &index.file(import).path));
+            via.extend(import.map(|import| (name.clone(), import)));
             uris.extend(uri(file).map(|uri| (name.clone(), uri)));
             files.insert(name, text.clone());
         }
@@ -48,9 +61,15 @@ impl Project {
             entry,
             files,
             key: (id, hasher.finish()),
+            via,
             root,
             uris,
         })
+    }
+
+    /// The entry's import that first reaches `file`, by breadth-first search.
+    pub fn via(&self, file: &str) -> Option<&str> {
+        self.via.get(file).map(String::as_str)
     }
 
     /// The closure's texts as the compiler takes them.
