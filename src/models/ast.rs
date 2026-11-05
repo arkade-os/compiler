@@ -852,7 +852,13 @@ impl Expression {
                 format!("tx.inputs[{}].{}", index.source_text(), property.name())
             }
             ExprKind::BinaryOp { left, op, right } => {
-                format!("{} {op} {}", left.source_text(), right.source_text())
+                // ponytail: every nested operation is parenthesized, so `a + b + c` reads
+                // `(a + b) + c`; print by precedence if the extra parentheses hurt messages.
+                let operand = |e: &Self| match e.kind {
+                    ExprKind::BinaryOp { .. } => format!("({})", e.source_text()),
+                    _ => e.source_text(),
+                };
+                format!("{} {op} {}", operand(left), operand(right))
             }
             _ => self
                 .access_path(&Self::source_text)

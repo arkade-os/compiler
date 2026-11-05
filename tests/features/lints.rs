@@ -103,6 +103,18 @@ fn covenant_lints_report_unauthorized_and_half_constrained_spends() {
             &["self-comparison", "self-comparison", "self-comparison"],
         ),
         (
+            "function f(signature s, int a, int b, int c) { require(checkSig(s, owner)); require((a + b) * c == a + b * c); }",
+            &[],
+        ),
+        (
+            "function f(signature s, int a, int b, int c) { require(checkSig(s, owner)); require(a - b - c != a - (b - c)); }",
+            &[],
+        ),
+        (
+            "function f(signature s, int a, int b, int c) { require(checkSig(s, owner)); require(a + b * c == a + b * c); }",
+            &["self-comparison"],
+        ),
+        (
             "function f(signature s) { require(helper(s)); } private function helper(signature s) bool { return checkSig(s, owner); }",
             &[],
         ),
