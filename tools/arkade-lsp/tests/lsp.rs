@@ -30,6 +30,7 @@ contract Vault(pubkey owner, int exit) {
 
 struct Client {
     connection: Connection,
+    initialized: Value,
     server: JoinHandle<Result<(), String>>,
     next_id: i32,
 }
@@ -45,10 +46,11 @@ impl Client {
         let server = std::thread::spawn(move || arkade_lsp::run(server).map_err(|e| e.to_string()));
         let mut client = Client {
             connection,
+            initialized: Value::Null,
             server,
             next_id: 0,
         };
-        client.request("initialize", initialize);
+        client.initialized = client.request("initialize", initialize);
         client.notify("initialized", json!({}));
         client
     }
@@ -1101,5 +1103,101 @@ fn inlay_hints_show_folded_constants() {
         ]
     );
     assert_eq!(hints(3).len(), 1);
+    client.stop();
+}
+
+#[test]
+fn editor_features_come_from_the_analysis() {
+    let (dir, vault, rules) = workspace();
+    let root = dir.path().canonicalize().unwrap();
+    std::fs::write(root.join("other.ark"), VAULT.replace("Vault", "Other")).unwrap();
+    let other = Url::from_file_path(root.join("other.ark")).unwrap();
+    let mut client = Client::start(&root);
+    assert_eq!(client.initialized["serverInfo"]["name"], "arkade-lsp");
+    assert_eq!(
+        client.initialized["serverInfo"]["version"],
+        env!("CARGO_PKG_VERSION")
+    );
+    client.open(&vault, VAULT);
+    let document = json!({ "textDocument": { "uri": vault } });
+
+    let links = client.request("textDocument/documentLink", document.clone());
+    assert_eq!(links[0]["target"], json!(rules));
+
+    let tokens = client.request("textDocument/semanticTokens/full", document.clone());
+    let data: Vec<u64> = tokens["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_u64().unwrap())
+        .collect();
+    let mut tokens = Vec::new();
+    let (mut line, mut character) = (0, 0);
+    for token in data.chunks(5) {
+        line += token[0];
+        character = if token[0] == 0 {
+            character + token[1]
+        } else {
+            token[1]
+        };
+        tokens.push((line, character, token[3], token[4]));
+    }
+    assert!(
+        tokens.contains(&(2, 22, 4, 1)),
+        "owner is a parameter declaration: {tokens:?}"
+    );
+    assert!(
+        tokens.contains(&(5, 31, 4, 0)),
+        "its use is a parameter: {tokens:?}"
+    );
+    assert!(
+        tokens.contains(&(4, 4, 0, 0)),
+        "Rules is a namespace: {tokens:?}"
+    );
+
+    let lenses = client.request("textDocument/codeLens", document);
+    let [lens] = lenses.as_array().unwrap().clone().try_into().unwrap();
+    assert_eq!(
+        lens["range"]["start"],
+        json!({ "line": 3, "character": 11 })
+    );
+    assert!(
+        lens["command"]["title"]
+            .as_str()
+            .unwrap()
+            .contains(" B script · "),
+        "{lens}"
+    );
+
+    let typing = VAULT.replace(
+        "require(checkSig(ownerSig, owner));\n  }\n\n",
+        "require(checkSig(ownerSig, \n  }\n\n",
+    );
+    client.change(&vault, &typing);
+    let help = client.request(
+        "textDocument/signatureHelp",
+        json!({ "textDocument": { "uri": vault }, "position": { "line": 5, "character": 31 } }),
+    );
+    assert_eq!(
+        help["signatures"][0]["label"],
+        "checkSig(signature, pubkey)"
+    );
+    assert_eq!(help["activeParameter"], 1);
+
+    client.change(&vault, VAULT);
+    let references = client.request(
+        "textDocument/references",
+        json!({ "textDocument": { "uri": vault }, "position": { "line": 4, "character": 14 }, "context": { "includeDeclaration": true } }),
+    );
+    let mut files: Vec<_> = references
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|l| l["uri"].as_str().unwrap().to_string())
+        .collect();
+    files.sort();
+    let mut expected = vec![rules.to_string(), other.to_string(), vault.to_string()];
+    expected.sort();
+    assert_eq!(files, expected);
     client.stop();
 }

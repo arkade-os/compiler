@@ -154,6 +154,17 @@ pub fn imports(source: &str) -> Option<Vec<(String, Span)>> {
     parser::header_imports(source)
 }
 
+/// How a built-in function is called, such as `checkSig(signature, pubkey)`; `None` for a name
+/// that is not built in.
+///
+/// ```
+/// assert_eq!(arkade_compiler::signature("checkSig").as_deref(), Some("checkSig(signature, pubkey)"));
+/// assert_eq!(arkade_compiler::signature("owner"), None);
+/// ```
+pub fn signature(name: &str) -> Option<String> {
+    parser::reserved_function_signature(name)
+}
+
 /// Each struct, contract or library `source` declares: its name, kind and the name's span, read
 /// from the top of the file up to the first declaration that does not parse.
 pub fn declarations(source: &str) -> Vec<(String, symbols::SymbolKind, Span)> {

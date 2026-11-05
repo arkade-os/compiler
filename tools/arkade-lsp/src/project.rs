@@ -10,7 +10,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use arkade_compiler::diagnostics::{offset as byte_offset, position as compiler_position};
-use arkade_compiler::{Analysis, Diagnostic, Span};
+use arkade_compiler::{Analysis, ContractJson, Diagnostic, Span};
 use lsp_types::{Position, Range, Url};
 
 use crate::index::{import_statements, File, FileId, Index};
@@ -128,12 +128,21 @@ const CACHED: usize = 32;
 pub struct Analyzed {
     analysis: Analysis,
     diagnostics: OnceCell<Vec<Diagnostic>>,
+    artifact: OnceCell<Option<ContractJson>>,
 }
 
 impl Analyzed {
     /// Every diagnostic, code generation's included.
     pub fn diagnostics(&self) -> &[Diagnostic] {
         (self.diagnostics).get_or_init(|| self.analysis.check(Default::default()))
+    }
+
+    /// The compiled artifact, when the entry is a contract that compiles.
+    pub fn artifact(&self) -> Option<&ContractJson> {
+        let artifact = self
+            .artifact
+            .get_or_init(|| self.analysis.compile(Default::default()).ok());
+        artifact.as_ref()
     }
 }
 
@@ -173,6 +182,7 @@ impl Cache {
         let analysis = Rc::new(Analyzed {
             analysis: analyze(),
             diagnostics: OnceCell::new(),
+            artifact: OnceCell::new(),
         });
         let mut cached = self.0.borrow_mut();
         cached.push_front((key, analysis.clone()));
