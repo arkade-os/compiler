@@ -8,6 +8,7 @@ use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
+mod editor;
 mod index;
 mod project;
 mod rename;
@@ -22,23 +23,26 @@ use lsp_types::notification::{
     DidSaveTextDocument, Notification as _, PublishDiagnostics,
 };
 use lsp_types::request::{
-    CodeActionRequest, Completion, DocumentHighlightRequest, DocumentSymbolRequest, GotoDefinition,
-    HoverRequest, InlayHintRequest, PrepareRenameRequest, References, RegisterCapability, Rename,
-    Request as _, WorkspaceSymbolRequest,
+    CodeActionRequest, CodeLensRequest, Completion, DocumentHighlightRequest, DocumentLinkRequest,
+    DocumentSymbolRequest, GotoDefinition, HoverRequest, InlayHintRequest, PrepareRenameRequest,
+    References, RegisterCapability, Rename, Request as _, SemanticTokensFullRequest,
+    SignatureHelpRequest, WorkspaceSymbolRequest,
 };
 use lsp_types::{
     CodeAction, CodeActionKind, CodeActionOrCommand, CodeActionParams,
-    CodeActionProviderCapability, CompletionItem, CompletionItemKind, CompletionList,
-    CompletionOptions, CompletionParams, CompletionTextEdit, Diagnostic,
-    DiagnosticRelatedInformation, DiagnosticSeverity, DidChangeWatchedFilesRegistrationOptions,
-    DocumentHighlight, DocumentHighlightParams, DocumentSymbol, DocumentSymbolParams,
+    CodeActionProviderCapability, CodeLensOptions, CodeLensParams, CompletionItem,
+    CompletionItemKind, CompletionList, CompletionOptions, CompletionParams, CompletionTextEdit,
+    Diagnostic, DiagnosticRelatedInformation, DiagnosticSeverity,
+    DidChangeWatchedFilesRegistrationOptions, DocumentHighlight, DocumentHighlightParams,
+    DocumentLinkOptions, DocumentLinkParams, DocumentSymbol, DocumentSymbolParams,
     FileSystemWatcher, GlobPattern, GotoDefinitionParams, Hover, HoverContents, HoverParams,
     HoverProviderCapability, InitializeParams, InlayHint, InlayHintLabel, InlayHintParams,
     InsertTextFormat, Location, MarkupContent, MarkupKind, NumberOrString, OneOf, Position,
     PublishDiagnosticsParams, Range, ReferenceParams, Registration, RegistrationParams,
-    RenameOptions, RenameParams, ServerCapabilities, SymbolKind, TextDocumentPositionParams,
-    TextDocumentSyncKind, TextDocumentSyncOptions, TextEdit, Url, WorkspaceEdit, WorkspaceSymbol,
-    WorkspaceSymbolParams,
+    RenameOptions, RenameParams, SemanticTokensFullOptions, SemanticTokensOptions,
+    SemanticTokensParams, ServerCapabilities, SignatureHelpOptions, SignatureHelpParams,
+    SymbolKind, TextDocumentPositionParams, TextDocumentSyncKind, TextDocumentSyncOptions,
+    TextEdit, Url, WorkspaceEdit, WorkspaceSymbol, WorkspaceSymbolParams,
 };
 use project::{
     first_line, import_line, import_path, offset, range, utf16_len, Analyzed, Cache, Project,
@@ -70,13 +74,37 @@ pub fn run(connection: Connection) -> Result<()> {
             prepare_provider: Some(true),
             work_done_progress_options: Default::default(),
         })),
+        document_link_provider: Some(DocumentLinkOptions {
+            resolve_provider: Some(false),
+            work_done_progress_options: Default::default(),
+        }),
+        semantic_tokens_provider: Some(
+            SemanticTokensOptions {
+                legend: editor::legend(),
+                full: Some(SemanticTokensFullOptions::Bool(true)),
+                ..Default::default()
+            }
+            .into(),
+        ),
+        code_lens_provider: Some(CodeLensOptions {
+            resolve_provider: Some(false),
+        }),
+        signature_help_provider: Some(SignatureHelpOptions {
+            trigger_characters: Some(vec!["(".into(), ",".into()]),
+            ..Default::default()
+        }),
         completion_provider: Some(CompletionOptions {
             trigger_characters: Some(vec![".".into(), "\"".into(), "/".into()]),
             ..Default::default()
         }),
         ..Default::default()
     };
-    let params = connection.initialize(serde_json::to_value(capabilities)?)?;
+    let (id, params) = connection.initialize_start()?;
+    let initialized = serde_json::json!({
+        "capabilities": capabilities,
+        "serverInfo": { "name": "arkade-lsp", "version": env!("CARGO_PKG_VERSION") },
+    });
+    connection.initialize_finish(id, initialized)?;
     let mut server = Server::new(serde_json::from_value(params)?);
     if server.watching {
         connection.sender.send(watch_request().into())?;
@@ -315,6 +343,18 @@ impl Server {
             }
             InlayHintRequest::METHOD => serde_json::from_value::<InlayHintParams>(params)
                 .map(|p| serde_json::json!(self.inlay_hints(&p.text_document.uri, p.range))),
+            DocumentLinkRequest::METHOD => serde_json::from_value::<DocumentLinkParams>(params)
+                .map(|p| serde_json::json!(self.document_links(&p.text_document.uri))),
+            SemanticTokensFullRequest::METHOD => {
+                serde_json::from_value::<SemanticTokensParams>(params)
+                    .map(|p| serde_json::json!(self.semantic_tokens(&p.text_document.uri)))
+            }
+            CodeLensRequest::METHOD => serde_json::from_value::<CodeLensParams>(params)
+                .map(|p| serde_json::json!(self.code_lenses(&p.text_document.uri))),
+            SignatureHelpRequest::METHOD => serde_json::from_value::<SignatureHelpParams>(params)
+                .map(|p| {
+                    serde_json::json!(self.signature_help(at(p.text_document_position_params)))
+                }),
             PrepareRenameRequest::METHOD => serde_json::from_value(params)
                 .map(|p| serde_json::json!(self.prepare_rename(at(p)))),
             method => {
@@ -474,18 +514,45 @@ impl Server {
     }
 
     /// The uses of the name at the cursor, across every analyzed file.
+    /// The uses of the name at the cursor in every file that can see it, as rename finds them.
     fn references(&self, (uri, cursor): (Url, Position), declaration: bool) -> Vec<Location> {
         let Some(project) = self.project(&uri) else {
             return Vec::new();
         };
         let analysis = self.analyze(&project);
-        uses(&analysis, &project, cursor, declaration)
-            .into_iter()
-            .filter_map(|(file, span)| {
-                let source = analysis.source(file)?;
-                Some(Location::new(project.uri(file)?, range(source, span)))
-            })
-            .collect()
+        let at = offset(project.source(), cursor);
+        let definition = at.and_then(|at| analysis.symbols().definition_at(&project.entry, at));
+        let Some(definition) = definition.cloned() else {
+            return Vec::new();
+        };
+        let mut seen = HashSet::new();
+        let mut locations = Vec::new();
+        for project in self.seeing(project, &definition) {
+            let analysis = self.analyze(&project);
+            let symbols = analysis.symbols();
+            let same = |d: &Definition| d.file == definition.file && d.span == definition.span;
+            let Some(index) = symbols.definitions().iter().position(same) else {
+                continue;
+            };
+            let target = &symbols.definitions()[index];
+            let references = symbols
+                .references()
+                .iter()
+                .filter(|r| r.definition == index);
+            let declared = declaration.then_some((target.file.as_str(), target.span));
+            for (file, span) in declared
+                .into_iter()
+                .chain(references.map(|r| (r.file.as_str(), r.span)))
+            {
+                let (Some(uri), Some(source)) = (project.uri(file), analysis.source(file)) else {
+                    continue;
+                };
+                if seen.insert((uri.clone(), span.start)) {
+                    locations.push(Location::new(uri, range(source, span)));
+                }
+            }
+        }
+        locations
     }
 
     fn highlights(&self, (uri, cursor): (Url, Position)) -> Vec<DocumentHighlight> {

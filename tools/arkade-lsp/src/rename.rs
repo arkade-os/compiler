@@ -38,14 +38,7 @@ impl Server {
         let symbols = analysis.symbols();
         let definition = at.and_then(|at| symbols.definition_at(&project.entry, at));
         let definition = definition.ok_or("no name to rename here")?.clone();
-        let mut projects = Vec::new();
-        if definition.visible.is_none() {
-            let file = project.id(&self.index, &definition.file);
-            let dependents = file.map(|file| self.index.dependents(file));
-            let dependents = dependents.into_iter().flatten();
-            projects.extend(dependents.filter_map(|id| Project::new(&self.index, id)));
-        }
-        projects.push(project);
+        let projects = self.seeing(project, &definition);
 
         let mut spans: HashMap<Url, Vec<Span>> = HashMap::new();
         let mut edits: HashMap<Url, Vec<TextEdit>> = HashMap::new();
@@ -84,6 +77,20 @@ impl Server {
             changes: Some(edits),
             ..Default::default()
         })
+    }
+
+    /// The projects whose files can use `definition`: for a file-level one, every file importing
+    /// its file, directly or not, then `project`; for a local, `project` alone.
+    pub(crate) fn seeing(&self, project: Project, definition: &Definition) -> Vec<Project> {
+        let mut projects = Vec::new();
+        if definition.visible.is_none() {
+            let file = project.id(&self.index, &definition.file);
+            let dependents = file.map(|file| self.index.dependents(file));
+            let dependents = dependents.into_iter().flatten();
+            projects.extend(dependents.filter_map(|id| Project::new(&self.index, id)));
+        }
+        projects.push(project);
+        projects
     }
 
     /// An error the compiler finds in `project` with `spans` renamed to `name` but not before,
