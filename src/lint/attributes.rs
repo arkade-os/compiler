@@ -73,7 +73,12 @@ struct Entry {
 pub(super) fn levels(contract: &Contract, findings: Vec<Finding>) -> Vec<(Finding, Option<Level>)> {
     let mut entries = Vec::new();
     let mut unknown = Vec::new();
-    for (scope, attributes) in contract.attributed() {
+    for (declaration, attributes) in contract.attributed() {
+        // An attribute is in force over its node's own attributes too, as rustc's are.
+        let scope = Span {
+            start: attributes[0].span.start,
+            end: declaration.end,
+        };
         for attribute in attributes {
             let kind = Kind::named(&attribute.name).expect("validated attribute");
             for arg in &attribute.args {

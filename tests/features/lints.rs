@@ -507,3 +507,29 @@ fn a_finding_fulfills_only_the_innermost_expectation() {
         .collect();
     assert_eq!(unfulfilled, [source.find("self-comparison").unwrap()]);
 }
+
+#[test]
+fn an_attribute_applies_to_findings_on_its_own_node_but_not_a_sibling() {
+    let lints = |functions: &str| {
+        let source = format!("contract C(pubkey k) {{ {functions} }}");
+        diagnostics_with(&source, &Levels::default())
+            .into_iter()
+            .filter_map(|d| d.lint)
+            .collect::<Vec<_>>()
+    };
+    let body = "(signature s) { require(checkSig(s, k)); }";
+    assert!(lints(&format!(
+        r#"@allow(unknown-lint, "x") @allow(no-such-lint, "y") function f{body}"#
+    ))
+    .is_empty());
+    assert!(lints(&format!(
+        r#"@allow(unfulfilled-expectation, "x") @expect(self-comparison, "y") function f{body}"#
+    ))
+    .is_empty());
+    assert_eq!(
+        lints(&format!(
+            r#"@allow(unknown-lint, "x") function f{body} @allow(no-such-lint, "y") function g{body}"#
+        )),
+        [Lint::UnknownLint]
+    );
+}
