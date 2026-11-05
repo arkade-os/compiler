@@ -123,3 +123,53 @@ fn an_error_in_an_import_is_located_in_that_file() {
     assert_eq!(text, "m");
     assert!(message.contains("unknown type 'Missing'"), "{message}");
 }
+
+/// The line (from 1) and text of the first diagnostic's span in `main`, and its message.
+fn at_line(main: &str) -> (usize, String, String) {
+    let files = BTreeMap::from([("main.ark".to_string(), main.to_string())]);
+    let diagnostics = analyze("main.ark", &files).diagnostics();
+    let error = diagnostics.first().expect("an error");
+    let span = error.span.expect("located");
+    let line = main[..span.start].matches('\n').count() + 1;
+    (
+        line,
+        main[span.start..span.end].to_string(),
+        error.message.clone(),
+    )
+}
+
+#[test]
+fn a_missing_token_is_reported_at_the_end_of_its_line() {
+    let body = |statements: &str| {
+        format!("contract C(pubkey o) {{\n  function f(signature s) {{\n{statements}\n  }}\n}}\n")
+    };
+    for (statements, line, text) in [
+        ("    require(checkSig(s, o))\n    require(true);", 3, ")"),
+        (
+            "    int x = 5\n    require(checkSig(s, o) && x > 1);",
+            3,
+            "5",
+        ),
+        (
+            "    require(checkSig(s, o)) // see \"docs\"\n    // more\n    require(true);",
+            3,
+            ")",
+        ),
+        (
+            "    require(checkSig(s, o), \"https://x\")\n    require(true);",
+            3,
+            ")",
+        ),
+        ("    require(checkSig(s, o);", 3, ";"),
+    ] {
+        let (found, spanned, message) = at_line(&body(statements));
+        assert_eq!(
+            (found, spanned.as_str()),
+            (line, text),
+            "{statements}: {message}"
+        );
+    }
+    let typo =
+        "contract C(pubkey o) {\n  fucntion f(signature s) { require(checkSig(s, o)); }\n}\n";
+    assert_eq!(at_line(typo).0, 2);
+}
