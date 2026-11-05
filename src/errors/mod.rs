@@ -37,9 +37,6 @@ macro_rules! errors {
 errors! {
     UnknownName: "unknown-name", "a name no binding in scope declares";
     UnknownFunction: "unknown-function", "a call to no builtin and no function of the contract";
-    UnknownType: "unknown-type", "a type no builtin and no visible struct declares";
-    UnknownContract: "unknown-contract", "a contract or library no imported file declares";
-    UnknownMember: "unknown-member", "a member an imported contract or library does not export";
 }
 
 impl std::str::FromStr for ErrorCode {
