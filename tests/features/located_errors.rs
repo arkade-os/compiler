@@ -193,3 +193,16 @@ fn call_errors_name_the_problem() {
         assert_eq!(at_line(&body(statement)).2, message, "{statement}");
     }
 }
+
+#[test]
+fn an_unused_parameter_is_located_at_its_name() {
+    let source = "contract C(pubkey o) {\n  function f(signature s, int extra) {\n    require(checkSig(s, o));\n  }\n}\n";
+    let (line, text, message) = at_line(source);
+    assert_eq!((line, text.as_str()), (2, "extra"));
+    assert_eq!(message, "parameter 'extra' of function 'f' is never used");
+    let tapscript = source.replace(
+        "{\n    require(checkSig(s, o));",
+        "tapscript {\n    require(checkSig(s, o));",
+    );
+    assert_eq!(at_line(&tapscript).1, "extra");
+}
