@@ -8,8 +8,8 @@ use crate::diagnostics::{Diagnostic, Span};
 use crate::models::{Contract, TapItem};
 
 pub(crate) mod attributes;
-mod covenants;
 mod expressions;
+mod functions;
 mod inspections;
 mod signatures;
 mod unused;
@@ -71,7 +71,7 @@ pub(crate) fn check(contract: &Contract) -> Lints {
     unused::check(contract, &mut findings);
     inspections::check(contract, &mut findings);
     signatures::check(contract, &mut findings);
-    covenants::check(contract, &mut findings);
+    functions::check(contract, &mut findings);
     expressions::check(contract, &mut findings);
     Lints(attributes::levels(contract, findings))
 }

@@ -1,4 +1,4 @@
-//! Covenant lints: what a spending function authorizes and constrains, gathered through the
+//! Function lints: what a spending function authorizes and constrains, gathered through the
 //! helpers it calls.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
