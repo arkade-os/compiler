@@ -29,6 +29,7 @@ contract OptionIntent(
 ) {
   const int DUST = 330;
 
+  @allow(unsigned-spend-path, "anyone may fill the intent before the deadline, and the outputs pay the user and the option")
   function finalize() {
     require(!checkTime(deadline), "expired");
     require(this.activeInputIndex == 0, "intent input");
@@ -57,6 +58,7 @@ contract OptionIntent(
     }
   }
 
+  @allow(unsigned-spend-path, "anyone may refund after the deadline, and the output pays the user")
   function cancel() {
     require(tx.numInputs == 1, "one input");
     require(checkTime(deadline), "open");

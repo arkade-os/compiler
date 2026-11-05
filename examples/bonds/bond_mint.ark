@@ -118,10 +118,14 @@ contract BondMint(
   // co-spent pool.liquidate. If that pool-side check ever regresses, this
   // vault-side floor still prevents the "1 sat to auctioneer, rest as miner
   // fee" siphon shape.
+  @allow(unsigned-spend-path, "permissionless liquidation, bound to the genuine pool by its debit control asset, with the debit burn and the auctioneer output pinned")
   function liquidate(int poolIdx, ScriptPubKey auctioneerScriptPubKey) {
     require(!checkTime(maturity), "matured; use auction");
 
     require(tx.inputs[poolIdx].assets.lookup(debitCtrlIdTxid, debitCtrlIdGidx) >= 1, "genuine pool not co-spent");
+    // One vault per pool: the debit burn below is checked per asset group, so two vaults
+    // sharing one pool input could both be settled by a single burn.
+    require(this.activeInputIndex == poolIdx + 1, "vault must follow the pool");
 
     let debitGroup = tx.assetGroups.find(debitAssetIdTxid, debitAssetIdGidx);
     require(debitGroup.sumInputs == debitGroup.sumOutputs + mintedAmount, "debit not burned exactly mintedAmount");
@@ -135,12 +139,14 @@ contract BondMint(
   // collateral destination via `auctioneerScriptPubKey`.
   //   output[0]: pool re-created (enforced by acceptAuction)
   //   output[1]: collateral (or sold portion) → auctioneer
+  @allow(unsigned-spend-path, "permissionless auction in its window, bound to the genuine pool by its debit control asset, with the debit burn and the auctioneer output pinned")
   function auction(int poolIdx, ScriptPubKey auctioneerScriptPubKey) {
     require(checkTime(maturity), "not yet matured");
     int windowEnd = maturity + auctionWindow;
     require(!checkTime(windowEnd), "auction window closed");
 
     require(tx.inputs[poolIdx].assets.lookup(debitCtrlIdTxid, debitCtrlIdGidx) >= 1, "genuine pool not co-spent");
+    require(this.activeInputIndex == poolIdx + 1, "vault must follow the pool");
 
     let debitGroup = tx.assetGroups.find(debitAssetIdTxid, debitAssetIdGidx);
     require(debitGroup.sumInputs == debitGroup.sumOutputs + mintedAmount, "debit not burned exactly mintedAmount");
