@@ -38,7 +38,9 @@ const arkadeTheme = {
         { token: 'string', foreground: 'CE9178' },
         { token: 'operator', foreground: 'D4D4D4' },
         { token: 'delimiter', foreground: 'D4D4D4' },
-        { token: 'identifier', foreground: '9CDCFE' }
+        { token: 'identifier', foreground: '9CDCFE' },
+        { token: 'annotation', foreground: 'DCDCAA' },
+        { token: 'annotation.lint', foreground: '4EC9B0' }
     ],
     colors: {
         'editor.background': '#1e1e1e',
@@ -152,6 +154,7 @@ const arkadeMonarch = {
         root: [
             [/\/\/.*$/, 'comment'],
             [/\s+/, 'white'],
+            [/@(allow|warn|deny|expect)(?=\s*\()/, { token: 'annotation', next: '@lints' }],
             [/(pragma)(\s+)(arkade)\b/, ['keyword', 'white', 'keyword']],
             [/\d+\.\d+\.\d+/, 'number'],
             [/0x[0-9a-fA-F]*/, 'number.hex'],
@@ -169,6 +172,16 @@ const arkadeMonarch = {
             [/[{}()\[\]]/, '@brackets'],
             [/[;,.:]/, 'delimiter'],
             [/[=<>!&|^~+\-*\/]+/, 'operator'],
+        ],
+        // The parenthesized lint ids and reason of a lint attribute, ids spelled as grammar.pest's
+        // `attribute_name`; anything else ends the attribute.
+        lints: [
+            [/\s+/, 'white'],
+            [/[a-zA-Z][\w-]*/, 'annotation.lint'],
+            [/"(?:[^"\\]|\\.)*"/, 'string'],
+            [/[(,]/, 'delimiter'],
+            [/\)/, { token: 'delimiter', next: '@pop' }],
+            [/./, { token: '@rematch', next: '@pop' }],
         ]
     }
 };
