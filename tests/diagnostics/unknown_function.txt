@@ -1,0 +1,5 @@
+error[validation]: unknown function 'chekSig'
+  --> 3:13
+3 |     require(chekSig(sig, owner));
+  |             ^^^^^^^^^^^^^^^^^^^
+

@@ -1,0 +1,5 @@
+error[validation]: unknown transaction property 'time'; expected one of version, locktime, numInputs, numOutputs, weight, id
+  --> 4:13
+4 |     require(tx.time >= 1000);
+  |             ^^^^^^^^
+

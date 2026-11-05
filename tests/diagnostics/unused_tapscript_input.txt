@@ -1,0 +1,5 @@
+error[validation]: input 'extra' in tapscript 'unilateral' is never used
+  --> 7:44
+7 |   function unilateral(signature sig, bytes extra) tapscript {
+  |                                            ^^^^^
+

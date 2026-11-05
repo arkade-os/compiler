@@ -1,0 +1,5 @@
+error[validation]: checkSig operand has type 'bytes', expected 'signature'
+  --> 3:22
+3 |     require(checkSig(owner, sig));
+  |                      ^^^^^
+

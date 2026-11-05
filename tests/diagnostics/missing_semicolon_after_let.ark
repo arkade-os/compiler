@@ -1,0 +1,12 @@
+contract Vault(pubkey owner, int exit) {
+  function spend(signature sig) {
+    require(checkSig(sig, owner));
+    int x = 5
+    require(tx.outputs[0].value >= x);
+  }
+
+  function unilateral(signature sig) tapscript {
+    require(older(exit));
+    require(checkSig(sig, owner));
+  }
+}
