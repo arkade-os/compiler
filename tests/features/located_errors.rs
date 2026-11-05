@@ -236,3 +236,32 @@ fn an_unknown_transaction_property_is_reported_by_validation() {
         "unknown output property 'valu'; expected one of value, witnessVersion, script"
     );
 }
+
+#[test]
+fn a_word_left_on_its_own_is_reported_at_the_word() {
+    let body = |statements: &str, tapscript: &str| {
+        format!("contract C(pubkey o) {{\n  function f(signature s){tapscript} {{\n{statements}\n  }}\n}}\n")
+    };
+    for (source, line) in [
+        (body("    require(checkSig(s, o));\n    dasd", ""), 4),
+        (body("    require(checkSig(s, o)); dasd", ""), 3),
+        (
+            body("    require(checkSig(s, o));\n    dasd", " tapscript"),
+            4,
+        ),
+        (
+            body(
+                "    if (true) {\n      dasd\n    }\n    require(checkSig(s, o));",
+                "",
+            ),
+            4,
+        ),
+    ] {
+        let (found, text, message) = at_line(&source);
+        assert_eq!(
+            (found, text.as_str(), message.as_str()),
+            (line, "dasd", "`dasd` on its own is not a statement"),
+            "{source}"
+        );
+    }
+}
