@@ -238,8 +238,9 @@ pub(crate) fn render_errors(diagnostics: &[Diagnostic], source: &str) -> String 
         .map(|d| {
             let message = located(&d.message, d.span, source);
             match d.code.as_deref() {
-                Some("validation") => format!("validation error: {message}"),
-                Some(code) if code.parse::<crate::errors::ErrorCode>().is_ok() => {
+                Some(code)
+                    if code == "validation" || code.parse::<crate::errors::ErrorCode>().is_ok() =>
+                {
                     format!("validation error: {message}")
                 }
                 Some("type") => format!("type error: {message}"),
