@@ -154,7 +154,7 @@ const arkadeMonarch = {
         root: [
             [/\/\/.*$/, 'comment'],
             [/\s+/, 'white'],
-            [/@(allow|warn|deny|expect)\b/, { token: 'annotation', next: '@lints' }],
+            [/@(allow|warn|deny|expect)(?=\s*\()/, { token: 'annotation', next: '@lints' }],
             [/(pragma)(\s+)(arkade)\b/, ['keyword', 'white', 'keyword']],
             [/\d+\.\d+\.\d+/, 'number'],
             [/0x[0-9a-fA-F]*/, 'number.hex'],
@@ -173,13 +173,15 @@ const arkadeMonarch = {
             [/[;,.:]/, 'delimiter'],
             [/[=<>!&|^~+\-*\/]+/, 'operator'],
         ],
-        // The parenthesized lint ids and reason of a lint attribute; ids contain hyphens.
+        // The parenthesized lint ids and reason of a lint attribute, ids spelled as grammar.pest's
+        // `attribute_name`; anything else ends the attribute.
         lints: [
             [/\s+/, 'white'],
-            [/[a-z][a-z0-9-]*/, 'annotation.lint'],
+            [/[a-zA-Z][\w-]*/, 'annotation.lint'],
             [/"(?:[^"\\]|\\.)*"/, 'string'],
             [/[(,]/, 'delimiter'],
             [/\)/, { token: 'delimiter', next: '@pop' }],
+            [/./, { token: '@rematch', next: '@pop' }],
         ]
     }
 };
