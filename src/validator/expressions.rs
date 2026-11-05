@@ -557,7 +557,11 @@ pub(super) fn validate_binding_expression(
             _ if find_binding(scopes, &path.root).is_some() => {
                 validate_named_binding(&path.key(), None, "field", scopes, issues);
             }
-            _ => {}
+            _ => {
+                if let Some(error) = unknown_property(path) {
+                    issues.push(ValidationIssue::error(error));
+                }
+            }
         },
         ExprKind::ContractInstance { args, .. } => {
             for argument in args {
@@ -719,4 +723,38 @@ fn literal_index(mut expression: &Expression) -> Option<(bool, &str)> {
         }),
         _ => None,
     }
+}
+
+/// Why `path` names no transaction property, with the properties its owner has.
+fn unknown_property(path: &crate::models::Path) -> Option<String> {
+    use crate::models::Segment::Field;
+    use crate::properties::{InputProperty, OutputProperty, TxProperty};
+    if path.root != "tx" {
+        return None;
+    }
+    // An indexed list arrives as one field, such as `outputs[0]`.
+    let list =
+        |field: &str, name: &str| field.strip_prefix(name).is_some_and(|i| i.starts_with('['));
+    let (owner, expected): (_, Vec<&str>) = match path.segments.as_slice() {
+        [Field(_)] => (
+            "transaction",
+            TxProperty::ALL.iter().map(|p| p.name()).collect(),
+        ),
+        [Field(field), Field(_)] if list(field, "inputs") => (
+            "input",
+            InputProperty::ALL.iter().map(|p| p.name()).collect(),
+        ),
+        [Field(field), Field(_)] if list(field, "outputs") => (
+            "output",
+            OutputProperty::ALL.iter().map(|p| p.name()).collect(),
+        ),
+        _ => return None,
+    };
+    let Some(Field(name)) = path.segments.last() else {
+        return None;
+    };
+    Some(format!(
+        "unknown {owner} property '{name}'; expected one of {}",
+        expected.join(", ")
+    ))
 }

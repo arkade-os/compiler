@@ -225,3 +225,14 @@ fn a_require_condition_of_the_wrong_type_is_located_at_the_condition() {
     assert_eq!((line, text.as_str()), (3, "\"dupa\""));
     assert_eq!(message, "require condition has type 'bytes', expected bool");
 }
+
+#[test]
+fn an_unknown_transaction_property_is_reported_by_validation() {
+    let source = "contract C(pubkey o) {\n  function f(signature s) {\n    require(tx.outputs[0].valu >= 1000);\n    require(checkSig(s, o));\n  }\n}\n";
+    let (line, text, message) = at_line(source);
+    assert_eq!((line, text.as_str()), (3, "tx.outputs[0].valu"));
+    assert_eq!(
+        message,
+        "unknown output property 'valu'; expected one of value, witnessVersion, script"
+    );
+}
