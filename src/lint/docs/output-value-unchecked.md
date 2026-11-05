@@ -1,6 +1,6 @@
-A function that checks the `scriptPubKey` of `tx.outputs[N]`, including a recreated `new Self(...)`, but not its value or assets.
+A function without a transaction signature that checks the `scriptPubKey` of `tx.outputs[N]`, including a recreated `new Self(...)`, but not its value or assets.
 
-The right script then receives a dust amount, and the rest of the input's value goes elsewhere.
+The right script then receives a dust amount, and the rest of the input's value goes elsewhere. With a transaction signature the signer chooses the outputs, so signed functions are not reported.
 
 Fix: check the value, or the assets the output must carry.
 

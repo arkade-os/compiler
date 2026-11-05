@@ -156,7 +156,7 @@ fn report(function: &Function, facts: &Facts, findings: &mut Vec<Finding>) {
                          scriptPubKey, so that value can be paid to any script"
                 ),
             )),
-            (Some(script), None) if !checks.assets => findings.push(Finding::new(
+            (Some(script), None) if !checks.assets && !facts.signed => findings.push(Finding::new(
                 Lint::OutputValueUnchecked,
                 script,
                 format!(
@@ -338,8 +338,8 @@ enum Choice {
 }
 
 /// Records each signature check whose key, threshold or `checkSigFromStack` message is a
-/// witness parameter the function uses nowhere else: one also hashed, compared or matched to
-/// an output is bound.
+/// witness parameter the function names only as such operands; any other mention of it, even
+/// `k != owner`, counts as binding it.
 fn find_witness_choices(
     statements: &[LocatedStatement],
     witness: &HashSet<&str>,

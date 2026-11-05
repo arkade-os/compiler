@@ -106,6 +106,10 @@ fn covenant_lints_report_unauthorized_and_half_constrained_spends() {
             "function f(signature s) { require(helper(s)); } private function helper(signature s) bool { return checkSig(s, owner); }",
             &[],
         ),
+        (
+            "function f(signature s) { require(checkSig(s, owner)); require(tx.outputs[0].script == new C(owner, oracle, hash)); }",
+            &[],
+        ),
     ] {
         assert_eq!(lints(function), expected, "{function}");
     }
