@@ -68,8 +68,12 @@ impl Path {
     /// holds when one never passes. Sibling `if`s with complementary conditions may cover an
     /// empty arm's case, so beside a live arm it is taken to authorize and to need no preimage.
     ///
-    /// ponytail: tracking conditions would tell whether siblings cover an empty arm; without
-    /// that, a lone `if (c) { require(checkSig(s, owner)); }` reads as authorized.
+    /// ponytail: the grammar has no `else if`, so a case split is written as sibling `if`s
+    /// (`examples/option/option_vault.ark` `settle`), and a lone
+    /// `if (c) { require(checkSig(s, owner)); }` reads as authorized. Once `else if` exists,
+    /// rewrite such splits as `else if` chains ending in `else`, then drop `empty` and its arm
+    /// here so an absent `else` holds nothing, and add that lone `if` as an `anyone-can-spend`
+    /// row in `tests/features/lints.rs`.
     fn either(then: Path, other: Path) -> Path {
         match (then, other) {
             (dead, live) | (live, dead) if dead.never_passes => live,
