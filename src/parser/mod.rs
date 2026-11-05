@@ -372,8 +372,10 @@ fn parse_contract(contract: &mut Contract, pair: Pair<Rule>) -> Result<(), Compi
                 let message = "libraries cannot declare tapscript functions";
                 return Err(CompileError::from(message).at(span));
             }
-            let ts = parse_named_tapscript(func_pair, &parsing_constants)
-                .map_err(|error| CompileError::from(error).at(span))?;
+            let ts = parse_named_tapscript(func_pair, &parsing_constants).map_err(|error| {
+                let at = error.span.unwrap_or(span);
+                error.at(at)
+            })?;
             contract.tapscripts.push(ts);
         } else {
             let func = parse_function(func_pair, &parsing_constants, contract.is_library)?;

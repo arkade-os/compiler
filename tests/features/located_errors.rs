@@ -206,3 +206,14 @@ fn an_unused_parameter_is_located_at_its_name() {
     );
     assert_eq!(at_line(&tapscript).1, "extra");
 }
+
+#[test]
+fn a_tapscript_require_is_located_at_its_condition() {
+    let source = "contract C(pubkey o) {\n  function f(signature s) tapscript {\n    require(\"dupa\");\n    require(checkSig(s, o));\n  }\n}\n";
+    let (line, text, message) = at_line(source);
+    assert_eq!((line, text.as_str()), (3, "\"dupa\""));
+    assert_eq!(
+        message,
+        "a tapscript require can check only signatures, hashes and timelocks, not a string"
+    );
+}
