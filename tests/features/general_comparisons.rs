@@ -634,6 +634,6 @@ fn logical_skipped_helpers_do_not_guarantee_spend_enforcement() {
         );
     }
     for expression in ["guarded() && skip", "guarded() || skip"] {
-        compile(&format!("contract C(bool skip) {{ function compare() {{ let value = {expression}; value = !value; }} private function guarded() bool {{ require(true); return true; }} }}")).unwrap_or_else(|error| panic!("{expression}: {error}"));
+        compile(&format!("contract C(bool skip) {{ function compare() {{ @allow(unused-variable, \"kept\") let value = {expression}; value = !value; }} private function guarded() bool {{ require(true); return true; }} }}")).unwrap_or_else(|error| panic!("{expression}: {error}"));
     }
 }

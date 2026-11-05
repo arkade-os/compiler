@@ -432,6 +432,26 @@ fn denied_lints_stop_compilation_only_in_the_file_being_compiled() {
 }
 
 #[test]
+fn a_read_by_a_dead_local_does_not_count_as_a_use() {
+    let source = r#"contract C(pubkey k, int p) { function f(signature s) {
+        let a = p;
+        @allow(unused-variable, "r") let b = a;
+        require(checkSig(s, k));
+    } }"#;
+    let messages: Vec<String> = diagnostics_with(source, &Levels::default())
+        .into_iter()
+        .map(|d| d.message)
+        .collect();
+    assert_eq!(
+        messages,
+        [
+            "variable 'a' in function 'f' is never used",
+            "constructor parameter 'p' is never used"
+        ],
+    );
+}
+
+#[test]
 fn an_allowed_unused_local_is_dropped_from_the_covenant_stack() {
     let source = r#"contract P(pubkey owner) { function spend(signature ownerSig, int amount) {
         @allow(unused-variable, "probe") int doubled = amount * 2;

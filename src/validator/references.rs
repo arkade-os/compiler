@@ -16,19 +16,27 @@ pub(crate) fn referenced_parameters<'a>(
 }
 
 /// The names `statements` read, leaving out the reads of a local or assignment nothing later
-/// reads, since the script drops the value they compute.
-pub(crate) fn live_reads(statements: &[LocatedStatement]) -> HashSet<&str> {
-    let mut live = HashSet::new();
-    collect_live(statements, &mut live);
-    live
+/// reads, since the script drops the value they compute; and those locals, the dead ones.
+pub(crate) fn live_reads(
+    statements: &[LocatedStatement],
+) -> (HashSet<&str>, Vec<&LocatedStatement>) {
+    let (mut live, mut dead) = (HashSet::new(), Vec::new());
+    collect_live(statements, &mut live, &mut dead);
+    (live, dead)
 }
 
-/// Add the names `statements` read to `live`, which holds the names read after them.
-fn collect_live<'a>(statements: &'a [LocatedStatement], live: &mut HashSet<&'a str>) {
+/// Add the names `statements` read to `live`, which holds the names read after them, and the
+/// locals nothing reads to `dead`.
+fn collect_live<'a>(
+    statements: &'a [LocatedStatement],
+    live: &mut HashSet<&'a str>,
+    dead: &mut Vec<&'a LocatedStatement>,
+) {
     for statement in statements.iter().rev() {
         match &statement.statement {
             Statement::Declaration { name, .. } | Statement::LetBinding { name, .. } => {
                 if !live.remove(name.as_str()) {
+                    dead.push(statement);
                     continue;
                 }
             }
@@ -48,18 +56,20 @@ fn collect_live<'a>(statements: &'a [LocatedStatement], live: &mut HashSet<&'a s
                 ..
             } => {
                 let mut other = live.clone();
-                collect_live(then_body, live);
-                collect_live(else_body.as_deref().unwrap_or_default(), &mut other);
+                collect_live(then_body, live, dead);
+                collect_live(else_body.as_deref().unwrap_or_default(), &mut other, dead);
                 live.extend(other);
             }
-            // An iteration reads what the one before it assigned.
+            // An iteration reads what the one before it assigned, so only the last walk, over
+            // every name read after the body, tells which locals are dead.
             // ponytail: re-walks the body until no new name turns up, which multiplies with loop
             // nesting depth; summarize each body once if loops ever nest deeply.
             Statement::ForIn { body, .. } | Statement::ForCount { body, .. } => {
                 loop {
-                    let mut next = live.clone();
-                    collect_live(body, &mut next);
+                    let (mut next, mut pass) = (live.clone(), Vec::new());
+                    collect_live(body, &mut next, &mut pass);
                     if next.is_subset(live) {
+                        dead.extend(pass);
                         break;
                     }
                     live.extend(next);

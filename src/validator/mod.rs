@@ -496,7 +496,7 @@ fn check_unused(contract: &Contract, issues: &mut Vec<ValidationIssue>) {
         }
     }
     for function in contract.functions.iter().filter(|f| !f.is_imported()) {
-        let used = references::live_reads(&function.statements);
+        let (used, _) = references::live_reads(&function.statements);
         for parameter in function
             .parameters
             .iter()
