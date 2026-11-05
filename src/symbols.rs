@@ -112,6 +112,17 @@ impl Symbols {
         visible
     }
 
+    /// The names a file importing `file` sees, as written there (such as `Fees.DELAY`), with their
+    /// definitions, sorted by name.
+    pub fn exports(&self, file: &str) -> Vec<(&str, &Definition)> {
+        let exports = self.exports.get(file).into_iter().flatten();
+        let mut exports: Vec<_> = exports
+            .map(|(name, &id)| (name.as_str(), &self.definitions[id]))
+            .collect();
+        exports.sort_by_key(|(name, _)| *name);
+        exports
+    }
+
     /// Record `contract`, typed, as `file`; `constants` are the constant references folded away.
     pub(crate) fn collect(
         &mut self,
@@ -190,11 +201,6 @@ impl Symbols {
             let span = tapscript.span;
             let id = collector.define(&tapscript.name, SymbolKind::Tapscript, None, span, None);
             names.globals.insert(tapscript.name.clone(), id);
-            for input in &tapscript.inputs {
-                let ty = Some(input.param_type.clone());
-                let visible = Some(tapscript.declaration);
-                collector.define(&input.name, SymbolKind::Parameter, ty, input.span, visible);
-            }
         }
         for parameter in &contract.parameters {
             let ty = Some(parameter.param_type.clone());
@@ -211,6 +217,9 @@ impl Symbols {
             let start = collector.token(span.start);
             collector.qualified(start, &path.key());
         }
+        for constant in contract.constants.iter().filter(|c| !c.name.contains('.')) {
+            collector.initializer(&constant.initializer);
+        }
         for function in functions {
             collector.scopes.push(HashMap::new());
             for parameter in &function.parameters {
@@ -225,6 +234,18 @@ impl Symbols {
                 );
             }
             collector.statements(&function.statements, function.declaration.end);
+            collector.scopes.pop();
+        }
+        for tapscript in &contract.tapscripts {
+            collector.scopes.push(HashMap::new());
+            for input in &tapscript.inputs {
+                let ty = Some(input.param_type.clone());
+                let visible = Some(tapscript.declaration);
+                collector.bind(&input.name, SymbolKind::Parameter, ty, input.span, visible);
+            }
+            for (name, span) in &tapscript.operands {
+                collector.refer(name, span.start);
+            }
             collector.scopes.pop();
         }
         self.exports.insert(file.to_string(), names.exports);
@@ -444,6 +465,17 @@ impl Collector<'_> {
         self.scopes.push(HashMap::new());
         self.statements(statements, end);
         self.scopes.pop();
+    }
+
+    /// A constant's initializer as written, whose names are all constants.
+    fn initializer(&mut self, expression: &Expression) {
+        if let ExprKind::Name(path) = &expression.kind {
+            let start = self.token(expression.span.start);
+            self.qualified(start, &path.key());
+        }
+        for child in crate::models::child_exprs(expression) {
+            self.initializer(child);
+        }
     }
 
     fn expression(&mut self, expression: &Expression) {

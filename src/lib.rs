@@ -141,6 +141,36 @@ pub fn analyze_file(path: impl AsRef<std::path::Path>) -> Analysis {
     imports::analyze_file(path.as_ref(), true)
 }
 
+/// Each import of `source`: its path as written and the span of its statement. `None` when the
+/// pragma and imports at the top do not parse; the rest of the file need not.
+///
+/// ```
+/// let source = "import \"lib/rules.ark\"; // see \"docs\"\ncontract C( {";
+/// let [(path, span)] = arkade_compiler::imports(source).unwrap().try_into().unwrap();
+/// assert_eq!((path.as_str(), &source[span.start..span.end]), ("lib/rules.ark", "import \"lib/rules.ark\";"));
+/// assert_eq!(arkade_compiler::imports("import \"lib/ru\ncontract C() {}"), None);
+/// ```
+pub fn imports(source: &str) -> Option<Vec<(String, Span)>> {
+    parser::header_imports(source)
+}
+
+/// How a built-in function is called, such as `checkSig(signature, pubkey)`; `None` for a name
+/// that is not built in.
+///
+/// ```
+/// assert_eq!(arkade_compiler::signature("checkSig").as_deref(), Some("checkSig(signature, pubkey)"));
+/// assert_eq!(arkade_compiler::signature("owner"), None);
+/// ```
+pub fn signature(name: &str) -> Option<String> {
+    parser::reserved_function_signature(name)
+}
+
+/// Each struct, contract or library `source` declares: its name, kind and the name's span, read
+/// from the top of the file up to the first declaration that does not parse.
+pub fn declarations(source: &str) -> Vec<(String, symbols::SymbolKind, Span)> {
+    parser::declarations(source)
+}
+
 /// Every parse, validation and type diagnostic for `entry`, without writing
 /// an artifact. Unlike the `compile_*` functions, this does not stop at the
 /// first error: independent problems in `entry` each get their own entry.

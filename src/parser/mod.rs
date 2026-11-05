@@ -51,6 +51,39 @@ pub(crate) fn imports(
         .collect()
 }
 
+/// [`imports`] of the file's header alone; `None` when the header does not parse.
+pub(crate) fn header_imports(source: &str) -> Option<Vec<(String, crate::diagnostics::Span)>> {
+    imports(&ArkadeParser::parse(Rule::header, source).ok()?).ok()
+}
+
+/// Each struct, contract or library the file declares: its name, kind and the name's span.
+pub(crate) fn declarations(
+    source: &str,
+) -> Vec<(String, crate::symbols::SymbolKind, crate::diagnostics::Span)> {
+    use crate::symbols::SymbolKind;
+    let Ok(mut pairs) = ArkadeParser::parse(Rule::outline, source) else {
+        return Vec::new();
+    };
+    let outline = pairs.next().expect("outline").into_inner();
+    outline
+        .filter_map(|pair| {
+            let rule = pair.as_rule();
+            let mut inner = pair.into_inner();
+            let kind = match rule {
+                Rule::struct_definition => SymbolKind::Struct,
+                Rule::declared => match inner.next()?.as_str() {
+                    "struct" => SymbolKind::Struct,
+                    "contract" => SymbolKind::Contract,
+                    _ => SymbolKind::Library,
+                },
+                _ => return None,
+            };
+            let name = inner.next()?;
+            Some((name.as_str().to_string(), kind, name.as_span().into()))
+        })
+        .collect()
+}
+
 /// Parse a source file, naming expected tokens in source terms instead of grammar rules.
 #[cfg(test)]
 pub(crate) fn parse_main(source: &str) -> Result<Pairs<'_, Rule>, String> {
@@ -350,6 +383,7 @@ fn parse_const_decl(pair: Pair<Rule>) -> Result<Constant, String> {
     Ok(Constant {
         name: name.as_str().to_string(),
         const_type,
+        initializer: value.clone(),
         value,
         span: name.as_span().into(),
     })

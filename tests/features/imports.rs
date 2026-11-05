@@ -114,7 +114,7 @@ library Fees {
     assert_eq!(output.structs.len(), 1);
     assert_eq!(
         output.warnings,
-        ["warning[validation]: constructor parameter 'amount' is never used (vault.ark)"]
+        ["warning[validation]: line 2, column 35: constructor parameter 'amount' is never used (vault.ark)"]
     );
     let asm = arkade_asm_tokens(&output, "spend");
     assert!(asm.contains(&"OP_INSPECTOUTPUTVALUE".to_string()));
@@ -675,4 +675,39 @@ fn computed_constants_and_array_sizes_keep_their_defining_import_scope() {
         serde_json::to_value(rebuilt).unwrap(),
         serde_json::to_value(output).unwrap()
     );
+}
+
+#[test]
+fn imports_are_read_from_the_header_while_the_body_is_broken() {
+    let source = "pragma arkade ^0.1.0;\nimport \"a.ark\"; // \"b.ark\"\nimport\n  \"c.ark\"\n;\ncontract C( {";
+    let imports = arkade_compiler::imports(source).unwrap();
+    let paths: Vec<_> = imports.iter().map(|(path, _)| path.as_str()).collect();
+    assert_eq!(paths, ["a.ark", "c.ark"]);
+    let span = imports[1].1;
+    assert_eq!(&source[span.start..span.end], "import\n  \"c.ark\"\n;");
+    assert_eq!(arkade_compiler::imports("contract C() {}"), Some(vec![]));
+    assert_eq!(
+        arkade_compiler::imports("pragma arkade;\nimport \"a.ark\";"),
+        None
+    );
+}
+
+#[test]
+fn declarations_are_read_up_to_the_first_broken_one() {
+    use arkade_compiler::symbols::SymbolKind;
+    let source = "import \"a.ark\";\nstruct P { int a; }\nstruct Q { int\nlibrary L {";
+    let names: Vec<_> = arkade_compiler::declarations(source)
+        .into_iter()
+        .map(|(name, kind, span)| (name, kind, &source[span.start..span.end]))
+        .collect();
+    assert_eq!(
+        names,
+        [
+            ("P".to_string(), SymbolKind::Struct, "P"),
+            ("Q".to_string(), SymbolKind::Struct, "Q")
+        ]
+    );
+    let contract = "contract Vault(pubkey owner) { function f( }";
+    let [(name, kind, _)] = arkade_compiler::declarations(contract).try_into().unwrap();
+    assert_eq!((name.as_str(), kind), ("Vault", SymbolKind::Contract));
 }

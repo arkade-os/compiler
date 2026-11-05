@@ -123,3 +123,49 @@ fn an_error_in_an_import_is_located_in_that_file() {
     assert_eq!(text, "m");
     assert!(message.contains("unknown type 'Missing'"), "{message}");
 }
+
+#[test]
+fn an_unknown_tapscript_operand_is_located_at_the_operand() {
+    let leaf = |body: &str| {
+        format!("contract C(pubkey owner) {{ function f(signature s) {{ require(checkSig(s, owner)); }} function exit(signature s) tapscript {{ {body} }} }}")
+    };
+    for (body, expected_text, expected_message) in [
+        (
+            "require(older(144)); require(checkSig(s, ownr));",
+            "ownr",
+            "unknown key `ownr` in tapscript `exit`",
+        ),
+        (
+            "require(older(delay)); require(checkSig(s, owner));",
+            "delay",
+            "'delay' is undefined in tapscript 'exit'",
+        ),
+    ] {
+        let (file, text, message) = located(&leaf(body), &[]);
+        assert_eq!(
+            (file.as_str(), text.as_str(), message.as_str()),
+            ("main.ark", expected_text, expected_message)
+        );
+    }
+}
+
+#[test]
+fn unused_parameters_and_tapscript_inputs_point_at_their_name() {
+    let source = "contract C(pubkey owner, int exit) {\n  function spend(signature sig) { require(checkSig(sig, owner)); }\n}\n";
+    let files = std::collections::BTreeMap::from([("main.ark".to_string(), source.to_string())]);
+    let [warning]: [_; 1] = arkade_compiler::check("main.ark", &files)
+        .try_into()
+        .unwrap();
+    let span = warning.span.unwrap();
+    assert_eq!(&source[span.start..span.end], "exit");
+
+    let source = "contract S(pubkey owner) { function spend() { require(true); } function spend(signature sig, bytes extra) tapscript { require(checkSig(sig, owner)); } }";
+    let files = std::collections::BTreeMap::from([("main.ark".to_string(), source.to_string())]);
+    let diagnostics = arkade_compiler::check("main.ark", &files);
+    let input = diagnostics
+        .iter()
+        .find(|d| d.message.contains("input 'extra'"))
+        .unwrap();
+    let span = input.span.unwrap();
+    assert_eq!(&source[span.start..span.end], "extra");
+}
