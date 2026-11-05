@@ -252,6 +252,17 @@ fn lint_attributes_set_levels_on_the_node_they_precede() {
         codes(&unsigned("@warn(anyone-can-spend)"), &allowed),
         [warning("anyone-can-spend")]
     );
+    let mut deny_warnings = Levels::default();
+    deny_warnings.set_named("warnings", Level::Deny).unwrap();
+    assert_eq!(
+        codes(&unsigned("@warn(anyone-can-spend)"), &deny_warnings),
+        [error("anyone-can-spend")]
+    );
+    assert!(codes(
+        &unsigned(r#"@allow(anyone-can-spend, "reviewed")"#),
+        &deny_warnings
+    )
+    .is_empty());
     assert_eq!(
         codes(&unsigned(r#"@allow(anyone-can-spnd, "typo")"#), &defaults),
         [warning("anyone-can-spend"), warning("unknown-lint")]
@@ -360,6 +371,10 @@ fn the_cli_applies_lint_levels() {
     assert!(passed);
     let (passed, _) = run(&["--allow", "security", "--deny", "all"]);
     assert!(!passed);
+    let (passed, _) = run(&["--warn", "anyone-can-spend", "--deny", "warnings"]);
+    assert!(!passed);
+    let (passed, _) = run(&["--deny", "warnings", "--allow", "warnings"]);
+    assert!(passed);
 }
 
 #[test]
@@ -397,6 +412,15 @@ fn denied_lints_stop_compilation_only_in_the_file_being_compiled() {
     };
     assert_eq!(severity("main.ark"), Some(Severity::Warning));
     assert_eq!(severity("fees.ark"), Some(Severity::Error));
+    let mut deny_warnings = Levels::default();
+    deny_warnings.set_named("warnings", Level::Deny).unwrap();
+    let imported = analyze("main.ark", &allowed).diagnostics_with(&deny_warnings);
+    assert!(
+        imported.iter().any(
+            |d| d.code.as_deref() == Some("unused-variable") && d.severity == Severity::Warning
+        ),
+        "{imported:?}"
+    );
 }
 
 #[test]

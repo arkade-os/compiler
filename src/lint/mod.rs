@@ -1,6 +1,7 @@
 //! Lints: named checks for code that compiles but is likely wrong or unsafe. They run as their
 //! own pass over a validated contract. Each finding's level comes from the innermost `@allow`,
-//! `@warn`, `@deny` or `@expect` around it, or else from the caller's [`Levels`].
+//! `@warn`, `@deny` or `@expect` around it, or else from the caller's [`Levels`]; a level of
+//! warn then takes the level the caller gives `warnings`, as rustc's `-D warnings` does.
 
 use std::collections::BTreeMap;
 
@@ -50,6 +51,9 @@ impl Lints {
             .iter()
             .filter_map(|(finding, attribute)| {
                 let mut level = attribute.unwrap_or_else(|| levels.level(finding.lint));
+                if level == Level::Warn {
+                    level = levels.warnings.unwrap_or(level);
+                }
                 if imported {
                     level = level.min(Level::Warn);
                 }
@@ -197,18 +201,26 @@ impl std::str::FromStr for Lint {
     }
 }
 
-/// A level for each lint, defaulting to its own.
+/// A level for each lint, defaulting to its own, and the level of `warnings`, which applies to
+/// every finding whose level is otherwise warn.
 #[derive(Debug, Clone, Default)]
-pub struct Levels(BTreeMap<Lint, Level>);
+pub struct Levels {
+    lints: BTreeMap<Lint, Level>,
+    warnings: Option<Level>,
+}
 
 impl Levels {
     pub fn set(&mut self, lint: Lint, level: Level) {
-        self.0.insert(lint, level);
+        self.lints.insert(lint, level);
     }
 
     /// Sets the lints `id` names: one lint, a category (`security`, `correctness`,
-    /// `performance`, `style`), `all`, or `warnings` for those at warning level.
+    /// `performance`, `style`), `all`, or `warnings` for every finding left at warn.
     pub fn set_named(&mut self, id: &str, level: Level) -> Result<(), String> {
+        if id == "warnings" {
+            self.warnings = Some(level);
+            return Ok(());
+        }
         let category = match id {
             "security" => Some(Category::Security),
             "correctness" => Some(Category::Correctness),
@@ -218,11 +230,6 @@ impl Levels {
         };
         let lints: Vec<Lint> = match id {
             "all" => Lint::ALL.to_vec(),
-            "warnings" => Lint::ALL
-                .iter()
-                .copied()
-                .filter(|&lint| self.level(lint) == Level::Warn)
-                .collect(),
             _ if category.is_some() => Lint::ALL
                 .iter()
                 .copied()
@@ -237,6 +244,6 @@ impl Levels {
     }
 
     pub fn level(&self, lint: Lint) -> Level {
-        self.0.get(&lint).copied().unwrap_or(lint.level())
+        self.lints.get(&lint).copied().unwrap_or(lint.level())
     }
 }

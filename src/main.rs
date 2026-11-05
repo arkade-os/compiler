@@ -108,7 +108,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // Level flags apply in the order given, so a later one wins, except that a lint
-    // named by its id overrides a category, `all` or `warnings` wherever it appears.
+    // named by its id overrides a category or `all` wherever it appears. `warnings`
+    // then applies to every finding left at warn.
     let mut flags = Vec::new();
     for (name, ids, level) in [
         ("allow", &args.allow, Level::Allow),

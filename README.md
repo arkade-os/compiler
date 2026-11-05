@@ -552,9 +552,9 @@ contract Vault(pubkey owner) {
 }
 ```
 
-The innermost attribute wins, and an attribute wins over the CLI. `@expect` allows its lint and reports `unfulfilled-expectation` when the lint does not fire where it applies, so it goes once the code is fixed; a name that is no lint is reported as `unknown-lint`. A malformed attribute is an error. An imported file's lints, attributes included, are at most warnings: only the file being compiled decides what fails it.
+The innermost attribute wins, and an attribute wins over the CLI, except that `--deny warnings` makes every warning an error, `@warn` ones included. `@expect` allows its lint and reports `unfulfilled-expectation` when the lint does not fire where it applies, so it goes once the code is fixed; a name that is no lint is reported as `unknown-lint`. A malformed attribute is an error. An imported file's lints, attributes included, are at most warnings: only the file being compiled decides what fails it.
 
-`arkadec --explain <lint>` prints what a lint reports, why it matters and how to fix it. The CLI sets levels with `--allow <lint>`, `--warn <lint>` and `--deny <lint>`, where `<lint>` is an id, a category (`security`, `correctness`, `performance`, `style`), `all`, or, for `--deny`, `warnings`. Flags apply in the order given, so a later one wins, and a lint named by its id overrides the others wherever it appears. A denied lint is an error that stops compilation, in the CLI and in `compile_sources`; `Analysis::diagnostics_with(&levels)` and `Analysis::compile_with(options, &levels)` take levels in the API.
+`arkadec --explain <lint>` prints what a lint reports, why it matters and how to fix it. The CLI sets levels with `--allow <lint>`, `--warn <lint>` and `--deny <lint>`, where `<lint>` is an id, a category (`security`, `correctness`, `performance`, `style`), `all`, or, for `--deny`, `warnings`. Flags apply in the order given, so a later one wins, and a lint named by its id overrides a category or `all` wherever it appears. A denied lint is an error that stops compilation, in the CLI and in `compile_sources`; `Analysis::diagnostics_with(&levels)` and `Analysis::compile_with(options, &levels)` take levels in the API.
 
 ## Artifact format
 
