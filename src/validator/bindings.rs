@@ -139,9 +139,9 @@ fn validate_binding_statements(
                             .as_ref()
                             .is_some_and(|ty| matches!(ty.ark_type(), ArkType::Struct(_)))
                         {
-                            issues.push(ValidationIssue::error(format!(
-                                "function '{function_name}': struct literal needs a declared struct type"
-                            )));
+                            issues.push(ValidationIssue::error(
+                                "struct literal needs a declared struct type",
+                            ));
                         }
                         validate_value_expression(value, function_name, scopes, issues);
                     }
@@ -170,8 +170,7 @@ fn validate_binding_statements(
                     && !binding_types_compatible(&binding_type, &inferred)
                 {
                     issues.push(ValidationIssue::error(format!(
-                        "function '{}': binding '{}' declares type '{}' but initializer has type '{}'",
-                        function_name,
+                        "binding '{}' declares type '{}' but initializer has type '{}'",
                         name,
                         binding_type.as_str(),
                         inferred.as_str()
@@ -184,7 +183,7 @@ fn validate_binding_statements(
                         .is_none()
                 {
                     issues.push(ValidationIssue::error(format!(
-                        "function '{function_name}': array literal needs a declared array type, as in 'int[2] {name} = …'"
+                        "array literal needs a declared array type, as in 'int[2] {name} = …'"
                     )));
                 }
                 if let ArkType::Struct(struct_type) = &binding_type {
@@ -200,7 +199,7 @@ fn validate_binding_statements(
                         )
                     {
                         issues.push(ValidationIssue::error(format!(
-                            "function '{function_name}': struct binding '{name}' must be initialized with a matching struct value",
+                            "struct binding '{name}' must be initialized with a matching struct value",
                         )));
                     }
                 }
@@ -232,14 +231,7 @@ fn validate_binding_statements(
                     if !name.segments.is_empty()
                         && find_binding(scopes, root).is_some_and(|binding| !binding.initialized)
                     {
-                        validate_named_binding(
-                            root,
-                            None,
-                            "binding",
-                            function_name,
-                            scopes,
-                            issues,
-                        );
+                        validate_named_binding(root, None, "binding", scopes, issues);
                     }
                 }
                 let target_type = match target {
@@ -298,25 +290,33 @@ fn validate_binding_statements(
                                 && inferred != ArkType::Unknown
                                 && !binding_types_compatible(&expected, &inferred)
                             {
-                                issues.push(ValidationIssue::error(format!("function '{function_name}': assignment to an indexed field changes its type from '{}' to '{}'", expected.as_str(), inferred.as_str())));
+                                issues.push(ValidationIssue::error(format!("assignment to an indexed field changes its type from '{}' to '{}'", expected.as_str(), inferred.as_str())));
                             }
-                            match access.binding_path().and_then(|path| find_binding(scopes, &path.key())) {
-                                None => issues.push(ValidationIssue::error(format!("function '{function_name}': assignment target is not a binding"))),
-                                Some(binding) if binding.source == BindingSource::Loop => issues.push(ValidationIssue::error(format!("function '{function_name}': cannot assign to compile-time loop variable"))),
+                            match access
+                                .binding_path()
+                                .and_then(|path| find_binding(scopes, &path.key()))
+                            {
+                                None => issues.push(ValidationIssue::error(
+                                    "assignment target is not a binding",
+                                )),
+                                Some(binding) if binding.source == BindingSource::Loop => issues
+                                    .push(ValidationIssue::error(
+                                        "cannot assign to compile-time loop variable",
+                                    )),
                                 Some(_) => {}
                             }
                         }
                     }
                     AssignmentTarget::Binding(name) => match find_binding(scopes, &name.key()) {
                         None => issues.push(ValidationIssue::error(format!(
-                            "function '{function_name}': assignment to undeclared variable '{name}'"
+                            "assignment to undeclared variable '{name}'"
                         ))),
                         Some(binding) if binding.source == BindingSource::Constructor => {
                             // The shadowing walk owns the constructor-mutation diagnostic.
                         }
                         Some(binding) if binding.source == BindingSource::Loop => {
                             issues.push(ValidationIssue::error(format!(
-                                "function '{function_name}': cannot assign to compile-time loop variable '{name}'"
+                                "cannot assign to compile-time loop variable '{name}'"
                             )));
                         }
                         Some(binding)
@@ -325,8 +325,7 @@ fn validate_binding_statements(
                                 && !binding_types_compatible(&binding.binding_type, &inferred) =>
                         {
                             issues.push(ValidationIssue::error(format!(
-                                "function '{}': assignment to '{}' changes its type from '{}' to '{}'",
-                                function_name,
+                                "assignment to '{}' changes its type from '{}' to '{}'",
                                 name,
                                 binding.binding_type.as_str(),
                                 inferred.as_str()
@@ -335,25 +334,19 @@ fn validate_binding_statements(
                         Some(_) => {}
                     },
                     AssignmentTarget::ArrayIndex { array, index } => {
-                        if let Some((element_type, source)) = validate_array_index(
-                            &array.key(),
-                            &array.key(),
-                            index,
-                            function_name,
-                            scopes,
-                            issues,
-                        ) {
+                        if let Some((element_type, source)) =
+                            validate_array_index(&array.key(), &array.key(), index, scopes, issues)
+                        {
                             if source == BindingSource::Loop {
                                 issues.push(ValidationIssue::error(format!(
-                                    "function '{function_name}': cannot assign to compile-time loop variable '{array}'"
+                                    "cannot assign to compile-time loop variable '{array}'"
                                 )));
                             } else if inferred != ArkType::Unknown
                                 && element_type != ArkType::Unknown
                                 && !binding_types_compatible(&element_type, &inferred)
                             {
                                 issues.push(ValidationIssue::error(format!(
-                                    "function '{}': assignment to an element of '{}' changes its type from '{}' to '{}'",
-                                    function_name,
+                                    "assignment to an element of '{}' changes its type from '{}' to '{}'",
                                     array,
                                     element_type.as_str(),
                                     inferred.as_str()
@@ -394,8 +387,7 @@ fn validate_binding_statements(
                 let condition_type = condition.ty.clone();
                 if condition_type != ArkType::Bool {
                     issues.push(ValidationIssue::error(format!(
-                        "function '{}': if condition has type '{}', expected bool; use an explicit comparison",
-                        function_name,
+                        "if condition has type '{}', expected bool; use an explicit comparison",
                         condition_type.as_str()
                     )));
                 }
@@ -429,14 +421,7 @@ fn validate_binding_statements(
                     ExprKind::Name(path) if path.key() != "tx.assetGroups" => {
                         let name = &path.key();
                         if find_binding(scopes, name).is_some_and(|binding| !binding.initialized) {
-                            validate_named_binding(
-                                name,
-                                None,
-                                "array",
-                                function_name,
-                                scopes,
-                                issues,
-                            );
+                            validate_named_binding(name, None, "array", scopes, issues);
                         }
                         match find_binding(scopes, name) {
                             Some(BindingInfo {
@@ -445,27 +430,26 @@ fn validate_binding_statements(
                             }) => (**element).clone(),
                             Some(binding) => {
                                 issues.push(ValidationIssue::error(format!(
-                                "function '{}': loop iterable '{}' has type '{}', expected array",
-                                function_name,
-                                name,
-                                binding.binding_type.as_str()
-                            )));
+                                    "loop iterable '{}' has type '{}', expected array",
+                                    name,
+                                    binding.binding_type.as_str()
+                                )));
                                 ArkType::Unknown
                             }
                             None => {
                                 issues.push(ValidationIssue::error(format!(
-                                    "function '{function_name}': loop iterable '{name}' is undefined"
+                                    "loop iterable '{name}' is undefined"
                                 )));
                                 ArkType::Unknown
                             }
                         }
                     }
                     ExprKind::Name(_) => {
-                        issues.push(ValidationIssue::error(format!(
-                            "function '{function_name}': cannot iterate 'tx.assetGroups'; the group count is \
+                        issues.push(ValidationIssue::error(
+                            "cannot iterate 'tx.assetGroups'; the group count is \
                              not known at compile time. Iterate a declared array of group \
-                             indices instead"
-                        )));
+                             indices instead",
+                        ));
                         ArkType::Unknown
                     }
                     ExprKind::ArrayIndex { .. }
@@ -478,8 +462,7 @@ fn validate_binding_statements(
                             actual => {
                                 if issues.len() == before {
                                     issues.push(ValidationIssue::error(format!(
-                                        "function '{}': loop iterable '{}' has type '{}', expected array",
-                                        function_name,
+                                        "loop iterable '{}' has type '{}', expected array",
                                         iterable.source_text(),
                                         actual.as_str()
                                     )));
@@ -489,9 +472,7 @@ fn validate_binding_statements(
                         }
                     }
                     _ => {
-                        issues.push(ValidationIssue::error(format!(
-                            "function '{function_name}': unsupported loop iterable"
-                        )));
+                        issues.push(ValidationIssue::error("unsupported loop iterable"));
                         ArkType::Unknown
                     }
                 };
@@ -517,9 +498,9 @@ fn validate_binding_statements(
             Statement::ForCount { count, body } => {
                 if !matches!(&count.kind, ExprKind::Literal(value) if value.parse::<usize>().is_ok())
                 {
-                    issues.push(ValidationIssue::error(format!(
-                        "function '{function_name}': loop count must be a non-negative integer compile-time constant"
-                    )));
+                    issues.push(ValidationIssue::error(
+                        "loop count must be a non-negative integer compile-time constant",
+                    ));
                 }
                 let incoming = scopes.clone();
                 scopes.push(HashMap::new());
@@ -539,16 +520,15 @@ pub(super) fn validate_named_binding(
     name: &str,
     expected: Option<ArkType>,
     label: &str,
-    function_name: &str,
     scopes: &BindingScopes,
     issues: &mut Vec<ValidationIssue>,
 ) {
     match find_binding(scopes, name) {
         None => issues.push(ValidationIssue::error(format!(
-            "function '{function_name}': {label} '{name}' is undefined"
+            "{label} '{name}' is undefined"
         ))),
         Some(binding) if !binding.initialized => issues.push(ValidationIssue::error(format!(
-            "function '{function_name}': {label} '{name}' may be uninitialized; assign it a value before use (initialize arrays and structs as a whole)"
+            "{label} '{name}' may be uninitialized; assign it a value before use (initialize arrays and structs as a whole)"
         ))),
         Some(binding)
             if expected.as_ref().is_some_and(|expected| {
@@ -556,8 +536,7 @@ pub(super) fn validate_named_binding(
             }) =>
         {
             issues.push(ValidationIssue::error(format!(
-                "function '{}': {} '{}' has type '{}', expected '{}'",
-                function_name,
+                "{} '{}' has type '{}', expected '{}'",
                 label,
                 name,
                 binding.binding_type.as_str(),

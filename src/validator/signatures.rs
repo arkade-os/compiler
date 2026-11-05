@@ -7,18 +7,18 @@ use crate::operators::{BinaryOperator, UnaryOperator};
 
 pub(super) fn check_signature_results(contract: &Contract, issues: &mut Vec<ValidationIssue>) {
     for function in contract.functions.iter().filter(|f| !f.is_imported()) {
-        statements(&function.statements, &function.name, issues);
+        statements(&function.statements, issues);
     }
 }
 
-fn statements(statements: &[LocatedStatement], function: &str, issues: &mut Vec<ValidationIssue>) {
+fn statements(statements: &[LocatedStatement], issues: &mut Vec<ValidationIssue>) {
     for statement in statements {
         let branches = matches!(
             statement.statement,
             Statement::IfElse { .. } | Statement::Require(Requirement::Comparison { .. })
         );
         for value in statement.statement.expressions() {
-            expression(value, branches, function, issues);
+            expression(value, branches, issues);
         }
         match &statement.statement {
             Statement::IfElse {
@@ -26,11 +26,11 @@ fn statements(statements: &[LocatedStatement], function: &str, issues: &mut Vec<
                 else_body,
                 ..
             } => {
-                self::statements(then_body, function, issues);
-                self::statements(else_body.as_deref().unwrap_or_default(), function, issues);
+                self::statements(then_body, issues);
+                self::statements(else_body.as_deref().unwrap_or_default(), issues);
             }
             Statement::ForIn { body, .. } | Statement::ForCount { body, .. } => {
-                self::statements(body, function, issues)
+                self::statements(body, issues)
             }
             _ => {}
         }
@@ -39,12 +39,7 @@ fn statements(statements: &[LocatedStatement], function: &str, issues: &mut Vec<
 
 /// `branches` when the value decides something, as an `if` condition, a `||` operand, a
 /// negation or a comparison does, rather than having to hold.
-fn expression(
-    expression: &Expression,
-    branches: bool,
-    function: &str,
-    issues: &mut Vec<ValidationIssue>,
-) {
+fn expression(expression: &Expression, branches: bool, issues: &mut Vec<ValidationIssue>) {
     let child_branches = match &expression.kind {
         ExprKind::Builtin { builtin, .. }
             if branches
@@ -55,7 +50,7 @@ fn expression(
         {
             issues.push(
                 ValidationIssue::warning(format!(
-                    "function '{function}': {} fails the spend on an invalid non-empty signature \
+                    "{} fails the spend on an invalid non-empty signature \
                      instead of returning false; pass an empty signature where the check may fail",
                     builtin.name
                 ))
@@ -75,6 +70,6 @@ fn expression(
         _ => false,
     };
     for child in child_exprs(expression) {
-        self::expression(child, child_branches, function, issues);
+        self::expression(child, child_branches, issues);
     }
 }

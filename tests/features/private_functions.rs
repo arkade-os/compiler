@@ -237,10 +237,10 @@ contract C() {
     )
     .expect_err("type mismatches are rejected")
     .to_string();
-    for function in ["spend", "array", "flag"] {
+    for (line, column) in [(4, 30), (6, 48), (7, 52)] {
         assert!(
             error.contains(&format!(
-                "function '{function}': comparison '==' is not defined between 'int' and 'bool'"
+                "line {line}, column {column}: comparison '==' is not defined between 'int' and 'bool'"
             )),
             "{error}"
         );

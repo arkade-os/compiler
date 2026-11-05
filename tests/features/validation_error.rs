@@ -394,7 +394,7 @@ contract Demo(bytes32 expected) {
     .expect_err("an undefined byte operand must be rejected")
     .to_string();
     assert!(
-        error.contains("function 'spend': binding 'missing' is undefined"),
+        error.contains("binding 'missing' is undefined"),
         "expected a validation diagnostic, got: {error}"
     );
 }
@@ -435,8 +435,8 @@ fn semantic_diagnostics_carry_source_positions() {
     .expect_err("non-boolean require must fail")
     .to_string();
     assert!(
-        error.contains("type error: line 3, column 9: "),
-        "type error must point at its statement: {error}"
+        error.contains("type error: line 3, column 17: "),
+        "type error must point at its condition: {error}"
     );
 }
 

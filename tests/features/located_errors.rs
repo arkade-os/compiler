@@ -217,3 +217,11 @@ fn a_tapscript_require_is_located_at_its_condition() {
         "a tapscript require can check only signatures, hashes and timelocks, not a string"
     );
 }
+
+#[test]
+fn a_require_condition_of_the_wrong_type_is_located_at_the_condition() {
+    let source = "contract C(pubkey o) {\n  function f(signature s) {\n    require(\"dupa\");\n    require(checkSig(s, o));\n  }\n}\n";
+    let (line, text, message) = at_line(source);
+    assert_eq!((line, text.as_str()), (3, "\"dupa\""));
+    assert_eq!(message, "require condition has type 'bytes', expected bool");
+}
