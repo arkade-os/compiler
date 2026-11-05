@@ -173,7 +173,7 @@ fn invalid_function_signatures_calls_and_returns_are_rejected() {
     let cases = [
         ("function spend() bool { return true; }", "public function"),
         ("function spend() { require(true); return; }", "only allowed in private"),
-        ("function spend() { missing(); require(true); }", "unknown private function"),
+        ("function spend() { missing(); require(true); }", "unknown function"),
         ("function spend() { require(true); spend(); }", "entrypoint and cannot be called"),
         ("function spend() { helper(); } private function helper() bool { return true; }", "must be used"),
         ("function spend() { require(helper()); } private function helper() { require(true); }", "does not return a value"),

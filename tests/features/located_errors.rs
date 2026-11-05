@@ -173,3 +173,23 @@ fn a_missing_token_is_reported_at_the_end_of_its_line() {
         "contract C(pubkey o) {\n  fucntion f(signature s) { require(checkSig(s, o)); }\n}\n";
     assert_eq!(at_line(typo).0, 2);
 }
+
+#[test]
+fn call_errors_name_the_problem() {
+    let body = |statement: &str| {
+        format!("contract C(pubkey o) {{\n  function f(signature s) {{\n    {statement}\n    require(checkSig(s, o));\n  }}\n}}\n")
+    };
+    for (statement, message) in [
+        ("require(chekSig(s, o));", "unknown function 'chekSig'"),
+        (
+            "require(true, 5);",
+            "the message of require must be a string",
+        ),
+        (
+            "require(checkSig(s));",
+            "wrong number of arguments to `checkSig`: expected checkSig(signature, pubkey), got 1",
+        ),
+    ] {
+        assert_eq!(at_line(&body(statement)).2, message, "{statement}");
+    }
+}

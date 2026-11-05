@@ -77,9 +77,7 @@ pub(crate) fn reject_reserved_function_call(pair: &Pair<Rule>) -> Result<(), Str
     }
 
     if let Some(signature) = reserved_function_signature(&name) {
-        return Err(format!(
-            "malformed reserved function call `{name}(...)`; expected {signature}"
-        ));
+        return Err(format!("wrong arguments to `{name}`: expected {signature}"));
     }
 
     Ok(())
@@ -386,9 +384,10 @@ fn parse_builtin_call(
         .collect::<Result<_, _>>()?;
     if !builtin.accepts_arity(args.len()) {
         return Err(format!(
-            "malformed reserved function call `{}(...)`; expected {}",
+            "wrong number of arguments to `{}`: expected {}, got {}",
             builtin.name,
-            builtin.signature()
+            builtin.signature(),
+            args.len()
         ));
     }
     Ok(Expression::new(ExprKind::Builtin { builtin, args }, span))
