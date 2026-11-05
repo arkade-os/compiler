@@ -96,7 +96,7 @@ impl<'a> Visitor<'a> for Reads {
         }
     }
 
-    fn enter_arm(&mut self, id: usize, then: bool) {
+    fn enter_arm(&mut self, id: usize, then: bool, _body: &'a [LocatedStatement]) {
         self.path.push((id, then));
     }
 

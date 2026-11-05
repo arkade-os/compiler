@@ -517,14 +517,14 @@ Lints report code that compiles but is likely unsafe or wrong. Each has an id, w
 
 | Lint | Category | Default | Reports |
 |---|---|---|---|
-| `anyone-can-spend` | security | warn | A covenant function with no transaction signature (`checkSig`, `checkMultisig`), no output constraint and no check of another input's script: anyone who satisfies it can send the coins anywhere. A revealed hash preimage or a `checkSigFromStack` message authorizes nothing. |
+| `anyone-can-spend` | security | warn | A covenant function with a path that has no transaction signature (`checkSig`, `checkMultisig`), no output constraint and no check of another input's script: anyone who satisfies it can send the coins anywhere. A revealed hash preimage or a `checkSigFromStack` message authorizes nothing. |
 | `output-script-unchecked` | security | warn | An unsigned function that checks the value of `tx.outputs[N]` but not its `scriptPubKey`, so the value can be paid to any script |
 | `output-value-unchecked` | security | warn | An unsigned function that checks the `scriptPubKey` of `tx.outputs[N]`, including `new Self(...)`, but not its value or assets |
 | `oracle-message-unbound` | security | warn | A `checkSigFromStack` message that is a witness parameter used nowhere else, so one signed message authorizes any spend |
 | `signer-from-witness` | security | warn | A `checkSig`, `checkSigFromStack` or `checkMultisig` key, or a multisig threshold, that is a witness parameter used nowhere else, so the spender chooses who must sign |
 | `duplicate-multisig-key` | security | warn | A key listed twice in `checkMultisig`, so one signature counts for each |
 | `ambiguous-hash-concat` | security | warn | A hash of two or more `bytes` parameters joined with `+`: their lengths vary, so other values can join to the same bytes |
-| `reveal-without-timeout` | security | warn | A hash preimage check when every function and tapscript has one, so the coins stay locked until the preimage is revealed |
+| `reveal-without-timeout` | security | warn | A hash preimage check when every spending path needs one, so the coins stay locked until the preimage is revealed |
 | `offchain-locktime` | correctness | warn | `tx.locktime` in a covenant: arkd rebuilds offchain spends with nLockTime 0, so use `checkTime(t)` |
 | `outputs-shared-across-inputs` | security | warn | An unsigned function whose outputs are constrained at fixed indexes without bounding `tx.numInputs`, comparing `this.activeInputIndex`, or reading an outpoint, so two inputs locked by the contract can be satisfied by the same outputs |
 | `divide-before-multiply` | correctness | warn | `(a / b) * c`, which drops the remainder before it scales |

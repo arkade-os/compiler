@@ -107,6 +107,50 @@ fn covenant_lints_report_unauthorized_and_half_constrained_spends() {
             &[],
         ),
         (
+            "function f(signature s, int b) { if (b == 1) { require(helper(s)); } else { require(b == 2); } require(helper(s)); } private function helper(signature s) bool { return checkSig(s, owner); }",
+            &[],
+        ),
+        (
+            "function f(signature s, int b) { if (b == 1) { require(checkSig(s, owner)); } else { require(b == 2); } }",
+            &["anyone-can-spend"],
+        ),
+        (
+            "function f(int b) { if (b == 1) { require(tx.outputs[0].script == new C(owner, oracle, hash)); require(tx.outputs[0].value >= tx.input.current.value); require(tx.numInputs == 1); } else { require(b == 2); } }",
+            &["anyone-can-spend"],
+        ),
+        (
+            "function f(signature s, int b) { if (b == 1) { require(checkSig(s, owner)); } else { require(checkSig(s, oracle)); } }",
+            &[],
+        ),
+        (
+            "function f(signature s, bytes p, int b) { if (b == 1) { require(sha256(p) == hash); } else { require(checkSig(s, owner)); } }",
+            &["anyone-can-spend"],
+        ),
+        (
+            "function f(bytes p, int b) { if (b == 1) { require(sha256(p) == hash); } else { require(1 == 2); } }",
+            &["anyone-can-spend", "reveal-without-timeout"],
+        ),
+        (
+            "function f(int b) { require(b > 0); if (b == 1) { require(1 == 2); } }",
+            &["anyone-can-spend"],
+        ),
+        (
+            "function f(signature s, bytes p, int b) { require(checkSig(s, owner)); if (b == 1) { require(sha256(p) == hash); } }",
+            &[],
+        ),
+        (
+            "function claim() { require(tx.outputs[this.activeInputIndex].value >= tx.input.current.value); require(tx.outputs[this.activeInputIndex].script == new C(owner, oracle, hash)); } function claim(bytes p, signature a, signature b) tapscript { require(sha256(p) == hash); require(checkMultisig([server, emulator], [a, b], 2)); }",
+            &["reveal-without-timeout"],
+        ),
+        (
+            "function claim(bytes p) { require(sha256(p) == hash); require(tx.outputs[this.activeInputIndex].value >= tx.input.current.value); require(tx.outputs[this.activeInputIndex].script == new C(owner, oracle, hash)); } function claim(signature a, signature b) tapscript { require(checkMultisig([server, emulator], [a, b], 2)); }",
+            &["reveal-without-timeout"],
+        ),
+        (
+            "function f(bytes p) { require(sha256(p) == hash); } function g() { require(1 == 2); } function g(signature a, signature b) tapscript { require(checkMultisig([server, emulator], [a, b])); }",
+            &["anyone-can-spend", "reveal-without-timeout"],
+        ),
+        (
             "function f(signature s) { require(checkSig(s, owner)); require(tx.outputs[0].script == new C(owner, oracle, hash)); }",
             &[],
         ),

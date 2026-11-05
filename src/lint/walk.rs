@@ -1,8 +1,6 @@
 //! The one traversal every lint uses: each statement, then the expressions it evaluates (a
 //! parent before its children), optionally into the helpers a function calls.
 
-use std::collections::HashSet;
-
 use crate::models::{child_exprs, Contract, ExprKind, Expression, LocatedStatement, Statement};
 
 /// What a lint sees during a [`Walk`].
@@ -11,8 +9,9 @@ pub(super) trait Visitor<'a> {
     fn expression(&mut self, _expression: &'a Expression) {}
     /// After the expression's children, including any helper it calls.
     fn leave_expression(&mut self, _expression: &'a Expression) {}
-    /// Around the statements of the `then` or else arm of the `if` numbered `id` in the walk.
-    fn enter_arm(&mut self, _id: usize, _then: bool) {}
+    /// Around the statements `body` of the `then` or else arm of the `if` numbered `id` in the
+    /// walk; an absent `else` is an empty `body`.
+    fn enter_arm(&mut self, _id: usize, _then: bool, _body: &'a [LocatedStatement]) {}
     fn exit_arm(&mut self) {}
     /// Around the body of an imported helper, whose spans index another file, entered from
     /// the call at `call` in the walked file.
@@ -22,9 +21,9 @@ pub(super) trait Visitor<'a> {
 
 #[derive(Default)]
 pub(super) struct Walk<'a> {
-    /// The contract whose helpers a call is followed into, each once.
+    /// The contract whose helpers a call is followed into, at every call, so each call's
+    /// facts belong to the arm it sits in. Validation rejects recursive calls.
     helpers: Option<&'a Contract>,
-    walked: HashSet<usize>,
     ifs: usize,
 }
 
@@ -55,11 +54,12 @@ impl<'a> Walk<'a> {
                 } => {
                     let id = self.ifs;
                     self.ifs += 1;
-                    visitor.enter_arm(id, true);
+                    visitor.enter_arm(id, true, then_body);
                     self.statements(then_body, visitor);
                     visitor.exit_arm();
-                    visitor.enter_arm(id, false);
-                    self.statements(else_body.as_deref().unwrap_or_default(), visitor);
+                    let else_body = else_body.as_deref().unwrap_or_default();
+                    visitor.enter_arm(id, false, else_body);
+                    self.statements(else_body, visitor);
                     visitor.exit_arm();
                 }
                 Statement::ForIn { body, .. } | Statement::ForCount { body, .. } => {
@@ -73,9 +73,7 @@ impl<'a> Walk<'a> {
     fn expression(&mut self, expression: &'a Expression, visitor: &mut impl Visitor<'a>) {
         visitor.expression(expression);
         if let (Some(contract), ExprKind::Call { name, .. }) = (self.helpers, &expression.kind) {
-            let helper = contract.functions.iter().position(|f| f.name == *name);
-            if let Some(index) = helper.filter(|&index| self.walked.insert(index)) {
-                let helper = &contract.functions[index];
+            if let Some(helper) = contract.functions.iter().find(|f| f.name == *name) {
                 if helper.is_imported() {
                     visitor.enter_import(expression.span);
                 }

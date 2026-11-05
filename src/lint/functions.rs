@@ -5,10 +5,11 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 
 use super::walk::{Visitor, Walk};
 use super::{Finding, Lint};
+use crate::compiler::tapscript::shared_tweak_func;
 use crate::diagnostics::Span;
 use crate::models::{
-    AssetLookupSource, Contract, ExprKind, Expression, Function, GroupIOSource, LocatedStatement,
-    Requirement, Statement, TapItem,
+    AssetLookupSource, Contract, ExprKind, Expression, Function, GroupIOSource, KeyExpr,
+    LocatedStatement, Requirement, Statement, TapItem, EMULATOR,
 };
 use crate::operators::BinaryOperator;
 use crate::properties::{GroupProperty, OutputProperty, ThisProperty, TxProperty};
@@ -47,15 +48,62 @@ struct OutputChecks {
     assets: bool,
 }
 
+/// What holds on every path through the statements walked so far.
+///
+/// ponytail: a `for` body counts as run, which a zero-count `for` is not, and a helper body
+/// as run to its end, which an early `return` cuts short. Track both if a lint needs them.
+#[derive(Default, Clone, Copy)]
+struct Path {
+    /// A transaction signature, an output constraint, or a check of another input's script,
+    /// whose contract then authorizes the spend.
+    authorized: bool,
+    preimage: Option<Span>,
+    never_passes: bool,
+    /// An arm without statements, as an absent `else` is.
+    empty: bool,
+}
+
+impl Path {
+    /// What holds on every path through an `if`: what both arms hold, or what the other arm
+    /// holds when one never passes. Sibling `if`s with complementary conditions may cover an
+    /// empty arm's case, so beside a live arm it is taken to authorize and to need no preimage.
+    ///
+    /// ponytail: tracking conditions would tell whether siblings cover an empty arm; without
+    /// that, a lone `if (c) { require(checkSig(s, owner)); }` reads as authorized.
+    fn either(then: Path, other: Path) -> Path {
+        match (then, other) {
+            (dead, live) | (live, dead) if dead.never_passes => live,
+            (empty, live) | (live, empty) if empty.empty => Path {
+                authorized: live.authorized,
+                ..Path::default()
+            },
+            _ => Path {
+                authorized: then.authorized && other.authorized,
+                preimage: then.preimage.filter(|_| other.preimage.is_some()),
+                ..Path::default()
+            },
+        }
+    }
+
+    fn followed_by(self, next: Path) -> Path {
+        Path {
+            authorized: self.authorized || next.authorized,
+            preimage: self.preimage.or(next.preimage),
+            never_passes: self.never_passes || next.never_passes,
+            empty: false,
+        }
+    }
+}
+
 #[derive(Default)]
 struct Facts {
-    /// A transaction signature, which commits to every output; a `checkSigFromStack` message
-    /// does not.
+    /// A transaction signature anywhere in the function, which commits to every output; a
+    /// `checkSigFromStack` message does not.
     signed: bool,
-    constrains_outputs: bool,
-    /// Another input's script is checked, so its contract authorizes this spend.
-    co_spent: bool,
-    never_passes: bool,
+    path: Path,
+    /// For each `if` arm being walked, the path before the `if`, and the `then` arm's path
+    /// once it is walked.
+    arms: Vec<(Path, Option<Path>)>,
     outputs: BTreeMap<OutputIndex, OutputChecks>,
     bounds_inputs: bool,
     locktime: Vec<Span>,
@@ -65,7 +113,6 @@ struct Facts {
     witness_signers: Vec<(String, Span)>,
     /// Multisig thresholds that are a witness parameter as given.
     witness_thresholds: Vec<(String, Span)>,
-    preimage: Option<Span>,
     /// While inside imported helpers, the outermost call to one and the depth of nesting:
     /// their spans index another file, so their findings sit at the call.
     import_call: Option<(Span, usize)>,
@@ -79,32 +126,13 @@ impl Facts {
 }
 
 pub(super) fn check(contract: &Contract, findings: &mut Vec<Finding>) {
-    let mut reveals = Vec::new();
-    let mut escapes = false;
-    for tapscript in &contract.tapscripts {
-        match tapscript
-            .items
-            .iter()
-            .any(|item| matches!(item, TapItem::Hash { .. }))
-        {
-            true => reveals.push(tapscript.span),
-            false => escapes = true,
-        }
-    }
+    let mut covenants = Vec::new();
     for function in contract
         .functions
         .iter()
         .filter(|f| !f.is_private && !f.is_imported())
     {
-        // A disabled branch leaves the rest of the function spendable, so only a top-level
-        // requirement that never passes disables the function.
-        let mut facts = Facts {
-            never_passes: function
-                .statements
-                .iter()
-                .any(|s| matches!(&s.statement, Statement::Require(r) if never_passes(r))),
-            ..Facts::default()
-        };
+        let mut facts = Facts::default();
         let witness: HashSet<&str> = function
             .parameters
             .iter()
@@ -113,38 +141,94 @@ pub(super) fn check(contract: &Contract, findings: &mut Vec<Finding>) {
         find_witness_choices(&function.statements, &witness, &mut facts);
         Walk::into_helpers(contract).statements(&function.statements, &mut facts);
         report(function, &facts, findings);
-        if !facts.never_passes {
-            match facts.preimage {
-                Some(span) => reveals.push(span),
-                None => escapes = true,
+        covenants.push((function.name.as_str(), facts.path));
+    }
+    reveal_without_timeout(contract, &covenants, findings);
+}
+
+/// Reports each hash preimage check when every spending path needs one. Each leaf is a path:
+/// one whose key is tweaked to a covenant also needs that covenant to pass, and a covenant
+/// that no leaf signs for with the emulator gets a synthesized leaf of its own.
+fn reveal_without_timeout(
+    contract: &Contract,
+    covenants: &[(&str, Path)],
+    findings: &mut Vec<Finding>,
+) {
+    let covenant = |name: &str| covenants.iter().find(|(n, _)| *n == name).map(|(_, p)| *p);
+    let mut paths = Vec::new();
+    let mut emulated = HashSet::new();
+    for tapscript in &contract.tapscripts {
+        let keys = tapscript
+            .items
+            .iter()
+            .find_map(|item| match item {
+                TapItem::Sig { keys, .. } => Some(keys.as_slice()),
+                _ => None,
+            })
+            .unwrap_or_default();
+        let bound = shared_tweak_func(&tapscript.name, keys).ok().flatten();
+        if keys.iter().any(
+            |key| matches!(key, KeyExpr::Ident(base) | KeyExpr::Tweak { base, .. } if base == EMULATOR),
+        ) {
+            emulated.extend(bound.clone());
+        }
+        let hash = tapscript
+            .items
+            .iter()
+            .any(|item| matches!(item, TapItem::Hash { .. }))
+            .then_some(tapscript.span);
+        paths.push((hash, bound.and_then(|name| covenant(&name))));
+    }
+    paths.extend(
+        covenants
+            .iter()
+            .filter(|(name, _)| !emulated.contains(*name))
+            .map(|&(_, path)| (None, Some(path))),
+    );
+    let mut reveals = Vec::new();
+    for (hash, covenant) in paths {
+        // A covenant that never passes leaves its tweaked key unsigned, so the leaf is dead.
+        if covenant.is_some_and(|c| c.never_passes) {
+            continue;
+        }
+        let needs: Vec<Span> = hash
+            .into_iter()
+            .chain(covenant.and_then(|c| c.preimage))
+            .collect();
+        if needs.is_empty() {
+            return;
+        }
+        for span in needs {
+            if !reveals.contains(&span) {
+                reveals.push(span);
             }
         }
     }
-    if !escapes {
-        for span in reveals {
-            findings.push(Finding::new(
-                Lint::RevealWithoutTimeout,
-                span,
-                "every spending path needs this hash preimage, so the coins stay locked \
-                     until it is revealed; add a path after a timeout, such as checkTime(t) or \
-                     after(t)",
-            ));
-        }
+    for span in reveals {
+        findings.push(Finding::new(
+            Lint::RevealWithoutTimeout,
+            span,
+            "every spending path needs this hash preimage, so the coins stay locked until it is \
+             revealed; add a path after a timeout, such as checkTime(t) or after(t)",
+        ));
     }
 }
 
 fn report(function: &Function, facts: &Facts, findings: &mut Vec<Finding>) {
     let name = &function.name;
-    if facts.never_passes {
+    if facts.path.never_passes {
         return;
     }
-    if !facts.signed && !facts.constrains_outputs && !facts.co_spent {
-        findings.push(
-            Finding::new(Lint::AnyoneCanSpend, function.span, format!(
-                    "function '{name}' checks no signature and constrains no output, so anyone who \
-                     satisfies it can send the coins anywhere; a revealed preimage is no authorization"
-                )),
-        );
+    if !facts.path.authorized {
+        findings.push(Finding::new(
+            Lint::AnyoneCanSpend,
+            function.span,
+            format!(
+                "function '{name}' has a path that checks no signature and constrains no \
+                     output, so anyone who satisfies it can send the coins anywhere; a revealed \
+                     preimage is no authorization"
+            ),
+        ));
     }
     for (index, checks) in &facts.outputs {
         match (checks.script, checks.value) {
@@ -226,13 +310,35 @@ fn report(function: &Function, facts: &Facts, findings: &mut Vec<Finding>) {
 
 impl<'a> Visitor<'a> for Facts {
     fn statement(&mut self, statement: &'a LocatedStatement) {
-        if let Statement::Require(Requirement::Comparison { left, op, right }) =
-            &statement.statement
-        {
+        let Statement::Require(requirement) = &statement.statement else {
+            return;
+        };
+        self.path.never_passes |= never_passes(requirement);
+        if let Requirement::Comparison { left, op, right } = requirement {
             self.bounds_inputs |= [left, right].iter().any(|side| is_active_input(side));
             if *op == BinaryOperator::Eq && [left, right].iter().any(|side| hashes_name(side)) {
                 let at = self.at(statement.span);
-                self.preimage.get_or_insert(at);
+                self.path.preimage.get_or_insert(at);
+            }
+        }
+    }
+
+    fn enter_arm(&mut self, _id: usize, then: bool, body: &'a [LocatedStatement]) {
+        let before = std::mem::take(&mut self.path);
+        if then {
+            self.arms.push((before, None));
+        }
+        self.path.empty = body.is_empty();
+    }
+
+    fn exit_arm(&mut self) {
+        let arm = std::mem::take(&mut self.path);
+        let (before, then) = self.arms.last_mut().expect("an arm is being walked");
+        match then.take() {
+            None => *then = Some(arm),
+            Some(then) => {
+                self.path = before.followed_by(Path::either(then, arm));
+                self.arms.pop();
             }
         }
     }
@@ -255,10 +361,11 @@ impl<'a> Visitor<'a> for Facts {
             ExprKind::Builtin { builtin, .. }
                 if matches!(builtin.name, "checkSig" | "checkMultisig") =>
             {
-                facts.signed = true
+                facts.signed = true;
+                facts.path.authorized = true;
             }
             ExprKind::OutputIntrospection { index, property } => {
-                facts.constrains_outputs = true;
+                facts.path.authorized = true;
                 facts.bounds_inputs |= is_active_input(index);
                 let Some(index) = OutputIndex::of(index) else {
                     return;
@@ -290,7 +397,7 @@ impl<'a> Visitor<'a> for Facts {
                 source: AssetLookupSource::Output,
                 index,
             } => {
-                facts.constrains_outputs = true;
+                facts.path.authorized = true;
                 if let Some(index) = OutputIndex::of(index) {
                     facts.outputs.entry(index).or_default().assets = true;
                 }
@@ -310,7 +417,7 @@ impl<'a> Visitor<'a> for Facts {
                 property:
                     GroupProperty::SumOutputs | GroupProperty::Delta | GroupProperty::NumOutputs,
                 ..
-            } => facts.constrains_outputs = true,
+            } => facts.path.authorized = true,
             ExprKind::TxIntrospection {
                 property: TxProperty::NumInputs,
             } => facts.bounds_inputs = true,
@@ -320,12 +427,17 @@ impl<'a> Visitor<'a> for Facts {
             ExprKind::InputIntrospection { index, property } => {
                 use crate::properties::InputProperty::*;
                 facts.bounds_inputs |= matches!(property, Outpoint);
-                facts.co_spent |= !is_active_input(index)
+                facts.path.authorized |= !is_active_input(index)
                     && matches!(property, Script | ArkadeScriptHash | ArkadeWitnessHash);
             }
             ExprKind::TxIntrospection {
                 property: TxProperty::Locktime,
-            } => facts.locktime.push(facts.at(expression.span)),
+            } => {
+                let at = facts.at(expression.span);
+                if !facts.locktime.contains(&at) {
+                    facts.locktime.push(at);
+                }
+            }
             _ => {}
         }
     }

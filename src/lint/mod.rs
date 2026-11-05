@@ -145,7 +145,7 @@ macro_rules! lints {
 }
 
 lints! {
-    AnyoneCanSpend: "anyone-can-spend", Security, Warn, "a covenant function with no signature check and no output constraint";
+    AnyoneCanSpend: "anyone-can-spend", Security, Warn, "a covenant function with a path that has no signature check and no output constraint";
     OutputScriptUnchecked: "output-script-unchecked", Security, Warn, "an output whose value is checked but not its scriptPubKey";
     OutputValueUnchecked: "output-value-unchecked", Security, Warn, "an output whose scriptPubKey is checked but not its value or assets";
     OutputsSharedAcrossInputs: "outputs-shared-across-inputs", Security, Warn, "an unsigned function that constrains outputs by index without bounding the inputs, so one output can satisfy two";

@@ -276,7 +276,7 @@ pub fn resolve_binding(contract: &Contract, ts: &NamedTapscript) -> Result<Bindi
 ///
 /// Bare `emulator` names the tapscript itself. `tweak(base, func)` names `func`.
 /// A leaf can name only one function, so it has one `leaves` array to join.
-fn shared_tweak_func(ts_name: &str, keys: &[KeyExpr]) -> Result<Option<String>, String> {
+pub(crate) fn shared_tweak_func(ts_name: &str, keys: &[KeyExpr]) -> Result<Option<String>, String> {
     let mut target: Option<String> = None;
     for key in keys {
         let func = match key {
