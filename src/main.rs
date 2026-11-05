@@ -1,4 +1,4 @@
-use clap::Parser as ClapParser;
+use clap::{CommandFactory, FromArgMatches, Parser as ClapParser};
 use std::fs;
 use std::path::Path;
 
@@ -80,7 +80,8 @@ struct Args {
 /// 5. Writes the JSON to the output file
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Parse CLI arguments
-    let args = Args::parse();
+    let matches = Args::command().get_matches();
+    let args = Args::from_arg_matches(&matches)?;
     if let Some(id) = &args.explain {
         let lint: Lint = id.parse()?;
         let level = format!("{:?}", lint.level()).to_lowercase();
@@ -102,20 +103,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Err("Input file must have .ark extension".into());
     }
 
-    // A lint named by its id overrides a category, `all` or `warnings`.
+    // Level flags apply in the order given, so a later one wins, except that a lint
+    // named by its id overrides a category, `all` or `warnings` wherever it appears.
+    let mut flags = Vec::new();
+    for (name, ids, level) in [
+        ("allow", &args.allow, Level::Allow),
+        ("warn", &args.warn, Level::Warn),
+        ("deny", &args.deny, Level::Deny),
+    ] {
+        let indices = matches.indices_of(name).into_iter().flatten();
+        flags.extend(indices.zip(ids).map(|(index, id)| (index, id, level)));
+    }
+    flags.sort_by_key(|&(index, ..)| index);
     let mut levels = Levels::default();
     for one_lint in [false, true] {
-        for (ids, level) in [
-            (&args.allow, Level::Allow),
-            (&args.warn, Level::Warn),
-            (&args.deny, Level::Deny),
-        ] {
-            for id in ids
-                .iter()
-                .filter(|id| id.parse::<Lint>().is_ok() == one_lint)
-            {
-                levels.set_named(id, level)?;
-            }
+        for (_, id, level) in flags
+            .iter()
+            .filter(|(_, id, _)| id.parse::<Lint>().is_ok() == one_lint)
+        {
+            levels.set_named(id, *level)?;
         }
     }
 

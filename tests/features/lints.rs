@@ -296,6 +296,10 @@ fn the_cli_applies_lint_levels() {
     assert!(passed);
     let (passed, _) = run(&["--allow", "anyone-can-spend", "--deny", "security"]);
     assert!(passed);
+    let (passed, _) = run(&["--deny", "all", "--allow", "security"]);
+    assert!(passed);
+    let (passed, _) = run(&["--allow", "security", "--deny", "all"]);
+    assert!(!passed);
 }
 
 #[test]
