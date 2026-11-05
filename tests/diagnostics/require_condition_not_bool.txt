@@ -1,0 +1,5 @@
+error[type]: require condition has type 'bytes', expected bool
+  --> 4:13
+4 |     require("dupa");
+  |             ^^^^^^
+

@@ -171,9 +171,10 @@ fn validate_calls(
     let first = issues.len();
     if let ExprKind::Call { name, args, .. } = &expression.kind {
         match contract.functions.iter().find(|f| f.name == *name) {
-            None => issues.push(ValidationIssue::error(format!(
-                "unknown private function '{name}'"
-            ))),
+            None if name == "require" => issues.push(ValidationIssue::error(
+                "the message of require must be a string",
+            )),
+            None => issues.push(ValidationIssue::error(format!("unknown function '{name}'"))),
             Some(function) => {
                 if !function.is_private {
                     issues.push(ValidationIssue::error(format!(

@@ -1,0 +1,5 @@
+error[validation]: binding 'ownr' is undefined
+  --> 3:27
+3 |     require(checkSig(sig, ownr));
+  |                           ^^^^
+

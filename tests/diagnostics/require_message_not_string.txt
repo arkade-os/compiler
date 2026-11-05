@@ -1,0 +1,5 @@
+error[validation]: the message of require must be a string
+  --> 3:5
+3 |     require(checkSig(sig, owner), 5);
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+

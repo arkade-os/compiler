@@ -1,0 +1,5 @@
+error: expected ';' or an operator
+  --> 4:13
+4 |     int x = 5
+  |             ^
+

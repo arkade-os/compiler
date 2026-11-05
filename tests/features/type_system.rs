@@ -306,7 +306,7 @@ fn cashscript_parity_rejections() {
         "contract Strict(pubkey owner) { function spend(signature sig, int amount) { require(checkSig(sig, owner)); } }",
     );
     assert!(
-        unused_param.contains("variable 'amount' in function 'spend' is never used"),
+        unused_param.contains("parameter 'amount' of function 'spend' is never used"),
         "{unused_param}"
     );
 }

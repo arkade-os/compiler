@@ -1,0 +1,5 @@
+error: expected '}', a constant or a function
+  --> 2:3
+2 |   fucntion spend(signature sig) {
+  |   ^
+

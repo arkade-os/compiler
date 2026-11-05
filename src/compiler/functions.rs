@@ -195,7 +195,7 @@ impl Generator {
             .iter()
             .find(|f| f.name == *name && f.is_private)
             .cloned()
-            .ok_or_else(|| format!("unknown private function '{name}'"))?;
+            .ok_or_else(|| format!("unknown function '{name}'"))?;
         if args.len() != function.parameters.len() {
             return Err(format!("wrong argument count for '{name}'").into());
         }

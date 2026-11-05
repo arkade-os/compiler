@@ -1,0 +1,5 @@
+error: expected ';'
+  --> 3:33
+3 |     require(checkSig(sig, owner))
+  |                                 ^
+

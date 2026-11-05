@@ -95,10 +95,81 @@ fn readable_error(error: pest::error::Error<Rule>, source: &str) -> pest::error:
         Some((last, [])) => format!("expected {last}"),
         Some((last, rest)) => format!("expected {} or {last}", rest.join(", ")),
     };
-    match pest::Position::new(source, attempts.max_position) {
+    let closing = ["';'", "')'", "'}'", "']'", "','", "an operator"];
+    let mut at = attempts.max_position;
+    if let Some((word, start, end)) = lone_word(source, at) {
+        let message = format!("`{word}` on its own is not a statement");
+        return match (
+            pest::Position::new(source, start),
+            pest::Position::new(source, end),
+        ) {
+            (Some(start), Some(end)) => {
+                Error::new_from_span(ErrorVariant::CustomError { message }, start.span(&end))
+            }
+            _ => error,
+        };
+    }
+    if !expected.is_empty() && expected.iter().all(|t| closing.contains(&t.as_str())) {
+        at = missing_at(source, at);
+    }
+    match pest::Position::new(source, at) {
         Some(pos) => Error::new_from_pos(ErrorVariant::CustomError { message }, pos),
         None => error,
     }
+}
+
+/// Where a token missing before `at` belongs: on the last character of the code before it, when a
+/// line break separates them, since the token ends that line. Otherwise `at` itself.
+fn missing_at(source: &str, at: usize) -> usize {
+    let end = code_end(source, at);
+    match source[..end].char_indices().next_back() {
+        Some((last, _)) if source[end..at].contains('\n') => last,
+        _ => at,
+    }
+}
+
+/// The end of the code before `at`, past whitespace and line comments.
+fn code_end(source: &str, at: usize) -> usize {
+    let mut end = at;
+    loop {
+        let code = source[..end].trim_end();
+        let line = code.rfind('\n').map_or(0, |i| i + 1);
+        match comment_start(&code[line..]) {
+            Some(comment) => end = line + comment,
+            None => return code.len(),
+        }
+    }
+}
+
+/// A single word that starts a statement and ends the code before `at`, as in `dasd` left on its
+/// own line: the word and its byte range.
+fn lone_word(source: &str, at: usize) -> Option<(&str, usize, usize)> {
+    let end = code_end(source, at);
+    let start = source[..end]
+        .trim_end_matches(|c: char| c.is_ascii_alphanumeric() || c == '_')
+        .len();
+    let word = &source[start..end];
+    let starts_statement = source[..code_end(source, start)].ends_with([';', '{', '}']);
+    let keyword = ["return", "else", "require", "let", "if", "for"].contains(&word);
+    let lone = word.starts_with(|c: char| c.is_ascii_alphabetic()) && starts_statement && !keyword;
+    lone.then_some((word, start, end))
+}
+
+/// The byte offset of a `//` comment in `line`, outside string literals.
+fn comment_start(line: &str) -> Option<usize> {
+    let mut quoted = false;
+    let mut characters = line.char_indices().peekable();
+    while let Some((i, c)) = characters.next() {
+        match c {
+            '\\' if quoted => {
+                characters.next();
+            }
+            '"' => quoted = !quoted,
+            '/' if !quoted && characters.peek().is_some_and(|(_, c)| *c == '/') => return Some(i),
+            _ => {}
+        }
+    }
+    None
 }
 
 fn rule_term(rule: &Rule) -> Option<String> {
@@ -133,6 +204,7 @@ fn rule_term(rule: &Rule) -> Option<String> {
         Rule::asset_at_property => "an asset property",
         Rule::this_property => "a contract property",
         Rule::identifier => "a name",
+        Rule::binding_suffix => "'.' or '['",
         Rule::const_keyword => "a constant",
         Rule::function_visibility | Rule::function => "a function",
         Rule::data_type => "a type",
@@ -329,8 +401,10 @@ fn parse_contract(contract: &mut Contract, pair: Pair<Rule>) -> Result<(), Compi
                 let message = "libraries cannot declare tapscript functions";
                 return Err(CompileError::from(message).at(span));
             }
-            let ts = parse_named_tapscript(func_pair, &parsing_constants)
-                .map_err(|error| CompileError::from(error).at(span))?;
+            let ts = parse_named_tapscript(func_pair, &parsing_constants).map_err(|error| {
+                let at = error.span.unwrap_or(span);
+                error.at(at)
+            })?;
             contract.tapscripts.push(ts);
         } else {
             let func = parse_function(func_pair, &parsing_constants, contract.is_library)?;
