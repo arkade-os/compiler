@@ -166,6 +166,14 @@ fn covenant_lints_report_unauthorized_and_half_constrained_spends() {
             "function f(signature s) { require(checkSig(s, owner)); require(tx.outputs[0].script == new C(owner, oracle, hash)); }",
             &[],
         ),
+        (
+            "function w(int x) { require(x > 0); } function w(signature a, signature b, signature c) tapscript { require(checkMultisig([owner, server, emulator], [a, b, c], 3)); }",
+            &[],
+        ),
+        (
+            "function w(int x) { require(x > 0); } function w(signature a, signature b) tapscript { require(checkMultisig([server, emulator], [a, b], 2)); }",
+            &["anyone-can-spend"],
+        ),
     ] {
         assert_eq!(lints(function), expected, "{function}");
     }

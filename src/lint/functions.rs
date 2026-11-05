@@ -145,20 +145,22 @@ pub(super) fn check(contract: &Contract, findings: &mut Vec<Finding>) {
         find_witness_choices(&function.statements, &witness, &mut facts);
         Walk::into_helpers(contract).statements(&function.statements, &mut facts);
         report(function, &facts, findings);
-        covenants.push((function.name.as_str(), facts.path));
+        covenants.push((function, facts.path));
     }
-    reveal_without_timeout(contract, &covenants, findings);
+    let paths = spending_paths(contract, &covenants);
+    anyone_can_spend(&covenants, &paths, findings);
+    reveal_without_timeout(&paths, findings);
 }
 
-/// Reports each hash preimage check when every spending path needs one. Each leaf is a path:
-/// one whose key is tweaked to a covenant also needs that covenant to pass, and a covenant
-/// that no leaf signs for with the emulator gets a synthesized leaf of its own.
-fn reveal_without_timeout(
+/// A tapscript leaf, or the synthesized leaf of a covenant that no leaf signs for with the
+/// emulator: its hash preimage check, whether it needs a constructor key's signature, and the
+/// covenant whose tweaked key it signs with, which must then pass too.
+type SpendingPath<'a> = (Option<Span>, bool, Option<(&'a Function, Path)>);
+
+fn spending_paths<'a>(
     contract: &Contract,
-    covenants: &[(&str, Path)],
-    findings: &mut Vec<Finding>,
-) {
-    let covenant = |name: &str| covenants.iter().find(|(n, _)| *n == name).map(|(_, p)| *p);
+    covenants: &[(&'a Function, Path)],
+) -> Vec<SpendingPath<'a>> {
     let mut paths = Vec::new();
     let mut emulated = HashSet::new();
     for tapscript in &contract.tapscripts {
@@ -176,21 +178,61 @@ fn reveal_without_timeout(
         ) {
             emulated.extend(bound.clone());
         }
+        // Every key of a leaf signs. The server and emulator co-sign every offchain spend, and a
+        // tweaked key's enclave signs whatever its covenant passes, so only a constructor key
+        // authorizes the spend.
+        let signed = keys.iter().any(|key| {
+            matches!(key, KeyExpr::Ident(name) if contract.parameters.iter().any(|p| &p.name == name))
+        });
         let hash = tapscript
             .items
             .iter()
             .any(|item| matches!(item, TapItem::Hash { .. }))
             .then_some(tapscript.span);
-        paths.push((hash, bound.and_then(|name| covenant(&name))));
+        let covenant = bound.and_then(|name| covenants.iter().find(|(f, _)| f.name == name));
+        paths.push((hash, signed, covenant.copied()));
     }
     paths.extend(
         covenants
             .iter()
-            .filter(|(name, _)| !emulated.contains(*name))
-            .map(|&(_, path)| (None, Some(path))),
+            .filter(|(f, _)| !emulated.contains(&f.name))
+            .map(|&covenant| (None, false, Some(covenant))),
     );
+    paths
+}
+
+/// Reports each covenant with a path that checks no transaction signature, through a leaf
+/// that needs no constructor key's signature either.
+fn anyone_can_spend(
+    covenants: &[(&Function, Path)],
+    paths: &[SpendingPath],
+    findings: &mut Vec<Finding>,
+) {
+    for &(function, path) in covenants {
+        let unsigned_leaf = paths
+            .iter()
+            .any(|&(_, signed, c)| !signed && c.is_some_and(|(f, _)| f.name == function.name));
+        if path.never_passes || path.authorized || !unsigned_leaf {
+            continue;
+        }
+        findings.push(Finding::new(
+            Lint::AnyoneCanSpend,
+            function.span,
+            format!(
+                "function '{}' has a path that checks no signature and constrains no output, so \
+                 anyone who satisfies it can send the coins anywhere; a revealed preimage is no \
+                 authorization",
+                function.name
+            ),
+        ));
+    }
+}
+
+/// Reports each hash preimage check when every spending path needs one.
+fn reveal_without_timeout(paths: &[SpendingPath], findings: &mut Vec<Finding>) {
     let mut reveals = Vec::new();
-    for (hash, covenant) in paths {
+    for &(hash, _, covenant) in paths {
+        let covenant = covenant.map(|(_, path)| path);
         // A covenant that never passes leaves its tweaked key unsigned, so the leaf is dead.
         if covenant.is_some_and(|c| c.never_passes) {
             continue;
@@ -222,17 +264,6 @@ fn report(function: &Function, facts: &Facts, findings: &mut Vec<Finding>) {
     let name = &function.name;
     if facts.path.never_passes {
         return;
-    }
-    if !facts.path.authorized {
-        findings.push(Finding::new(
-            Lint::AnyoneCanSpend,
-            function.span,
-            format!(
-                "function '{name}' has a path that checks no signature and constrains no \
-                     output, so anyone who satisfies it can send the coins anywhere; a revealed \
-                     preimage is no authorization"
-            ),
-        ));
     }
     for (index, checks) in &facts.outputs {
         match (checks.script, checks.value) {
