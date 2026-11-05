@@ -340,6 +340,20 @@ fn denied_lints_stop_compilation_only_in_the_file_being_compiled() {
 }
 
 #[test]
+fn an_allowed_unused_local_is_dropped_from_the_covenant_stack() {
+    let source = r#"contract P(pubkey owner) { function spend(signature ownerSig, int amount) {
+        @allow(unused-variable, "probe") int doubled = amount * 2;
+        require(amount > 0);
+        require(checkSig(ownerSig, owner));
+    } }"#;
+    let output = arkade_compiler::compile(source).unwrap();
+    assert_eq!(
+        crate::common::arkade_asm(&output, "spend"),
+        "OP_OVER 2 OP_MUL OP_ROT 0 OP_GREATERTHAN OP_VERIFY OP_SWAP <owner> OP_CHECKSIG OP_NIP"
+    );
+}
+
+#[test]
 fn every_lint_is_documented_and_explained() {
     let readme = include_str!("../../README.md");
     for &lint in Lint::ALL {
