@@ -83,6 +83,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let matches = Args::command().get_matches();
     let args = Args::from_arg_matches(&matches)?;
     if let Some(id) = &args.explain {
+        if let Ok(code) = id.parse::<arkade_compiler::errors::ErrorCode>() {
+            println!("{id}: error\n\n{}", code.explanation());
+            return Ok(());
+        }
         let lint: Lint = id.parse()?;
         let level = format!("{:?}", lint.level()).to_lowercase();
         let category = format!("{:?}", lint.category()).to_lowercase();
@@ -253,6 +257,9 @@ fn print_diagnostics(
             .map(|code| format!("[{code}]"))
             .unwrap_or_default();
         writeln!(out, "{location}: {severity}{code}: {}", d.message)?;
+        for suggestion in &d.suggestions {
+            writeln!(out, "  help: {}", suggestion.message)?;
+        }
     }
     Ok(())
 }

@@ -54,6 +54,15 @@ pub fn to_json(diagnostic: &Diagnostic, source: Option<&str>) -> serde_json::Val
         "file": diagnostic.file,
         "start": start,
         "end": end,
+        "suggestions": diagnostic.suggestions.iter().map(|suggestion| {
+            let [start, end] = range_json(source, Some(suggestion.span));
+            serde_json::json!({
+                "message": suggestion.message,
+                "start": start,
+                "end": end,
+                "replacement": suggestion.replacement,
+            })
+        }).collect::<Vec<_>>(),
     })
 }
 
@@ -97,6 +106,16 @@ pub struct Diagnostic {
     pub span: Option<Span>,
     /// The lint this reports, whose level decides its severity.
     pub lint: Option<crate::lint::Lint>,
+    /// Edits that may fix it, for editors to offer and agents to apply.
+    pub suggestions: Vec<Suggestion>,
+}
+
+/// Replacing `span` with `replacement`, described by `message`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Suggestion {
+    pub message: String,
+    pub span: Span,
+    pub replacement: String,
 }
 
 impl Diagnostic {
@@ -108,6 +127,7 @@ impl Diagnostic {
             file: file.into(),
             span: None,
             lint: None,
+            suggestions: Vec::new(),
         }
     }
 
@@ -119,6 +139,7 @@ impl Diagnostic {
             file: file.into(),
             span: None,
             lint: None,
+            suggestions: Vec::new(),
         }
     }
 
@@ -129,6 +150,11 @@ impl Diagnostic {
 
     pub(crate) fn with_code(mut self, code: &str) -> Self {
         self.code = Some(code.to_string());
+        self
+    }
+
+    pub(crate) fn with_suggestions(mut self, suggestions: Vec<Suggestion>) -> Self {
+        self.suggestions = suggestions;
         self
     }
 
@@ -213,6 +239,9 @@ pub(crate) fn render_errors(diagnostics: &[Diagnostic], source: &str) -> String 
             let message = located(&d.message, d.span, source);
             match d.code.as_deref() {
                 Some("validation") => format!("validation error: {message}"),
+                Some(code) if code.parse::<crate::errors::ErrorCode>().is_ok() => {
+                    format!("validation error: {message}")
+                }
                 Some("type") => format!("type error: {message}"),
                 _ => message,
             }
