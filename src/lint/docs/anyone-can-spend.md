@@ -11,3 +11,5 @@ function claim(signature sig) {
 ```
 
 Allow it only for a function that is meant to be spendable by anyone, such as a public puzzle.
+
+Reported on the function's name, so an attribute on the function or the contract applies to it.

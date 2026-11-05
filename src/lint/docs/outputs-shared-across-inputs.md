@@ -11,3 +11,5 @@ require(tx.numInputs == 1);
 ```
 
 Allow it when a singleton asset or another invariant already makes a second such input impossible, and say which in the reason.
+
+Reported on the function's name, so an attribute on the function or the contract applies to it.

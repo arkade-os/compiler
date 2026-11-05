@@ -10,3 +10,5 @@ function refund(signature sig) {
   require(checkSig(sig, sender));
 }
 ```
+
+Reported on each hash preimage check, so an attribute on the statement holding it, its function or the contract applies to it. Since every such check is reported, only an attribute on the contract silences them all.

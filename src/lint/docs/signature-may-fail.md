@@ -7,3 +7,5 @@ Fix: pass an empty signature on the path where the check may fail, or `require` 
 ```solidity
 if (checkSig(sig, owner)) { ... } // sig must be empty, not wrong, to take the else arm
 ```
+
+Reported on the signature check, so an attribute on the statement holding it, its function or the contract applies to it.

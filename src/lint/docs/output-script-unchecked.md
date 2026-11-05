@@ -8,3 +8,5 @@ Fix: pin the script as well as the value.
 require(tx.outputs[this.activeInputIndex].scriptPubKey == new SingleSig(receiver));
 require(tx.outputs[this.activeInputIndex].value >= tx.input.current.value);
 ```
+
+Reported on the check of the output's value, so an attribute on the statement holding it, its function or the contract applies to it.

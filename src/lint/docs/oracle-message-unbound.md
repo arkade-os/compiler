@@ -11,3 +11,5 @@ let outpoint = tx.input.current.outpoint;
 let message = sha256(outpoint.txid + num2bin(outpoint.vout, 4) + num2bin(amount, 8) + recipient);
 require(checkSigFromStack(sig, oracle, message));
 ```
+
+Reported on the checkSigFromStack call, so an attribute on the statement holding it, its function or the contract applies to it.

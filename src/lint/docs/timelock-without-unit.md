@@ -3,3 +3,5 @@
 The number is pushed as a raw BIP68 sequence or nLockTime, whose unit depends on its magnitude and flags.
 
 Fix: state the unit with `blocks(n)` or `seconds(n)`.
+
+Reported on the tapscript, so an attribute on the tapscript or the contract applies to it.

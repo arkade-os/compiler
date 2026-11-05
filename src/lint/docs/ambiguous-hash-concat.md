@@ -7,3 +7,5 @@ Fix: give the parts a fixed length, such as `bytes32`, or hash each part separat
 ```solidity
 require(sha256(sha256(a) + sha256(b)) == commitment);
 ```
+
+Reported on the hashed data, so an attribute on the statement holding it, its function or the contract applies to it.

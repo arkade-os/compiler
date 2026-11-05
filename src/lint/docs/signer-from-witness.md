@@ -13,3 +13,5 @@ contract Vault(pubkey owner) {
   }
 }
 ```
+
+Reported on the signature check that takes the key or threshold, so an attribute on the statement holding it, its function or the contract applies to it.

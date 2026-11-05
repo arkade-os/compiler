@@ -8,3 +8,5 @@ Fix: check the value, or the assets the output must carry.
 require(tx.outputs[0].scriptPubKey == new Vault(owner));
 require(tx.outputs[0].value >= tx.input.current.value);
 ```
+
+Reported on the check of the output's scriptPubKey, so an attribute on the statement holding it, its function or the contract applies to it.
