@@ -15,8 +15,10 @@ pub(crate) fn referenced_parameters<'a>(
     names
 }
 
-/// The names `statements` read, leaving out the reads of a local or assignment nothing later
-/// reads, since the script drops the value they compute; and those locals, the dead ones.
+/// The names `statements` read, leaving out the reads of a statement that has no effect: a local
+/// or assignment nothing later reads, whose value the script drops, unless it calls a helper,
+/// whose requirements still run; and an `if` or loop whose arms or body have none. Also the
+/// locals nothing reads, calling a helper or not.
 pub(crate) fn live_reads(
     statements: &[LocatedStatement],
 ) -> (HashSet<&str>, Vec<&LocatedStatement>) {
@@ -26,18 +28,26 @@ pub(crate) fn live_reads(
 }
 
 /// Add the names `statements` read to `live`, which holds the names read after them, and the
-/// locals nothing reads to `dead`.
+/// locals nothing reads to `dead`. Returns whether any statement has an effect.
 fn collect_live<'a>(
     statements: &'a [LocatedStatement],
     live: &mut HashSet<&'a str>,
     dead: &mut Vec<&'a LocatedStatement>,
-) {
+) -> bool {
+    let mut effect = false;
     for statement in statements.iter().rev() {
+        let calls = statement
+            .statement
+            .expressions()
+            .into_iter()
+            .any(calls_helper);
         match &statement.statement {
             Statement::Declaration { name, .. } | Statement::LetBinding { name, .. } => {
                 if !live.remove(name.as_str()) {
                     dead.push(statement);
-                    continue;
+                    if !calls {
+                        continue;
+                    }
                 }
             }
             Statement::VarAssign { target, .. } => {
@@ -46,7 +56,7 @@ fn collect_live<'a>(
                     | AssignmentTarget::ArrayIndex { array: path, .. } => Some(path.clone()),
                     AssignmentTarget::Access(value) => value.binding_path(),
                 };
-                if path.is_some_and(|path| !live.contains(path.root.as_str())) {
+                if path.is_some_and(|path| !live.contains(path.root.as_str())) && !calls {
                     continue;
                 }
             }
@@ -56,24 +66,28 @@ fn collect_live<'a>(
                 ..
             } => {
                 let mut other = live.clone();
-                collect_live(then_body, live, dead);
-                collect_live(else_body.as_deref().unwrap_or_default(), &mut other, dead);
+                let then = collect_live(then_body, live, dead);
+                let otherwise =
+                    collect_live(else_body.as_deref().unwrap_or_default(), &mut other, dead);
                 live.extend(other);
+                if !then && !otherwise && !calls {
+                    continue;
+                }
             }
             // An iteration reads what the one before it assigned, so only the last walk, over
             // every name read after the body, tells which locals are dead.
             // ponytail: re-walks the body until no new name turns up, which multiplies with loop
             // nesting depth; summarize each body once if loops ever nest deeply.
             Statement::ForIn { body, .. } | Statement::ForCount { body, .. } => {
-                loop {
+                let acts = loop {
                     let (mut next, mut pass) = (live.clone(), Vec::new());
-                    collect_live(body, &mut next, &mut pass);
+                    let acts = collect_live(body, &mut next, &mut pass);
                     if next.is_subset(live) {
                         dead.extend(pass);
-                        break;
+                        break acts;
                     }
                     live.extend(next);
-                }
+                };
                 if let Statement::ForIn {
                     index_var,
                     value_var,
@@ -83,13 +97,23 @@ fn collect_live<'a>(
                     live.remove(index_var.as_str());
                     live.remove(value_var.as_str());
                 }
+                if !acts && !calls {
+                    continue;
+                }
             }
             _ => {}
         }
+        effect = true;
         for expression in statement.statement.expressions() {
             collect_expression(expression, live, &[], &mut HashSet::new());
         }
     }
+    effect
+}
+
+fn calls_helper(expression: &Expression) -> bool {
+    matches!(expression.kind, ExprKind::Call { .. })
+        || child_exprs(expression).into_iter().any(calls_helper)
 }
 
 fn collect_expression<'a>(

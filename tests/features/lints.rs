@@ -452,6 +452,58 @@ fn a_read_by_a_dead_local_does_not_count_as_a_use() {
 }
 
 #[test]
+fn a_helper_call_counts_as_a_use_and_an_empty_branch_does_not() {
+    let helper =
+        "private function checked(signature s) bool { require(checkSig(s, owner)); return true; }";
+    let checked = |attribute: &str| {
+        format!(
+            "contract C(pubkey owner) {{ function spend(signature sig) {{ {attribute} bool ok = checked(sig); ok = !ok; }} {helper} }}"
+        )
+    };
+    let error = arkade_compiler::compile(&checked(""))
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains("variable 'ok' in function 'spend' is never used")
+            && !error.contains("'sig'"),
+        "{error}"
+    );
+    let output = arkade_compiler::compile(&checked(r#"@allow(unused-variable, "r")"#)).unwrap();
+    assert!(crate::common::arkade_asm(&output, "spend").contains("<owner> OP_CHECKSIGVERIFY"));
+
+    for (parameter, body, unread) in [
+        (
+            "int amount",
+            r#"if (amount > 0) { @allow(unused-variable, "r") let t = 1; }"#,
+            "amount",
+        ),
+        (
+            "int[2] xs",
+            r#"for (i, x) in xs { @allow(unused-variable, "r") let t = 1; }"#,
+            "xs",
+        ),
+    ] {
+        let source = format!(
+            "contract C(pubkey owner) {{ function spend(signature sig, {parameter}) {{ require(checkSig(sig, owner)); {body} }} }}"
+        );
+        let error = arkade_compiler::compile(&source).unwrap_err().to_string();
+        assert!(
+            error.contains(&format!(
+                "variable '{unread}' in function 'spend' is never used"
+            )),
+            "{error}"
+        );
+    }
+
+    let error = arkade_compiler::compile(
+        "contract C(pubkey owner) { function spend(signature sig) { let t = 1; require(checkSig(sig, owner)); } }",
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(error.contains("error[unused-variable]: "), "{error}");
+}
+
+#[test]
 fn an_allowed_unused_local_is_dropped_from_the_covenant_stack() {
     let source = r#"contract P(pubkey owner) { function spend(signature ownerSig, int amount) {
         @allow(unused-variable, "probe") int doubled = amount * 2;

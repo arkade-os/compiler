@@ -244,6 +244,7 @@ pub(crate) fn render_errors(diagnostics: &[Diagnostic], source: &str) -> String 
                     format!("validation error: {message}")
                 }
                 Some("type") => format!("type error: {message}"),
+                Some(code) if d.lint.is_some() => format!("error[{code}]: {message}"),
                 _ => message,
             }
         })

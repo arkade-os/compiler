@@ -1,4 +1,4 @@
-A constructor parameter that no function or tapscript reads, where a read by a local or assignment nothing later reads does not count.
+A constructor parameter that no function or tapscript reads, where a read by a local or assignment nothing later reads does not count unless it calls a helper, and neither does an `if` condition or loop target whose arms or body do nothing.
 
 It is pruned from the script, so it costs nothing and cannot be malleated, but it usually means a check is missing.
 
