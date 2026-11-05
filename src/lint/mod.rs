@@ -149,7 +149,7 @@ macro_rules! lints {
 }
 
 lints! {
-    AnyoneCanSpend: "anyone-can-spend", Security, Warn, "a covenant function with a path that has no signature check and no output constraint";
+    UnsignedSpendPath: "unsigned-spend-path", Security, Warn, "a covenant function with a spending path that checks no transaction signature";
     OutputScriptUnchecked: "output-script-unchecked", Security, Warn, "an output whose value is checked but not its scriptPubKey";
     OutputValueUnchecked: "output-value-unchecked", Security, Warn, "an output whose scriptPubKey is checked but not its value or assets";
     OutputsSharedAcrossInputs: "outputs-shared-across-inputs", Security, Warn, "an unsigned function that constrains outputs by index without bounding the inputs, so one output can satisfy two";
@@ -157,7 +157,6 @@ lints! {
     SignerFromWitness: "signer-from-witness", Security, Warn, "a signature key or multisig threshold taken from the witness as given";
     DuplicateMultisigKey: "duplicate-multisig-key", Security, Warn, "a key listed twice in checkMultisig, so one signer counts twice";
     AmbiguousHashConcat: "ambiguous-hash-concat", Security, Warn, "a hash of two concatenated variable-length parameters, which other values can match";
-    RevealWithoutTimeout: "reveal-without-timeout", Security, Warn, "a hash preimage reveal with no timeout path, so the coins wait for it forever";
     OffchainLocktime: "offchain-locktime", Correctness, Warn, "tx.locktime in a covenant, which arkd sets to 0 offchain";
     DivideBeforeMultiply: "divide-before-multiply", Correctness, Warn, "(a / b) * c, which truncates before it scales";
     SelfComparison: "self-comparison", Correctness, Warn, "a comparison or logical operator with the same operand on both sides";

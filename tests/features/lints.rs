@@ -25,12 +25,12 @@ fn covenant_lints_report_unauthorized_and_half_constrained_spends() {
     for (function, expected) in [
         (
             "function f(bytes p) { require(sha256(p) == hash); }",
-            &["anyone-can-spend", "reveal-without-timeout"][..],
+            &["unsigned-spend-path"][..],
         ),
         ("function f(signature s) { require(checkSig(s, owner)); }", &[]),
         (
             "function f() { require(tx.outputs[0].value >= tx.input.current.value); }",
-            &["output-script-unchecked", "outputs-shared-across-inputs"],
+            &["output-script-unchecked", "outputs-shared-across-inputs", "unsigned-spend-path"],
         ),
         (
             "function f(signature s) { require(checkSig(s, owner)); require(tx.outputs[0].value >= 1); }",
@@ -38,19 +38,19 @@ fn covenant_lints_report_unauthorized_and_half_constrained_spends() {
         ),
         (
             "function f() { require(tx.numInputs == 1); require(tx.outputs[0].script == new C(owner, oracle, hash)); }",
-            &["output-value-unchecked"],
+            &["output-value-unchecked", "unsigned-spend-path"],
         ),
         (
             "function f() { require(this.activeInputIndex == 0); require(tx.outputs[0].script == new C(owner, oracle, hash)); require(tx.outputs[0].value >= tx.input.current.value); }",
-            &[],
+            &["unsigned-spend-path"],
         ),
         (
             "function f(signature s, bytes32 m) { require(checkSigFromStack(s, oracle, m)); require(tx.outputs[this.activeInputIndex].script == new C(owner, oracle, hash)); require(tx.outputs[this.activeInputIndex].value >= 1); }",
-            &["oracle-message-unbound"],
+            &["oracle-message-unbound", "unsigned-spend-path"],
         ),
         (
             "function f(signature s, bytes32 m) { require(sha256(m) == hash); require(checkSigFromStack(s, oracle, m)); require(tx.outputs[this.activeInputIndex].script == new C(owner, oracle, hash)); require(tx.outputs[this.activeInputIndex].value >= 1); }",
-            &["reveal-without-timeout"],
+            &["unsigned-spend-path"],
         ),
         (
             "function f(signature s) { require(checkSig(s, owner)); require(tx.locktime >= 100); }",
@@ -59,16 +59,16 @@ fn covenant_lints_report_unauthorized_and_half_constrained_spends() {
         ("function f() { require(1 == 2); }", &[]),
         (
             "function f(bytes p) { require(sha256(p) == hash); } function g() { require(1 == 2); }",
-            &["anyone-can-spend", "reveal-without-timeout"],
+            &["unsigned-spend-path"],
         ),
-        ("function f() { require(tx.inputs[0].script == new C(owner, oracle, hash)); }", &[]),
+        ("function f() { require(tx.inputs[0].script == new C(owner, oracle, hash)); }", &["unsigned-spend-path"]),
         (
             "function f(pubkey k, signature s) { require(checkSig(s, k)); }",
             &["signer-from-witness"],
         ),
         (
             "function f(pubkey k, signature s) { require(sha256(k) == hash); require(checkSig(s, k)); }",
-            &["reveal-without-timeout"],
+            &[],
         ),
         (
             "function f(signature s, signature t, int n) { require(checkMultisig([owner, oracle], [s, t], n)); }",
@@ -99,6 +99,10 @@ fn covenant_lints_report_unauthorized_and_half_constrained_spends() {
             &["divide-before-multiply"],
         ),
         (
+            "function f(signature s, int a, int b) { require(checkSig(s, owner)); require(a / 2 * 2 > 1); require(b * (a / b) > 1); }",
+            &[],
+        ),
+        (
             "function f(signature s, int a) { require(checkSig(s, owner)); require(a == a); if (a < 1 || a < 1) { require(a >= a); } }",
             &["self-comparison", "self-comparison", "self-comparison"],
         ),
@@ -124,11 +128,11 @@ fn covenant_lints_report_unauthorized_and_half_constrained_spends() {
         ),
         (
             "function f(signature s, int b) { if (b == 1) { require(checkSig(s, owner)); } else { require(b == 2); } }",
-            &["anyone-can-spend"],
+            &["unsigned-spend-path"],
         ),
         (
             "function f(int b) { if (b == 1) { require(tx.outputs[0].script == new C(owner, oracle, hash)); require(tx.outputs[0].value >= tx.input.current.value); require(tx.numInputs == 1); } else { require(b == 2); } }",
-            &["anyone-can-spend"],
+            &["unsigned-spend-path"],
         ),
         (
             "function f(signature s, int b) { if (b == 1) { require(checkSig(s, owner)); } else { require(checkSig(s, oracle)); } }",
@@ -136,15 +140,15 @@ fn covenant_lints_report_unauthorized_and_half_constrained_spends() {
         ),
         (
             "function f(signature s, bytes p, int b) { if (b == 1) { require(sha256(p) == hash); } else { require(checkSig(s, owner)); } }",
-            &["anyone-can-spend"],
+            &["unsigned-spend-path"],
         ),
         (
             "function f(bytes p, int b) { if (b == 1) { require(sha256(p) == hash); } else { require(1 == 2); } }",
-            &["anyone-can-spend", "reveal-without-timeout"],
+            &["unsigned-spend-path"],
         ),
         (
             "function f(int b) { require(b > 0); if (b == 1) { require(1 == 2); } }",
-            &["anyone-can-spend"],
+            &["unsigned-spend-path"],
         ),
         (
             "function f(signature s, bytes p, int b) { require(checkSig(s, owner)); if (b == 1) { require(sha256(p) == hash); } }",
@@ -152,15 +156,15 @@ fn covenant_lints_report_unauthorized_and_half_constrained_spends() {
         ),
         (
             "function claim() { require(tx.outputs[this.activeInputIndex].value >= tx.input.current.value); require(tx.outputs[this.activeInputIndex].script == new C(owner, oracle, hash)); } function claim(bytes p, signature a, signature b) tapscript { require(sha256(p) == hash); require(checkMultisig([server, emulator], [a, b], 2)); }",
-            &["reveal-without-timeout"],
+            &["unsigned-spend-path"],
         ),
         (
             "function claim(bytes p) { require(sha256(p) == hash); require(tx.outputs[this.activeInputIndex].value >= tx.input.current.value); require(tx.outputs[this.activeInputIndex].script == new C(owner, oracle, hash)); } function claim(signature a, signature b) tapscript { require(checkMultisig([server, emulator], [a, b], 2)); }",
-            &["reveal-without-timeout"],
+            &["unsigned-spend-path"],
         ),
         (
             "function f(bytes p) { require(sha256(p) == hash); } function g() { require(1 == 2); } function g(signature a, signature b) tapscript { require(checkMultisig([server, emulator], [a, b])); }",
-            &["anyone-can-spend", "reveal-without-timeout"],
+            &["unsigned-spend-path"],
         ),
         (
             "function f(signature s) { require(checkSig(s, owner)); require(tx.outputs[0].script == new C(owner, oracle, hash)); }",
@@ -172,7 +176,7 @@ fn covenant_lints_report_unauthorized_and_half_constrained_spends() {
         ),
         (
             "function w(int x) { require(x > 0); } function w(signature a, signature b) tapscript { require(checkMultisig([server, emulator], [a, b], 2)); }",
-            &["anyone-can-spend"],
+            &["unsigned-spend-path"],
         ),
     ] {
         assert_eq!(lints(function), expected, "{function}");
@@ -190,17 +194,17 @@ fn levels_allow_warn_or_deny_each_lint() {
     };
     let defaults = codes(&Levels::default());
     assert!(
-        defaults.contains(&("anyone-can-spend".into(), Severity::Warning)),
+        defaults.contains(&("unsigned-spend-path".into(), Severity::Warning)),
         "{defaults:?}"
     );
     assert!(defaults.contains(&("unused-parameter".into(), Severity::Warning)));
 
     let mut levels = Levels::default();
-    levels.set(Lint::AnyoneCanSpend, Level::Deny);
+    levels.set(Lint::UnsignedSpendPath, Level::Deny);
     levels.set(Lint::UnusedParameter, Level::Allow);
     assert_eq!(
         codes(&levels),
-        [("anyone-can-spend".into(), Severity::Error)]
+        [("unsigned-spend-path".into(), Severity::Error)]
     );
 
     let mut levels = Levels::default();
@@ -231,53 +235,53 @@ fn lint_attributes_set_levels_on_the_node_they_precede() {
     let defaults = Levels::default();
     assert_eq!(
         codes(&unsigned(""), &defaults),
-        [warning("anyone-can-spend")]
+        [warning("unsigned-spend-path")]
     );
     assert!(codes(
-        &unsigned(r#"@allow(anyone-can-spend, "a demo")"#),
+        &unsigned(r#"@allow(unsigned-spend-path, "a demo")"#),
         &defaults
     )
     .is_empty());
     assert!(codes(
-        &unsigned(r#"@expect(anyone-can-spend, "a demo")"#),
+        &unsigned(r#"@expect(unsigned-spend-path, "a demo")"#),
         &defaults
     )
     .is_empty());
     assert_eq!(
-        codes(&unsigned("@deny(anyone-can-spend)"), &defaults),
-        [error("anyone-can-spend")]
+        codes(&unsigned("@deny(unsigned-spend-path)"), &defaults),
+        [error("unsigned-spend-path")]
     );
     let mut denied = Levels::default();
-    denied.set(Lint::AnyoneCanSpend, Level::Deny);
+    denied.set(Lint::UnsignedSpendPath, Level::Deny);
     assert!(codes(
-        &unsigned(r#"@allow(anyone-can-spend, "reviewed")"#),
+        &unsigned(r#"@allow(unsigned-spend-path, "reviewed")"#),
         &denied
     )
     .is_empty());
     let mut allowed = Levels::default();
-    allowed.set(Lint::AnyoneCanSpend, Level::Allow);
+    allowed.set(Lint::UnsignedSpendPath, Level::Allow);
     assert_eq!(
-        codes(&unsigned("@warn(anyone-can-spend)"), &allowed),
-        [warning("anyone-can-spend")]
+        codes(&unsigned("@warn(unsigned-spend-path)"), &allowed),
+        [warning("unsigned-spend-path")]
     );
     let mut deny_warnings = Levels::default();
     deny_warnings.set_named("warnings", Level::Deny).unwrap();
     assert_eq!(
-        codes(&unsigned("@warn(anyone-can-spend)"), &deny_warnings),
-        [error("anyone-can-spend")]
+        codes(&unsigned("@warn(unsigned-spend-path)"), &deny_warnings),
+        [error("unsigned-spend-path")]
     );
     assert!(codes(
-        &unsigned(r#"@allow(anyone-can-spend, "reviewed")"#),
+        &unsigned(r#"@allow(unsigned-spend-path, "reviewed")"#),
         &deny_warnings
     )
     .is_empty());
     assert_eq!(
         codes(&unsigned(r#"@allow(anyone-can-spnd, "typo")"#), &defaults),
-        [warning("anyone-can-spend"), warning("unknown-lint")]
+        [warning("unsigned-spend-path"), warning("unknown-lint")]
     );
     assert_eq!(
         codes(
-            &unsigned(r#"@expect(anyone-can-spend, self-comparison, "one does not fire")"#),
+            &unsigned(r#"@expect(unsigned-spend-path, self-comparison, "one does not fire")"#),
             &defaults
         ),
         [warning("unfulfilled-expectation")]
@@ -302,15 +306,18 @@ fn lint_attributes_set_levels_on_the_node_they_precede() {
 #[test]
 fn malformed_lint_attributes_are_errors() {
     for (attribute, expected) in [
-        ("@allow(anyone-can-spend)", "@allow needs a reason"),
+        ("@allow(unsigned-spend-path)", "@allow needs a reason"),
         (
-            r#"@expect(anyone-can-spend, " ")"#,
+            r#"@expect(unsigned-spend-path, " ")"#,
             "@expect needs a reason",
         ),
-        ("@inline(anyone-can-spend)", "unknown attribute '@inline'"),
+        (
+            "@inline(unsigned-spend-path)",
+            "unknown attribute '@inline'",
+        ),
         (r#"@deny("why")"#, "@deny needs a lint"),
         (
-            r#"@deny("why", anyone-can-spend)"#,
+            r#"@deny("why", unsigned-spend-path)"#,
             "takes lint names, then one reason",
         ),
     ] {
@@ -326,7 +333,7 @@ fn malformed_lint_attributes_are_errors() {
         );
     }
     let dangling =
-        "contract C(int n) { function f(int x) { require(x == n); @deny(anyone-can-spend) } }";
+        "contract C(int n) { function f(int x) { require(x == n); @deny(unsigned-spend-path) } }";
     assert!(diagnostics_with(dangling, &Levels::default())
         .iter()
         .any(|d| d.severity == Severity::Error));
@@ -356,30 +363,33 @@ fn the_cli_applies_lint_levels() {
     };
     let (passed, stderr) = run(&[]);
     assert!(
-        passed && stderr.contains("warning[anyone-can-spend]"),
+        passed && stderr.contains("warning[unsigned-spend-path]"),
         "{stderr}"
     );
-    let (passed, stderr) = run(&["--deny", "anyone-can-spend"]);
+    let (passed, stderr) = run(&["--deny", "unsigned-spend-path"]);
     assert!(
-        !passed && stderr.contains("error[anyone-can-spend]"),
+        !passed && stderr.contains("error[unsigned-spend-path]"),
         "{stderr}"
     );
-    let (passed, stderr) = run(&["--allow", "anyone-can-spend"]);
-    assert!(passed && !stderr.contains("anyone-can-spend"), "{stderr}");
+    let (passed, stderr) = run(&["--allow", "unsigned-spend-path"]);
+    assert!(
+        passed && !stderr.contains("unsigned-spend-path"),
+        "{stderr}"
+    );
     let (passed, stderr) = run(&["--deny", "security"]);
     assert!(
-        !passed && stderr.contains("error[anyone-can-spend]"),
+        !passed && stderr.contains("error[unsigned-spend-path]"),
         "{stderr}"
     );
     let (passed, _) = run(&["--deny", "style"]);
     assert!(passed);
-    let (passed, _) = run(&["--allow", "anyone-can-spend", "--deny", "security"]);
+    let (passed, _) = run(&["--allow", "unsigned-spend-path", "--deny", "security"]);
     assert!(passed);
     let (passed, _) = run(&["--deny", "all", "--allow", "security"]);
     assert!(passed);
     let (passed, _) = run(&["--allow", "security", "--deny", "all"]);
     assert!(!passed);
-    let (passed, _) = run(&["--warn", "anyone-can-spend", "--deny", "warnings"]);
+    let (passed, _) = run(&["--warn", "unsigned-spend-path", "--deny", "warnings"]);
     assert!(!passed);
     let (passed, _) = run(&["--deny", "warnings", "--allow", "warnings"]);
     assert!(passed);
@@ -534,11 +544,11 @@ fn every_lint_is_documented_and_explained() {
             .output()
             .unwrap()
     };
-    let output = explain("reveal-without-timeout");
+    let output = explain("unsigned-spend-path");
     let text = String::from_utf8(output.stdout).unwrap();
     assert!(output.status.success());
-    assert!(text.starts_with("reveal-without-timeout: security, warn by default"));
-    assert!(text.contains("checkTime"), "{text}");
+    assert!(text.starts_with("unsigned-spend-path: security, warn by default"));
+    assert!(text.contains("checkSig"), "{text}");
     assert!(!explain("no-such-lint").status.success());
 }
 
@@ -581,7 +591,7 @@ fn a_requirement_that_folds_to_false_disables_the_function() {
         assert!(
             !diagnostics_with(&source, &Levels::default())
                 .iter()
-                .any(|d| d.lint == Some(Lint::AnyoneCanSpend)),
+                .any(|d| d.lint == Some(Lint::UnsignedSpendPath)),
             "{dead}"
         );
     }
@@ -592,7 +602,7 @@ fn a_disabled_branch_keeps_the_rest_of_the_function_linted() {
     let source = "contract C(int n) { function f(bool b, int x) { if (b) { require(false); } else { require(x == n); } } }";
     assert!(diagnostics_with(source, &Levels::default())
         .iter()
-        .any(|d| d.lint == Some(Lint::AnyoneCanSpend)));
+        .any(|d| d.lint == Some(Lint::UnsignedSpendPath)));
 }
 
 #[test]

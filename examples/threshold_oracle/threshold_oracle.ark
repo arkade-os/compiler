@@ -20,6 +20,7 @@ contract ThresholdOracle(
   pubkey[3] oracles,
   int threshold
 ) {
+  @allow(unsigned-spend-path, "an oracle quorum signs this input, amount and recipient")
   function attest(
     int amount,
     ScriptPubKey recipientScriptPubKey,

@@ -8,11 +8,10 @@ use super::{Finding, Lint};
 use crate::compiler::tapscript::shared_tweak_func;
 use crate::diagnostics::Span;
 use crate::models::{
-    AssetLookupSource, Contract, ExprKind, Expression, Function, GroupIOSource, KeyExpr,
-    LocatedStatement, Requirement, Statement, TapItem, EMULATOR,
+    AssetLookupSource, Contract, ExprKind, Expression, Function, KeyExpr, LocatedStatement,
+    Requirement, Statement, TapItem, EMULATOR,
 };
-use crate::operators::BinaryOperator;
-use crate::properties::{GroupProperty, OutputProperty, ThisProperty, TxProperty};
+use crate::properties::{OutputProperty, ThisProperty, TxProperty};
 
 /// An output the function constrains at a fixed place; outputs at a computed index are not
 /// tracked.
@@ -54,10 +53,8 @@ struct OutputChecks {
 /// as run to its end, which an early `return` cuts short. Track both if a lint needs them.
 #[derive(Default, Clone, Copy)]
 struct Path {
-    /// A transaction signature, an output constraint, or a check of another input's script,
-    /// whose contract then authorizes the spend.
-    authorized: bool,
-    preimage: Option<Span>,
+    /// A transaction signature: `checkSig` or `checkMultisig`.
+    signed: bool,
     never_passes: bool,
     /// An arm without statements, as an absent `else` is.
     empty: bool,
@@ -66,24 +63,23 @@ struct Path {
 impl Path {
     /// What holds on every path through an `if`: what both arms hold, or what the other arm
     /// holds when one never passes. Sibling `if`s with complementary conditions may cover an
-    /// empty arm's case, so beside a live arm it is taken to authorize and to need no preimage.
+    /// empty arm's case, so beside a live arm it is taken to be signed if the live arm is.
     ///
     /// ponytail: the grammar has no `else if`, so a case split is written as sibling `if`s
     /// (`examples/option/option_vault.ark` `settle`), and a lone
-    /// `if (c) { require(checkSig(s, owner)); }` reads as authorized. Once `else if` exists,
+    /// `if (c) { require(checkSig(s, owner)); }` reads as signed. Once `else if` exists,
     /// rewrite such splits as `else if` chains ending in `else`, then drop `empty` and its arm
-    /// here so an absent `else` holds nothing, and add that lone `if` as an `anyone-can-spend`
-    /// row in `tests/features/lints.rs`.
+    /// here so an absent `else` holds nothing, and add that lone `if` as an
+    /// `unsigned-spend-path` row in `tests/features/lints.rs`.
     fn either(then: Path, other: Path) -> Path {
         match (then, other) {
             (dead, live) | (live, dead) if dead.never_passes => live,
             (empty, live) | (live, empty) if empty.empty => Path {
-                authorized: live.authorized,
+                signed: live.signed,
                 ..Path::default()
             },
             _ => Path {
-                authorized: then.authorized && other.authorized,
-                preimage: then.preimage.filter(|_| other.preimage.is_some()),
+                signed: then.signed && other.signed,
                 ..Path::default()
             },
         }
@@ -91,8 +87,7 @@ impl Path {
 
     fn followed_by(self, next: Path) -> Path {
         Path {
-            authorized: self.authorized || next.authorized,
-            preimage: self.preimage.or(next.preimage),
+            signed: self.signed || next.signed,
             never_passes: self.never_passes || next.never_passes,
             empty: false,
         }
@@ -147,15 +142,13 @@ pub(super) fn check(contract: &Contract, findings: &mut Vec<Finding>) {
         report(function, &facts, findings);
         covenants.push((function, facts.path));
     }
-    let paths = spending_paths(contract, &covenants);
-    anyone_can_spend(&covenants, &paths, findings);
-    reveal_without_timeout(&paths, findings);
+    unsigned_spend_path(&covenants, &spending_paths(contract, &covenants), findings);
 }
 
 /// A tapscript leaf, or the synthesized leaf of a covenant that no leaf signs for with the
-/// emulator: its hash preimage check, whether it needs a constructor key's signature, and the
-/// covenant whose tweaked key it signs with, which must then pass too.
-type SpendingPath<'a> = (Option<Span>, bool, Option<(&'a Function, Path)>);
+/// emulator: whether it needs a constructor key's signature, and the covenant whose tweaked
+/// key it signs with, which must then pass too.
+type SpendingPath<'a> = (bool, Option<(&'a Function, Path)>);
 
 fn spending_paths<'a>(
     contract: &Contract,
@@ -184,26 +177,22 @@ fn spending_paths<'a>(
         let signed = keys.iter().any(|key| {
             matches!(key, KeyExpr::Ident(name) if contract.parameters.iter().any(|p| &p.name == name))
         });
-        let hash = tapscript
-            .items
-            .iter()
-            .any(|item| matches!(item, TapItem::Hash { .. }))
-            .then_some(tapscript.span);
         let covenant = bound.and_then(|name| covenants.iter().find(|(f, _)| f.name == name));
-        paths.push((hash, signed, covenant.copied()));
+        paths.push((signed, covenant.copied()));
     }
     paths.extend(
         covenants
             .iter()
             .filter(|(f, _)| !emulated.contains(&f.name))
-            .map(|&covenant| (None, false, Some(covenant))),
+            .map(|&covenant| (false, Some(covenant))),
     );
     paths
 }
 
 /// Reports each covenant with a path that checks no transaction signature, through a leaf
-/// that needs no constructor key's signature either.
-fn anyone_can_spend(
+/// that needs no constructor key's signature either. Introspection does not count: such a
+/// path may still be sound, as a hash lock or a stateful covenant is.
+fn unsigned_spend_path(
     covenants: &[(&Function, Path)],
     paths: &[SpendingPath],
     findings: &mut Vec<Finding>,
@@ -211,51 +200,18 @@ fn anyone_can_spend(
     for &(function, path) in covenants {
         let unsigned_leaf = paths
             .iter()
-            .any(|&(_, signed, c)| !signed && c.is_some_and(|(f, _)| f.name == function.name));
-        if path.never_passes || path.authorized || !unsigned_leaf {
+            .any(|&(signed, c)| !signed && c.is_some_and(|(f, _)| f.name == function.name));
+        if path.never_passes || path.signed || !unsigned_leaf {
             continue;
         }
         findings.push(Finding::new(
-            Lint::AnyoneCanSpend,
+            Lint::UnsignedSpendPath,
             function.span,
             format!(
-                "function '{}' has a path that checks no signature and constrains no output, so \
-                 anyone who satisfies it can send the coins anywhere; a revealed preimage is no \
-                 authorization",
+                "function '{}' has a spending path with no transaction signature, so its other \
+                 conditions alone authorize the spend",
                 function.name
             ),
-        ));
-    }
-}
-
-/// Reports each hash preimage check when every spending path needs one.
-fn reveal_without_timeout(paths: &[SpendingPath], findings: &mut Vec<Finding>) {
-    let mut reveals = Vec::new();
-    for &(hash, _, covenant) in paths {
-        let covenant = covenant.map(|(_, path)| path);
-        // A covenant that never passes leaves its tweaked key unsigned, so the leaf is dead.
-        if covenant.is_some_and(|c| c.never_passes) {
-            continue;
-        }
-        let needs: Vec<Span> = hash
-            .into_iter()
-            .chain(covenant.and_then(|c| c.preimage))
-            .collect();
-        if needs.is_empty() {
-            return;
-        }
-        for span in needs {
-            if !reveals.contains(&span) {
-                reveals.push(span);
-            }
-        }
-    }
-    for span in reveals {
-        findings.push(Finding::new(
-            Lint::RevealWithoutTimeout,
-            span,
-            "every spending path needs this hash preimage, so the coins stay locked until it is \
-             revealed; add a path after a timeout, such as checkTime(t) or after(t)",
         ));
     }
 }
@@ -349,12 +305,8 @@ impl<'a> Visitor<'a> for Facts {
             return;
         };
         self.path.never_passes |= never_passes(requirement);
-        if let Requirement::Comparison { left, op, right } = requirement {
+        if let Requirement::Comparison { left, right, .. } = requirement {
             self.bounds_inputs |= [left, right].iter().any(|side| is_active_input(side));
-            if *op == BinaryOperator::Eq && [left, right].iter().any(|side| hashes_name(side)) {
-                let at = self.at(statement.span);
-                self.path.preimage.get_or_insert(at);
-            }
         }
     }
 
@@ -397,10 +349,9 @@ impl<'a> Visitor<'a> for Facts {
                 if matches!(builtin.name, "checkSig" | "checkMultisig") =>
             {
                 facts.signed = true;
-                facts.path.authorized = true;
+                facts.path.signed = true;
             }
             ExprKind::OutputIntrospection { index, property } => {
-                facts.path.authorized = true;
                 facts.bounds_inputs |= is_active_input(index);
                 let Some(index) = OutputIndex::of(index) else {
                     return;
@@ -432,38 +383,19 @@ impl<'a> Visitor<'a> for Facts {
                 source: AssetLookupSource::Output,
                 index,
             } => {
-                facts.path.authorized = true;
                 if let Some(index) = OutputIndex::of(index) {
                     facts.outputs.entry(index).or_default().assets = true;
                 }
             }
-            ExprKind::AssetAt {
-                source: AssetLookupSource::Output,
-                ..
-            }
-            | ExprKind::Tunnel { .. }
-            | ExprKind::ContractInstance { .. }
-            | ExprKind::IntentInspect { .. }
-            | ExprKind::GroupIOAccess {
-                source: GroupIOSource::Outputs,
-                ..
-            }
-            | ExprKind::GroupProperty {
-                property:
-                    GroupProperty::SumOutputs | GroupProperty::Delta | GroupProperty::NumOutputs,
-                ..
-            } => facts.path.authorized = true,
             ExprKind::TxIntrospection {
                 property: TxProperty::NumInputs,
             } => facts.bounds_inputs = true,
             ExprKind::BinaryOp { left, op, right } if op.compares() => {
                 facts.bounds_inputs |= [left, right].iter().any(|side| is_active_input(side))
             }
-            ExprKind::InputIntrospection { index, property } => {
-                use crate::properties::InputProperty::*;
-                facts.bounds_inputs |= matches!(property, Outpoint);
-                facts.path.authorized |= !is_active_input(index)
-                    && matches!(property, Script | ArkadeScriptHash | ArkadeWitnessHash);
+            ExprKind::InputIntrospection { property, .. } => {
+                facts.bounds_inputs |=
+                    matches!(property, crate::properties::InputProperty::Outpoint);
             }
             ExprKind::TxIntrospection {
                 property: TxProperty::Locktime,
@@ -549,13 +481,6 @@ fn find_witness_choices(
             found.push((name.to_string(), span));
         }
     }
-}
-
-/// `sha256(x)` or another hash of a name, as in a hash lock.
-fn hashes_name(expression: &Expression) -> bool {
-    matches!(&expression.kind, ExprKind::Builtin { builtin, args }
-        if crate::models::HashFn::parse(builtin.name).is_some()
-            && matches!(args[0].kind, ExprKind::Name(_)))
 }
 
 /// A requirement the constant folder evaluates to false, as in a disabled function.

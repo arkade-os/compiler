@@ -204,7 +204,7 @@ arkadec contract.ark --check             # every error and warning as file:line:
 arkadec contract.ark --check --json      # the same diagnostics as a JSON array
 arkadec contract.ark --debug             # also writes contract.debug.json with covenant source maps
 arkadec contract.ark --report            # each covenant's script bytes, stack peak and opcode execution counts
-arkadec --explain anyone-can-spend      # what a lint reports, why it matters and how to fix it
+arkadec --explain unsigned-spend-path      # what a lint reports, why it matters and how to fix it
 ```
 
 `--report` shows each covenant's script size as a lower bound, peak stack items, and an upper bound on executions of each named opcode, sorted by name. Branches take the maximum per opcode; sequential work adds up. Correlated conditions are counted independently, so the counts can overestimate actual execution. The report excludes data pushes without named opcodes. Opcode counts are informational: a row does not imply that the opcode has a configured budget. Compute budgets are operator-configurable and are not enforced by the compiler. Compare the counts against the target deployment's per-input limits, and check its request-wide budget for the complete transaction.
@@ -517,14 +517,13 @@ Lints report code that compiles but is likely unsafe or wrong. Each has an id, w
 
 | Lint | Category | Default | Reports |
 |---|---|---|---|
-| `anyone-can-spend` | security | warn | A covenant function with a path that has no transaction signature (`checkSig`, `checkMultisig`), no output constraint and no check of another input's script: anyone who satisfies it can send the coins anywhere. A revealed hash preimage or a `checkSigFromStack` message authorizes nothing. |
+| `unsigned-spend-path` | security | warn | A covenant function with a spending path that checks no transaction signature (`checkSig`, `checkMultisig`). Such a path can still be sound, as a hash lock or a stateful covenant is, but its other conditions alone authorize the spend; introspection, a hash preimage and a `checkSigFromStack` message do not count as a signature. |
 | `output-script-unchecked` | security | warn | An unsigned function that checks the value of `tx.outputs[N]` but not its `scriptPubKey`, so the value can be paid to any script |
 | `output-value-unchecked` | security | warn | An unsigned function that checks the `scriptPubKey` of `tx.outputs[N]`, including `new Self(...)`, but not its value or assets |
 | `oracle-message-unbound` | security | warn | A `checkSigFromStack` message that is a witness parameter used nowhere else, so one signed message authorizes any spend |
 | `signer-from-witness` | security | warn | A `checkSig`, `checkSigFromStack` or `checkMultisig` key, or a multisig threshold, that is a witness parameter used nowhere else, so the spender chooses who must sign |
 | `duplicate-multisig-key` | security | warn | A key listed twice in `checkMultisig`, so one signature counts for each |
 | `ambiguous-hash-concat` | security | warn | A hash of two or more `bytes` parameters joined with `+`: their lengths vary, so other values can join to the same bytes |
-| `reveal-without-timeout` | security | warn | A hash preimage check when every spending path needs one, so the coins stay locked until the preimage is revealed |
 | `offchain-locktime` | correctness | warn | `tx.locktime` in a covenant: arkd rebuilds offchain spends with nLockTime 0, so use `checkTime(t)` |
 | `outputs-shared-across-inputs` | security | warn | An unsigned function whose outputs are constrained at fixed indexes without bounding `tx.numInputs`, comparing `this.activeInputIndex`, or reading an outpoint, so two inputs locked by the contract can be satisfied by the same outputs |
 | `divide-before-multiply` | correctness | warn | `(a / b) * c`, which drops the remainder before it scales |
@@ -547,7 +546,7 @@ contract Vault(pubkey owner) {
   @allow(outputs-shared-across-inputs, "the control asset is a singleton")
   function receive() { ... }
 
-  @expect(anyone-can-spend, "a public puzzle")
+  @expect(unsigned-spend-path, "a public puzzle")
   function solve(bytes32 answer) { ... }
 }
 ```

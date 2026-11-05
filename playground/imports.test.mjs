@@ -24,7 +24,7 @@ const warningSource = 'contract HasWarnings(int value) { function spend() { requ
 const detailed = await compile({ entry: 'main.ark', files: { 'main.ark': warningSource } }, { optimize: false });
 const warningArtifact = detailed.artifact;
 const warningDiagnostics = detailed.diagnostics.filter(d => d.severity === 'warning');
-assert.deepEqual(warningDiagnostics.map(d => d.code), ['unused-parameter', 'anyone-can-spend']);
+assert.deepEqual(warningDiagnostics.map(d => d.code), ['unused-parameter', 'unsigned-spend-path']);
 assert(!Object.hasOwn(detailed, 'warnings'));
 assert(!Object.hasOwn(warningArtifact, 'warnings'));
 assert.equal(warningArtifact.compiler.options.optimize, false);

@@ -9,10 +9,12 @@ contract HTLC(
   int refundTime
 ) {
   // Covenants (emulator): pin the payout to the right party for >= input value.
+  @allow(unsigned-spend-path, "the claim leaf needs the preimage, and the output pays the receiver")
   function claim() {
     require(tx.outputs[this.activeInputIndex].script == new SingleSig(receiver));
     require(tx.outputs[this.activeInputIndex].value >= tx.input.current.value);
   }
+  @allow(unsigned-spend-path, "the refund leaf needs the timeout, and the output pays the sender")
   function refund() {
     require(tx.outputs[this.activeInputIndex].script == new SingleSig(sender));
     require(tx.outputs[this.activeInputIndex].value >= tx.input.current.value);

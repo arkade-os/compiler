@@ -27,6 +27,7 @@ contract NonInteractiveSwap(
   int expirationTime
 ) {
   // Swap: Any taker can fulfill - introspection makes cooperative path trustless
+  @allow(unsigned-spend-path, "any taker may fill the offer, and the outputs pay the maker and the taker")
   function swap(ScriptPubKey takerScriptPubKey) {
     // One offer per transaction, so outputs 0 and 1 cannot settle two offers at once.
     require(this.activeInputIndex == 0, "offer must be input 0");

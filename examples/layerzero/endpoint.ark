@@ -128,6 +128,7 @@ contract Endpoint(
   //   - Output[1] uses the canonical ReceiveMarker pkScript.
   // -------------------------------------------------------------------------
   @expect(outputs-shared-across-inputs, "output 0 carries the Endpoint control singleton, so only one input can be the Endpoint state")
+  @allow(unsigned-spend-path, "the DVN attestations authorize the receive, and the Endpoint control singleton is carried on")
   function receive(
     bytes32 attestedHash,
     signature dvn0Sig,
@@ -224,6 +225,7 @@ contract Endpoint(
   // LzSendPacket. Endpoint state continues; the OAppID marker is fully burned.
   // -------------------------------------------------------------------------
   @expect(outputs-shared-across-inputs, "output 0 carries the Endpoint control singleton, so only one input can be the Endpoint state")
+  @allow(unsigned-spend-path, "the OApp send-invocation marker on input 1 authorizes the send, and the Endpoint control singleton is carried on")
   function send() {
     require(size(tx.packet(16)) == 183, "endpoint state packet size");
     require(size(tx.packet(19)) == 181, "lz send packet size");

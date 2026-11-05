@@ -93,7 +93,8 @@ contract PaymentAuthorization(
   }
 
   // Refund: timelocked fallback back to customer
-  // Becomes valid after refundTime - effectively anyone-can-spend into customerScript
+  // Becomes valid after refundTime: anyone may spend it, but only into customerScript
+  @allow(unsigned-spend-path, "anyone may refund after refundTime, and the single output pays the customer")
   function refund() {
     require(checkTime(refundTime), "Refund timelock not reached");
 

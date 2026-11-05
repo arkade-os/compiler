@@ -63,16 +63,16 @@ impl<'a> Visitor<'a> for Expressions<'_, '_> {
                 {
                     self.findings.push(self_comparison(expression.span));
                 }
-                let divides = |side: &Expression| {
-                    matches!(
-                        side.kind,
-                        ExprKind::BinaryOp {
-                            op: BinaryOperator::Div,
-                            ..
-                        }
-                    )
+                // `(a / b) * b` rounds down to a multiple of b on purpose.
+                let divides = |side: &Expression, scale: &Expression| {
+                    matches!(&side.kind, ExprKind::BinaryOp {
+                        op: BinaryOperator::Div,
+                        right: divisor,
+                        ..
+                    } if divisor.source_text().contains("<expr>")
+                        || divisor.source_text() != scale.source_text())
                 };
-                if *op == BinaryOperator::Mul && (divides(left) || divides(right)) {
+                if *op == BinaryOperator::Mul && (divides(left, right) || divides(right, left)) {
                     self.findings.push(Finding::new(
                         Lint::DivideBeforeMultiply,
                         expression.span,
