@@ -446,9 +446,17 @@ pub(crate) fn prepare(
         return Err(ast_issues
             .iter()
             .map(|i| {
+                let suggestions = i.suggestion.iter().filter_map(|(replacement, span)| {
+                    Some(crate::diagnostics::Suggestion {
+                        message: format!("replace with '{replacement}'"),
+                        span: span.or(i.span)?,
+                        replacement: replacement.clone(),
+                    })
+                });
                 Diagnostic::error(file, i.message.clone())
                     .with_code(i.code)
                     .with_span(i.span)
+                    .with_suggestions(suggestions.collect())
             })
             .collect());
     }

@@ -53,6 +53,8 @@ pub struct ValidationIssue {
     pub span: Option<crate::diagnostics::Span>,
     /// Diagnostic code: `validation`, or `type` for operand type mismatches.
     pub code: &'static str,
+    /// A replacement that may fix it, and the span it replaces when not the issue's own.
+    pub suggestion: Option<(String, Option<crate::diagnostics::Span>)>,
 }
 
 impl ValidationIssue {
@@ -61,11 +63,26 @@ impl ValidationIssue {
             message: message.into(),
             span: None,
             code: "validation",
+            suggestion: None,
         }
     }
 
     fn at(mut self, span: crate::diagnostics::Span) -> Self {
         self.span = Some(span);
+        self
+    }
+
+    /// With `code` from the error registry.
+    fn coded(mut self, code: crate::errors::ErrorCode) -> Self {
+        self.code = code.id();
+        self
+    }
+
+    /// Suggesting `replacement` for `span`, or for the issue's own span once it is located.
+    fn suggest(mut self, replacement: &str, span: Option<crate::diagnostics::Span>) -> Self {
+        self.message
+            .push_str(&format!("; did you mean '{replacement}'?"));
+        self.suggestion = Some((replacement.to_string(), span));
         self
     }
 

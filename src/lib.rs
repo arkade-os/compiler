@@ -3,6 +3,7 @@
 mod builtins;
 mod compiler;
 pub mod diagnostics;
+pub mod errors;
 mod imports;
 pub mod lint;
 pub mod models;
