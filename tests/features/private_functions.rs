@@ -278,9 +278,5 @@ contract Early(int minimum) {
 "#,
     )
     .expect("early returns");
-    assert!(
-        feature_warnings(&output).is_empty(),
-        "{:?}",
-        output.warnings
-    );
+    assert!(output.warnings.is_empty(), "{:?}", output.warnings);
 }
