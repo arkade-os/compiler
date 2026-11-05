@@ -627,13 +627,13 @@ fn logical_skipped_helpers_do_not_guarantee_spend_enforcement() {
         "skip || guarded()",
         "skip || (skip && guarded())",
     ] {
-        let error = compile(&format!("contract C() {{ function compare(bool skip) {{ let value = {expression}; value = !value; }} private function guarded() bool {{ require(true); return true; }} }}")).expect_err("skippable requirement").to_string();
+        let error = compile(&format!("contract C(bool skip) {{ function compare() {{ let value = {expression}; value = !value; }} private function guarded() bool {{ require(true); return true; }} }}")).expect_err("skippable requirement").to_string();
         assert!(
             error.contains("spend path with no require"),
             "{expression}: {error}"
         );
     }
     for expression in ["guarded() && skip", "guarded() || skip"] {
-        compile(&format!("contract C() {{ function compare(bool skip) {{ let value = {expression}; value = !value; }} private function guarded() bool {{ require(true); return true; }} }}")).unwrap_or_else(|error| panic!("{expression}: {error}"));
+        compile(&format!("contract C(bool skip) {{ function compare() {{ let value = {expression}; value = !value; }} private function guarded() bool {{ require(true); return true; }} }}")).unwrap_or_else(|error| panic!("{expression}: {error}"));
     }
 }

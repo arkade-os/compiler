@@ -305,7 +305,7 @@ fn the_cli_applies_lint_levels() {
 #[test]
 fn denied_lints_stop_compilation_only_in_the_file_being_compiled() {
     let main = |annotation: &str| {
-        format!("import \"fees.ark\";\ncontract C(pubkey k) {{ function f(signature s, int n) {{ {annotation} let x = Fees.fee(n); require(checkSig(s, k)); }} }}")
+        format!("import \"fees.ark\";\ncontract C(pubkey k) {{ function f(signature s, int n) {{ {annotation} let x = Fees.fee(n); require(n > 0); require(checkSig(s, k)); }} }}")
     };
     let library = "library Fees { function fee(int n) int { let unused = n; return n + 1; } }";
     let files = |main: String| {

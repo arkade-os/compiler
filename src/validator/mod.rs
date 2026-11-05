@@ -477,8 +477,10 @@ fn validate_source_identifier(name: &str, context: &str, issues: &mut Vec<Valida
 }
 
 /// Reject parameters and tapscript inputs that are never read: an unread witness
-/// element is unchecked, so anyone relaying the spend could replace it. An unread
-/// constructor parameter or local is only a lint, since neither can be malleated.
+/// element is unchecked, so anyone relaying the spend could replace it. A read by a
+/// local or assignment nothing later reads does not count, since the script drops the
+/// value. An unread constructor parameter or local is itself only a lint, since neither
+/// can be malleated.
 fn check_unused(contract: &Contract, issues: &mut Vec<ValidationIssue>) {
     for tapscript in &contract.tapscripts {
         let used = tapscript_reads(tapscript);
@@ -494,7 +496,7 @@ fn check_unused(contract: &Contract, issues: &mut Vec<ValidationIssue>) {
         }
     }
     for function in contract.functions.iter().filter(|f| !f.is_imported()) {
-        let used = references::referenced_parameters(&function.statements, &[]);
+        let used = references::live_reads(&function.statements);
         for parameter in function
             .parameters
             .iter()

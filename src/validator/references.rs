@@ -15,6 +15,73 @@ pub(crate) fn referenced_parameters<'a>(
     names
 }
 
+/// The names `statements` read, leaving out the reads of a local or assignment nothing later
+/// reads, since the script drops the value they compute.
+pub(crate) fn live_reads(statements: &[LocatedStatement]) -> HashSet<&str> {
+    let mut live = HashSet::new();
+    collect_live(statements, &mut live);
+    live
+}
+
+/// Add the names `statements` read to `live`, which holds the names read after them.
+fn collect_live<'a>(statements: &'a [LocatedStatement], live: &mut HashSet<&'a str>) {
+    for statement in statements.iter().rev() {
+        match &statement.statement {
+            Statement::Declaration { name, .. } | Statement::LetBinding { name, .. } => {
+                if !live.remove(name.as_str()) {
+                    continue;
+                }
+            }
+            Statement::VarAssign { target, .. } => {
+                let path = match target {
+                    AssignmentTarget::Binding(path)
+                    | AssignmentTarget::ArrayIndex { array: path, .. } => Some(path.clone()),
+                    AssignmentTarget::Access(value) => value.binding_path(),
+                };
+                if path.is_some_and(|path| !live.contains(path.root.as_str())) {
+                    continue;
+                }
+            }
+            Statement::IfElse {
+                then_body,
+                else_body,
+                ..
+            } => {
+                let mut other = live.clone();
+                collect_live(then_body, live);
+                collect_live(else_body.as_deref().unwrap_or_default(), &mut other);
+                live.extend(other);
+            }
+            // An iteration reads what the one before it assigned.
+            // ponytail: re-walks the body until no new name turns up, which multiplies with loop
+            // nesting depth; summarize each body once if loops ever nest deeply.
+            Statement::ForIn { body, .. } | Statement::ForCount { body, .. } => {
+                loop {
+                    let mut next = live.clone();
+                    collect_live(body, &mut next);
+                    if next.is_subset(live) {
+                        break;
+                    }
+                    live.extend(next);
+                }
+                if let Statement::ForIn {
+                    index_var,
+                    value_var,
+                    ..
+                } = &statement.statement
+                {
+                    live.remove(index_var.as_str());
+                    live.remove(value_var.as_str());
+                }
+            }
+            _ => {}
+        }
+        for expression in statement.statement.expressions() {
+            collect_expression(expression, live, &[], &mut HashSet::new());
+        }
+    }
+}
+
 fn collect_expression<'a>(
     expression: &'a Expression,
     names: &mut HashSet<&'a str>,
