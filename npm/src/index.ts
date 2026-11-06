@@ -7,6 +7,8 @@ export interface CompileInput {
 
 export interface CompileOptions {
     optimize?: boolean;
+    /** Whether `compile` builds the debug file. Defaults to `true`; `check` ignores it. */
+    debug?: boolean;
 }
 
 /** A 1-based line and column, with columns in UTF-16 code units as editors count them. */
@@ -132,10 +134,10 @@ export interface DebugInfo {
 
 /**
  * Source errors are diagnostics with a `null` artifact, not a rejection. `diagnostics` lists every
- * error and warning, warnings included on success.
+ * error and warning, warnings included on success. `debug` is `null` with `{ debug: false }`.
  */
 export type CompileResult =
-    | { artifact: CompilerArtifact; debug: DebugInfo; diagnostics: Diagnostic[] }
+    | { artifact: CompilerArtifact; debug: DebugInfo | null; diagnostics: Diagnostic[] }
     | { artifact: null; debug: null; diagnostics: Diagnostic[] };
 
 let initialization: ReturnType<typeof load> | undefined;
@@ -181,12 +183,12 @@ async function call<T>(method: (wasm: Awaited<ReturnType<typeof load>>) => strin
 /** Compile a virtual source project using the installed compiler. */
 export async function compile(input: CompileInput, options?: CompileOptions): Promise<CompileResult> {
     const { entry, files } = serializeInput(input);
-    const optimize = options?.optimize;
+    const { optimize, debug: withDebug } = options ?? {};
     const { artifact, debug, diagnostics } = await call<{ artifact: string | null; debug: string | null; diagnostics: Diagnostic[] }>(
-        wasm => wasm.compile_sources_with_diagnostics(entry, files, optimize));
-    return artifact === null || debug === null
+        wasm => wasm.compile_sources_with_diagnostics(entry, files, optimize, withDebug));
+    return artifact === null
         ? { artifact: null, debug: null, diagnostics }
-        : { artifact: JSON.parse(artifact), debug: JSON.parse(debug), diagnostics };
+        : { artifact: JSON.parse(artifact), debug: debug === null ? null : JSON.parse(debug), diagnostics };
 }
 
 /** Every diagnostic of a project without generating an artifact; a library entry is not an error. */
