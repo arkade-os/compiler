@@ -40,11 +40,11 @@ async function call(method) {
 /** Compile a virtual source project using the installed compiler. */
 export async function compile(input, options) {
     const { entry, files } = serializeInput(input);
-    const optimize = options?.optimize;
-    const { artifact, debug, diagnostics } = await call(wasm => wasm.compile_sources_with_diagnostics(entry, files, optimize));
-    return artifact === null || debug === null
+    const { optimize, debug: withDebug } = options ?? {};
+    const { artifact, debug, diagnostics } = await call(wasm => wasm.compile_sources_with_diagnostics(entry, files, optimize, withDebug));
+    return artifact === null
         ? { artifact: null, debug: null, diagnostics }
-        : { artifact: JSON.parse(artifact), debug: JSON.parse(debug), diagnostics };
+        : { artifact: JSON.parse(artifact), debug: debug === null ? null : JSON.parse(debug), diagnostics };
 }
 /** Every diagnostic of a project without generating an artifact; a library entry is not an error. */
 export async function check(input, options) {
