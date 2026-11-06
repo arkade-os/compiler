@@ -658,3 +658,40 @@ fn logical_skipped_helpers_do_not_guarantee_spend_enforcement() {
         compile(&format!("contract C() {{ function compare(bool skip) {{ let value = {expression}; value = !value; }} private function guarded() bool {{ require(true); return true; }} }}")).unwrap_or_else(|error| panic!("{expression}: {error}"));
     }
 }
+
+#[test]
+fn a_literal_takes_the_type_of_what_it_is_compared_with() {
+    let wide = format!("0x{}", "ab".repeat(32));
+    let source = |params: &str, literal: &str| {
+        format!("struct Point {{ int x; int y; }}\ncontract C({params}) {{ function f() {{ require(value == {literal}); }} }}")
+    };
+    for (params, literal) in [
+        ("bytes[2] value", format!("[{wide}, 0x01]")),
+        ("Point[2] value", "[{x: 1, y: 2}, {x: 3, y: 4}]".to_string()),
+    ] {
+        let compiled = arkade_compiler::compile(&source(params, &literal));
+        assert!(compiled.is_ok(), "{literal}: {compiled:?}");
+    }
+    for (params, literal, expected) in [
+        (
+            "bytes[2] value",
+            "[0x01, 5]",
+            "element 1: expected 'bytes', got 'int'",
+        ),
+        (
+            "Point[2] value",
+            "[{x: 1, y: 2}, {x: true, y: 4}]",
+            "element 1, field 'x': expected 'int', got 'bool'",
+        ),
+        (
+            "int[2] value",
+            "[1, 2, 3]",
+            "expected 2 array elements, got 3",
+        ),
+    ] {
+        let error = arkade_compiler::compile(&source(params, literal))
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains(expected), "{literal}: {error}");
+    }
+}
