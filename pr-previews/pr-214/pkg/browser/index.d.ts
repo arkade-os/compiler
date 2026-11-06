@@ -4,6 +4,8 @@ export interface CompileInput {
 }
 export interface CompileOptions {
     optimize?: boolean;
+    /** Whether `compile` builds the debug file. Defaults to `true`; `check` ignores it. */
+    debug?: boolean;
 }
 /** A 1-based line and column, with columns in UTF-16 code units as editors count them. */
 export interface Position {
@@ -120,11 +122,11 @@ export interface DebugInfo {
 }
 /**
  * Source errors are diagnostics with a `null` artifact, not a rejection. `diagnostics` lists every
- * error and warning, warnings included on success.
+ * error and warning, warnings included on success. `debug` is `null` with `{ debug: false }`.
  */
 export type CompileResult = {
     artifact: CompilerArtifact;
-    debug: DebugInfo;
+    debug: DebugInfo | null;
     diagnostics: Diagnostic[];
 } | {
     artifact: null;
