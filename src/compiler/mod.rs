@@ -164,16 +164,26 @@ impl Generator {
                 kind: BindingKind::Constructor,
             });
         }
-        // Witness inputs carry any length; pin fixed-width ones before the body reads them.
+        // Witness inputs carry any bytes; pin fixed-width and bool ones before the body reads them.
         let prologue = asm.len();
         let mut prologue_peak = 0;
         for (index, (_, leaf_type)) in function_bindings.iter().enumerate() {
+            let depth = prologue + index;
             let width = match leaf_type.ark_type() {
                 types::ArkType::Bytes20 => "20",
                 types::ArkType::Bytes32 => "32",
+                types::ArkType::Bool => {
+                    // Only empty and 0x01 equal their own 0NOTEQUAL, so `require`, `if` and `==` agree.
+                    prologue_peak = prologue_peak.max(2);
+                    asm.extend(match depth {
+                        0 => vec![Dup.into()],
+                        _ => vec![integer_op(depth), Pick.into()],
+                    });
+                    asm.extend([Dup.into(), NotEqual0.into(), EqualVerify.into()]);
+                    continue;
+                }
                 _ => continue,
             };
-            let depth = prologue + index;
             // The copy, its size and the expected width.
             prologue_peak = prologue_peak.max(2 + usize::from(depth > 0));
             if depth > 0 {
