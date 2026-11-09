@@ -1,15 +1,17 @@
 pragma arkade ^0.1.0;
 
-// Cash-settled note on the hashprice published by HashpriceBeacon.
+// Cash-settled note on the hashprice HashpriceBeacon has already published.
 //
 // Input 0 is the beacon, spent through passthrough. Input 1 is this note.
-// Output 0 continues the beacon with the same hashprice and height. The rest
-// pays the holder and the writer.
+// Output 0 continues the beacon with the same script, value, control asset,
+// and state packet. The rest pays the holder and the writer.
 //
 //   hashprice > strike → holder gets collateral * (hashprice - strike) / hashprice
 //   otherwise           → holder gets 0
 // A leg of 330 sats or less is folded into the other output. Hashprice and
-// strike are the same integer scale.
+// strike use the beacon's scale: sats per PH/s per day, subsidy only.
+// Settlement reads a beacon that has moved past its checkpoint, so the
+// number was produced by update rather than by the issuer's genesis packet.
 
 import "hashprice_beacon.ark";
 
@@ -20,29 +22,36 @@ contract HashpriceOption(
   ScriptPubKey writerScript,
   int strike,
   int collateral,
-  pubkey oraclePk,
-  AssetId hashpriceAsset,
-  AssetId heightAsset
+  bytes32 checkpoint,
+  int checkpointHeight,
+  int bits,
+  AssetId control
 ) {
+  const int STATE = 16;
   const int DUST = 330;
 
-  @allow(unsigned-spend-path, "the beacon's published hashprice settles the note, and the outputs pay the holder and the writer")
+  @allow(unsigned-spend-path, "the beacon's header-derived hashprice settles the note, and the outputs pay the holder and the writer")
   function settle() {
     require(this.activeInputIndex == 1, "note is input 1");
     require(strike > 0, "strike");
     require(collateral > 0, "collateral");
 
-    let beacon = new HashpriceBeacon(oraclePk, hashpriceAsset, heightAsset);
+    let beacon = new HashpriceBeacon(checkpoint, checkpointHeight, bits, control);
     require(tx.inputs[0].script == beacon, "beacon");
 
-    int hashprice = tx.inputs[0].assets.lookup(hashpriceAsset.txid, hashpriceAsset.gidx);
+    let state = tx.inputs[0].packet(STATE);
+    require(size(state) == 56, "state");
+    require(tx.packet(STATE) == state, "state moved");
+    int height = bin2num(substr(state, 32, 8));
+    require(height > checkpointHeight, "checkpoint");
+    int hashprice = bin2num(substr(state, 40, 16));
     require(hashprice > 0, "hashprice");
-    int height = tx.inputs[0].assets.lookup(heightAsset.txid, heightAsset.gidx);
 
     require(tx.outputs[0].script == beacon, "beacon output");
     require(tx.outputs[0].value >= tx.inputs[0].value, "beacon value");
-    require(tx.outputs[0].assets.lookup(hashpriceAsset.txid, hashpriceAsset.gidx) == hashprice, "hashprice moved");
-    require(tx.outputs[0].assets.lookup(heightAsset.txid, heightAsset.gidx) == height, "height moved");
+    int held = tx.inputs[0].assets.lookup(control.txid, control.gidx);
+    require(held > 0, "control");
+    require(tx.outputs[0].assets.lookup(control.txid, control.gidx) == held, "control moved");
 
     int locked = tx.input.current.value;
     require(locked >= collateral, "underfunded");

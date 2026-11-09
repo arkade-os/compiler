@@ -33,7 +33,7 @@ const projects = {
     },
     hashprice: {
         name: 'Hashprice',
-        description: 'Oracle-signed hashprice beacon and a cash-settled note that reads it in the same spend',
+        description: 'Header-verified hashprice beacon and a cash-settled note that reads it in the same spend',
         files: {
             'hashprice_beacon.ark': contracts.hashprice_beacon,
             'hashprice_option.ark': contracts.hashprice_option,

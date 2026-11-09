@@ -3,6 +3,9 @@ package e2e
 import (
 	"bytes"
 	"crypto/sha256"
+	"encoding/binary"
+	"fmt"
+	"math/big"
 	"path/filepath"
 	"testing"
 
@@ -21,12 +24,29 @@ import (
 const (
 	hashpriceBeaconValue = int64(10_000)
 	hashpriceCollateral  = int64(50_000)
-	hashpriceStrike      = int64(100)
 	hashpriceDust        = int64(330)
+	hashpriceStateType   = 16
+	// 0x1f00ffff is difficulty 2^-16, about 2^16 hashes, so a test can mine
+	// the six headers. The covenant applies the same compact-target and
+	// hashprice formula it would use for a mainnet epoch.
+	hashpriceBits     = uint32(0x1f00ffff)
+	checkpointHeight  = int64(100)
+	hashpriceHeaderAt = uint32(1_700_000_000)
+	hashpriceStep     = uint32(600)
 )
 
-// One beacon, one note. The beacon's update and passthrough leaves share a
-// taproot output, which is the program the note is instantiated against.
+// subsidyQuote is the era-0 quote at hashpriceBits for a 3000-second window:
+// 2^15 * 3^3 * 5^27 sats per PH/s per day.
+func subsidyQuote() *big.Int {
+	quote := new(big.Int).Lsh(big.NewInt(1), 15)
+	quote.Mul(quote, big.NewInt(27))
+	five := big.NewInt(5)
+	for range 27 {
+		quote.Mul(quote, five)
+	}
+	return quote
+}
+
 func TestHashprice(t *testing.T) {
 	beaconContract := compileArtifact(t, filepath.Join("..", "..", "examples", "hashprice", "hashprice_beacon.ark"))
 	optionContract := compileArtifact(t, filepath.Join("..", "..", "examples", "hashprice", "hashprice_option.ark"))
@@ -35,197 +55,208 @@ func TestHashprice(t *testing.T) {
 	emulatorKey := fixedPrivateKey(2)
 	holderKey := fixedPrivateKey(4)
 	writerKey := fixedPrivateKey(5)
-	oracleKey := fixedPrivateKey(6)
 
-	hashpriceAsset := asset.AssetId{Txid: chainhash.Hash{0x44}, Index: 1}
-	heightAsset := asset.AssetId{Txid: chainhash.Hash{0x45}, Index: 2}
+	checkpoint := bytes.Repeat([]byte{0xA1}, 32)
+	control := asset.AssetId{Txid: chainhash.Hash{0x46}, Index: 1}
 	holderProgram := bytes.Repeat([]byte{0x11}, 32)
 	writerProgram := bytes.Repeat([]byte{0x22}, 32)
 
-	assetValues := map[string][]byte{
-		"oraclePk":             schnorr.SerializePubKey(oracleKey.PubKey()),
-		"hashpriceAsset.txid":  hashpriceAsset.Txid[:],
-		"hashpriceAsset.gidx":  scriptInt(t, int64(hashpriceAsset.Index)),
-		"heightAsset.txid":     heightAsset.Txid[:],
-		"heightAsset.gidx":     scriptInt(t, int64(heightAsset.Index)),
-		"holderPk":             schnorr.SerializePubKey(holderKey.PubKey()),
-		"writerPk":             schnorr.SerializePubKey(writerKey.PubKey()),
-		"holderScript.program": holderProgram,
-		"holderScript.version": scriptInt(t, 1),
-		"writerScript.program": writerProgram,
-		"writerScript.version": scriptInt(t, 1),
-		"strike":               scriptInt(t, hashpriceStrike),
-		"collateral":           scriptInt(t, hashpriceCollateral),
-		"SERVER_EXIT_DELAY":    scriptInt(t, 144),
-	}
-	beacon := instantiateSharedTree(
-		t, beaconContract, []string{"update", "passthrough"}, assetValues,
-		serverKey.PubKey(), emulatorKey.PubKey(),
-	)
-	noteValues := map[string][]byte{}
-	for key, value := range assetValues {
-		noteValues[key] = value
-	}
-	noteValues["CONTRACT:HashpriceBeacon(<oraclePk>,<hashpriceAsset.txid>,<hashpriceAsset.gidx>,<heightAsset.txid>,<heightAsset.gidx>)"] = beacon.pkScript[2:]
-
-	assets := func(inHashprice, outHashprice, inHeight, outHeight uint64) asset.Packet {
-		hashpriceID, heightID := hashpriceAsset, heightAsset
-		return asset.Packet{
-			{
-				AssetId: &hashpriceID,
-				Inputs:  []asset.AssetInput{{Type: asset.AssetInputTypeLocal, Vin: 0, Amount: inHashprice}},
-				Outputs: []asset.AssetOutput{{Type: asset.AssetOutputTypeLocal, Vout: 0, Amount: outHashprice}},
-			},
-			{
-				AssetId: &heightID,
-				Inputs:  []asset.AssetInput{{Type: asset.AssetInputTypeLocal, Vin: 0, Amount: inHeight}},
-				Outputs: []asset.AssetOutput{{Type: asset.AssetOutputTypeLocal, Vout: 0, Amount: outHeight}},
-			},
+	beaconValues := func(height int64) map[string][]byte {
+		return map[string][]byte{
+			"checkpoint":       append([]byte{}, checkpoint...),
+			"checkpointHeight": scriptInt(t, height),
+			"bits":             scriptInt(t, int64(hashpriceBits)),
+			"control.txid":     control.Txid[:],
+			"control.gidx":     scriptInt(t, int64(control.Index)),
 		}
 	}
-	beaconOut := func(value int64, script []byte) *wire.TxOut {
-		return &wire.TxOut{Value: value, PkScript: script}
+	deploy := func(height int64) sharedTree {
+		return instantiateSharedTree(
+			t, beaconContract, []string{"update", "passthrough"}, beaconValues(height),
+			serverKey.PubKey(), emulatorKey.PubKey(),
+		)
+	}
+	beacon := deploy(checkpointHeight)
+	chain := mineChain(t, checkpoint, hashpriceHeaderAt, hashpriceStep)
+	price := hashpriceQuote(checkpointHeight+6, int64(5*hashpriceStep), hashpriceBits)
+	if price.Cmp(subsidyQuote()) != 0 {
+		t.Fatalf("ten-minute window quotes %s, closed form is %s", price, subsidyQuote())
+	}
+	fast := mineChain(t, checkpoint, hashpriceHeaderAt, hashpriceStep/2)
+	fastPrice := hashpriceQuote(checkpointHeight+6, int64(5*hashpriceStep/2), hashpriceBits)
+	if fastPrice.Cmp(new(big.Int).Rsh(price, 1)) != 0 {
+		t.Fatalf("faster window %s is not half of %s", fastPrice, price)
+	}
+
+	noteBase := beaconValues(checkpointHeight)
+	noteBase["holderPk"] = schnorr.SerializePubKey(holderKey.PubKey())
+	noteBase["writerPk"] = schnorr.SerializePubKey(writerKey.PubKey())
+	noteBase["holderScript.program"] = holderProgram
+	noteBase["holderScript.version"] = scriptInt(t, 1)
+	noteBase["writerScript.program"] = writerProgram
+	noteBase["writerScript.version"] = scriptInt(t, 1)
+	noteBase["SERVER_EXIT_DELAY"] = scriptInt(t, 144)
+	contractKey := "CONTRACT:HashpriceBeacon(<checkpoint>,<checkpointHeight>,<bits>,<control.txid>,<control.gidx>)"
+	noteBase[contractKey] = beacon.pkScript[2:]
+
+	genesis := fundBeacon(t, beacon.pkScript, beaconState(t, checkpoint, checkpointHeight, big.NewInt(0)))
+	continued := beaconOut(hashpriceBeaconValue, beacon.pkScript)
+	published := beaconState(t, chain.tip, checkpointHeight+6, price)
+	held := controlPacket(1, 1)
+
+	update := func(prev *wire.MsgTx, headers [][]byte, output *wire.TxOut, state []byte, packet asset.Packet) *psbt.Packet {
+		t.Helper()
+		group := covenantGroup(t, beaconContract, "update")
+		witness := covenantWitness(t, beaconContract, group, headerWitness(headers))
+		return hashpriceTx(t, []covenantInput{{
+			prev: prev, path: beacon.update, witness: witness,
+		}}, []*wire.TxOut{output}, packet, state)
+	}
+	optionOf := func(collateral int64, strike *big.Int) instantiatedGroup {
+		t.Helper()
+		values := map[string][]byte{}
+		for key, value := range noteBase {
+			values[key] = value
+		}
+		values["collateral"] = scriptInt(t, collateral)
+		values["strike"] = scriptBigInt(t, strike)
+		return instantiateGroup(
+			t, optionContract, "settle", values, serverKey.PubKey(), emulatorKey.PubKey(),
+		)
+	}
+	strike := new(big.Int).Rsh(new(big.Int).Set(price), 1)
+	standard := optionOf(hashpriceCollateral, strike)
+	passthroughOf := func(prev *wire.MsgTx) covenantInput {
+		return covenantInput{prev: prev, path: beacon.passthrough}
+	}
+	settle := func(prev *wire.MsgTx, option instantiatedGroup, locked int64, state []byte, outputs []*wire.TxOut) *psbt.Packet {
+		t.Helper()
+		return hashpriceTx(t, []covenantInput{
+			passthroughOf(prev),
+			{prev: fundingTx(option.pkScript, locked), path: scriptPath{covenant: option.covenant, leaf: option.tapLeafScript}},
+		}, outputs, held, state)
 	}
 	pay := func(value int64, program []byte) *wire.TxOut {
 		return &wire.TxOut{Value: value, PkScript: p2trTo(program)}
 	}
+	holderAmt := holderPayoff(t, hashpriceCollateral, price, strike)
+	writerAmt := hashpriceCollateral - holderAmt
 
 	t.Run("update", func(t *testing.T) {
-		group := covenantGroup(t, beaconContract, "update")
-		deployment := fundingTx(beacon.pkScript, hashpriceBeaconValue)
-		spend := func(hashprice, height int64, signer *btcec.PrivateKey, output *wire.TxOut, packet asset.Packet) *psbt.Packet {
-			witness := covenantWitness(t, beaconContract, group, map[string][]byte{
-				"newHashprice": scriptInt(t, hashprice),
-				"newHeight":    scriptInt(t, height),
-				"oracleSig": signBIP340(t, signer, hashpriceMessage(
-					t, deployment, 0, hashprice, height,
-				)),
-			})
-			return hashpriceTx(t, []covenantInput{{
-				prev: deployment, path: beacon.update, witness: witness,
-			}}, []*wire.TxOut{output}, packet)
-		}
-		continued := beaconOut(hashpriceBeaconValue, beacon.pkScript)
-		published := assets(100, 150, 100, 101)
-
-		t.Run("oracle advances the published hashprice", func(t *testing.T) {
-			requireVMResult(t, spend(150, 101, oracleKey, continued, published), emulatorKey.PubKey(), "")
+		t.Run("six headers publish the extrapolated hashprice", func(t *testing.T) {
+			requireVMResult(t, update(genesis, chain.headers, continued, published, held), emulatorKey.PubKey(), "")
 		})
-		t.Run("an old height is a replay", func(t *testing.T) {
-			requireVMResult(
-				t, spend(150, 100, oracleKey, continued, assets(100, 150, 100, 100)),
-				emulatorKey.PubKey(), "OP_VERIFY failed",
-			)
+		t.Run("a faster window extrapolates a lower hashprice", func(t *testing.T) {
+			state := beaconState(t, fast.tip, checkpointHeight+6, fastPrice)
+			requireVMResult(t, update(genesis, fast.headers, continued, state, held), emulatorKey.PubKey(), "")
 		})
-		t.Run("the oracle signed a different hashprice than the output", func(t *testing.T) {
-			requireVMResult(
-				t, spend(150, 101, oracleKey, continued, assets(100, 149, 100, 101)),
-				emulatorKey.PubKey(), "OP_NUMEQUALVERIFY failed",
-			)
+		t.Run("passthrough copies the checkpoint packet", func(t *testing.T) {
+			requireVMResult(t, hashpriceTx(t, []covenantInput{
+				passthroughOf(genesis),
+			}, []*wire.TxOut{continued}, held, beaconState(t, checkpoint, checkpointHeight, big.NewInt(0))), emulatorKey.PubKey(), "")
 		})
-		t.Run("another key cannot publish", func(t *testing.T) {
-			requireVMResult(
-				t, spend(150, 101, holderKey, continued, published),
-				emulatorKey.PubKey(), "signature verification failed",
-			)
+		t.Run("the height must advance in steps of six", func(t *testing.T) {
+			prev := fundBeacon(t, beacon.pkScript, beaconState(t, checkpoint, checkpointHeight+3, big.NewInt(0)))
+			requireVMResult(t, update(prev, chain.headers, continued, published, held), emulatorKey.PubKey(), "OP_NUMEQUALVERIFY failed")
+		})
+		t.Run("the genesis packet must be the checkpoint", func(t *testing.T) {
+			prev := fundBeacon(t, beacon.pkScript, beaconState(t, bytes.Repeat([]byte{0xB2}, 32), checkpointHeight, big.NewInt(0)))
+			requireVMResult(t, update(prev, chain.headers, continued, published, held), emulatorKey.PubKey(), "OP_EQUALVERIFY failed")
+		})
+		t.Run("a window that crosses a retarget is rejected", func(t *testing.T) {
+			retarget := deploy(2010)
+			prev := fundBeacon(t, retarget.pkScript, beaconState(t, checkpoint, 2010, big.NewInt(0)))
+			group := covenantGroup(t, beaconContract, "update")
+			witness := covenantWitness(t, beaconContract, group, headerWitness(chain.headers))
+			spent := hashpriceTx(t, []covenantInput{{
+				prev: prev, path: retarget.update, witness: witness,
+			}}, []*wire.TxOut{beaconOut(hashpriceBeaconValue, retarget.pkScript)}, held, published)
+			requireVMResult(t, spent, emulatorKey.PubKey(), "OP_NUMEQUALVERIFY failed")
+		})
+		t.Run("a window that crosses a halving is rejected", func(t *testing.T) {
+			halving := deploy(209994)
+			prev := fundBeacon(t, halving.pkScript, beaconState(t, checkpoint, 209994, big.NewInt(0)))
+			group := covenantGroup(t, beaconContract, "update")
+			witness := covenantWitness(t, beaconContract, group, headerWitness(chain.headers))
+			spent := hashpriceTx(t, []covenantInput{{
+				prev: prev, path: halving.update, witness: witness,
+			}}, []*wire.TxOut{beaconOut(hashpriceBeaconValue, halving.pkScript)}, held, published)
+			requireVMResult(t, spent, emulatorKey.PubKey(), "OP_NUMEQUALVERIFY failed")
+		})
+		t.Run("a future tip is rejected", func(t *testing.T) {
+			future := mineChain(t, checkpoint, 4_102_444_800, hashpriceStep)
+			state := beaconState(t, future.tip, checkpointHeight+6, hashpriceQuote(checkpointHeight+6, int64(5*hashpriceStep), hashpriceBits))
+			requireVMResult(t, update(genesis, future.headers, continued, state, held), emulatorKey.PubKey(), "OP_VERIFY failed")
+		})
+		t.Run("a header that does not link is rejected", func(t *testing.T) {
+			headers := cloneHeaders(chain.headers)
+			headers[1][4] ^= 0xff
+			requireVMResult(t, update(genesis, headers, continued, published, held), emulatorKey.PubKey(), "OP_EQUALVERIFY failed")
+		})
+		t.Run("a header with different nBits is rejected", func(t *testing.T) {
+			headers := cloneHeaders(chain.headers)
+			binary.LittleEndian.PutUint32(headers[0][72:76], hashpriceBits^1)
+			requireVMResult(t, update(genesis, headers, continued, published, held), emulatorKey.PubKey(), "OP_NUMEQUALVERIFY failed")
+		})
+		t.Run("a header that misses its target is rejected", func(t *testing.T) {
+			headers := cloneHeaders(chain.headers)
+			nonce := binary.LittleEndian.Uint32(headers[0][76:80])
+			binary.LittleEndian.PutUint32(headers[0][76:80], nonce+1)
+			requireVMResult(t, update(genesis, headers, continued, published, held), emulatorKey.PubKey(), "OP_VERIFY failed")
+		})
+		t.Run("the output hashprice must be the one the headers imply", func(t *testing.T) {
+			wrong := beaconState(t, chain.tip, checkpointHeight+6, new(big.Int).Add(price, big.NewInt(1)))
+			requireVMResult(t, update(genesis, chain.headers, continued, wrong, held), emulatorKey.PubKey(), "OP_EQUALVERIFY failed")
 		})
 		t.Run("the beacon value cannot be skimmed", func(t *testing.T) {
 			requireVMResult(
-				t, spend(150, 101, oracleKey, beaconOut(hashpriceBeaconValue-1, beacon.pkScript), published),
+				t, update(genesis, chain.headers, beaconOut(hashpriceBeaconValue-1, beacon.pkScript), published, held),
 				emulatorKey.PubKey(), "does not preserve source value",
 			)
 		})
 	})
 
 	t.Run("settle", func(t *testing.T) {
-		deployment := fundingTx(beacon.pkScript, hashpriceBeaconValue)
-		passthrough := covenantInput{prev: deployment, path: beacon.passthrough}
-		optionOf := func(collateral, strike int64) instantiatedGroup {
-			values := map[string][]byte{}
-			for key, value := range noteValues {
-				values[key] = value
-			}
-			values["collateral"] = scriptInt(t, collateral)
-			values["strike"] = scriptInt(t, strike)
-			return instantiateGroup(
-				t, optionContract, "settle", values, serverKey.PubKey(), emulatorKey.PubKey(),
-			)
-		}
-		standard := optionOf(hashpriceCollateral, hashpriceStrike)
-		settle := func(
-			beacon covenantInput, option instantiatedGroup, locked, hashprice, height int64,
-			outputs []*wire.TxOut,
-		) *psbt.Packet {
-			return hashpriceTx(t, []covenantInput{
-				beacon,
-				{prev: fundingTx(option.pkScript, locked), path: scriptPath{covenant: option.covenant, leaf: option.tapLeafScript}},
-			}, outputs, assets(uint64(hashprice), uint64(hashprice), uint64(height), uint64(height)))
-		}
-		holderAmt := hashpriceCollateral * (150 - hashpriceStrike) / 150
-		writerAmt := hashpriceCollateral - holderAmt
+		updated := update(genesis, chain.headers, continued, published, held)
+		requireVMResult(t, updated, emulatorKey.PubKey(), "")
 
 		t.Run("an in-the-money note pays the holder and the writer", func(t *testing.T) {
-			requireVMResult(t, settle(
-				passthrough, standard, hashpriceCollateral, 150, 101,
-				[]*wire.TxOut{
-					beaconOut(hashpriceBeaconValue, beacon.pkScript),
-					pay(holderAmt, holderProgram),
-					pay(writerAmt, writerProgram),
-				},
-			), emulatorKey.PubKey(), "")
-		})
-		t.Run("the published value survives an update and then settles", func(t *testing.T) {
-			update := covenantGroup(t, beaconContract, "update")
-			witness := covenantWitness(t, beaconContract, update, map[string][]byte{
-				"newHashprice": scriptInt(t, 150),
-				"newHeight":    scriptInt(t, 101),
-				"oracleSig": signBIP340(t, oracleKey, hashpriceMessage(
-					t, deployment, 0, 150, 101,
-				)),
-			})
-			updated := hashpriceTx(t, []covenantInput{{
-				prev: deployment, path: beacon.update, witness: witness,
-			}}, []*wire.TxOut{beaconOut(hashpriceBeaconValue, beacon.pkScript)}, assets(100, 150, 100, 101))
-			requireVMResult(t, updated, emulatorKey.PubKey(), "")
-
-			requireVMResult(t, settle(
-				covenantInput{prev: updated.UnsignedTx, path: beacon.passthrough},
-				standard, hashpriceCollateral, 150, 101,
-				[]*wire.TxOut{
-					beaconOut(hashpriceBeaconValue, beacon.pkScript),
-					pay(holderAmt, holderProgram),
-					pay(writerAmt, writerProgram),
-				},
-			), emulatorKey.PubKey(), "")
+			requireVMResult(t, settle(updated.UnsignedTx, standard, hashpriceCollateral, published, []*wire.TxOut{
+				continued,
+				pay(holderAmt, holderProgram),
+				pay(writerAmt, writerProgram),
+			}), emulatorKey.PubKey(), "")
 		})
 		t.Run("out of the money the writer keeps the collateral", func(t *testing.T) {
 			requireVMResult(t, settle(
-				passthrough, standard, hashpriceCollateral, 80, 101,
-				[]*wire.TxOut{
-					beaconOut(hashpriceBeaconValue, beacon.pkScript),
-					pay(hashpriceCollateral, writerProgram),
-				},
+				updated.UnsignedTx, optionOf(hashpriceCollateral, price), hashpriceCollateral, published,
+				[]*wire.TxOut{continued, pay(hashpriceCollateral, writerProgram)},
 			), emulatorKey.PubKey(), "")
 		})
 		t.Run("a dust leg folds into the writer", func(t *testing.T) {
-			const collateral = hashpriceDust + 70
-			holder := collateral * (101 - hashpriceStrike) / 101
-			if holder > hashpriceDust {
-				t.Fatalf("dust fixture holder payout %d is above dust", holder)
+			diff := new(big.Int).Quo(new(big.Int).Set(price), big.NewInt(hashpriceCollateral/100))
+			dustStrike := new(big.Int).Sub(new(big.Int).Set(price), diff)
+			holder := holderPayoff(t, hashpriceCollateral, price, dustStrike)
+			if holder <= 0 || holder > hashpriceDust {
+				t.Fatalf("dust fixture holder payout %d is outside 1..%d", holder, hashpriceDust)
 			}
 			requireVMResult(t, settle(
-				passthrough, optionOf(collateral, hashpriceStrike), collateral, 101, 102,
-				[]*wire.TxOut{
-					beaconOut(hashpriceBeaconValue, beacon.pkScript),
-					pay(collateral, writerProgram),
-				},
+				updated.UnsignedTx, optionOf(hashpriceCollateral, dustStrike), hashpriceCollateral, published,
+				[]*wire.TxOut{continued, pay(hashpriceCollateral, writerProgram)},
 			), emulatorKey.PubKey(), "")
 		})
-		t.Run("a different beacon program does not settle", func(t *testing.T) {
-			other := fundingTx(p2trScript(t, []byte{0x51}), hashpriceBeaconValue)
+		t.Run("the checkpoint packet cannot settle a note", func(t *testing.T) {
 			requireVMResult(t, settle(
-				covenantInput{prev: other, path: beacon.passthrough},
-				standard, hashpriceCollateral, 150, 101,
+				genesis, standard, hashpriceCollateral, beaconState(t, checkpoint, checkpointHeight, big.NewInt(0)),
+				[]*wire.TxOut{continued, pay(holderAmt, holderProgram), pay(writerAmt, writerProgram)},
+			), emulatorKey.PubKey(), "OP_VERIFY failed")
+		})
+		t.Run("a different beacon program does not settle", func(t *testing.T) {
+			// The foreign coin carries a well-formed packet, so passthrough's
+			// copy checks succeed and the note is what rejects the program.
+			other := fundBeacon(t, p2trScript(t, []byte{0x51}), published)
+			requireVMResult(t, settle(
+				other, standard, hashpriceCollateral, published,
 				[]*wire.TxOut{
 					beaconOut(hashpriceBeaconValue, other.TxOut[0].PkScript),
 					pay(holderAmt, holderProgram),
@@ -233,38 +264,191 @@ func TestHashprice(t *testing.T) {
 				},
 			), emulatorKey.PubKey(), "OP_EQUALVERIFY failed")
 		})
-		t.Run("settlement cannot move the published hashprice", func(t *testing.T) {
-			moved := hashpriceTx(t, []covenantInput{
-				passthrough,
-				{prev: fundingTx(standard.pkScript, hashpriceCollateral), path: scriptPath{covenant: standard.covenant, leaf: standard.tapLeafScript}},
-			}, []*wire.TxOut{
-				beaconOut(hashpriceBeaconValue, beacon.pkScript),
-				pay(holderAmt, holderProgram),
-				pay(writerAmt, writerProgram),
-			}, assets(150, 151, 101, 101))
-			requireVMResult(t, moved, emulatorKey.PubKey(), "does not preserve source assets")
-		})
-		t.Run("the holder cannot be shorted", func(t *testing.T) {
+		t.Run("settlement cannot move the published state", func(t *testing.T) {
+			moved := append([]byte{}, published...)
+			moved[55] ^= 0xff
 			requireVMResult(t, settle(
-				passthrough, standard, hashpriceCollateral, 150, 101,
-				[]*wire.TxOut{
-					beaconOut(hashpriceBeaconValue, beacon.pkScript),
-					pay(holderAmt-1, holderProgram),
-					pay(writerAmt+1, writerProgram),
-				},
-			), emulatorKey.PubKey(), "OP_VERIFY failed")
-		})
-		t.Run("the holder payout cannot be redirected", func(t *testing.T) {
-			requireVMResult(t, settle(
-				passthrough, standard, hashpriceCollateral, 150, 101,
-				[]*wire.TxOut{
-					beaconOut(hashpriceBeaconValue, beacon.pkScript),
-					pay(holderAmt, writerProgram),
-					pay(writerAmt, writerProgram),
-				},
+				updated.UnsignedTx, standard, hashpriceCollateral, moved,
+				[]*wire.TxOut{continued, pay(holderAmt, holderProgram), pay(writerAmt, writerProgram)},
 			), emulatorKey.PubKey(), "OP_EQUALVERIFY failed")
 		})
+		t.Run("the holder cannot be shorted", func(t *testing.T) {
+			requireVMResult(t, settle(updated.UnsignedTx, standard, hashpriceCollateral, published, []*wire.TxOut{
+				continued,
+				pay(holderAmt-1, holderProgram),
+				pay(writerAmt+1, writerProgram),
+			}), emulatorKey.PubKey(), "OP_VERIFY failed")
+		})
+		t.Run("the holder payout cannot be redirected", func(t *testing.T) {
+			requireVMResult(t, settle(updated.UnsignedTx, standard, hashpriceCollateral, published, []*wire.TxOut{
+				continued,
+				pay(holderAmt, writerProgram),
+				pay(writerAmt, writerProgram),
+			}), emulatorKey.PubKey(), "OP_EQUALVERIFY failed")
+		})
 	})
+}
+
+type minedChain struct {
+	headers [][]byte
+	tip     []byte
+}
+
+func mineChain(t *testing.T, prev []byte, opened, step uint32) minedChain {
+	t.Helper()
+
+	headers := make([][]byte, 6)
+	cursor := append([]byte{}, prev...)
+	for i := range headers {
+		headers[i] = mineHeader(t, cursor, opened+uint32(i)*step, hashpriceBits)
+		cursor = hash256(headers[i])
+	}
+	return minedChain{headers: headers, tip: cursor}
+}
+
+func mineHeader(t *testing.T, prev []byte, stamp, bits uint32) []byte {
+	t.Helper()
+
+	if len(prev) != 32 {
+		t.Fatalf("previous hash is %d bytes", len(prev))
+	}
+	header := make([]byte, 80)
+	binary.LittleEndian.PutUint32(header[0:4], 0x20000000)
+	copy(header[4:36], prev)
+	binary.LittleEndian.PutUint32(header[68:72], stamp)
+	binary.LittleEndian.PutUint32(header[72:76], bits)
+	target := compactTarget(bits)
+	for extra := uint32(0); extra < 8; extra++ {
+		binary.LittleEndian.PutUint32(header[36:40], extra)
+		for nonce := uint32(0); nonce < 1<<22; nonce++ {
+			binary.LittleEndian.PutUint32(header[76:80], nonce)
+			if meetsTarget(hash256(header), target) {
+				return append([]byte{}, header...)
+			}
+		}
+	}
+	t.Fatal("mined no header")
+	return nil
+}
+
+func cloneHeaders(headers [][]byte) [][]byte {
+	out := make([][]byte, len(headers))
+	for i, header := range headers {
+		out[i] = append([]byte{}, header...)
+	}
+	return out
+}
+
+func headerWitness(headers [][]byte) map[string][]byte {
+	values := make(map[string][]byte, len(headers))
+	for i, header := range headers {
+		values[fmt.Sprintf("headers.%d", i)] = header
+	}
+	return values
+}
+
+func hash256(data []byte) []byte {
+	first := sha256.Sum256(data)
+	second := sha256.Sum256(first[:])
+	out := make([]byte, 32)
+	copy(out, second[:])
+	return out
+}
+
+func compactTarget(bits uint32) *big.Int {
+	exponent := int64(bits >> 24)
+	mantissa := int64(bits & 0x7fffff)
+	if bits&0x00800000 != 0 || mantissa == 0 || exponent < 3 || exponent > 32 {
+		return big.NewInt(0)
+	}
+	return new(big.Int).Lsh(big.NewInt(mantissa), uint(8*(exponent-3)))
+}
+
+func meetsTarget(hash []byte, target *big.Int) bool {
+	reversed := make([]byte, len(hash))
+	for i := range hash {
+		reversed[len(hash)-1-i] = hash[i]
+	}
+	work := new(big.Int).SetBytes(reversed)
+	return work.Sign() > 0 && work.Cmp(target) <= 0
+}
+
+func hashpriceQuote(height, span int64, bits uint32) *big.Int {
+	subsidy := new(big.Int).Rsh(big.NewInt(5_000_000_000), uint(height/210_000))
+	if span < 750 {
+		span = 750
+	}
+	if span > 12000 {
+		span = 12000
+	}
+	target := compactTarget(bits)
+	maxTarget := new(big.Int).Lsh(big.NewInt(65535), 208)
+	numerator := new(big.Int).Mul(subsidy, big.NewInt(86_400))
+	numerator.Mul(numerator, big.NewInt(1_000_000_000_000_000))
+	numerator.Mul(numerator, big.NewInt(span))
+	numerator.Mul(numerator, target)
+	denominator := new(big.Int).Mul(maxTarget, big.NewInt(3000))
+	denominator.Mul(denominator, new(big.Int).Lsh(big.NewInt(1), 32))
+	return numerator.Quo(numerator, denominator)
+}
+
+func holderPayoff(t *testing.T, collateral int64, price, strike *big.Int) int64 {
+	t.Helper()
+
+	if price.Cmp(strike) <= 0 {
+		return 0
+	}
+	amount := new(big.Int).Sub(new(big.Int).Set(price), strike)
+	amount.Mul(amount, big.NewInt(collateral))
+	amount.Quo(amount, price)
+	if !amount.IsInt64() {
+		t.Fatalf("holder payoff %s does not fit a satoshi amount", amount)
+	}
+	return amount.Int64()
+}
+
+func beaconState(t *testing.T, tip []byte, height int64, price *big.Int) []byte {
+	t.Helper()
+
+	if len(tip) != 32 {
+		t.Fatalf("tip is %d bytes", len(tip))
+	}
+	state := append([]byte{}, tip...)
+	state = append(state, num2bin(t, height, 8)...)
+	state = append(state, num2binBig(t, price, 16)...)
+	if len(state) != 56 {
+		t.Fatalf("state is %d bytes", len(state))
+	}
+	return state
+}
+
+func fundBeacon(t *testing.T, pkScript, state []byte) *wire.MsgTx {
+	t.Helper()
+
+	tx := fundingTx(pkScript, hashpriceBeaconValue)
+	output, err := extension.Extension{statePacket(state)}.TxOut()
+	if err != nil {
+		t.Fatalf("state packet: %v", err)
+	}
+	tx.AddTxOut(output)
+	return tx
+}
+
+func beaconOut(value int64, script []byte) *wire.TxOut {
+	return &wire.TxOut{Value: value, PkScript: script}
+}
+
+func statePacket(state []byte) extension.Packet {
+	return extension.UnknownPacket{PacketType: hashpriceStateType, Data: state}
+}
+
+func controlPacket(inAmount, outAmount uint64) asset.Packet {
+	id := asset.AssetId{Txid: chainhash.Hash{0x46}, Index: 1}
+	return asset.Packet{{
+		AssetId: &id,
+		Inputs:  []asset.AssetInput{{Type: asset.AssetInputTypeLocal, Vin: 0, Amount: inAmount}},
+		Outputs: []asset.AssetOutput{{Type: asset.AssetOutputTypeLocal, Vout: 0, Amount: outAmount}},
+	}}
 }
 
 type scriptPath struct {
@@ -309,10 +493,8 @@ func instantiateSharedTree(
 			t.Fatalf("%s.%s leaf not found", contract.Name, name)
 		}
 		leafValues := map[string][]byte{
-			"SERVER_KEY": schnorr.SerializePubKey(serverKey),
-			"EMULATOR_KEY:" + name: schnorr.SerializePubKey(arkade.ComputeArkadeScriptPublicKey(
-				emulatorKey, arkade.ArkadeScriptHash(covenant),
-			)),
+			"SERVER_KEY":           schnorr.SerializePubKey(serverKey),
+			"EMULATOR_KEY:" + name: schnorr.SerializePubKey(arkade.ComputeArkadeScriptPublicKey(emulatorKey, arkade.ArkadeScriptHash(covenant))),
 		}
 		leaves[i] = assemble(t, leafASM, leafValues)
 		paths[i] = scriptPath{covenant: covenant}
@@ -329,9 +511,6 @@ func instantiateSharedTree(
 	pkScript, err := txscript.PayToTaprootScript(outputKey)
 	if err != nil {
 		t.Fatal(err)
-	}
-	if len(tree.LeafMerkleProofs) != len(leaves) {
-		t.Fatalf("%d proofs for %d leaves", len(tree.LeafMerkleProofs), len(leaves))
 	}
 	for i, leaf := range leaves {
 		controlBlock := tree.LeafMerkleProofs[i].ToControlBlock(internalKey)
@@ -352,12 +531,7 @@ func instantiateSharedTree(
 	for i, name := range names {
 		byName[name] = paths[i]
 	}
-	update, okUpdate := byName["update"]
-	passthrough, okPassthrough := byName["passthrough"]
-	if !okUpdate || !okPassthrough {
-		t.Fatalf("beacon tree is missing update or passthrough: %v", names)
-	}
-	return sharedTree{pkScript: pkScript, update: update, passthrough: passthrough}
+	return sharedTree{pkScript: pkScript, update: byName["update"], passthrough: byName["passthrough"]}
 }
 
 func hashpriceTx(
@@ -365,6 +539,7 @@ func hashpriceTx(
 	inputs []covenantInput,
 	outputs []*wire.TxOut,
 	assets asset.Packet,
+	state []byte,
 ) *psbt.Packet {
 	t.Helper()
 
@@ -387,7 +562,7 @@ func hashpriceTx(
 	if err != nil {
 		t.Fatal(err)
 	}
-	extensionOutput, err := extension.Extension{extension.Packet(assets), packet}.TxOut()
+	extensionOutput, err := extension.Extension{extension.Packet(assets), packet, statePacket(state)}.TxOut()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -407,25 +582,26 @@ func hashpriceTx(
 	return ptx
 }
 
-func hashpriceMessage(t *testing.T, prev *wire.MsgTx, vout uint32, hashprice, height int64) []byte {
-	t.Helper()
-
-	var body bytes.Buffer
-	txid := prev.TxHash()
-	body.Write(txid[:])
-	body.Write(num2bin(t, int64(vout), 4))
-	body.Write(num2bin(t, hashprice, 8))
-	body.Write(num2bin(t, height, 8))
-	sum := sha256.Sum256(body.Bytes())
-	return sum[:]
-}
-
 func num2bin(t *testing.T, value int64, size int) []byte {
 	t.Helper()
 
 	encoded, err := arkade.BigNumFromInt64(value).FixedBytes(size)
 	if err != nil {
 		t.Fatalf("num2bin(%d, %d): %v", value, size, err)
+	}
+	return encoded
+}
+
+func num2binBig(t *testing.T, value *big.Int, size int) []byte {
+	t.Helper()
+
+	number, err := arkade.BigNumFromBytes(scriptBigInt(t, value))
+	if err != nil {
+		t.Fatalf("num2bin big: %v", err)
+	}
+	encoded, err := number.FixedBytes(size)
+	if err != nil {
+		t.Fatalf("num2bin big size %d: %v", size, err)
 	}
 	return encoded
 }

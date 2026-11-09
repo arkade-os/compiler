@@ -1,6 +1,6 @@
 use arkade_compiler::compile_file;
 use arkade_compiler::opcodes::{
-    OP_CHECKSIGFROMSTACK, OP_INSPECTINASSETLOOKUP, OP_SHA256, OP_TUNNEL,
+    OP_CHECKSIGFROMSTACK, OP_HASH256, OP_INSPECTINPUTPACKET, OP_INSPECTPACKET, OP_TUNNEL,
 };
 use std::path::Path;
 
@@ -12,7 +12,7 @@ fn compile(path: &str) -> arkade_compiler::models::ContractJson {
 }
 
 #[test]
-fn beacon_publishes_hashprice_and_forwards_unchanged() {
+fn beacon_derives_hashprice_from_six_headers() {
     let out = compile("examples/hashprice/hashprice_beacon.ark");
     assert_eq!(out.name, "HashpriceBeacon");
     let names: Vec<&str> = out
@@ -23,19 +23,26 @@ fn beacon_publishes_hashprice_and_forwards_unchanged() {
     assert_eq!(names, ["update", "passthrough"]);
 
     let update = arkade_asm(&out, "update");
-    assert!(update.contains(OP_CHECKSIGFROMSTACK), "{update}");
-    assert!(update.contains(OP_SHA256), "{update}");
-    assert!(update.contains(OP_TUNNEL), "{update}");
-    assert_eq!(
-        arkade_inputs(&out, "update"),
-        ["newHashprice", "newHeight", "oracleSig"]
+    assert!(
+        !update.contains(OP_CHECKSIGFROMSTACK),
+        "update must not take an oracle signature: {update}"
     );
+    assert_eq!(
+        update.matches(OP_HASH256).count(),
+        6,
+        "each header is hashed once: {update}"
+    );
+    assert!(update.contains(OP_INSPECTINPUTPACKET), "{update}");
+    assert!(update.contains(OP_INSPECTPACKET), "{update}");
+    assert!(update.contains(OP_TUNNEL), "{update}");
+    assert_eq!(arkade_inputs(&out, "update"), ["headers"]);
 
     let passthrough = arkade_asm(&out, "passthrough");
     assert!(passthrough.contains(OP_TUNNEL), "{passthrough}");
+    assert!(passthrough.contains(OP_INSPECTPACKET), "{passthrough}");
     assert!(
-        !passthrough.contains(OP_CHECKSIGFROMSTACK),
-        "passthrough must not require an oracle"
+        !passthrough.contains(OP_HASH256),
+        "passthrough copies the packet and does not re-hash headers"
     );
     assert!(arkade_inputs(&out, "passthrough").is_empty());
 }
@@ -57,8 +64,8 @@ fn option_settles_against_the_beacon_program() {
         "settle must authenticate the beacon program: {settle}"
     );
     assert!(
-        settle.contains(OP_INSPECTINASSETLOOKUP),
-        "settle must read the published asset amount: {settle}"
+        settle.contains(OP_INSPECTINPUTPACKET),
+        "settle must read the beacon state packet: {settle}"
     );
     assert!(arkade_inputs(&out, "settle").is_empty());
 }
