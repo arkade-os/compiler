@@ -31,6 +31,14 @@ const projects = {
             'option_intent.ark': contracts.option_intent,
         }
     },
+    hashprice: {
+        name: 'Hashprice',
+        description: 'Oracle-signed hashprice beacon and a cash-settled note that reads it in the same spend',
+        files: {
+            'hashprice_beacon.ark': contracts.hashprice_beacon,
+            'hashprice_option.ark': contracts.hashprice_option,
+        }
+    },
     bonds: {
         name: 'Bonds',
         description: "Fixed-maturity bond market with a phased lifecycle: borrowers self-issue 1:1 credit + debit tokens against collateral and sell credit on the order book for USDT (no interest rate); permissionless oracle-priced margin call (pre-maturity, fires when collateralValue < liqThresholdBps × mintedAmount / 10000) keeps every vault thresholded healthy so credit tokens are genuinely fungible; post-maturity auction window settles defaulted collateral; credit holders redeem pro-rata into single-sig wallets",
