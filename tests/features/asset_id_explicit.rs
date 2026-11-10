@@ -341,7 +341,7 @@ fn accepts_loop_index_as_gidx() {
     );
 }
 
-// ─── Computed indexes and gidx operands ─────────────────────────────────────
+// ─── Computed indexes and Asset ID operands ─────────────────────────────────
 
 #[test]
 fn computed_indexes_unroll_in_nested_loops() {
@@ -418,4 +418,54 @@ fn control_is_accepts_computed_gidx() {
         asm.contains("OP_INSPECTASSETGROUPCTRL OP_DROP") && asm.contains("1 OP_ADD OP_EQUAL"),
         "{asm}"
     );
+}
+
+#[test]
+fn txid_operands_accept_bytes32_expressions_at_every_site() {
+    let compile_site = |site: &str, txid: &str, gidx: &str| {
+        compile(&format!(
+            "contract C(bytes data, AssetId[2] ids) {{
+                function f() {{ {} }}
+                private function id(bytes d) bytes32 {{ return sha256(d + d); }}
+            }}",
+            site.replace("TXID", txid).replace("GIDX", gidx)
+        ))
+    };
+    let literal = format!("0x{}", "01".repeat(32));
+    for site in [
+        "require(tx.inputs[0].assets.lookup(TXID, GIDX) >= 1);",
+        "let x = tx.outputs[0].assets.tryLookup(TXID, GIDX); require(x.found);",
+        "require(tx.outputs[0].assets.has(TXID, GIDX));",
+        "require(tx.assetGroups.has(TXID, GIDX));",
+        "require(tx.assetGroups.find(TXID, GIDX).delta == 0);",
+        "require(tx.assetGroups[0].controlIs(TXID, GIDX));",
+        "let g = tx.assetGroups[0]; require(g.controlIs(TXID, GIDX));",
+    ] {
+        // Each operand is emitted exactly once.
+        for (txid, emitted) in [
+            (literal.as_str(), literal.as_str()),
+            ("sha256(data)", "OP_SHA256"),
+            ("id(data)", "OP_CAT OP_SHA256"),
+            ("ids[1].txid", "<ids.1.txid>"),
+            (
+                "id(bytes(tx.inputs[1].assets.lookup(ids[0].txid, 1)))",
+                "OP_CAT OP_SHA256",
+            ),
+        ] {
+            let output = compile_site(site, txid, "2")
+                .unwrap_or_else(|error| panic!("{site} with {txid}: {error}"));
+            let asm = crate::common::arkade_asm(&output, "f");
+            assert_eq!(asm.matches(emitted).count(), 1, "{site} with {txid}: {asm}");
+        }
+        for (txid, gidx, expected) in [
+            ("0x0101", "2", "'0x0101' must be bytes32, got bytes"),
+            ("ids[1].gidx", "2", "must be bytes32, got int"),
+            ("sha256(data)", "70000", "gidx 70000 is out of range"),
+        ] {
+            let error = compile_site(site, txid, gidx)
+                .expect_err("invalid Asset ID operand must be rejected")
+                .to_string();
+            assert!(error.contains(expected), "{site} with {txid}: {error}");
+        }
+    }
 }

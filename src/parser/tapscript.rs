@@ -63,6 +63,7 @@ pub(crate) fn parse_named_tapscript(
         name,
         span,
         declaration,
+        attributes: Vec::new(),
         inputs,
         items,
     })
