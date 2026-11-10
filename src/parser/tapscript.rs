@@ -74,7 +74,7 @@ pub(crate) fn parse_tap_item(
     pair: Pair<Rule>,
     constants: &[Constant],
 ) -> Result<crate::models::TapItem, String> {
-    use crate::models::{HashFn, TapItem};
+    use crate::models::{HashFn, TapItem, TapOperand};
     match pair.as_rule() {
         rule if is_operator_level(rule)
             || matches!(rule, Rule::unary_expr | Rule::primary_expr) =>
@@ -95,12 +95,23 @@ pub(crate) fn parse_tap_item(
             let fn_name = f_inner.next().ok_or("Missing hash fn name")?.as_str();
             let hash_fn =
                 HashFn::parse(fn_name).ok_or_else(|| format!("unknown hash function {fn_name}"))?;
-            let preimage = f_inner
-                .next()
-                .ok_or("Missing hash preimage")?
-                .as_str()
-                .to_string();
-            let hash = parse_named_operand(inner.next().ok_or("Missing hash value")?)?;
+            let preimage = parse_general_expression(f_inner.next().ok_or("Missing hash preimage")?)?;
+            let preimage = operand_path(&preimage, constants).ok_or_else(|| {
+                format!(
+                    "hash preimage `{}` is not a tapscript input",
+                    preimage.source_text()
+                )
+            })?;
+            let hash = inner.next().ok_or("Missing hash value")?;
+            let hash = if hash.as_rule() == Rule::named_binding {
+                let path = parse_binding(hash, constants)?;
+                match constant_value(&path, constants) {
+                    Ok(value) if value.starts_with("0x") => TapOperand::Literal(value),
+                    _ => TapOperand::Name(path),
+                }
+            } else {
+                TapOperand::Literal(parse_named_operand(hash)?)
+            };
             Ok(TapItem::Hash {
                 hash_fn,
                 preimage,
@@ -113,12 +124,8 @@ pub(crate) fn parse_tap_item(
         ),
         Rule::check_sig => {
             let mut inner = pair.into_inner();
-            let sig = inner
-                .next()
-                .ok_or("Missing signature")?
-                .as_str()
-                .to_string();
-            let key = parse_key_expr(inner.next().ok_or("Missing key")?)?;
+            let sig = parse_binding(inner.next().ok_or("Missing signature")?, constants)?;
+            let key = parse_key_expr(inner.next().ok_or("Missing key")?, constants)?;
             Ok(TapItem::Sig {
                 keys: vec![key],
                 sigs: vec![sig],
@@ -150,7 +157,7 @@ pub(crate) fn parse_tap_item(
             if inner.next().is_some() {
                 return Err(format!("{name}() requires one argument"));
             }
-            let (value, unit) = parse_time_operand(&name, arg)?;
+            let (value, unit) = parse_time_operand(&name, arg, constants)?;
             if name == "older" {
                 Ok(TapItem::Older { value, unit })
             } else {
@@ -168,15 +175,17 @@ pub(crate) fn parse_tap_item(
 fn parse_time_operand(
     call: &str,
     arg: Pair<Rule>,
-) -> Result<(String, Option<crate::models::TimeUnit>), String> {
+    constants: &[Constant],
+) -> Result<(crate::models::TapOperand, Option<crate::models::TimeUnit>), String> {
     use crate::models::TimeUnit;
-    let text = arg.as_str();
+    let text = arg.as_str().trim_end();
     let Some(wrapper) = arg
+        .clone()
         .into_inner()
         .flatten()
         .find(|p| p.as_rule() == Rule::function_call && p.as_str() == text)
     else {
-        return Ok((text.to_string(), None));
+        return Ok((parse_time_value(arg, constants)?, None));
     };
     let mut parts = wrapper.into_inner();
     let unit_name = parts.next().ok_or("Missing call name")?.as_str();
@@ -191,13 +200,79 @@ fn parse_time_operand(
     };
     let value = parts
         .next()
-        .ok_or_else(|| format!("{unit_name}() requires one argument"))?
-        .as_str()
-        .to_string();
+        .ok_or_else(|| format!("{unit_name}() requires one argument"))?;
     if parts.next().is_some() {
         return Err(format!("{unit_name}() requires one argument"));
     }
-    Ok((value, Some(unit)))
+    Ok((parse_time_value(value, constants)?, Some(unit)))
+}
+
+/// A timelock value: a literal, with constants folded in, or the binding it reads.
+fn parse_time_value(
+    pair: Pair<Rule>,
+    constants: &[Constant],
+) -> Result<crate::models::TapOperand, String> {
+    use crate::models::TapOperand;
+    let value = parse_general_expression(pair)?;
+    let mut constant = |path: &crate::models::Path| constant_value(path, constants);
+    if let Ok(literal) = crate::compiler::constants::evaluate(&value, &mut constant) {
+        return Ok(TapOperand::Literal(literal));
+    }
+    operand_path(&value, constants)
+        .map(TapOperand::Name)
+        .ok_or_else(|| {
+            format!(
+                "timelock `{}` is not a literal or scalar constructor parameter",
+                value.source_text()
+            )
+        })
+}
+
+/// The binding `operand` reads, with each index evaluated from the constants, or `None` for
+/// any other expression or an index that is not constant.
+fn operand_path(operand: &Expression, constants: &[Constant]) -> Option<crate::models::Path> {
+    let index = |index: &Expression| {
+        let mut constant = |path: &crate::models::Path| constant_value(path, constants);
+        crate::compiler::constants::evaluate(index, &mut constant)
+            .ok()?
+            .parse()
+            .ok()
+    };
+    match &operand.kind {
+        ExprKind::Name(path) => Some(path.clone()),
+        ExprKind::ArrayIndex { array, index: at } => Some(array.clone().index(index(at)?)),
+        ExprKind::IndexAccess { value, index: at } => {
+            Some(operand_path(value, constants)?.index(index(at)?))
+        }
+        ExprKind::FieldAccess { value, field } => {
+            Some(operand_path(value, constants)?.field(field))
+        }
+        _ => None,
+    }
+}
+
+/// The literal value of the constant `path` names.
+fn constant_value(path: &crate::models::Path, constants: &[Constant]) -> Result<String, String> {
+    let key = path.key();
+    match constants
+        .iter()
+        .find(|c| c.name == key)
+        .map(|c| &c.value.kind)
+    {
+        Some(ExprKind::Literal(value)) => Ok(value.clone()),
+        _ => Err(format!("unknown constant '{path}'")),
+    }
+}
+
+/// The binding a `named_binding` operand reads.
+fn parse_binding(pair: Pair<Rule>, constants: &[Constant]) -> Result<crate::models::Path, String> {
+    let binding = parse_property_access(pair)?;
+    operand_path(&binding, constants).ok_or_else(|| {
+        format!(
+            "`{}` must be indexed by an integer literal or constant",
+            binding.source_text()
+        )
+    })
 }
 
 /// Parse `check_threshold_multisig` inner pairs into a Sig item.
@@ -213,12 +288,12 @@ pub(crate) fn parse_tap_multisig(
         match child.as_rule() {
             Rule::key_array => {
                 for k in child.into_inner() {
-                    keys.push(parse_key_expr(k)?);
+                    keys.push(parse_key_expr(k, constants)?);
                 }
             }
             Rule::array => {
                 for s in child.into_inner() {
-                    sigs.push(s.as_str().to_string());
+                    sigs.push(parse_binding(s, constants)?);
                 }
             }
             Rule::number_literal | Rule::qualified_name => {
@@ -234,14 +309,17 @@ pub(crate) fn parse_tap_multisig(
     })
 }
 
-/// Parse a `key_expr` (bare identifier or `tweak(emulator, func)`).
-pub(crate) fn parse_key_expr(pair: Pair<Rule>) -> Result<crate::models::KeyExpr, String> {
+/// Parse a `key_expr` (a pubkey binding or `tweak(emulator, func)`).
+pub(crate) fn parse_key_expr(
+    pair: Pair<Rule>,
+    constants: &[Constant],
+) -> Result<crate::models::KeyExpr, String> {
     use crate::models::KeyExpr;
     match pair.as_rule() {
-        Rule::identifier | Rule::named_binding => Ok(KeyExpr::Ident(pair.as_str().to_string())),
+        Rule::named_binding => parse_binding(pair, constants).map(KeyExpr::Ident),
         Rule::key_expr => {
             let inner = pair.into_inner().next().ok_or("Empty key expression")?;
-            parse_key_expr(inner)
+            parse_key_expr(inner, constants)
         }
         Rule::tweak_key => {
             let mut inner = pair.into_inner();
@@ -265,7 +343,7 @@ pub(crate) fn parse_key_expr(pair: Pair<Rule>) -> Result<crate::models::KeyExpr,
 mod tests {
     //! Parser-level tests for the `tapscript` modifier: assert AST routing,
     //! not ABI output.
-    use crate::models::{Contract, HashFn, KeyExpr, TapItem};
+    use crate::models::{Contract, HashFn, KeyExpr, Path, TapItem, TapOperand};
 
     fn parse(src: &str) -> Contract {
         super::super::parse(src).expect("parse should succeed")
@@ -301,7 +379,7 @@ contract Demo(pubkey owner) {
             } => {
                 assert_eq!(*hash_fn, HashFn::Hash160);
                 assert_eq!(preimage, "preimage");
-                assert_eq!(hash, "preimageHash");
+                assert_eq!(hash, &TapOperand::Name("preimageHash".into()));
             }
             other => panic!("expected Hash item, got {other:?}"),
         }
@@ -321,7 +399,7 @@ contract Demo(pubkey owner) {
                 );
                 assert_eq!(
                     sigs,
-                    &vec!["serverSig".to_string(), "emulatorSig".to_string()]
+                    &vec![Path::new("serverSig"), Path::new("emulatorSig")]
                 );
                 assert_eq!(*threshold, Some(2));
             }
@@ -350,7 +428,7 @@ contract Demo(pubkey owner) {
         assert_eq!(c.tapscripts.len(), 3);
         let exit = c.tapscripts.iter().find(|t| t.name == "exit").unwrap();
         assert!(
-            matches!(&exit.items[0], TapItem::Older { value, unit: None } if value == "exitDelay")
+            matches!(&exit.items[0], TapItem::Older { value: TapOperand::Name(value), unit: None } if value == "exitDelay")
         );
         let direct = c.tapscripts.iter().find(|t| t.name == "direct").unwrap();
         match &direct.items[0] {
@@ -365,13 +443,63 @@ contract Demo(pubkey owner) {
         }
         let cancel = c.tapscripts.iter().find(|t| t.name == "cancel").unwrap();
         assert!(
-            matches!(&cancel.items[0], TapItem::After { value, unit: None } if value == "cancelTime")
+            matches!(&cancel.items[0], TapItem::After { value: TapOperand::Name(value), unit: None } if value == "cancelTime")
         );
         // Omitted threshold → N-of-N (None).
         match &cancel.items[1] {
             TapItem::Sig { threshold, .. } => assert_eq!(*threshold, None),
             other => panic!("expected Sig, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn parses_operands_into_paths_with_constant_indexes_and_no_whitespace() {
+        let src = r#"
+struct Policy { pubkey owner; bytes32 h; int delay; }
+contract Demo(pubkey[2] keys, Policy[2] ps) {
+    const int SECOND = 1;
+    function exit(bytes32 pre , signature s1 , signature s2 ) tapscript {
+        require(sha256(pre ) == ps[ 0 ].h );
+        require(older(ps[SECOND].delay ));
+        require(checkMultisig([keys[ SECOND ] , ps[0].owner ], [s1 , s2 ], 2));
+    }
+}
+"#;
+        let c = parse(src);
+        let ps = |at| Path::new("ps").index(at);
+        let items = &c.tapscripts[0].items;
+        assert!(matches!(
+            &items[0],
+            TapItem::Hash { preimage, hash: TapOperand::Name(hash), .. }
+                if preimage == "pre" && *hash == ps(0).field("h")
+        ));
+        assert!(matches!(
+            &items[1],
+            TapItem::Older { value: TapOperand::Name(value), unit: None } if *value == ps(1).field("delay")
+        ));
+        match &items[2] {
+            TapItem::Sig { keys, sigs, .. } => {
+                assert_eq!(
+                    keys,
+                    &vec![
+                        KeyExpr::Ident(Path::new("keys").index(1)),
+                        KeyExpr::Ident(ps(0).field("owner"))
+                    ]
+                );
+                assert_eq!(sigs, &vec![Path::new("s1"), Path::new("s2")]);
+            }
+            other => panic!("expected Sig item, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn rejects_a_runtime_index_in_a_tapscript_operand() {
+        let src = "contract Demo(pubkey[2] keys) { function exit(signature s, int i) tapscript { require(checkSig(s, keys[i])); } }";
+        let err = super::super::parse(src).unwrap_err();
+        assert!(
+            err.contains("`keys[i]` must be indexed by an integer literal or constant"),
+            "got: {err}"
+        );
     }
 
     #[test]
