@@ -87,7 +87,7 @@ contract C() {
 							}
 							wantErr := ""
 							if wrongExpectation {
-								wantErr = "OP_EQUALVERIFY failed"
+								wantErr = "OP_NUMEQUALVERIFY failed"
 							}
 							spend := spendingPSBTWithWitness(t, deployment, instance, 10_000, instance.pkScript, covenantWitness(t, contract, group, values))
 							requireVMResult(t, spend, emulatorKey.PubKey(), wantErr)
