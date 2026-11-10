@@ -40,7 +40,8 @@ pub struct Closure {
 
 /// An operand the leaf script pushes. The script is fixed when the address is
 /// made, so no tapscript input can be one; inputs reach the leaf only as witness
-/// elements it consumes: the preimage and the signatures.
+/// elements it consumes: the preimage and the signatures. `Constructor` takes
+/// any name; `LeafScript` is what keeps inputs out.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Pushed {
     /// Assembled as written: a number, a hex string or `OP_0`.
@@ -69,7 +70,10 @@ impl Pushed {
     }
 }
 
-/// A closure whose pushed operands are resolved; what leaf emission reads.
+/// A closure whose pushed operands are resolved; what leaf emission reads. Its
+/// fields are private, so only this module builds one: `validate_arkd_rules`,
+/// once it has refused every tapscript input in a pushed slot, and the
+/// synthesized default leaf.
 #[derive(Debug, Clone)]
 pub struct LeafScript {
     /// The digest, the preimage width it pins, and the hash the preimage must match.
@@ -208,19 +212,10 @@ pub fn validate_closure_shape(c: &Closure, ts_name: &str) -> Result<(), String> 
     Ok(())
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Binding {
-    /// Leaf name matches a covenant function; bare `emulator` is implicitly tweaked.
-    NameMatched,
-    /// Unmatched leaf that explicitly tweaks exactly one function's emulator key.
-    Tweaked(String),
-    /// Unmatched leaf with no emulator binding at all.
-    Standalone,
-}
-
-/// Resolve a tapscript's binding and enforce the `emulator` rule + key
-/// resolution (§5.3). `contract` supplies the covenant function names.
-pub fn resolve_binding(contract: &Contract, ts: &NamedTapscript) -> Result<Binding, String> {
+/// Enforce the `emulator` binding rule (§5.3): a leaf named after a covenant
+/// function includes bare `emulator`; any other leaf tweaks at most one
+/// function's emulator key. `contract` supplies the covenant function names.
+pub fn resolve_binding(contract: &Contract, ts: &NamedTapscript) -> Result<(), String> {
     if contract
         .functions
         .iter()
@@ -266,7 +261,7 @@ pub fn resolve_binding(contract: &Contract, ts: &NamedTapscript) -> Result<Bindi
                 ts.name
             ));
         }
-        return Ok(Binding::NameMatched);
+        return Ok(());
     }
 
     // Unmatched leaf: bare emulator forbidden.
@@ -281,7 +276,7 @@ pub fn resolve_binding(contract: &Contract, ts: &NamedTapscript) -> Result<Bindi
     // Validate explicit tweak targets: all must reference one existing function.
     let unique_targets: std::collections::BTreeSet<String> = tweak_targets.into_iter().collect();
     match unique_targets.len() {
-        0 => Ok(Binding::Standalone),
+        0 => Ok(()),
         1 => {
             let func = unique_targets.iter().next().expect("one target");
             if !contract
@@ -294,7 +289,7 @@ pub fn resolve_binding(contract: &Contract, ts: &NamedTapscript) -> Result<Bindi
                     ts.name
                 ));
             }
-            Ok(Binding::Tweaked(func.clone()))
+            Ok(())
         }
         _ => Err(format!(
             "ambiguous emulator tweak targets in tapscript `{}`",
@@ -474,7 +469,7 @@ pub fn validate_arkd_rules(
                 } else {
                     let Some(t) = fixed(hash, "hash value")? else {
                         return Err(format!(
-                            "tapscript `{}`: hash value `{hash}` is not a constructor parameter",
+                            "tapscript `{}`: hash value `{hash}` is not a scalar constructor parameter",
                             ts.name
                         ));
                     };
@@ -525,7 +520,7 @@ pub fn validate_arkd_rules(
                     match declared {
                         None => {
                             return Err(format!(
-                                "tapscript `{}`: timelock `{value}` is not a literal or constructor parameter",
+                                "tapscript `{}`: timelock `{value}` is not a literal or scalar constructor parameter",
                                 ts.name
                             ))
                         }
@@ -1088,7 +1083,7 @@ mod tests {
 
     #[test]
     fn name_matched_requires_bare_emulator() {
-        // claim covenant exists; leaf named claim with bare emulator → NameMatched
+        // claim covenant exists; leaf named claim with bare emulator → accepted
         let leaf = NamedTapscript {
             span: Default::default(),
             declaration: Default::default(),
@@ -1098,7 +1093,7 @@ mod tests {
             items: vec![sig(vec![ident("server"), ident("emulator")])],
         };
         let c = contract_with(&["claim"], vec![leaf.clone()]);
-        assert_eq!(resolve_binding(&c, &leaf).unwrap(), Binding::NameMatched);
+        resolve_binding(&c, &leaf).unwrap();
     }
 
     #[test]
@@ -1145,9 +1140,10 @@ mod tests {
             }])],
         };
         let c = contract_with(&["claim"], vec![leaf.clone()]);
+        resolve_binding(&c, &leaf).unwrap();
         assert_eq!(
-            resolve_binding(&c, &leaf).unwrap(),
-            Binding::Tweaked("claim".into())
+            shared_tweak_func(&leaf.name, &closure_of(&leaf).keys).unwrap(),
+            Some("claim".into())
         );
     }
 
@@ -1221,7 +1217,7 @@ mod tests {
             items: vec![sig(vec![ident("owner")])],
         };
         let c = contract_with(&["claim"], vec![leaf.clone()]);
-        assert_eq!(resolve_binding(&c, &leaf).unwrap(), Binding::Standalone);
+        resolve_binding(&c, &leaf).unwrap();
     }
 
     fn closure_of(leaf: &NamedTapscript) -> Closure {
@@ -1254,7 +1250,7 @@ mod tests {
         };
         let c = contract_with(&[], vec![leaf.clone()]);
         let cl = closure_of(&leaf);
-        let _binding = resolve_binding(&c, &leaf).unwrap();
+        resolve_binding(&c, &leaf).unwrap();
         let err = validate_arkd_rules(&c, &leaf, &cl).unwrap_err();
         assert!(err.contains("server"), "got: {err}");
     }
@@ -1277,7 +1273,7 @@ mod tests {
         };
         let c = contract_with(&[], vec![leaf.clone()]);
         let cl = closure_of(&leaf);
-        let _binding = resolve_binding(&c, &leaf).unwrap();
+        resolve_binding(&c, &leaf).unwrap();
         assert!(validate_arkd_rules(&c, &leaf, &cl).is_ok());
     }
 
@@ -1293,7 +1289,7 @@ mod tests {
         };
         let c = contract_with(&[], vec![leaf.clone()]);
         let cl = closure_of(&leaf);
-        let _binding = resolve_binding(&c, &leaf).unwrap();
+        resolve_binding(&c, &leaf).unwrap();
         let err = validate_arkd_rules(&c, &leaf, &cl).unwrap_err();
         assert!(err.contains("unknown key"), "got: {err}");
     }
@@ -1441,7 +1437,7 @@ mod tests {
         };
         let c = contract_with(&["x"], vec![leaf.clone()]);
         let cl = closure_of(&leaf);
-        let _binding = resolve_binding(&c, &leaf).unwrap();
+        resolve_binding(&c, &leaf).unwrap();
         let err = validate_arkd_rules(&c, &leaf, &cl).unwrap_err();
         assert!(err.contains("align 1:1"), "got: {err}");
     }
@@ -1463,7 +1459,7 @@ mod tests {
         };
         let c = contract_with(&[], vec![leaf.clone()]);
         let cl = closure_of(&leaf);
-        let _binding = resolve_binding(&c, &leaf).unwrap();
+        resolve_binding(&c, &leaf).unwrap();
         let err = validate_arkd_rules(&c, &leaf, &cl).unwrap_err();
         assert!(
             err.contains("not a declared `signature` input"),
@@ -1490,7 +1486,7 @@ mod tests {
         };
         let c = contract_with(&[], vec![leaf.clone()]);
         let cl = closure_of(&leaf);
-        let _binding = resolve_binding(&c, &leaf).unwrap();
+        resolve_binding(&c, &leaf).unwrap();
         let err = validate_arkd_rules(&c, &leaf, &cl).unwrap_err();
         assert!(err.contains("timelock `typoDelay`"), "got: {err}");
     }
@@ -1530,7 +1526,7 @@ mod tests {
         };
         let c = contract_with(&[], vec![leaf.clone()]);
         let cl = closure_of(&leaf);
-        let _binding = resolve_binding(&c, &leaf).unwrap();
+        resolve_binding(&c, &leaf).unwrap();
         let err = validate_arkd_rules(&c, &leaf, &cl).unwrap_err();
         assert!(err.contains("hash value `typoHash`"), "got: {err}");
     }

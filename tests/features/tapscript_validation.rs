@@ -56,6 +56,11 @@ fn a_tapscript_input_cannot_be_a_pushed_operand() {
             "a key",
         ),
         (
+            "pubkey k",
+            "require(checkMultisig([server, tweak(k, claim)], [serverSig, sig], 2));",
+            "a key",
+        ),
+        (
             "bytes32 pre, bytes32 h",
             "require(sha256(pre) == h); \
              require(checkMultisig([server, owner], [serverSig, sig], 2));",
