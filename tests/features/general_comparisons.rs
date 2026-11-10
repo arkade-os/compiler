@@ -89,17 +89,19 @@ fn composite_comparison_expressions_validate_operand_types() {
     let error = compile("struct Item { int value; } contract C() { function compare(Item left) { require(true || (left < {value: 1})); } }")
         .expect_err("composite ordering is invalid even with a literal").to_string();
     assert!(error.contains("not defined"), "{error}");
-    for comparison in ["left < right.missing", "true || (left < right.missing)"] {
+    let ordering = &["'<' is not defined", "'right.missing' is undefined"][..];
+    let record = &["does not produce one stack item"][..];
+    for (comparison, diagnostics) in [
+        ("left < right.missing", ordering),
+        ("true || (left < right.missing)", ordering),
+        ("left == tx.assetGroups[0].outputs[0]", record),
+        ("true || left == tx.assetGroups[0].outputs[0]", record),
+    ] {
         let error = compile(&format!("struct Item {{ int value; }} contract C() {{ function compare(Item left, Item right) {{ require({comparison}); }} }}"))
-            .expect_err("composite ordering is invalid beside an operand error").to_string();
-        assert!(
-            error.contains("'<' is not defined"),
-            "{comparison}: {error}"
-        );
-        assert!(
-            error.contains("'right.missing' is undefined"),
-            "{comparison}: {error}"
-        );
+            .expect_err("invalid composite comparison").to_string();
+        for diagnostic in diagnostics {
+            assert!(error.contains(diagnostic), "{comparison}: {error}");
+        }
     }
 }
 

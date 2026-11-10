@@ -47,12 +47,13 @@ fn validate_comparison(
     scopes: &BindingScopes,
     issues: &mut Vec<ValidationIssue>,
 ) {
-    let composite = [left, right]
-        .iter()
-        .any(|operand| matches!(operand.ty, ArkType::Array(..) | ArkType::Struct(..)));
     let before = issues.len();
-    validate_binding_expression(left, function_name, scopes, issues, !composite);
-    validate_binding_expression(right, function_name, scopes, issues, !composite);
+    let mut composite = false;
+    for operand in [left, right] {
+        let whole = matches!(operand.ty, ArkType::Array(..) | ArkType::Struct(..));
+        validate_binding_expression(operand, function_name, scopes, issues, !whole);
+        composite |= whole;
+    }
     let (left, right) = (&left.ty, &right.ty);
     let bytes_like = crate::types::is_bytes_like;
     let compatible = match op.class() {
