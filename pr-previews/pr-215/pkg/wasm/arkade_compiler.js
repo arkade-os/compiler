@@ -99,15 +99,17 @@ export function compile_sources(entry, files, optimize) {
  * Compile a virtual project and report every diagnostic with its position. Compilation
  * errors are diagnostics, not a thrown error: the result is
  * `{ artifact: string | null, debug: string | null, diagnostics: Diagnostic[] }`,
- * where `debug` is the debug file JSON (`ContractJson::debug_info`) and each
- * diagnostic has `severity`, `code`, `message`, `file` and, when located, 1-based `start` and
- * `end` `{ line, column }` with columns counted in UTF-16 units, as editors count them.
+ * where `debug` is the debug file JSON (`ContractJson::debug_info`), built unless `debug` is
+ * `false`, and each diagnostic has `severity`, `code`, `message`, `file` and, when located,
+ * 1-based `start` and `end` `{ line, column }` with columns counted in UTF-16 units, as editors
+ * count them.
  * @param {string} entry
  * @param {string} files
  * @param {boolean | null} [optimize]
+ * @param {boolean | null} [debug]
  * @returns {string}
  */
-export function compile_sources_with_diagnostics(entry, files, optimize) {
+export function compile_sources_with_diagnostics(entry, files, optimize, debug) {
     let deferred4_0;
     let deferred4_1;
     try {
@@ -115,7 +117,7 @@ export function compile_sources_with_diagnostics(entry, files, optimize) {
         const len0 = WASM_VECTOR_LEN;
         const ptr1 = passStringToWasm0(files, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len1 = WASM_VECTOR_LEN;
-        const ret = wasm.compile_sources_with_diagnostics(ptr0, len0, ptr1, len1, isLikeNone(optimize) ? 0xFFFFFF : optimize ? 1 : 0);
+        const ret = wasm.compile_sources_with_diagnostics(ptr0, len0, ptr1, len1, isLikeNone(optimize) ? 0xFFFFFF : optimize ? 1 : 0, isLikeNone(debug) ? 0xFFFFFF : debug ? 1 : 0);
         var ptr3 = ret[0];
         var len3 = ret[1];
         if (ret[3]) {
