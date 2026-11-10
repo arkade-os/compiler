@@ -2,7 +2,8 @@ use crate::common::compile_unoptimized as compile;
 use arkade_compiler::opcodes::{
     OP_EQUALVERIFY, OP_INSPECTINPUTARKADESCRIPTHASH, OP_INSPECTINPUTARKADEWITNESSHASH,
     OP_INSPECTINPUTOUTPOINT, OP_INSPECTINPUTSCRIPTPUBKEY, OP_INSPECTINPUTSEQUENCE,
-    OP_INSPECTINPUTVALUE, OP_INSPECTOUTPUTSCRIPTPUBKEY, OP_INSPECTOUTPUTVALUE, OP_SWAP,
+    OP_INSPECTINPUTVALUE, OP_INSPECTOUTPUTSCRIPTPUBKEY, OP_INSPECTOUTPUTVALUE, OP_NUMEQUALVERIFY,
+    OP_SWAP,
 };
 
 /// Test input introspection opcodes
@@ -35,10 +36,10 @@ fn test_input_value() {
 #[test]
 fn test_input_script_pubkey() {
     let code = r#"
-        contract InputScriptChecker(pubkey owner, bytes32 expectedScript) {
+        contract InputScriptChecker(pubkey owner, ScriptPubKey expectedScript) {
             function checkInputScript(signature ownerSig) {
                 require(checkSig(ownerSig, owner));
-                require(tx.inputs[0].scriptPubKey == expectedScript);
+                require(tx.inputs[0].script == expectedScript);
             }
         }
     "#;
@@ -46,7 +47,7 @@ fn test_input_script_pubkey() {
     let result = compile(code);
     assert!(
         result.is_ok(),
-        "Failed to parse tx.inputs[0].scriptPubKey: {:?}",
+        "Failed to parse tx.inputs[0].script: {:?}",
         result.err()
     );
 
@@ -128,9 +129,10 @@ fn test_input_outpoint_is_compared_field_by_field() {
         "both outpoints are inspected: {asm:?}"
     );
     assert_eq!(
-        asm.iter().filter(|token| *token == OP_EQUALVERIFY).count(),
-        2,
-        "txid and vout are both verified: {asm:?}"
+        [OP_EQUALVERIFY, OP_NUMEQUALVERIFY]
+            .map(|opcode| asm.iter().filter(|token| *token == opcode).count()),
+        [1, 1],
+        "the txid is verified as bytes and the vout as a number: {asm:?}"
     );
 }
 
@@ -164,10 +166,10 @@ fn test_output_value() {
 #[test]
 fn test_output_script_pubkey() {
     let code = r#"
-        contract OutputScriptChecker(pubkey owner, bytes32 expectedScript) {
+        contract OutputScriptChecker(pubkey owner, ScriptPubKey expectedScript) {
             function checkOutputScript(signature ownerSig) {
                 require(checkSig(ownerSig, owner));
-                require(tx.outputs[0].scriptPubKey == expectedScript);
+                require(tx.outputs[0].script == expectedScript);
             }
         }
     "#;
@@ -175,7 +177,7 @@ fn test_output_script_pubkey() {
     let result = compile(code);
     assert!(
         result.is_ok(),
-        "Failed to parse tx.outputs[0].scriptPubKey: {:?}",
+        "Failed to parse tx.outputs[0].script: {:?}",
         result.err()
     );
 

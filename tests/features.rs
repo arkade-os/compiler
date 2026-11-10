@@ -68,11 +68,15 @@ mod validation_error;
 #[path = "features/imports.rs"]
 mod imports;
 
+#[path = "features/cost_report.rs"]
+mod cost_report;
 #[path = "features/struct_arrays.rs"]
 mod struct_arrays;
 
 #[path = "features/cli_check.rs"]
 mod cli_check;
+#[path = "features/lints.rs"]
+mod lints;
 #[path = "features/located_errors.rs"]
 mod located_errors;
 #[path = "features/source_map.rs"]
@@ -81,3 +85,5 @@ mod source_map;
 mod staged_api;
 #[path = "features/symbols.rs"]
 mod symbols;
+#[path = "features/vm_limits.rs"]
+mod vm_limits;

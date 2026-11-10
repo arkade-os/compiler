@@ -48,7 +48,7 @@ func TestPrivateFunctions(t *testing.T) {
 				wantErr = "OP_VERIFY failed"
 			}
 			if tc.wrongResult {
-				wantErr = "OP_EQUALVERIFY failed"
+				wantErr = "OP_NUMEQUALVERIFY failed"
 				expected++
 			}
 			pass := int64(0)

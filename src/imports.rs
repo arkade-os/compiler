@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Component, Path, PathBuf};
 
-use crate::diagnostics::{CompileError, Diagnostic};
+use crate::diagnostics::{CompileError, Diagnostic, Severity};
 use crate::models::{
     self, Contract, ContractJson, ExprKind, Expression, LocatedStatement, SourceBundle, Statement,
 };
@@ -11,7 +11,7 @@ use crate::{compiler, parser, types};
 struct Module {
     contract: Contract,
     structs: HashSet<String>,
-    warnings: Vec<Diagnostic>,
+    lints: crate::lint::Lints,
     leaves: Vec<compiler::tapscript::CheckedLeaf>,
 }
 
@@ -84,14 +84,20 @@ impl Analysis {
         }
     }
 
-    /// Every parse, validation and type diagnostic, warnings included. Independent problems in
-    /// the entry file each get their own; diagnostics from imports name the imported file.
+    /// Every parse, validation and type diagnostic, warnings included, with each lint at its
+    /// own level. Independent problems in the entry file each get their own; diagnostics from
+    /// imports name the imported file.
     pub fn diagnostics(&self) -> Vec<Diagnostic> {
+        self.diagnostics_with(&Default::default())
+    }
+
+    /// [`Analysis::diagnostics`] with each lint at its level in `levels`: allowed lints are
+    /// left out and denied ones are errors.
+    pub fn diagnostics_with(&self, levels: &crate::lint::Levels) -> Vec<Diagnostic> {
         match &self.loaded {
             Ok(loaded) => loaded
-                .modules
-                .values()
-                .flat_map(|module| module.warnings.clone())
+                .warnings(&self.entry, levels)
+                .flat_map(|(_, warnings)| warnings)
                 .collect(),
             Err(error) => error.diagnostics(&self.entry),
         }
@@ -117,25 +123,46 @@ impl Analysis {
     /// The diagnostics, and for a contract code generation's first error with `options`, which
     /// finds some problems alone, such as the VM's stack and script limits.
     pub fn check(&self, options: crate::CompileOptions) -> Vec<Diagnostic> {
-        let mut diagnostics = self.diagnostics();
-        if self.contract().is_some_and(|contract| !contract.is_library) {
-            if let Err(errors) = self.compile(options) {
+        self.check_with(options, &Default::default())
+    }
+
+    /// [`Analysis::check`] with each lint at its level in `levels`.
+    pub fn check_with(
+        &self,
+        options: crate::CompileOptions,
+        levels: &crate::lint::Levels,
+    ) -> Vec<Diagnostic> {
+        let mut diagnostics = self.diagnostics_with(levels);
+        let failed = diagnostics.iter().any(|d| d.severity == Severity::Error);
+        if !failed && self.contract().is_some_and(|contract| !contract.is_library) {
+            if let Err(errors) = self.compile_with(options, levels) {
                 diagnostics.extend(errors);
             }
         }
         diagnostics
     }
 
-    /// Generate the artifact. Fails with the analysis errors, or with code generation's first.
+    /// Generate the artifact with each lint at its default level.
     pub fn compile(&self, options: crate::CompileOptions) -> Result<ContractJson, Vec<Diagnostic>> {
+        self.compile_with(options, &Default::default())
+    }
+
+    /// Generate the artifact. Fails with the analysis errors, the entry file's lints `levels`
+    /// denies, or code generation's first error.
+    pub fn compile_with(
+        &self,
+        options: crate::CompileOptions,
+        levels: &crate::lint::Levels,
+    ) -> Result<ContractJson, Vec<Diagnostic>> {
         let loaded = self
             .loaded
             .as_ref()
             .map_err(|error| error.diagnostics(&self.entry))?;
         loaded
-            .emit(&self.entry, &self.sources, self.filesystem, options)
+            .emit(&self.entry, &self.sources, self.filesystem, options, levels)
             .map_err(|error| match error {
                 EmitError::Library => vec![Diagnostic::error(&self.entry, LIBRARY_ENTRY)],
+                EmitError::Lints(errors) => errors,
                 EmitError::Code(error, _) => vec![error.diagnostic(&self.entry)],
             })
     }
@@ -147,9 +174,20 @@ impl Analysis {
             .as_ref()
             .map_err(|error| error.message(&self.entry))?;
         loaded
-            .emit(&self.entry, &self.sources, self.filesystem, options)
+            .emit(
+                &self.entry,
+                &self.sources,
+                self.filesystem,
+                options,
+                &Default::default(),
+            )
             .map_err(|error| match error {
                 EmitError::Library => format!("{}: {LIBRARY_ENTRY}", self.entry),
+                EmitError::Lints(errors) => format!(
+                    "{}: {}",
+                    self.entry,
+                    crate::diagnostics::render_errors(&errors, &self.sources[&self.entry])
+                ),
                 EmitError::Code(error, source) => {
                     crate::diagnostics::located(&error.to_string(), error.span, &source)
                 }
@@ -245,7 +283,7 @@ pub(crate) fn compile_file(
 }
 
 pub(crate) fn relative_path(path: &str) -> Result<String, String> {
-    if Path::new(path).is_absolute() || path.contains('\\') || path.contains(':') {
+    if path.starts_with('/') || path.contains('\\') || path.contains(':') {
         return Err(format!(
             "source path '{path}' must be a relative .ark path using '/'"
         ));
@@ -282,7 +320,7 @@ fn normalize(path: &Path) -> Result<String, String> {
 }
 
 fn import_path(importer: &str, import: &str) -> Result<String, String> {
-    if Path::new(import).is_absolute() || import.contains('\\') || import.contains(':') {
+    if import.starts_with('/') || import.contains('\\') || import.contains(':') {
         return Err(format!(
             "import '{import}' must be a relative .ark path using '/'"
         ));
@@ -304,6 +342,7 @@ struct Loaded {
 
 enum EmitError {
     Library,
+    Lints(Vec<Diagnostic>),
     Code(crate::diagnostics::CompileError, String),
 }
 
@@ -328,6 +367,17 @@ impl Loaded {
         Ok(loaded)
     }
 
+    /// Each module's lint diagnostics at `levels`.
+    fn warnings<'a>(
+        &'a self,
+        entry: &'a str,
+        levels: &'a crate::lint::Levels,
+    ) -> impl Iterator<Item = (&'a String, Vec<Diagnostic>)> {
+        self.modules.iter().map(move |(path, module)| {
+            (path, module.lints.diagnostics(path, levels, path != entry))
+        })
+    }
+
     /// `files` are the sources of every module.
     fn emit(
         &self,
@@ -335,10 +385,21 @@ impl Loaded {
         files: &BTreeMap<String, String>,
         filesystem: bool,
         options: crate::CompileOptions,
+        levels: &crate::lint::Levels,
     ) -> Result<ContractJson, EmitError> {
         let root = &self.modules[entry];
         if root.contract.is_library {
             return Err(EmitError::Library);
+        }
+        let lints: Vec<_> = self.warnings(entry, levels).collect();
+        let denied: Vec<_> = lints
+            .iter()
+            .flat_map(|(_, warnings)| warnings)
+            .filter(|d| d.severity == Severity::Error)
+            .cloned()
+            .collect();
+        if !denied.is_empty() {
+            return Err(EmitError::Lints(denied));
         }
         let mut bundle = SourceBundle {
             entry: entry.to_string(),
@@ -375,17 +436,16 @@ impl Loaded {
                 })
                 .collect();
         }
-        let warnings = self
-            .modules
-            .iter()
-            .flat_map(|(path, module)| {
+        let warnings = lints
+            .into_iter()
+            .flat_map(|(path, warnings)| {
                 let path = Path::new(path)
                     .strip_prefix(&base)
                     .expect("common root")
                     .to_string_lossy()
                     .replace('\\', "/");
                 let source = bundle.files.get(&path).map(String::as_str).unwrap_or("");
-                module.warnings.iter().map(move |warning| {
+                warnings.into_iter().map(move |warning| {
                     let tag = warning.code.as_deref().unwrap_or("general");
                     let message =
                         crate::diagnostics::located(&warning.message, warning.span, source);
@@ -609,7 +669,7 @@ fn load(
             Module {
                 contract,
                 structs: own_structs,
-                warnings: prepared.warnings,
+                lints: prepared.lints,
                 leaves: prepared.leaves,
             },
         );
@@ -1053,5 +1113,42 @@ mod tests {
             error.starts_with("lib.ark: validation error: line 3, column 13: "),
             "{error}"
         );
+    }
+
+    #[test]
+    fn a_dependency_syntax_failure_keeps_its_file_and_span() {
+        let files = BTreeMap::from([
+            (
+                "main.ark".into(),
+                "import \"lib.ark\"; contract C() { function spend() { require(true); } }".into(),
+            ),
+            ("lib.ark".into(), "// é 🐴\nlibrary Broken(".into()),
+        ]);
+        let [diagnostic]: [_; 1] = super::check_sources("main.ark", &files).try_into().unwrap();
+        assert_eq!(diagnostic.file, "lib.ark");
+        assert_eq!(diagnostic.severity, Severity::Error);
+        let span = diagnostic.span.unwrap();
+        assert_eq!(&files["lib.ark"][span.start..span.end], "(");
+        let error = super::compile_sources("main.ark", &files, Default::default()).unwrap_err();
+        assert!(error.starts_with("lib.ark: Parse error:"), "{error}");
+    }
+
+    #[test]
+    fn a_dependency_loader_failure_keeps_its_file() {
+        let files = BTreeMap::from([
+            (
+                "main.ark".into(),
+                "import \"lib.ark\"; contract C() { function spend() { require(true); } }".into(),
+            ),
+            (
+                "lib.ark".into(),
+                "library AssetId { function value() int { return 1; } }".into(),
+            ),
+        ]);
+        let [diagnostic]: [_; 1] = super::check_sources("main.ark", &files).try_into().unwrap();
+        assert_eq!(diagnostic.file, "lib.ark");
+        assert_eq!(diagnostic.message, "contract name 'AssetId' is reserved");
+        let span = diagnostic.span.unwrap();
+        assert_eq!(&files["lib.ark"][span.start..span.end], "AssetId");
     }
 }

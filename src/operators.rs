@@ -104,6 +104,16 @@ impl BinaryOperator {
         self.describe().2
     }
 
+    /// The opcodes applying the operator; `numeric` operands are compared as numbers, since
+    /// `OP_EQUAL` compares bytes and so accepts a non-minimal encoding of an equal number.
+    pub fn opcodes_for(self, numeric: bool) -> &'static [Opcode] {
+        match self {
+            Self::Eq if numeric => &[NumEqual],
+            Self::Ne if numeric => &[NumNotEqual],
+            _ => self.opcodes(),
+        }
+    }
+
     /// Whether the result is a `bool` comparing its operands.
     pub fn compares(self) -> bool {
         matches!(

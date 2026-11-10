@@ -167,7 +167,7 @@ func TestConstantFoldingReturnJoins(t *testing.T) {
 				spend := spendingPSBTWithWitness(t, deployment, instance, 10_000, instance.pkScript, covenantWitness(t, contract, group, values))
 				wantErr := ""
 				if input != 7 {
-					wantErr = "OP_EQUALVERIFY failed"
+					wantErr = "OP_NUMEQUALVERIFY failed"
 				}
 				requireVMResult(t, spend, emulatorKey.PubKey(), wantErr)
 			}

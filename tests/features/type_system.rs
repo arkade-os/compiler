@@ -341,7 +341,7 @@ fn cashscript_parity_acceptances() {
     );
     assert_eq!(
         output.warnings,
-        ["warning[validation]: constructor parameter 'unused' is never used (main.ark)"]
+        ["warning[unused-parameter]: line 1, column 46: constructor parameter 'unused' is never used (main.ark)"]
     );
 }
 
@@ -408,7 +408,7 @@ contract HexCasts(pubkey owner) {
         "9223372036854775807 OP_LESSTHANOREQUAL",
         "4722366482869645213695 OP_LESSTHAN",
         "256 OP_GREATERTHANOREQUAL",
-        "0 OP_EQUAL OP_NOT",
+        "0 OP_NUMNOTEQUAL",
     ] {
         assert!(asm.contains(expected), "{expected}: {asm}");
     }
@@ -705,6 +705,44 @@ fn unused_locals_are_checked_per_declaration() {
     let error = compile_error(&source("true"));
     assert!(
         error.contains("variable 'x' in function 'f' is never used"),
+        "{error}"
+    );
+}
+
+#[test]
+fn a_parameter_read_only_by_dead_locals_is_never_used() {
+    let source = |body: &str| {
+        format!("contract T(pubkey k, int limit, int[2] values) {{ function f(signature s, int amount) {{ {body} require(checkSig(s, k)); }} }}")
+    };
+    let allow = r#"@allow(unused-variable, "kept")"#;
+    for body in [
+        format!("{allow} int unused = amount;"),
+        format!("let a = amount; {allow} let b = a;"),
+        format!("if (limit > 0) {{ {allow} let t = amount; }}"),
+        format!("for (2) {{ {allow} let t = amount; }}"),
+        format!("if (limit > 0) {{ {allow} let t = amount; }} if (limit > 1) {{ let t = limit; require(t > 2); }}"),
+        format!("if (limit > 0) {{ {allow} let v = amount; }} for (i, v) in values {{ require(v > i); }}"),
+        "int x = amount; x = x + 1;".to_string(),
+    ] {
+        let error = compile_error(&source(&body));
+        assert!(
+            error.contains("variable 'amount' in function 'f' is never used"),
+            "{body}: {error}"
+        );
+    }
+    compile_ok(&source(
+        "int x = limit; for (2) { require(x < 100); x = x + amount; }",
+    ));
+    let files = std::collections::BTreeMap::from([
+        ("main.ark".to_string(), "import \"fees.ark\";\ncontract C(pubkey k) { function f(signature s, int amount) { require(Fees.fee(amount) == 1); require(checkSig(s, k)); } }".to_string()),
+        ("fees.ark".to_string(), "library Fees { function fee(int n) int { let unused = n; return 1; } }".to_string()),
+    ]);
+    let error = arkade_compiler::compile_sources("main.ark", &files)
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.starts_with("fees.ark: validation error")
+            && error.contains("variable 'n' in function 'fee' is never used"),
         "{error}"
     );
 }

@@ -228,7 +228,7 @@ fn tunnel_defaults_and_constant_policies() {
                 require(this.tunnel(0));
                 bool continued = this . tunnel(1, {
                     assets: false,
-                    scriptPubKey: PRESERVE,
+                    script: PRESERVE,
                     value: !false
                 }, []);
                 require(continued);
@@ -255,7 +255,7 @@ fn tunnel_exceptions_accept_bound_native_and_helper_asset_ids() {
             private function identity(AssetId id) AssetId { return id; }
             function spend(int outputIndex, AssetId feeAsset) {
                 require(this.tunnel(outputIndex, {
-                    scriptPubKey: true, value: true, assets: true
+                    script: true, value: true, assets: true
                 }, [feeAsset, identity(feeAsset), tx.inputs[0].assets[0].assetId]));
                 require(outputIndex >= 0);
             }
@@ -279,14 +279,14 @@ fn tunnel_validates_policy_shape_types_and_exceptions() {
         "this.tunnel()",
         "this.tunnel(true)",
         "this.tunnel(0, {value: true, assets: true})",
-        "this.tunnel(0, {scriptPubKey: true, value: true, assets: true, other: true})",
-        "this.tunnel(0, {scriptPubKey: true, value: true, assets: true, value: false})",
-        "this.tunnel(0, {scriptPubKey: false, value: false, assets: false})",
-        "this.tunnel(0, {scriptPubKey: 1, value: true, assets: true})",
-        "this.tunnel(0, {scriptPubKey: runtime, value: true, assets: true})",
-        "this.tunnel(0, {scriptPubKey: true, value: true, assets: false}, [assetId])",
-        "this.tunnel(0, {scriptPubKey: true, value: true, assets: true}, [1])",
-        "this.tunnel(0, {scriptPubKey: true, value: true, assets: true}, [unknown])",
+        "this.tunnel(0, {script: true, value: true, assets: true, other: true})",
+        "this.tunnel(0, {script: true, value: true, assets: true, value: false})",
+        "this.tunnel(0, {script: false, value: false, assets: false})",
+        "this.tunnel(0, {script: 1, value: true, assets: true})",
+        "this.tunnel(0, {script: runtime, value: true, assets: true})",
+        "this.tunnel(0, {script: true, value: true, assets: false}, [assetId])",
+        "this.tunnel(0, {script: true, value: true, assets: true}, [1])",
+        "this.tunnel(0, {script: true, value: true, assets: true}, [unknown])",
     ] {
         let source = format!("contract Bad(AssetId assetId, bool runtime) {{ function spend() {{ require({call}); }} }}");
         assert!(compile(&source).is_err(), "{source}");

@@ -1,6 +1,5 @@
 // Arkade Playground - Main Application
-// Import default export for WASM initialization, plus the exported functions
-import initWasm, { check_sources, compile_sources, compile_sources_with_diagnostics, completions_at, symbol_at, version, init as initPanicHook } from './pkg/arkade_compiler.js';
+import { compile, check, symbolAt as compilerSymbolAt, completionsAt, version } from './pkg/browser/index.js';
 import * as contracts from './contracts.js';
 import { generateBindings, AVAILABLE_TARGETS } from './codegen.js';
 
@@ -73,6 +72,7 @@ const bundledSnapshot = JSON.parse(JSON.stringify({ projects, examples }));
 
 // Global state
 let editor = null;
+// Once set, compiler calls resolve before any edit can arrive, so their results are current.
 let wasmReady = false;
 let currentProject = null;
 let currentFile = null;
@@ -300,10 +300,14 @@ async function shareContract() {
     let encoded;
     try {
         const { entry, files } = compilationSources();
-        const bundle = canonicalShareBundle(JSON.parse(compile_sources(entry, JSON.stringify(files))).source);
-        encoded = await compressCode(JSON.stringify(bundle));
+        const { artifact, diagnostics } = await compile({ entry, files });
+        if (artifact === null) {
+            showErrors(diagnostics, entry);
+            return;
+        }
+        encoded = await compressCode(JSON.stringify(canonicalShareBundle(artifact.source)));
     } catch (error) {
-        showError(error.toString());
+        showError(error.message);
         return;
     }
     const url = `${location.origin}${location.pathname}#project=${encoded}`;
@@ -794,24 +798,19 @@ function promptNewStandaloneFile() {
     if (name && name.trim()) createStandaloneFile(name.trim());
 }
 
-// Initialize WASM module
+// Load the compiler and show its version; true once it is ready.
 async function initCompiler() {
     try {
-        await initWasm();
-        initPanicHook();
+        const ver = await version();
         wasmReady = true;
-        lint();
-
-        const ver = version();
         document.getElementById('compiler-version').textContent = `v${ver}`;
         document.getElementById('footer-version').textContent = `v${ver}`;
-
-        // Show button as ready to compile
-        markDirty();
+        lint();
     } catch (err) {
-        console.error('Failed to initialize WASM:', err);
-        showError('Failed to load compiler. Make sure the WASM module is built.');
+        console.error('Failed to initialize compiler:', err);
+        showError(`Failed to load compiler: ${err.message}`);
     }
+    return wasmReady;
 }
 
 // Render file tree
@@ -1241,7 +1240,7 @@ function initMonaco() {
         // Register completions
         monaco.languages.registerCompletionItemProvider('arkade', {
             triggerCharacters: ['.'],
-            provideCompletionItems: (model, position) => {
+            provideCompletionItems: async (model, position) => {
                 const word = model.getWordUntilPosition(position);
                 const insert = {
                     startLineNumber: position.lineNumber,
@@ -1253,7 +1252,7 @@ function initMonaco() {
                 const range = { insert, replace: { ...insert, endColumn: model.getWordAtPosition(position)?.endColumn ?? position.column } };
                 const before = model.getLineContent(position.lineNumber).slice(0, word.startColumn - 1);
                 // A peek at another file shows its own text, so only the editor's file has names.
-                const table = model === editor.getModel() ? symbolTable(position.lineNumber) : null;
+                const table = model === editor.getModel() ? await symbolTable(position.lineNumber) : null;
                 const suggestions = window.arkadeComplete(before, table).map(item => ({
                     label: item.label,
                     kind: monaco.languages.CompletionItemKind[item.kind] || monaco.languages.CompletionItemKind.Text,
@@ -1315,7 +1314,7 @@ function initMonaco() {
             }
         });
 
-        // Initialize WASM after editor is ready
+        markDirty();
         initCompiler();
     });
 }
@@ -1368,11 +1367,10 @@ function sourceFiles() {
 }
 
 // The compiler's symbol at `position` in the editor's file, or null.
-function symbolAt(model, position) {
+async function symbolAt(model, position) {
     if (!wasmReady || model !== editor?.getModel()) return null;
     try {
-        const { entry, files } = sourceFiles();
-        return JSON.parse(symbol_at(entry, JSON.stringify(files), position.lineNumber, position.column));
+        return await compilerSymbolAt(sourceFiles(), { line: position.lineNumber, column: position.column });
     } catch {
         return null;
     }
@@ -1391,8 +1389,8 @@ function registerSymbolProviders() {
     const range = location => new monaco.Range(
         location.start.line, location.start.column, location.end.line, location.end.column);
     monaco.languages.registerHoverProvider('arkade', {
-        provideHover: (model, position) => {
-            const symbol = symbolAt(model, position);
+        provideHover: async (model, position) => {
+            const symbol = await symbolAt(model, position);
             if (!symbol?.at.start) return null;
             const [signature, where] = describeSymbol(symbol);
             return {
@@ -1405,8 +1403,8 @@ function registerSymbolProviders() {
     // kept to select it.
     const definitionRanges = new Map();
     monaco.languages.registerDefinitionProvider('arkade', {
-        provideDefinition: (model, position) => {
-            const symbol = symbolAt(model, position);
+        provideDefinition: async (model, position) => {
+            const symbol = await symbolAt(model, position);
             if (!symbol?.definition.start) return null;
             const { file } = symbol.definition;
             if (file === symbol.at.file) return { uri: model.uri, range: range(symbol.definition) };
@@ -1442,8 +1440,8 @@ function registerSymbolProviders() {
         },
     });
     monaco.languages.registerDocumentHighlightProvider('arkade', {
-        provideDocumentHighlights: (model, position) => {
-            const symbol = symbolAt(model, position);
+        provideDocumentHighlights: async (model, position) => {
+            const symbol = await symbolAt(model, position);
             if (!symbol) return [];
             return [symbol.definition, ...symbol.references]
                 .filter(location => location.file === symbol.at.file && location.start)
@@ -1452,34 +1450,33 @@ function registerSymbolProviders() {
     });
 }
 
-// The last sources JSON that gave the editor's file names, per entry path.
+// The last sources that gave the editor's file names, per entry path.
 const lastSources = {};
 
 // The line being typed rarely parses, so it is blanked; if the file still does not parse, which
 // leaves it no names, the names are those at the cursor's line in the last sources that gave some.
 // ponytail: lines added or removed above the cursor since shift those names a line or more; the
 // parser recovering from errors would give names in the current text.
-function symbolTable(lineNumber) {
+async function symbolTable(lineNumber) {
     if (!wasmReady) return null;
     try {
         const { entry, files } = sourceFiles();
         const lines = files[entry].split('\n');
         lines[lineNumber - 1] = '';
         files[entry] = lines.join('\n');
-        const at = sources => JSON.parse(completions_at(entry, sources, lineNumber, 1));
-        const sources = JSON.stringify(files);
-        const table = at(sources);
-        if (table.symbols.length) lastSources[entry] = sources;
-        else if (lastSources[entry]) return at(lastSources[entry]);
+        const at = files => completionsAt({ entry, files }, { line: lineNumber, column: 1 });
+        const table = await at(files);
+        if (table.symbols.length) lastSources[entry] = files;
+        else if (lastSources[entry]) return await at(lastSources[entry]);
         return table;
     } catch {
         return null;
     }
 }
 
-// Compile the source code
-function doCompile() {
-    if (!wasmReady || !editor) return;
+// Compile the source code, first retrying a failed compiler load
+async function doCompile() {
+    if (!editor || (!wasmReady && !await initCompiler())) return;
 
     const source = editor.getValue();
     clearErrors();
@@ -1487,37 +1484,33 @@ function doCompile() {
     try {
         const { entry, files } = compilationSources();
         const optimize = document.getElementById('optimize-toggle').checked;
-        const { artifact: result, debug, warnings, diagnostics } = JSON.parse(compile_sources_with_diagnostics(entry, JSON.stringify(files), optimize));
+        const { artifact, debug, diagnostics } = await compile({ entry, files }, { optimize });
         markDiagnostics(diagnostics, entry);
-        if (result === null) {
+        if (artifact === null) {
             showErrors(diagnostics, entry);
             return;
         }
         lastCompiledSource = source;
-        displayJson(result);
-        displayAsm(result, debug);
-        displayBindings(result);
-        showSuccess(result, warnings.length);
+        displayJson(artifact);
+        displayAsm(artifact, debug);
+        displayBindings(artifact);
+        showSuccess(artifact, diagnostics.filter(d => d.severity === 'warning').length);
         renderDiagnostics(diagnostics, entry);
         markCompiled();
     } catch (err) {
-        showError(err.toString());
+        showError(err.message);
     }
 }
 
 // Display JSON output
-function displayJson(jsonStr) {
+function displayJson(artifact) {
     const container = document.getElementById('json-output');
-    container.innerHTML = syntaxHighlightJson(jsonStr);
+    container.innerHTML = syntaxHighlightJson(artifact);
 }
 
 // Syntax highlight JSON
-function syntaxHighlightJson(json) {
-    if (typeof json !== 'string') {
-        json = JSON.stringify(json, null, 2);
-    }
-
-    return json
+function syntaxHighlightJson(artifact) {
+    return JSON.stringify(artifact, null, 2)
         .replace(/&/g, '&amp;')
         .replace(/</g, '&lt;')
         .replace(/>/g, '&gt;')
@@ -1541,42 +1534,27 @@ function syntaxHighlightJson(json) {
 }
 
 // Display Assembly output
-function displayAsm(jsonStr, debugStr) {
+function displayAsm(artifact, debug) {
     const container = document.getElementById('asm-output');
     linkAsmToSource(container);
-
-    try {
-        const data = JSON.parse(jsonStr);
-        const debugFunctions = JSON.parse(debugStr).functions;
-        let html = '';
-        asmRuns = [];
-
-        if (data.functions && data.functions.length > 0) {
-            for (const group of data.functions) {
-                if (group.arkade && group.arkade.asm && group.arkade.asm.length > 0) {
-                    html += `<span class="asm-function">${group.name} <span class="asm-variant">(arkade covenant)</span></span>\n`;
-                    html += covenantListing(group.arkade.asm, debugFunctions[group.name]?.sourceMap) + '\n';
-                }
-                for (const leaf of (group.leaves || [])) {
-                    const label = leaf.name === group.name ? group.name : `${group.name}/${leaf.name}`;
-                    html += `<span class="asm-function">${label} <span class="asm-variant">(tapscript leaf)</span></span>\n`;
-                    if (leaf.asm && leaf.asm.length > 0) {
-                        html += highlightAsm(leaf.asm) + '\n\n';
-                    }
-                }
-            }
-        } else {
-            html = '<span class="comment">No functions compiled</span>';
+    let html = '';
+    asmRuns = [];
+    for (const group of artifact.functions) {
+        if (group.arkade?.asm.length) {
+            html += `<span class="asm-function">${group.name} <span class="asm-variant">(arkade covenant)</span></span>\n`;
+            html += covenantListing(group.arkade.asm, debug.functions[group.name]?.sourceMap) + '\n';
         }
-
-        container.innerHTML = html;
-    } catch (e) {
-        container.textContent = 'Failed to parse assembly output';
+        for (const leaf of group.leaves) {
+            const label = leaf.name === group.name ? group.name : `${group.name}/${leaf.name}`;
+            html += `<span class="asm-function">${label} <span class="asm-variant">(tapscript leaf)</span></span>\n`;
+            html += highlightAsm(leaf.asm) + '\n\n';
+        }
     }
+    container.innerHTML = html || '<span class="comment">No functions compiled</span>';
 }
 
 // Display generated SDK bindings
-function displayBindings(jsonStr) {
+function displayBindings(artifact) {
     const container = document.getElementById('bindings-output');
 
     // Build target selector + content area if first time
@@ -1601,8 +1579,7 @@ function displayBindings(jsonStr) {
         });
     }
 
-    // Store the JSON for re-rendering on target switch
-    container.dataset.lastJson = jsonStr;
+    container.artifact = artifact;
 
     const activeLang = container.querySelector('.bindings-lang-btn.active')?.dataset.lang || 'typescript';
     renderBindings(container.querySelector('.bindings-code'), activeLang);
@@ -1610,11 +1587,11 @@ function displayBindings(jsonStr) {
 
 function renderBindings(contentEl, target) {
     const container = document.getElementById('bindings-output');
-    const jsonStr = container.dataset.lastJson;
-    if (!jsonStr) { contentEl.textContent = 'Compile a contract first'; return; }
+    const artifact = container.artifact;
+    if (!artifact) { contentEl.textContent = 'Compile a contract first'; return; }
 
     try {
-        const code = generateBindings(jsonStr, target);
+        const code = generateBindings(artifact, target);
         contentEl.innerHTML = escapeHtml(code);
     } catch (err) {
         contentEl.textContent = 'Codegen error: ' + err.message;
@@ -1728,14 +1705,10 @@ function linkAsmToSource(container) {
 }
 
 // Show compilation success
-function showSuccess(jsonStr, warningCount = 0) {
+function showSuccess(artifact, warningCount = 0) {
     const statusEl = document.getElementById('compile-status');
-    let funcCount = '';
-    try {
-        const data = JSON.parse(jsonStr);
-        const count = data.functions?.length || 0;
-        funcCount = ` &mdash; ${count} function${count !== 1 ? 's' : ''}`;
-    } catch (e) {}
+    const count = artifact.functions.length;
+    const funcCount = ` &mdash; ${count} function${count !== 1 ? 's' : ''}`;
     const warningLabel = warningCount ? ` &mdash; ${warningCount} warning${warningCount !== 1 ? 's' : ''}` : '';
     statusEl.innerHTML = `<i class="fas fa-check-circle"></i> Compiled${funcCount}${warningLabel}`;
     statusEl.className = `compile-status ${warningCount ? 'warning' : 'success'}`;
@@ -1775,12 +1748,12 @@ let lintTimer = null;
 // Diagnose the sources while typing, without touching the outputs of the last compile.
 function lint() {
     clearTimeout(lintTimer);
-    lintTimer = setTimeout(() => {
+    lintTimer = setTimeout(async () => {
         if (!wasmReady || !editor) return;
         try {
             const { entry, files } = sourceFiles();
             const optimize = document.getElementById('optimize-toggle').checked;
-            const diagnostics = JSON.parse(check_sources(entry, JSON.stringify(files), optimize));
+            const diagnostics = await check({ entry, files }, { optimize });
             markDiagnostics(diagnostics, entry);
             renderDiagnostics(diagnostics, entry);
         } catch {}

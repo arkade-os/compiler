@@ -99,9 +99,9 @@ contract GroupRecords() {
 	}{
 		{"local input", 0, 0, 7, 1, 0, ""},
 		{"intent input", 1, 0, 11, 2, 3, ""},
-		{"wrong amount", 1, 0, 7, 2, 3, "OP_EQUALVERIFY failed"},
-		{"wrong type", 0, 0, 7, 2, 0, "OP_EQUALVERIFY failed"},
-		{"wrong index", 1, 0, 11, 2, 0, "OP_EQUALVERIFY failed"},
+		{"wrong amount", 1, 0, 7, 2, 3, "OP_NUMEQUALVERIFY failed"},
+		{"wrong type", 0, 0, 7, 2, 0, "OP_NUMEQUALVERIFY failed"},
+		{"wrong index", 1, 0, 11, 2, 0, "OP_NUMEQUALVERIFY failed"},
 		{"input out of range", 0, 1, 7, 1, 0, "input index out of range"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

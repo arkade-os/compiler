@@ -5,7 +5,7 @@ pragma arkade ^0.1.0;
 //
 // This contract manages a token minting authority where:
 // 1. mint() - Authority can mint new tokens (delta > 0), control asset required
-// 2. burn() - Anyone can burn tokens (delta < 0), no control needed
+// 2. burn() - Authority can burn tokens (delta < 0), no control needed
 // 3. lockSupply() - Authority burns the control asset to lock supply forever
 //
 // Asset groups provide aggregate views of asset flows across all inputs/outputs,
@@ -19,7 +19,7 @@ contract ControlledMint(
   pubkey issuerPk
 ) {
   // Mint: delta > 0, control asset present and retained
-  function mint(int amount, bytes recipientScriptPubKey, signature issuerSig) {
+  function mint(int amount, ScriptPubKey recipientScriptPubKey, signature issuerSig) {
     let tokenGroup = tx.assetGroups.find(tokenAssetIdTxid, tokenAssetIdGidx);
     require(tokenGroup.delta == amount, "delta mismatch");
     require(tokenGroup.controlIs(ctrlAssetIdTxid, ctrlAssetIdGidx), "wrong control");
@@ -28,15 +28,15 @@ contract ControlledMint(
     require(ctrlGroup.delta == 0, "ctrl supply changed");
 
     require(tx.outputs[0].assets.lookup(tokenAssetIdTxid, tokenAssetIdGidx) >= amount, "mint short");
-    require(tx.outputs[0].scriptPubKey == recipientScriptPubKey, "wrong dest");
+    require(tx.outputs[0].script == recipientScriptPubKey, "wrong dest");
     require(checkSig(issuerSig, issuerPk), "bad sig");
   }
 
   // Burn: delta < 0, no control asset needed
-  function burn(int amount, signature ownerSig, pubkey ownerPk) {
+  function burn(int amount, signature issuerSig) {
     let tokenGroup = tx.assetGroups.find(tokenAssetIdTxid, tokenAssetIdGidx);
     require(tokenGroup.sumInputs >= tokenGroup.sumOutputs + amount, "burn short");
-    require(checkSig(ownerSig, ownerPk), "bad sig");
+    require(checkSig(issuerSig, issuerPk), "bad sig");
   }
 
   // Lock supply forever: burn the control asset

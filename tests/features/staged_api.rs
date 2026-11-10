@@ -52,7 +52,8 @@ fn analysis_errors_stop_compilation_and_code_generation_errors_wait_for_it() {
 
     let source = "contract C() {\n    function spend(int[2] xs) {\n        for (i, x) in xs {\n            require(xs[i + 1] == x);\n        }\n    }\n}";
     let analysis = analyze("main.ark", &files(source));
-    assert!(analysis.diagnostics().is_empty());
+    let codes: Vec<_> = analysis.diagnostics().into_iter().map(|d| d.code).collect();
+    assert_eq!(codes, [Some("unsigned-spend-path".to_string())]);
     let [error] = analysis
         .compile(CompileOptions::default())
         .unwrap_err()

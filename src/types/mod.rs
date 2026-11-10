@@ -535,8 +535,8 @@ fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
         ExprKind::Unary { op, .. } => ArkType::parse(op.operand_type()),
         ExprKind::Tunnel { .. } => ArkType::Bool,
 
-        // Contract instantiation resolves to a scriptPubKey bytes value.
-        ExprKind::ContractInstance { .. } => ArkType::Bytes,
+        // Contract instantiation includes the Taproot witness version.
+        ExprKind::ContractInstance { .. } => ArkType::Struct("ScriptPubKey".to_string()),
 
         ExprKind::Cast { target, .. } => ArkType::parse(target),
 
@@ -603,6 +603,11 @@ fn bytes_of_width(width: Option<usize>) -> ArkType {
         Some(32) => ArkType::Bytes32,
         _ => ArkType::Bytes,
     }
+}
+
+/// Whether values of the type are script numbers.
+pub(crate) fn is_numeric(t: &ArkType) -> bool {
+    t.encoding() == "scriptnum"
 }
 
 /// Returns true when the type widens to `bytes`: it can be concatenated with

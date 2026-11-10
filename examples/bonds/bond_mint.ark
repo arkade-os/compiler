@@ -102,7 +102,7 @@ contract BondMint(
     require(debitGroup.sumInputs == debitGroup.sumOutputs + mintedAmount, "debit not burned exactly mintedAmount");
 
     require(tx.outputs[1].value >= collateral, "collateral not returned");
-    require(tx.outputs[1].scriptPubKey == new SingleSig(borrowerPk), "output 1 not borrower");
+    require(tx.outputs[1].script == new SingleSig(borrowerPk), "output 1 not borrower");
   }
 
   // LIQUIDATE — pre-maturity MARGIN CALL, permissionless. The pool's liquidate
@@ -118,16 +118,20 @@ contract BondMint(
   // co-spent pool.liquidate. If that pool-side check ever regresses, this
   // vault-side floor still prevents the "1 sat to auctioneer, rest as miner
   // fee" siphon shape.
-  function liquidate(int poolIdx, bytes auctioneerScriptPubKey) {
+  @allow(unsigned-spend-path, "permissionless liquidation, bound to the genuine pool by its debit control asset, with the debit burn and the auctioneer output pinned")
+  function liquidate(int poolIdx, ScriptPubKey auctioneerScriptPubKey) {
     require(!checkTime(maturity), "matured; use auction");
 
     require(tx.inputs[poolIdx].assets.lookup(debitCtrlIdTxid, debitCtrlIdGidx) >= 1, "genuine pool not co-spent");
+    // One vault per pool: the debit burn below is checked per asset group, so two vaults
+    // sharing one pool input could both be settled by a single burn.
+    require(this.activeInputIndex == poolIdx + 1, "vault must follow the pool");
 
     let debitGroup = tx.assetGroups.find(debitAssetIdTxid, debitAssetIdGidx);
     require(debitGroup.sumInputs == debitGroup.sumOutputs + mintedAmount, "debit not burned exactly mintedAmount");
 
     require(tx.outputs[1].value > 0, "auctioneer output empty");
-    require(tx.outputs[1].scriptPubKey == auctioneerScriptPubKey, "output 1 not auctioneer");
+    require(tx.outputs[1].script == auctioneerScriptPubKey, "output 1 not auctioneer");
   }
 
   // AUCTION — during the auction window, atomic with RepaymentPool.acceptAuction.
@@ -135,18 +139,20 @@ contract BondMint(
   // collateral destination via `auctioneerScriptPubKey`.
   //   output[0]: pool re-created (enforced by acceptAuction)
   //   output[1]: collateral (or sold portion) → auctioneer
-  function auction(int poolIdx, bytes auctioneerScriptPubKey) {
+  @allow(unsigned-spend-path, "permissionless auction in its window, bound to the genuine pool by its debit control asset, with the debit burn and the auctioneer output pinned")
+  function auction(int poolIdx, ScriptPubKey auctioneerScriptPubKey) {
     require(checkTime(maturity), "not yet matured");
     int windowEnd = maturity + auctionWindow;
     require(!checkTime(windowEnd), "auction window closed");
 
     require(tx.inputs[poolIdx].assets.lookup(debitCtrlIdTxid, debitCtrlIdGidx) >= 1, "genuine pool not co-spent");
+    require(this.activeInputIndex == poolIdx + 1, "vault must follow the pool");
 
     let debitGroup = tx.assetGroups.find(debitAssetIdTxid, debitAssetIdGidx);
     require(debitGroup.sumInputs == debitGroup.sumOutputs + mintedAmount, "debit not burned exactly mintedAmount");
 
     require(tx.outputs[1].value > 0, "auctioneer output empty");
-    require(tx.outputs[1].scriptPubKey == auctioneerScriptPubKey, "output 1 not auctioneer");
+    require(tx.outputs[1].script == auctioneerScriptPubKey, "output 1 not auctioneer");
   }
 
   // ROLL — borrower-signed authorisation to migrate this vault to a next-

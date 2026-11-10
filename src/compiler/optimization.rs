@@ -198,9 +198,10 @@ fn fixed_bytes(value: i128, width: usize) -> Option<String> {
 }
 
 /// Opcodes that leave a minimal 0 or 1, which `NotEqual0` returns unchanged.
-const BOOLEAN_RESULTS: [Opcode; 12] = [
+const BOOLEAN_RESULTS: [Opcode; 13] = [
     Equal,
     NumEqual,
+    NumNotEqual,
     LessThan,
     LessThanOrEqual,
     GreaterThan,

@@ -1,4 +1,4 @@
-# WASM build output
+# Packed compiler browser assets
 pkg/
 
 # Generated from examples/*.ark

@@ -54,7 +54,7 @@ contract Shape(int limit) {
     );
     assert_eq!(
         crate::common::arkade_asm(&optimized, "read"),
-        "<limit> OP_DUP OP_EQUAL"
+        "<limit> OP_DUP OP_NUMEQUAL"
     );
     assert_eq!(
         crate::common::arkade_asm(&optimized, "write"),
@@ -405,7 +405,7 @@ fn single_read_constructor_leaves_are_pushed_at_their_read() {
         ),
         (
             "struct S { int length; int[2] xs; } contract C(S s) { function spend() { require(s.length == 3); require(s.xs.length == 2); } }",
-            "<s.length> 3 OP_EQUAL OP_VERIFY OP_2 2 OP_EQUAL OP_VERIFY OP_1",
+            "<s.length> 3 OP_NUMEQUAL OP_VERIFY OP_2 2 OP_NUMEQUAL OP_VERIFY OP_1",
         ),
     ] {
         assert_eq!(covenant(source, "spend").asm.join(" "), expected, "{source}");
@@ -435,7 +435,7 @@ contract Paths(int unused, int left, int right, pubkey exitKey, int delay) {
         let covenant = group.arkade.as_ref().unwrap();
         assert_eq!(
             covenant.asm,
-            format!("OP_0 OP_ROLL <{parameter}> OP_EQUAL OP_VERIFY OP_1")
+            format!("OP_0 OP_ROLL <{parameter}> OP_NUMEQUAL OP_VERIFY OP_1")
                 .split_whitespace()
                 .map(String::from)
                 .collect::<Vec<_>>()
@@ -514,7 +514,7 @@ fn constructor_references_cover_nested_bodies_and_named_operands() {
          "require(groupIndex.sumInputs >= 0); require(groupIndex.controlIs(txid, gidx));",
          vec!["<groupIndex>", "<gidx>", "<txid>"]),
         ("Policy policy", "",
-         "require(tx.outputs[0].scriptPubKey == new Child(policy));",
+         "require(tx.outputs[0].script == new Child(policy));",
          vec![]),
     ] {
         let source = format!(
@@ -537,15 +537,15 @@ fn final_use_liveness_keeps_repeated_reads_and_assignment_targets() {
     for (body, expected) in [
         (
             "require(x + x == y);",
-            "OP_0 OP_PICK OP_1 OP_ROLL OP_ADD OP_1 OP_ROLL OP_EQUAL OP_VERIFY OP_1",
+            "OP_0 OP_PICK OP_1 OP_ROLL OP_ADD OP_1 OP_ROLL OP_NUMEQUAL OP_VERIFY OP_1",
         ),
         (
             "require(x == y); x = 7; require(true);",
-            "OP_0 OP_PICK OP_2 OP_ROLL OP_EQUAL OP_VERIFY 7 OP_NIP OP_1 OP_VERIFY OP_1 OP_NIP",
+            "OP_0 OP_PICK OP_2 OP_ROLL OP_NUMEQUAL OP_VERIFY 7 OP_NIP OP_1 OP_VERIFY OP_1 OP_NIP",
         ),
         (
             "x = x + 1; require(x == y);",
-            "OP_0 OP_ROLL 1 OP_ADD OP_0 OP_ROLL OP_1 OP_ROLL OP_EQUAL OP_VERIFY OP_1",
+            "OP_0 OP_ROLL 1 OP_ADD OP_0 OP_ROLL OP_1 OP_ROLL OP_NUMEQUAL OP_VERIFY OP_1",
         ),
     ] {
         let source = format!("contract FinalUse() {{ function spend(int x, int y) {{ {body} }} }}");
@@ -558,11 +558,11 @@ fn short_circuit_operands_move_outside_open_branches() {
     for (body, expected) in [
         (
             "require(x == y || z > 0);",
-            "OP_0 OP_ROLL OP_1 OP_ROLL OP_EQUAL OP_IF OP_1 OP_ELSE OP_0 OP_PICK 0 OP_GREATERTHAN OP_ENDIF OP_VERIFY OP_1 OP_NIP",
+            "OP_0 OP_ROLL OP_1 OP_ROLL OP_NUMEQUAL OP_IF OP_1 OP_ELSE OP_0 OP_PICK 0 OP_GREATERTHAN OP_ENDIF OP_VERIFY OP_1 OP_NIP",
         ),
         (
             "require(z > 0 || z < x); require(y == 1);",
-            "OP_2 OP_PICK 0 OP_GREATERTHAN OP_IF OP_1 OP_ELSE OP_2 OP_PICK OP_1 OP_PICK OP_LESSTHAN OP_ENDIF OP_VERIFY OP_1 OP_ROLL 1 OP_EQUAL OP_VERIFY OP_1 OP_NIP OP_NIP",
+            "OP_2 OP_PICK 0 OP_GREATERTHAN OP_IF OP_1 OP_ELSE OP_2 OP_PICK OP_1 OP_PICK OP_LESSTHAN OP_ENDIF OP_VERIFY OP_1 OP_ROLL 1 OP_NUMEQUAL OP_VERIFY OP_1 OP_NIP OP_NIP",
         ),
     ] {
         let source =

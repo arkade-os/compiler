@@ -342,14 +342,7 @@ never holds raw USDT mid-roll; they bring no new sats; the order book
 provides the USDT counterparty. Their cost is the market discount on the
 new credit (typical: ~1–5%, depending on term and risk).
 
-**Why it works under one tx.** Each new function pins its outputs at
-WITNESS-supplied indices (`outIdxPool`, `outIdxVault`, `outIdxCredit`)
-rather than the hard-coded `output[0]` used by the issuance/settlement
-functions. That removes the cross-covenant index conflict (both pools
-wanting "their" output[0]) that previously blocked composition. The
-underlying compiler primitive — `tx.outputs[witnessIdx].scriptPubKey ==
-new Contract(...)` — works the same way as the witness-indexed input
-lookups (`vaultIdx`, `poolIdx`) the contract already uses.
+**Why it works under one tx.** Each new function pins its outputs at WITNESS-supplied indices (`outIdxPool`, `outIdxVault`, `outIdxCredit`) rather than the hard-coded `output[0]` used by the issuance/settlement functions. That removes the cross-covenant index conflict (both pools wanting "their" output[0]) that previously blocked composition. The underlying compiler primitive — `tx.outputs[witnessIdx].script == new Contract(...)` — works the same way as the witness-indexed input lookups (`vaultIdx`, `poolIdx`) the contract already uses.
 
 **Safety.** rollOut and rollIn each enforce their own pool's invariants
 independently:

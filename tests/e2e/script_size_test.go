@@ -14,11 +14,11 @@ func TestScriptSizeLimitMatchesTheVM(t *testing.T) {
 	if os.Getenv("ARKADEC_NO_OPTIMIZE") != "" {
 		t.Skip("the byte counts below are for the optimized covenant")
 	}
-	// `require(x != n)` assembles to 7 bytes for a two-byte n and 8 for a three-byte one,
+	// `require(x != n)` assembles to 6 bytes for a two-byte n and 7 for a three-byte one,
 	// less the last requirement's DUP and VERIFY.
 	write := func(wide int) string {
 		var requires strings.Builder
-		for i := 0; i < 1428; i++ {
+		for i := 0; i < 1667; i++ {
 			n := 1000 + i
 			if i < wide {
 				n = 100000 + i
@@ -33,7 +33,7 @@ func TestScriptSizeLimitMatchesTheVM(t *testing.T) {
 		return source
 	}
 
-	contract := compileArtifact(t, write(6))
+	contract := compileArtifact(t, write(0))
 	serverKey, emulatorKey := fixedPrivateKey(1), fixedPrivateKey(2)
 	group := covenantGroup(t, contract, "spend")
 	instance := instantiateGroup(t, contract, "spend", nil, serverKey.PubKey(), emulatorKey.PubKey())
@@ -45,7 +45,7 @@ func TestScriptSizeLimitMatchesTheVM(t *testing.T) {
 		instance.pkScript, covenantWitness(t, contract, group, values))
 	requireVMResult(t, spend, emulatorKey.PubKey(), "")
 
-	output, err := compile(t, write(7), filepath.Join(t.TempDir(), "a.json"))
+	output, err := compile(t, write(1), filepath.Join(t.TempDir(), "a.json"))
 	if err == nil || !strings.Contains(string(output), "at least 10001 bytes, above the VM limit of 10000") {
 		t.Fatalf("10001 bytes compiled or failed differently: %v\n%s", err, output)
 	}

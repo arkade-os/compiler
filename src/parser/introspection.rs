@@ -61,7 +61,7 @@ pub(crate) fn parse_tunnel(pair: Pair<Rule>) -> Result<Expression, String> {
         let mut values = [None, None, None];
         for (name, value) in fields {
             let index = match name.as_str() {
-                "scriptPubKey" => 0,
+                "script" => 0,
                 "value" => 1,
                 "assets" => 2,
                 _ => return Err(format!("unknown tunnel policy field '{name}'")),
@@ -72,7 +72,7 @@ pub(crate) fn parse_tunnel(pair: Pair<Rule>) -> Result<Expression, String> {
         }
         let [script, value, assets] = values;
         [
-            script.ok_or("missing tunnel policy field 'scriptPubKey'")?,
+            script.ok_or("missing tunnel policy field 'script'")?,
             value.ok_or("missing tunnel policy field 'value'")?,
             assets.ok_or("missing tunnel policy field 'assets'")?,
         ]
@@ -119,7 +119,7 @@ pub(crate) fn parse_tx_introspection_to_expression(pair: Pair<Rule>) -> Result<E
 // ─── Input/Output Introspection Parsing ─────────────────────────────────────────
 
 /// Parse input_introspection pair into an ExprKind::InputIntrospection
-/// tx.inputs[i].value, tx.inputs[i].scriptPubKey, etc.
+/// tx.inputs[i].value, tx.inputs[i].script, etc.
 pub(crate) fn parse_input_introspection_to_expression(
     pair: Pair<Rule>,
 ) -> Result<Expression, String> {
@@ -149,7 +149,7 @@ pub(crate) fn parse_input_introspection_to_expression(
 }
 
 /// Parse output_introspection pair into an ExprKind::OutputIntrospection
-/// tx.outputs[o].value, tx.outputs[o].scriptPubKey
+/// tx.outputs[o].value, tx.outputs[o].script
 pub(crate) fn parse_output_introspection_to_expression(
     pair: Pair<Rule>,
 ) -> Result<Expression, String> {
@@ -249,8 +249,6 @@ pub(crate) fn parse_tx_property_to_expr(pair: Pair<Rule>) -> Result<Expression, 
     let span: crate::diagnostics::Span = pair.as_span().into();
     let text = without_trivia(pair.as_str());
 
-    reject_malformed_asset_call(&text)?;
-
     let body = pair.into_inner().next().ok_or("Missing tx property")?;
     let mut parts = body.into_inner();
     let first = parts.next().ok_or("Missing tx property")?;
@@ -282,6 +280,7 @@ pub(crate) fn parse_tx_property_to_expr(pair: Pair<Rule>) -> Result<Expression, 
             })
         }
         _ => {
+            reject_malformed_asset_call(&text)?;
             // `tx.input.current` without a property it accepts reads as a plain property path.
             let mut names = std::iter::once(first.as_str())
                 .chain(parts.map(|suffix| suffix.as_str().trim_start_matches('.').trim()));
@@ -319,7 +318,7 @@ fn parse_asset_group_access(
             }
         } else {
             ExprKind::GroupFind {
-                asset_txid: Box::new(parse_asset_id_txid(first)?),
+                asset_txid: Box::new(parse_general_expression(first)?),
                 asset_gidx: Box::new(parse_general_expression(
                     operands.next().ok_or("Missing asset group gidx")?,
                 )?),

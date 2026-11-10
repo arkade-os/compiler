@@ -140,7 +140,7 @@ function computeChildGeneration(sireGenerationBE8: bytes8, dameGenerationBE8: by
 contract BreedCommit(
     bytes32 speciesControlIdTxid,
     int speciesControlIdGidx,
-    script feeScript, // A generic script for the fee output
+    ScriptPubKey feeScript, // A generic script for the fee output
     int fee, // The required fee to prevent spam
     pubkey oracle // The public key of the oracle to be used for the reveal
     int timeout // The timeout for the reveal to occur
@@ -148,8 +148,8 @@ contract BreedCommit(
 ) {
     function commit(            
         // Sire & Dame details
-        sireIdTxid: bytes32, sireIdGidx: int, sireGenome: bytes32, sireGenerationBE8: bytes8, script sireOwner,
-        dameIdTxid: bytes32, dameIdGidx: int, dameGenome: bytes32, dameGenerationBE8: bytes8, script dameOwner,
+        sireIdTxid: bytes32, sireIdGidx: int, sireGenome: bytes32, sireGenerationBE8: bytes8, ScriptPubKey sireOwner,
+        dameIdTxid: bytes32, dameIdGidx: int, dameGenome: bytes32, dameGenerationBE8: bytes8, ScriptPubKey dameOwner,
         // A secret salt from the user, hashed
         saltHash: bytes32,
         // The output index for the reveal UTXO
@@ -157,12 +157,12 @@ contract BreedCommit(
         // The output index for the fee UTXO
         feeOutputIndex: int,
         // the script for the new Kitty owner
-        newKittyOwner: script,
+        newKittyOwner: ScriptPubKey,
     ) {
 
 
         // 1. Verify a fee is paid to the designated fee script
-        require(tx.outputs[feeOutputIndex].scriptPubKey == feeScript, "Fee output script mismatch");
+        require(tx.outputs[feeOutputIndex].script == feeScript, "Fee output script mismatch");
         require(tx.outputs[feeOutputIndex].value >= fee, "Fee not paid");
         require(tx.outputs[revealOutputIndex].assets.lookup(speciesControlIdTxid, speciesControlIdGidx) == 1, "Species Control not locked in reveal output");
         require(tx.outputs[revealOutputIndex].assets.lookup(sireIdTxid, sireIdGidx) == 1, "Sire not locked in reveal output");
@@ -185,7 +185,7 @@ contract BreedCommit(
         // The commit contract then verifies that the output at the specified index is locked
         // with this exact script, which it reconstructs here for verification.
 
-        Script revealScript = new BreedReveal(
+        ScriptPubKey revealScript = new BreedReveal(
             speciesControlIdTxid, speciesControlIdGidx,
             oracle,
             sireIdTxid, sireIdGidx,
@@ -198,7 +198,7 @@ contract BreedCommit(
             tx.locktime + timeout,
         );
 
-        require(tx.outputs[revealOutputIndex].scriptPubKey == revealScript, "Reveal output script mismatch");
+        require(tx.outputs[revealOutputIndex].script == revealScript, "Reveal output script mismatch");
 
     }
 }
@@ -215,8 +215,8 @@ contract BreedReveal(
     bytes32 sireGenome, bytes8 sireGenerationBE8,
     bytes32 dameGenome, bytes8 dameGenerationBE8,
     bytes32 saltHash,
-    script sireOwner, script dameOwner,
-    script newKittyOwner,
+    ScriptPubKey sireOwner, ScriptPubKey dameOwner,
+    ScriptPubKey newKittyOwner,
     int expirationTime,
 ) {
     function reveal(
@@ -252,7 +252,7 @@ contract BreedReveal(
         require(newKittyGroup.controlIs(speciesControlIdTxid, speciesControlIdGidx), "Child not Species-Controlled");
         let newKittyOutput = tx.outputs[kittyOutputIndex];
         require(newKittyOutput.assets.lookup(newKittyIdTxid, newKittyIdGidx) == 1, "New Kitty not locked in output");
-        require(newKittyOutput.scriptPubKey == newKittyOwner, "New Kitty must be sent to a P2PKH address");
+        require(newKittyOutput.script == newKittyOwner, "New Kitty must be sent to a P2PKH address");
 
         // 5. Generate the unpredictable genome and expected metadata hash
         let entropy = sha256(salt + oracleRand);
@@ -271,9 +271,9 @@ contract BreedReveal(
 
         // 2. Verify parents are returned to their owners
         require(tx.outputs[sireOutputIndex].assets.lookup(sireIdTxid, sireIdGidx) == 1, "Sire not refunded");
-        require(tx.outputs[sireOutputIndex].scriptPubKey == sireOwner, "Sire not refunded to owner");
+        require(tx.outputs[sireOutputIndex].script == sireOwner, "Sire not refunded to owner");
         require(tx.outputs[dameOutputIndex].assets.lookup(dameIdTxid, dameIdGidx) == 1, "Dame not refunded");
-        require(tx.outputs[dameOutputIndex].scriptPubKey == dameOwner, "Dame not refunded to owner");
+        require(tx.outputs[dameOutputIndex].script == dameOwner, "Dame not refunded to owner");
 
         // 3. Verify Species Control is retained (delta == 0)
         let speciesGroup = tx.assetGroups.find(speciesControlIdTxid, speciesControlIdGidx);

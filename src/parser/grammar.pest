@@ -14,7 +14,12 @@ pragma_constraint = { (">=" | "<=" | ">" | "<" | "=" | "^" | "~")? ~ pragma_vers
 pragma_stmt = { pragma_keyword ~ pragma_language ~ pragma_constraint+ ~ ("||" ~ pragma_constraint+)* ~ ";" }
 
 // Main entry point - must consume the entire input
-main = { SOI ~ pragma_stmt? ~ import_stmt* ~ struct_definition* ~ (contract | library)? ~ EOI }
+main = { SOI ~ pragma_stmt? ~ import_stmt* ~ struct_definition* ~ (attribute* ~ (contract | library))? ~ EOI }
+
+// Outer attribute of the contract, function or statement after it: @name(arg, ...)
+attribute = { "@" ~ identifier ~ "(" ~ attribute_arg ~ ("," ~ attribute_arg)* ~ ")" }
+attribute_arg = _{ string_literal | attribute_name }
+attribute_name = @{ ASCII_ALPHA ~ (ASCII_ALPHANUMERIC | "-" | "_")* }
 
 struct_definition = {
     "struct" ~ identifier ~ "{" ~ struct_field+ ~ "}"
@@ -26,11 +31,11 @@ struct_field = { data_type ~ identifier ~ ";" }
 contract = {
     "contract" ~ identifier ~
     "(" ~ param_list ~ ")" ~
-    "{" ~ (const_decl | function)* ~ "}"
+    "{" ~ (const_decl | attribute* ~ function)* ~ "}"
 }
 
 library = {
-    "library" ~ identifier ~ "{" ~ (const_decl | function)* ~ "}"
+    "library" ~ identifier ~ "{" ~ (const_decl | attribute* ~ function)* ~ "}"
 }
 
 // Compile-time constant: const int NAME = 144;
@@ -69,7 +74,8 @@ return_keyword = @{ "return" ~ !(ASCII_ALPHANUMERIC | "_") }
 return_stmt = { return_keyword ~ general_expression? ~ ";" }
 
 // Statement types - order matters, more specific first
-statement = _{
+statement = _{ attribute* ~ statement_kind }
+statement_kind = _{
     return_stmt |
     if_stmt |
     for_stmt |
@@ -80,7 +86,8 @@ statement = _{
     variable_declaration
 }
 
-// If statement with optional else
+// If statement with optional else. There is no `else if`; `Path::either` in
+// `src/lint/functions.rs` relies on that, see its ponytail note.
 if_stmt = {
     "if" ~ "(" ~ general_expression ~ ")" ~ block ~ ("else" ~ block)?
 }
@@ -230,11 +237,11 @@ rem_op = { "%" }
 
 // ─── Asset Lookups ─────────────────────────────────────────────────────────────
 
-asset_id_txid_operand = _{ identifier_property_access | identifier }
+asset_id_txid_operand = _{ general_expression }
 asset_id_gidx_operand = _{ general_expression }
 
 // Asset lookup on inputs/outputs: tx.inputs[i].assets.lookup(txid, gidx)
-// txid is a bytes32 identifier; gidx is an int expression (constants must be 0..65535).
+// txid is a bytes32 expression; gidx is an int expression (constants must be 0..65535).
 asset_lookup = {
     "tx" ~ "." ~ asset_lookup_source ~ array_access ~ "." ~ "assets"
         ~ "." ~ "lookup" ~ "(" ~ asset_id_txid_operand ~ "," ~ asset_id_gidx_operand ~ ")"
@@ -298,7 +305,7 @@ input_introspection = {
 // opcodes and are used by invocation-marker contracts to pin themselves to
 // a specific consuming Arkade closure.
 input_introspection_property = {
-    "value" | "scriptPubKey" | "witnessVersion" | "sequence" | "outpoint" |
+    "value" | "witnessVersion" | "sequence" | "outpoint" |
     "arkadeScriptHash" | "arkadeWitnessHash" | "script"
 }
 
@@ -308,7 +315,7 @@ output_introspection = {
 }
 
 // Output introspection properties (excluding asset - use .assets.* API instead)
-output_introspection_property = { "value" | "scriptPubKey" | "witnessVersion" | "script" }
+output_introspection_property = { "value" | "witnessVersion" | "script" }
 
 // ─── Asset Groups ──────────────────────────────────────────────────────────────
 

@@ -97,7 +97,7 @@ fn test_liquidate_is_permissionless_prematurity() {
         .iter()
         .find(|input| input.name == "auctioneerScriptPubKey")
         .expect("auctioneer destination input");
-    assert_eq!(destination.param_type, "bytes");
+    assert_eq!(destination.param_type, "ScriptPubKey");
 }
 
 #[test]
@@ -146,7 +146,7 @@ fn test_auction_is_permissionless_and_phased() {
         .iter()
         .find(|input| input.name == "auctioneerScriptPubKey")
         .expect("auctioneer destination input");
-    assert_eq!(destination.param_type, "bytes");
+    assert_eq!(destination.param_type, "ScriptPubKey");
 }
 
 #[test]

@@ -134,11 +134,11 @@ fn bytes_literals_work_through_expressions_and_named_operands() {
                 let ctx = sha256Initialize("he");
                 ctx = sha256Update(ctx, "ll");
                 require(sha256Finalize(ctx, 0x6f) == hash);
-                require(digest("hello", 0) == hash);
-                require(checkSigFromStack(sig, key, "hello"));
-                let valid = checkSigFromStack(sig, key, 0x68656c6c6f);
+                require(digest("hello", 1) == hash);
+                require(checkSigFromStack(sig, key, "thirty-two bytes of message text"));
+                let valid = checkSigFromStack(sig, key, 0x7468697274792d74776f206279746573206f66206d6573736167652074657874);
                 require(valid);
-                require(checkSigFromStackVerify(sig, key, MESSAGE));
+                require(checkSigFromStackVerify(sig, key, sha256(MESSAGE)));
             }
         }
     "#,
@@ -260,7 +260,11 @@ fn bytes_literals_compound_hash_comparisons() {
             if rhs.contains("suffix") { "bytes suffix" } else { "" }
         ))
             .unwrap_or_else(|error| panic!("{rhs}: {error}"));
-        assert!(out.warnings.is_empty(), "{:?}", out.warnings);
+        assert!(
+            crate::common::feature_warnings(&out).is_empty(),
+            "{:?}",
+            out.warnings
+        );
         assert!(arkade_asm_tokens(&out, "spend")
             .iter()
             .any(|token| token == "OP_EQUAL"));

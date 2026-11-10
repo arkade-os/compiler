@@ -1,8 +1,8 @@
 use arkade_compiler::compile_file;
 use arkade_compiler::models::ContractJson;
 use arkade_compiler::opcodes::{
-    OP_CHECKSEQUENCEVERIFY, OP_CHECKSIG, OP_CHECKSIGFROMSTACK, OP_CHECKTIME, OP_EQUAL,
-    OP_INSPECTLOCKTIME, OP_INSPECTNUMINPUTS, OP_INSPECTOUTPUTSCRIPTPUBKEY, OP_SHA256,
+    OP_CHECKSEQUENCEVERIFY, OP_CHECKSIG, OP_CHECKSIGFROMSTACK, OP_CHECKTIME, OP_INSPECTLOCKTIME,
+    OP_INSPECTNUMINPUTS, OP_INSPECTOUTPUTSCRIPTPUBKEY, OP_SHA256,
 };
 use std::path::Path;
 
@@ -73,12 +73,17 @@ fn test_payouts_are_pinned_to_committed_destinations() {
     let output = escrow();
 
     let complete = arkade_asm(&output, "complete");
-    let single_input = format!("{OP_INSPECTNUMINPUTS} 1 {OP_EQUAL}");
+    let single_input = format!("{OP_INSPECTNUMINPUTS} 1 OP_NUMEQUALVERIFY");
     assert!(
         complete.contains(&single_input),
         "complete must require exactly one input: {complete}"
     );
-    for destination in ["<partyBScript>", "<partyAScript>"] {
+    for destination in [
+        "<partyBScript.program>",
+        "<partyBScript.version>",
+        "<partyAScript.program>",
+        "<partyAScript.version>",
+    ] {
         assert!(
             complete.contains(destination),
             "complete must pin a payout to {destination}: {complete}"
@@ -103,7 +108,9 @@ fn test_payouts_are_pinned_to_committed_destinations() {
         "arkd rebuilds this spend with nLockTime 0, so tx.locktime cannot gate cancel: {cancel}"
     );
     assert!(
-        cancel.contains("<partyAScript>") && !cancel.contains("<partyBScript>"),
+        cancel.contains("<partyAScript.program>")
+            && cancel.contains("<partyAScript.version>")
+            && !cancel.contains("<partyBScript.program>"),
         "a timeout refund may only reach party A: {cancel}"
     );
 }

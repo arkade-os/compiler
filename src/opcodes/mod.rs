@@ -75,6 +75,7 @@ opcodes! {
     // Comparisons
     Equal = OP_EQUAL => (2, 1),
     NumEqual = OP_NUMEQUAL => (2, 1),
+    NumNotEqual = OP_NUMNOTEQUAL => (2, 1),
     GreaterThanOrEqual = OP_GREATERTHANOREQUAL => (2, 1),
     LessThanOrEqual = OP_LESSTHANOREQUAL => (2, 1),
     GreaterThan = OP_GREATERTHAN => (2, 1),
@@ -111,6 +112,8 @@ opcodes! {
     BoolAnd = OP_BOOLAND => (2, 1),
     Not = OP_NOT => (1, 1),
     False = OP_FALSE,
+    // The only opcode that opens a branch: an `OP_NOTIF` added here must also open one in the
+    // generator's stack model and in `most_executions`.
     If = OP_IF,
     EndIf = OP_ENDIF,
     Else = OP_ELSE,
@@ -141,7 +144,6 @@ opcodes! {
     // Verify variants
     EqualVerify = OP_EQUALVERIFY => (2, 0),
     NumEqualVerify = OP_NUMEQUALVERIFY => (2, 0),
-    NumNotEqual = OP_NUMNOTEQUAL,
     BoolOr = OP_BOOLOR,
 
     // Stack manipulation (extended)

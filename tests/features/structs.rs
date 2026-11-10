@@ -1,8 +1,8 @@
 use crate::common::compile_unoptimized as compile;
 use arkade_compiler::opcodes::{
-    OP_ADD, OP_BOOLAND, OP_CHECKSIG, OP_CHECKSIGFROMSTACK, OP_DUP, OP_ENDIF, OP_EQUAL,
-    OP_EQUALVERIFY, OP_GREATERTHANOREQUAL, OP_INSPECTASSETGROUPASSETID, OP_INSPECTINPUTOUTPOINT,
-    OP_LESSTHAN, OP_NOT, OP_PICK, OP_PUT, OP_ROLL, OP_SWAP, OP_VERIFY,
+    OP_ADD, OP_BOOLAND, OP_CHECKSIG, OP_CHECKSIGFROMSTACK, OP_DUP, OP_ENDIF, OP_GREATERTHANOREQUAL,
+    OP_INSPECTASSETGROUPASSETID, OP_INSPECTINPUTOUTPOINT, OP_LESSTHAN, OP_NOT, OP_NUMEQUAL,
+    OP_NUMEQUALVERIFY, OP_PICK, OP_PUT, OP_ROLL, OP_SWAP, OP_VERIFY,
 };
 
 #[test]
@@ -212,7 +212,9 @@ contract C(Pair left) {
     .expect("struct equality compares leaf by leaf");
     let asm = crate::common::arkade_asm_tokens(&output, "spend");
     assert_eq!(
-        asm.iter().filter(|token| *token == OP_EQUALVERIFY).count(),
+        asm.iter()
+            .filter(|token| *token == OP_NUMEQUALVERIFY)
+            .count(),
         4,
         "every leaf of the nested struct is verified: {asm:?}"
     );
@@ -263,11 +265,11 @@ fn struct_inequality_checks_the_final_leaf() {
     )
     .expect("only the final leaf differs");
     let asm = crate::common::arkade_asm_tokens(&output, "spend");
-    assert_eq!(asm.iter().filter(|token| *token == OP_EQUAL).count(), 4);
+    assert_eq!(asm.iter().filter(|token| *token == OP_NUMEQUAL).count(), 4);
     assert_eq!(asm.iter().filter(|token| *token == OP_BOOLAND).count(), 3);
     assert!(
         asm.windows(4)
-            .any(|tokens| tokens == [OP_EQUAL, OP_BOOLAND, OP_NOT, OP_VERIFY]),
+            .any(|tokens| tokens == [OP_NUMEQUAL, OP_BOOLAND, OP_NOT, OP_VERIFY]),
         "{asm:?}"
     );
 }
@@ -287,7 +289,7 @@ contract C() {
 "#,
     )
     .expect("helper parameter types stay inside the helper");
-    assert!(crate::common::arkade_asm(&after_call, "spend").contains(OP_EQUALVERIFY));
+    assert!(crate::common::arkade_asm(&after_call, "spend").contains(OP_NUMEQUALVERIFY));
 
     let after_block = compile(
         r#"
@@ -315,7 +317,7 @@ fn constructor_struct_arguments_expand_recursively() {
 struct Point { int x; int y; }
 contract C(Point point) {
     function renew() {
-        require(tx.outputs[0].scriptPubKey == new C(point));
+        require(tx.outputs[0].script == new C(point));
     }
 }
 "#,
@@ -508,7 +510,7 @@ contract C() {
     let asm = &output.functions[0].arkade.as_ref().expect("covenant").asm;
     assert!(asm.iter().all(|token| !token.contains("policy.")));
     assert!(asm.iter().filter(|token| *token == OP_PICK).count() >= 2);
-    assert!(asm.iter().any(|token| token == OP_EQUAL));
+    assert!(asm.iter().any(|token| token == OP_NUMEQUAL));
 }
 
 #[test]
@@ -594,21 +596,63 @@ contract C() { function spend() { let point = { x: 1, y: 2 }; require(true); } }
 }
 
 #[test]
-fn whole_struct_copy_and_constructor_field_assignment_are_rejected() {
-    let copy = compile(
-        r#"
-struct Point { int x; int y; }
-contract C(Point initial) {
-    function spend() {
-        Point copied = initial;
-        require(copied.x == 1);
+fn composite_copy_initializers_and_constructor_field_assignment() {
+    let contract = |copies: &str| {
+        format!(
+            r#"
+struct Point {{ int x; int y; }}
+struct Box {{ Point corner; int[2] values; }}
+contract C(Point initial, Box box) {{
+    function spend(AssetId id, int next) {{
+        {copies}
+        copied.x = next;
+        values[1] = corner.y;
+        require(copied.x == values[0] && named.gidx == initial.x);
+    }}
+}}
+"#
+        )
+    };
+    let initialized = compile(&contract(
+        "Point copied = initial; let corner = box.corner; int[2] values = box.values; let named = id;",
+    ))
+    .expect("named composite copy initializers");
+    let assigned = compile(&contract(
+        "Point copied; copied = initial; Point corner; corner = box.corner; \
+         int[2] values; values = box.values; AssetId named; named = id;",
+    ))
+    .expect("deferred whole-value assignment");
+    assert_eq!(
+        crate::common::arkade_asm_tokens(&initialized, "spend"),
+        crate::common::arkade_asm_tokens(&assigned, "spend"),
+        "a copy initializer emits the whole-value assignment"
+    );
+
+    for (copy, expected) in [
+        (
+            "Box copied = initial;",
+            "declares type 'Box' but initializer has type 'Point'",
+        ),
+        (
+            "int[3] copied = box.values;",
+            "declares type 'int[3]' but initializer has type 'int[2]'",
+        ),
+        (
+            "Point p; Point copied = p;",
+            "binding 'p' may be uninitialized",
+        ),
+        (
+            "int[2] v; let copied = v;",
+            "binding 'v' may be uninitialized",
+        ),
+    ] {
+        let source = format!(
+            "struct Point {{ int x; int y; }} struct Box {{ Point corner; int[2] values; }} \
+             contract C(Point initial, Box box) {{ function spend() {{ {copy} require(true); }} }}"
+        );
+        let error = compile(&source).expect_err(copy).to_string();
+        assert!(error.contains(expected), "{copy}: {error}");
     }
-}
-"#,
-    )
-    .expect_err("whole struct copy")
-    .to_string();
-    assert!(copy.contains("matching struct value"), "{copy}");
 
     let mutation = compile(
         r#"

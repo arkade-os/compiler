@@ -27,6 +27,7 @@ contract SendMarker(
   // OApp-emitted send marker from input 1. The marker must be at input 1
   // (PUSHCURRENTINPUTINDEX), and input 0 must have been spent through the
   // Endpoint.send() Arkade closure with the Endpoint control singleton.
+  @allow(unsigned-spend-path, "consumed only beside an Endpoint state input spent through Endpoint.send with its control singleton")
   function consume() {
     // (1) the marker is at the expected input position.
     require(this.activeInputIndex == 1, "marker input position");

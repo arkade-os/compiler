@@ -150,8 +150,6 @@ fn invalid_or_unrepresentable_arithmetic_and_encoding_stays_at_runtime() {
         ("num2bin(128, 1)", "OP_NUM2BIN"),
         ("num2bin(-128, 1)", "OP_NUM2BIN"),
         ("num2bin(1, 0)", "OP_NUM2BIN"),
-        ("num2bin(0, -1)", "OP_NUM2BIN"),
-        ("num2bin(0, 521)", "OP_NUM2BIN"),
     ] {
         let ty = if expression.starts_with("num2bin") {
             "bytes"
@@ -587,7 +585,11 @@ fn folding_keeps_byte_size_failures_and_concatenation() {
     let source = format!(
         "contract C() {{ function spend() {{ require(0x{oversized} == 0x{oversized}); }} }}"
     );
-    assert!(asm(&source).iter().any(|token| token == "OP_EQUAL"));
+    let error = arkade_compiler::compile(&source).unwrap_err().to_string();
+    assert!(
+        error.contains("above the VM element limit of 520"),
+        "{error}"
+    );
     let source =
         "contract C() { function spend(bytes expected) { require(0x01 + 0x02 == expected); } }";
     assert!(asm(source).iter().any(|token| token == "OP_CAT"));

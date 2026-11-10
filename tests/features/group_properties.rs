@@ -473,7 +473,7 @@ fn test_group_access_as_constructor_argument_is_parsed() {
             function spend(signature sig) {
                 require(checkSig(sig, owner));
                 require(amount >= 0);
-                require(tx.outputs[0].scriptPubKey == new T(tx.assetGroups[0].sumInputs, owner));
+                require(tx.outputs[0].script == new T(tx.assetGroups[0].sumInputs, owner));
             }
         }
     "#;

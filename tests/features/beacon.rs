@@ -11,7 +11,7 @@ contract PriceBeacon(
   AssetGroup[3] watchedGroups
 ) {
   function passthrough() {
-    require(tx.outputs[0].scriptPubKey == new PriceBeacon(ctrlAssetIdTxid, ctrlAssetIdGidx, oraclePk, watchedGroups), "broken");
+    require(tx.outputs[0].script == new PriceBeacon(ctrlAssetIdTxid, ctrlAssetIdGidx, oraclePk, watchedGroups), "broken");
 
     for (k, group) in watchedGroups {
       require(group.sumOutputs >= group.sumInputs, "drained");
@@ -20,7 +20,7 @@ contract PriceBeacon(
 
   function update(signature oracleSig) {
     require(tx.inputs[0].assets.lookup(ctrlAssetIdTxid, ctrlAssetIdGidx) > 0, "no ctrl");
-    require(tx.outputs[0].scriptPubKey == new PriceBeacon(ctrlAssetIdTxid, ctrlAssetIdGidx, oraclePk, watchedGroups), "broken");
+    require(tx.outputs[0].script == new PriceBeacon(ctrlAssetIdTxid, ctrlAssetIdGidx, oraclePk, watchedGroups), "broken");
     require(checkSig(oracleSig, oraclePk), "bad sig");
   }
 }
@@ -42,7 +42,7 @@ contract PriceBeacon(
     require(newBlockHeight >= currentHeight, "block height must not regress");
 
     require(
-      tx.outputs[0].scriptPubKey == new PriceBeacon(tickerTxid, tickerGidx, clockTxid, clockGidx, oraclePk, exit),
+      tx.outputs[0].script == new PriceBeacon(tickerTxid, tickerGidx, clockTxid, clockGidx, oraclePk, exit),
       "beacon script must survive"
     );
     require(
@@ -57,7 +57,7 @@ contract PriceBeacon(
 
   function passthrough() {
     require(
-      tx.outputs[0].scriptPubKey == new PriceBeacon(tickerTxid, tickerGidx, clockTxid, clockGidx, oraclePk, exit),
+      tx.outputs[0].script == new PriceBeacon(tickerTxid, tickerGidx, clockTxid, clockGidx, oraclePk, exit),
       "beacon script must survive"
     );
 

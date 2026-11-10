@@ -122,10 +122,23 @@ fn fingerprint_identifies_artifact_content() {
     assert_eq!(first.compiler.as_ref().unwrap().name, "arkadec");
     let fingerprint = first.fingerprint.as_deref().unwrap();
     assert!(fingerprint.starts_with("sha256:") && fingerprint.len() == 71);
-    // This value pins the artifact's exact serialization, including field order.
+    let mut pinned = first.clone();
+    pinned.fingerprint = None;
+    pinned.updated_at = None;
+    let digest = |artifact: &arkade_compiler::ContractJson| {
+        use sha2::Digest;
+        format!(
+            "sha256:{:x}",
+            sha2::Sha256::digest(serde_json::to_vec(artifact).unwrap())
+        )
+    };
+    assert_eq!(digest(&pinned), fingerprint);
+    // This value pins the artifact's exact serialization, including field order, with the
+    // compiler version fixed so releases leave it unchanged.
+    pinned.compiler.as_mut().unwrap().version = "0.0.0".into();
     assert_eq!(
-        fingerprint,
-        "sha256:64fc308645fcfd1da22b7f8930a509c0f1d30785e82969459e1d81826c07ce2b"
+        digest(&pinned),
+        "sha256:58926f26dbbea23f714e32421fa590786124bb78dfb78acc4ef6e251acf65f5b"
     );
     assert_eq!(first.fingerprint, second.fingerprint);
     assert_ne!(
@@ -187,7 +200,7 @@ fn roundtrip_nft_mint() {
         assert!(arkade
             .inputs
             .iter()
-            .any(|input| input.name == destination && input.param_type == "bytes"));
+            .any(|input| input.name == destination && input.param_type == "ScriptPubKey"));
         assert!(!arkade
             .asm
             .iter()
@@ -238,7 +251,7 @@ fn roundtrip_non_interactive_swap() {
                 .find(|input| input.name == "takerScriptPubKey")
         })
         .expect("swap taker destination input");
-    assert_eq!(destination.param_type, "bytes");
+    assert_eq!(destination.param_type, "ScriptPubKey");
 }
 
 #[test]
@@ -326,4 +339,21 @@ fn all_examples_compile_and_satisfy_invariants() {
         count >= 14,
         "expected at least 14 example contracts, found {count}"
     );
+}
+
+#[test]
+fn no_example_has_a_security_finding() {
+    use arkade_compiler::lint::Category;
+    for path in collect_ark_files(&examples_dir()) {
+        let findings: Vec<_> = arkade_compiler::analyze_file(&path)
+            .diagnostics()
+            .into_iter()
+            .filter(|d| {
+                d.lint
+                    .is_some_and(|lint| lint.category() == Category::Security)
+            })
+            .map(|d| d.message)
+            .collect();
+        assert!(findings.is_empty(), "{}: {findings:?}", path.display());
+    }
 }

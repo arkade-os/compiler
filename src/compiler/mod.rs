@@ -19,7 +19,7 @@ use crate::opcodes::Opcode::{
     Verify,
 };
 use crate::types::{self};
-use crate::validator::{self, Severity};
+use crate::validator;
 use chrono::Utc;
 use sha2::{Digest, Sha256};
 
@@ -69,6 +69,8 @@ enum StackItem {
 const MAX_STACK_ITEMS: usize = 1000;
 /// Bytes the VM allows in a script (`txscript.MaxScriptSize`).
 const MAX_SCRIPT_SIZE: usize = 10_000;
+/// Bytes the VM allows in one stack element (`txscript.MaxScriptElementSize`).
+const MAX_ELEMENT_SIZE: usize = 520;
 
 fn integer_op(value: usize) -> Op {
     use crate::opcodes::Opcode::*;
@@ -426,7 +428,7 @@ pub fn compile(source_code: &str) -> Result<ContractJson, String> {
 
 /// A validated contract's warnings and its checked tapscript leaves, in declaration order.
 pub(crate) struct Prepared {
-    pub warnings: Vec<Diagnostic>,
+    pub lints: crate::lint::Lints,
     pub leaves: Vec<tapscript::CheckedLeaf>,
 }
 
@@ -446,14 +448,21 @@ pub(crate) fn prepare(
     // Catch errors the PEG grammar cannot express (duplicate names, missing
     // timelocks, etc.) before we attempt code generation.
     let ast_issues = validator::validate_ast(contract, require_entrypoint);
-    if validator::has_errors(&ast_issues) {
+    if !ast_issues.is_empty() {
         return Err(ast_issues
             .iter()
-            .filter(|i| matches!(i.severity, Severity::Error))
             .map(|i| {
+                let suggestions = i.suggestion.iter().filter_map(|(replacement, span)| {
+                    Some(crate::diagnostics::Suggestion {
+                        message: format!("replace with '{replacement}'"),
+                        span: span.or(i.span)?,
+                        replacement: replacement.clone(),
+                    })
+                });
                 Diagnostic::error(file, i.message.clone())
                     .with_code(i.code)
                     .with_span(i.span)
+                    .with_suggestions(suggestions.collect())
             })
             .collect());
     }
@@ -472,20 +481,10 @@ pub(crate) fn prepare(
     if !leaf_errors.is_empty() {
         return Err(leaf_errors);
     }
-    let mut warnings = Vec::new();
-
-    // Append any non-fatal validation warnings (e.g. renew=0)
-    for issue in &ast_issues {
-        if matches!(issue.severity, Severity::Warning) {
-            warnings.push(
-                Diagnostic::warning(file, issue.message.clone())
-                    .with_code(issue.code)
-                    .with_span(issue.span),
-            );
-        }
-    }
-
-    Ok(Prepared { warnings, leaves })
+    Ok(Prepared {
+        lints: crate::lint::check(contract),
+        leaves,
+    })
 }
 
 pub(crate) fn emit(
@@ -532,10 +531,11 @@ pub(crate) fn emit(
                 &contract.functions,
                 options.optimize,
             )
-            .map(|(inputs, ops)| ArkadeCovenant {
+            .map(|(inputs, ops, costs)| ArkadeCovenant {
                 inputs,
                 asm: ops.iter().map(|(op, _)| op.spell()).collect(),
                 source_map: source_map(&ops, &entry_source, &messages),
+                costs,
             })
             .map_err(|error| error.at(function.span))?,
         );
@@ -546,20 +546,14 @@ pub(crate) fn emit(
     // ── Output invariant check ─────────────────────────────────────────────
     // Self-check the emitted JSON for structural invariants.
     let output_issues = validator::validate_output(&json);
-    if validator::has_errors(&output_issues) {
+    if !output_issues.is_empty() {
         return Err(output_issues
             .iter()
-            .filter(|issue| matches!(issue.severity, Severity::Error))
             .map(|issue| format!("output validation error: {}", issue.message))
             .collect::<Vec<_>>()
             .join("; ")
             .into());
     }
-    for issue in &output_issues {
-        json.warnings
-            .push(format!("warning[output-invariant]: {}", issue.message));
-    }
-
     // Serialized field order is part of the fingerprint; reordering artifact fields changes it.
     let bytes = serde_json::to_vec(&json).map_err(|error| error.to_string())?;
     json.fingerprint = Some(format!("sha256:{:x}", Sha256::digest(bytes)));
@@ -590,13 +584,15 @@ pub(crate) fn expanded_placeholder_params(
 }
 
 /// Build an `ArkadeCovenant` for a public function.
+/// Compute budgets are deployment-configurable; compare the reported counts with the target
+/// emulator's limits rather than enforcing defaults here.
 fn covenant_for(
     function: &Function,
     constructor_parameters: &[Parameter],
     structs: &[crate::models::StructDefinition],
     functions: &[Function],
     optimize: bool,
-) -> Result<(Vec<FunctionInput>, Vec<Spanned>)> {
+) -> Result<(Vec<FunctionInput>, Vec<Spanned>, Vec<crate::models::Cost>)> {
     let inputs = function_inputs(&function.parameters);
     let references =
         crate::validator::references::referenced_parameters(&function.statements, functions);
@@ -707,7 +703,37 @@ fn covenant_for(
             function.name
         ).into());
     }
-    Ok((inputs, ops))
+    if ops
+        .iter()
+        .any(|(op, _)| op.pushes_more_than(MAX_ELEMENT_SIZE))
+    {
+        return Err(format!(
+            "function '{}' pushes a value above the VM element limit of {MAX_ELEMENT_SIZE}",
+            function.name
+        )
+        .into());
+    }
+    let mut executions = most_executions(&ops, &mut 0);
+    // Conditional opcodes execute even inside skipped branches.
+    for (op, _) in &ops {
+        if let Op::Opcode(opcode @ (If | Else | EndIf)) = op {
+            *executions.entry(*opcode).or_default() += 1;
+        }
+    }
+    let cost = |name: &str, used| crate::models::Cost {
+        name: name.to_string(),
+        used,
+    };
+    let mut costs = vec![
+        cost("script bytes (min)", size),
+        cost("stack items (peak)", peak),
+    ];
+    let mut executions: Vec<_> = executions.into_iter().collect();
+    executions.sort_unstable_by_key(|(opcode, _)| opcode.name());
+    for (opcode, count) in executions {
+        costs.push(cost(opcode.name(), count));
+    }
+    Ok((inputs, ops, costs))
 }
 
 /// Runs of `ops` from one statement, located in `source`.
@@ -767,6 +793,38 @@ fn require_messages(
             _ => {}
         }
     }
+}
+
+/// An upper bound on executions of each non-conditional opcode from `position` to the
+/// enclosing `Else` or `EndIf`. Correlated branch conditions are counted independently.
+fn most_executions(
+    ops: &[Spanned],
+    position: &mut usize,
+) -> std::collections::HashMap<Opcode, usize> {
+    let mut counts = std::collections::HashMap::new();
+    while let Some((op, _)) = ops.get(*position) {
+        match op {
+            Op::Opcode(Else | EndIf) => break,
+            Op::Opcode(If) => {
+                *position += 1;
+                let mut branch = most_executions(ops, position);
+                if matches!(ops.get(*position), Some((Op::Opcode(Else), _))) {
+                    *position += 1;
+                    for (opcode, count) in most_executions(ops, position) {
+                        let longest = branch.entry(opcode).or_default();
+                        *longest = (*longest).max(count);
+                    }
+                }
+                for (opcode, count) in branch {
+                    *counts.entry(opcode).or_default() += count;
+                }
+            }
+            Op::Opcode(opcode) => *counts.entry(*opcode).or_default() += 1,
+            _ => {}
+        }
+        *position += 1;
+    }
+    counts
 }
 
 fn function_inputs(params: &[Parameter]) -> Vec<FunctionInput> {

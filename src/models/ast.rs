@@ -102,6 +102,65 @@ pub struct Contract {
     pub imports: Vec<String>,
     /// Compile-time constants declared in the contract body.
     pub constants: Vec<Constant>,
+    /// Byte range of the contract or library declaration, without its attributes.
+    pub declaration: crate::diagnostics::Span,
+    pub attributes: Vec<Attribute>,
+}
+
+impl Contract {
+    /// Each node of this file that has attributes, with the node's declaration span: the
+    /// contract, its functions and tapscripts, and their statements.
+    pub(crate) fn attributed(&self) -> Vec<(crate::diagnostics::Span, &[Attribute])> {
+        fn walk<'a>(
+            statements: &'a [LocatedStatement],
+            out: &mut Vec<(crate::diagnostics::Span, &'a [Attribute])>,
+        ) {
+            for statement in statements {
+                out.push((statement.span, &statement.attributes));
+                match &statement.statement {
+                    Statement::IfElse {
+                        then_body,
+                        else_body,
+                        ..
+                    } => {
+                        walk(then_body, out);
+                        walk(else_body.as_deref().unwrap_or_default(), out);
+                    }
+                    Statement::ForIn { body, .. } | Statement::ForCount { body, .. } => {
+                        walk(body, out)
+                    }
+                    _ => {}
+                }
+            }
+        }
+        let mut out = vec![(self.declaration, &self.attributes[..])];
+        for function in self.functions.iter().filter(|f| !f.is_imported()) {
+            out.push((function.declaration, &function.attributes));
+            walk(&function.statements, &mut out);
+        }
+        for tapscript in &self.tapscripts {
+            out.push((tapscript.declaration, &tapscript.attributes));
+        }
+        out.retain(|(_, attributes)| !attributes.is_empty());
+        out
+    }
+}
+
+/// An outer attribute, `@name(arg, ...)`, of the contract, function or statement it precedes.
+#[derive(Debug, Clone)]
+pub struct Attribute {
+    pub name: String,
+    pub name_span: crate::diagnostics::Span,
+    pub args: Vec<AttributeArg>,
+    pub span: crate::diagnostics::Span,
+}
+
+#[derive(Debug, Clone)]
+pub enum AttributeArg {
+    /// A name, such as a lint id: `outputs-shared-across-inputs`.
+    Name(String, crate::diagnostics::Span),
+    /// A string literal, such as a reason.
+    Text(String, crate::diagnostics::Span),
 }
 
 /// A compile-time constant, folded into every use site before validation.
@@ -134,6 +193,7 @@ pub struct Function {
     pub is_exported: bool,
     /// Explicit result type; None means the function returns no value.
     pub return_type: Option<TypeName>,
+    pub attributes: Vec<Attribute>,
 }
 
 impl Function {
@@ -154,6 +214,7 @@ pub struct LocatedStatement {
     /// A `require`'s message.
     pub message: Option<String>,
     pub statement: Statement,
+    pub attributes: Vec<Attribute>,
 }
 
 /// Statement AST - represents any executable statement in a function body
@@ -210,7 +271,8 @@ pub enum AssignmentTarget {
 }
 
 impl Statement {
-    /// The expressions the statement itself evaluates, not those of nested statements.
+    /// The expressions the statement itself evaluates, in source order, not those of nested
+    /// statements.
     pub(crate) fn expressions(&self) -> Vec<&Expression> {
         match self {
             Statement::Call(expression) | Statement::Return(Some(expression)) => vec![expression],
@@ -220,7 +282,7 @@ impl Statement {
             Statement::VarAssign {
                 target: AssignmentTarget::ArrayIndex { index, .. } | AssignmentTarget::Access(index),
                 value,
-            } => vec![value, index],
+            } => vec![index, value],
             Statement::VarAssign { value, .. } => vec![value],
             Statement::IfElse { condition, .. } => vec![condition],
             Statement::ForIn { iterable, .. } => vec![iterable],
@@ -387,8 +449,9 @@ pub struct NamedTapscript {
     /// Declared name (decides function-binding by exact match).
     pub name: String,
     pub span: crate::diagnostics::Span,
-    /// Byte range of the whole declaration, through its closing brace.
+    /// Byte range of the whole declaration through its closing brace, without its attributes.
     pub declaration: crate::diagnostics::Span,
+    pub attributes: Vec<Attribute>,
     /// Declared witness inputs (signatures, preimages, …), in source order.
     pub inputs: Vec<Parameter>,
     /// Ordered closure components.
@@ -506,7 +569,7 @@ pub enum ExprKind {
     AssetLookup {
         source: AssetLookupSource,
         index: Box<Expression>,
-        asset_txid: Box<Expression>, // bytes32 reference
+        asset_txid: Box<Expression>, // bytes32 expression
         asset_gidx: Box<Expression>, // int reference or literal (0..65535)
     },
     /// Asset presence predicate: tx.inputs[i].assets.has(txid, gidx) or
@@ -544,13 +607,13 @@ pub enum ExprKind {
     TxIntrospection {
         property: crate::properties::TxProperty,
     },
-    /// Input introspection: tx.inputs[i].value, scriptPubKey, sequence, outpoint;
+    /// Input introspection: tx.inputs[i].value, script, sequence, outpoint;
     /// tx.input.current.* indexes it with this.activeInputIndex
     InputIntrospection {
         index: Box<Expression>,
         property: crate::properties::InputProperty,
     },
-    /// Output introspection: tx.outputs[o].value, scriptPubKey
+    /// Output introspection: tx.outputs[o].value, script
     OutputIntrospection {
         index: Box<Expression>,
         property: crate::properties::OutputProperty,
@@ -607,10 +670,10 @@ pub enum ExprKind {
     },
     /// Contract instantiation: new ContractName(arg1, arg2, ...)
     ///
-    /// Resolves to the Taproot scriptPubKey of the named contract instantiated
+    /// Resolves to the Taproot program and witness version 1 of the named contract instantiated
     /// with the given arguments. Options (server key, exit timelock) are
     /// inherited from the enclosing contract. Used for recursion enforcement
-    /// via output introspection: `tx.outputs[0].scriptPubKey == new Foo(x)`
+    /// via output introspection: `tx.outputs[0].script == new Foo(x)`
     ContractInstance {
         /// Name of the contract to instantiate
         contract_name: String,
@@ -652,6 +715,7 @@ pub fn expression_result_struct(expression: &Expression) -> Option<&'static str>
             Some(property.map_or("AssetEntry", |p| p.value_type()))
         }
         ExprKind::AssetTryLookup { .. } => Some("AssetLookup"),
+        ExprKind::ContractInstance { .. } => Some("ScriptPubKey"),
         ExprKind::GroupProperty { property, .. } => Some(property.value_type()),
         ExprKind::InputIntrospection { property, .. } => Some(property.value_type()),
         ExprKind::OutputIntrospection { property, .. } => Some(property.value_type()),
@@ -788,7 +852,13 @@ impl Expression {
                 format!("tx.inputs[{}].{}", index.source_text(), property.name())
             }
             ExprKind::BinaryOp { left, op, right } => {
-                format!("{} {op} {}", left.source_text(), right.source_text())
+                // ponytail: every nested operation is parenthesized, so `a + b + c` reads
+                // `(a + b) + c`; print by precedence if the extra parentheses hurt messages.
+                let operand = |e: &Self| match e.kind {
+                    ExprKind::BinaryOp { .. } => format!("({})", e.source_text()),
+                    _ => e.source_text(),
+                };
+                format!("{} {op} {}", operand(left), operand(right))
             }
             _ => self
                 .access_path(&Self::source_text)

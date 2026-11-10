@@ -19,7 +19,7 @@ contract Vault(Point p, pubkey owner) {
         }
         require(checkSig(sig, owner));
         require(helper(total) == p.x);
-        require(tx.outputs[0].scriptPubKey == new Vault(p, owner));
+        require(tx.outputs[0].script == new Vault(p, owner));
     }
     private function helper(int amount) int { return amount + Vault.LIMIT; }
     function unilateral(signature ownerSig) tapscript {
@@ -139,9 +139,9 @@ fn symbols_resolve_bindings_calls_and_constants_across_files() {
             "main.ark:12:17 helper -> Function helper int main.ark:15:22",
             "main.ark:12:24 total -> Variable total int main.ark:6:13",
             "main.ark:12:34 p -> Parameter p Point main.ark:3:22",
-            "main.ark:13:51 Vault -> Contract Vault main.ark:3:10",
-            "main.ark:13:57 p -> Parameter p Point main.ark:3:22",
-            "main.ark:13:60 owner -> Parameter owner pubkey main.ark:3:32",
+            "main.ark:13:45 Vault -> Contract Vault main.ark:3:10",
+            "main.ark:13:51 p -> Parameter p Point main.ark:3:22",
+            "main.ark:13:54 owner -> Parameter owner pubkey main.ark:3:32",
             "main.ark:15:54 amount -> Parameter amount int main.ark:15:33",
         ]
     );
@@ -217,7 +217,7 @@ fn references_in_parentheses_and_after_new_cover_the_name() {
     const int K = 1;
     function spend(int n) {
         require(( n ) + (h(a)) > (K));
-        require(tx.outputs[0].scriptPubKey == new // C
+        require(tx.outputs[0].script == new // C
             C(a));
     }
     private function h(int x) int { return x; }

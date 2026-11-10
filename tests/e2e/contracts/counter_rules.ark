@@ -11,7 +11,7 @@ library CounterRules {
 
   function persists() {
     require(
-      tx.outputs[0].scriptPubKey == tx.inputs[0].scriptPubKey,
+      tx.outputs[0].script == tx.inputs[0].script,
       "counter script must persist"
     );
     require(

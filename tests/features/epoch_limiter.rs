@@ -33,7 +33,7 @@ contract EpochLimiter(
     }
 
     require(tx.outputs[0].assets.lookup(ctrlAssetIdTxid, ctrlAssetIdGidx) >= tx.inputs[0].assets.lookup(ctrlAssetIdTxid, ctrlAssetIdGidx), "ctrl leaked");
-    require(tx.outputs[0].scriptPubKey == tx.input.current.scriptPubKey, "broken");
+    require(tx.outputs[0].script == tx.input.current.script, "broken");
   }
 }
 "#;

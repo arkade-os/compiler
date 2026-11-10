@@ -113,8 +113,8 @@ library Fees {
     assert_eq!(output.functions.len(), 2);
     assert_eq!(output.structs.len(), 1);
     assert_eq!(
-        output.warnings,
-        ["warning[validation]: constructor parameter 'amount' is never used (vault.ark)"]
+        crate::common::feature_warnings(&output),
+        ["warning[unused-parameter]: line 2, column 35: constructor parameter 'amount' is never used (vault.ark)"]
     );
     let asm = arkade_asm_tokens(&output, "spend");
     assert!(asm.contains(&"OP_INSPECTOUTPUTVALUE".to_string()));
@@ -171,8 +171,12 @@ contract Main() {
         &[[("main.ark", source)].as_slice(), &libraries].concat(),
     )
     .unwrap();
+    assert!(
+        crate::common::feature_warnings(&output).is_empty(),
+        "{:?}",
+        output.warnings
+    );
     assert_eq!(output.source.unwrap().files.len(), 3);
-    assert!(output.warnings.is_empty(), "{:?}", output.warnings);
     for (imports, call, expected) in [
         (
             r#"import "a.ark";"#,
@@ -212,7 +216,7 @@ fn libraries_reject_invalid_declarations_and_helpers() {
         ("library Helper { function value() int { return secret; } }", "binding 'secret' is undefined"),
         ("library Helper { function value(int x) int { if (x > 0) { return x; } } }", "must return a value on every path"),
         ("library Helper { function sha256(int x) int { return x; } }", "reserved"),
-        ("library Helper { function check() { require(tx.outputs[0].scriptPubKey == new Helper()); } }", "library 'Helper' cannot be instantiated"),
+        ("library Helper { function check() { require(tx.outputs[0].script == new Helper()); } }", "library 'Helper' cannot be instantiated"),
     ] {
         let error = project("main.ark", &[
             ("main.ark", r#"import "helper.ark"; contract Main(int secret) { function spend() { require(true); } }"#),
@@ -283,7 +287,11 @@ contract Vault(Policy policy, int amount, pubkey owner) {
     );
     assert_eq!(output.functions.len(), 2);
     assert_eq!(output.structs.len(), 1);
-    assert!(output.warnings.is_empty(), "{:?}", output.warnings);
+    assert!(
+        crate::common::feature_warnings(&output).is_empty(),
+        "{:?}",
+        output.warnings
+    );
     let bundle = output.source.as_ref().unwrap();
     assert_eq!(bundle.entry, "contracts/vault.ark");
     assert_eq!(bundle.files.len(), 3);
@@ -461,7 +469,7 @@ fn constructors_require_visible_contracts_and_matching_signatures() {
         ("Main(owner)", true),
     ] {
         let source = format!(
-            r#"import "other.ark"; contract Main(pubkey owner) {{ function spend() {{ require(tx.outputs[0].scriptPubKey == new {call}); }} }}"#
+            r#"import "other.ark"; contract Main(pubkey owner) {{ function spend() {{ require(tx.outputs[0].script == new {call}); }} }}"#
         );
         let result = project(
             "main.ark",
@@ -487,11 +495,11 @@ fn native_and_virtual_compilation_match_and_bundle_is_portable() {
     std::fs::write(dir.path().join("contracts/main.ark"), source).unwrap();
     std::fs::write(dir.path().join("helper.ark"), helper).unwrap();
     let output = compile_file(dir.path().join("contracts/main.ark")).unwrap();
-    assert_eq!(output.warnings.len(), 2);
+    assert_eq!(crate::common::feature_warnings(&output).len(), 2);
     for path in ["contracts/main.ark", "helper.ark"] {
         assert!(
             output.warnings.iter().any(|warning| {
-                warning.starts_with("warning[validation]:")
+                warning.starts_with("warning[unused-parameter]:")
                     && warning.ends_with(&format!(" ({path})"))
             }),
             "{:?}",
@@ -588,7 +596,7 @@ fn imported_helpers_check_returns_recursion_and_namespace_shadowing() {
 #[test]
 fn qualified_static_calls_are_distinct_from_group_methods() {
     project("main.ark", &[
-        ("main.ark", r#"import "helper.ark"; contract Main(bytes32 txid) { function spend(int index) { require(Helper.controlIs(txid, index)); } }"#),
+        ("main.ark", r#"import "helper.ark"; contract Main(bytes32 txid) { function spend(int index) { require(Helper.controlIs(txid, index)); require(Helper.controlIs(sha256(txid), index)); } }"#),
         ("helper.ark", "contract Helper() { static function controlIs(bytes32 txid, int index) bool { return index == size(txid) - 32; } }"),
     ]).unwrap();
 }
@@ -605,7 +613,7 @@ fn qualified_constants_in_builtin_operands_and_transaction_indices_match_literal
             require(tx.outputs[Limits.INDEX].assets.length >= Limits.INDEX);
             require(tx.outputs[Limits.INDEX].assets[Limits.INDEX].amount >= Limits.VALUE);
             require(tx.inputs[Limits.INDEX].assets.lookup(txid, Limits.INDEX) >= Limits.VALUE);
-            require(tx.outputs[Limits.INDEX].scriptPubKey == new Limits(Limits.VALUE));
+            require(tx.outputs[Limits.INDEX].script == new Limits(Limits.VALUE));
         }
     }"#;
     let helper = "contract Limits(int value) { const int INDEX = 0; const int VALUE = 7; const int WIDTH = 8; const int PACKET = 16; }";

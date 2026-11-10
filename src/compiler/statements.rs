@@ -277,7 +277,7 @@ fn generate_requirement_asm(req: &Requirement, generator: &mut Generator) -> Res
             }
             generator.emit_expression(left)?;
             generator.emit_expression(right)?;
-            for &opcode in op.opcodes() {
+            for &opcode in super::expr::operator_opcodes(*op, left, right) {
                 generator.lower_raw_opcode(opcode)?;
             }
             generator.apply(Verify, 1, 0)?;

@@ -78,7 +78,7 @@ contract C(State state) {
             require(item.value == state.items[index].value);
             require(item.position == provided[index].position);
         }
-        require(tx.outputs[0].scriptPubKey == new C(state));
+        require(tx.outputs[0].script == new C(state));
     }
 }
 "#,
@@ -216,13 +216,16 @@ contract C(Signer[2] owners) {
 
 #[test]
 fn native_struct_array_elements_support_tunnel_exceptions() {
-    let output = compile(r#"
+    let output = compile(
+        r#"
 contract C() {
     function spend(AssetId[2] ids, int index) {
-        require(this.tunnel(0, { scriptPubKey: true, value: true, assets: true }, [ids[index], ids[0]]));
+        require(this.tunnel(0, { script: true, value: true, assets: true }, [ids[index], ids[0]]));
     }
 }
-"#).unwrap();
+"#,
+    )
+    .unwrap();
     let asm = arkade_asm_tokens(&output, "spend");
     assert!(asm.windows(2).any(|tokens| tokens == ["2", "OP_TUNNEL"]));
     assert_eq!(asm.iter().filter(|token| *token == "OP_SWAP").count(), 2);

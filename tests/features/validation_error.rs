@@ -40,7 +40,7 @@ fn parse_errors_use_source_terms() {
         (
             "require(checkSig(s, pk), \"x\"); ",
             "1:84",
-            "expected '}', a constant or a function",
+            "expected '}', an attribute, a constant or a function",
         ),
     ];
     for (body, at, expected) in cases {
@@ -486,7 +486,7 @@ fn introspection_diagnostics_name_normalized_operands() {
     for (expression, expected) in [
         (
             "tx.assetGroups.has(id, this.activeBytecode)",
-            "gidx operand 'tx.inputs[this.activeInputIndex].scriptPubKey' must be int",
+            "gidx operand 'tx.inputs[this.activeInputIndex].script' must be int",
         ),
         (
             "checkMultisig([values[0]], [values[this.activeInputIndex]])",
@@ -657,7 +657,7 @@ fn witness_length_checks_count_toward_the_stack_limit() {
 #[test]
 fn covenants_over_the_vm_script_size_do_not_compile() {
     let source = |wide: usize| {
-        let requires: String = (0..1428)
+        let requires: String = (0..1667)
             .map(|i| {
                 format!(
                     "require(x != {});",
@@ -667,8 +667,8 @@ fn covenants_over_the_vm_script_size_do_not_compile() {
             .collect();
         format!("contract C() {{ function spend(int x) {{ {requires} }} }}")
     };
-    assert!(compile(&source(6)).is_ok());
-    let error = compile(&source(7)).expect_err("10001 bytes").to_string();
+    assert!(compile(&source(0)).is_ok());
+    let error = compile(&source(1)).expect_err("10001 bytes").to_string();
     assert!(
         error.contains("at least 10001 bytes, above the VM limit of 10000"),
         "{error}"
