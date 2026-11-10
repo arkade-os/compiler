@@ -549,7 +549,7 @@ fn test_ec_operands_accept_point_literals() {
         ),
         (
             "require(ecMul(p, {x: a, y: b}, 0) == p);",
-            "ecMul operand has type 'unknown', expected 'int'",
+            "ecMul operand: expected 'int', got 'unknown'",
         ),
     ] {
         let source = spend(body);

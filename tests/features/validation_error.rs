@@ -502,7 +502,7 @@ fn skipped_builtin_literal_operands_are_validated_in_both_modes() {
         ),
         (
             "sha256({a: 1}) == 0x00",
-            "sha256 operand has type 'unknown', expected 'bytes'",
+            "sha256 operand: expected 'bytes', got 'unknown'",
         ),
     ] {
         let source = format!(
