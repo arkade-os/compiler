@@ -505,10 +505,12 @@ fn composite_comparison_expressions_fold_every_leaf_into_one_condition() {
             contains_tokens(&asm, folded),
             "{op}: the bytes leaf folds into the condition: {asm:?}"
         );
-        assert!(
-            !asm.iter()
-                .any(|token| *token == OP_EQUALVERIFY || *token == OP_NUMEQUALVERIFY),
-            "{op}: a short-circuit operand must not verify: {asm:?}"
+        assert_eq!(
+            asm.iter()
+                .filter(|token| *token == OP_EQUALVERIFY || *token == OP_NUMEQUALVERIFY)
+                .count(),
+            1,
+            "{op}: only the fallback witness check verifies, not a short-circuit operand: {asm:?}"
         );
     }
 }
