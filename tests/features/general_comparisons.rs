@@ -1,8 +1,9 @@
 use crate::common::compile_unoptimized as compile;
 use arkade_compiler::opcodes::{
-    OP_0, OP_1, OP_BOOLAND, OP_CHECKSIG, OP_CHECKSIGFROMSTACK, OP_EQUAL, OP_GREATERTHAN,
-    OP_GREATERTHANOREQUAL, OP_LESSTHAN, OP_LESSTHANOREQUAL, OP_NOT, OP_NUMEQUAL, OP_NUMEQUALVERIFY,
-    OP_NUMNOTEQUAL, OP_PICK, OP_PUSHCURRENTINPUTINDEX, OP_ROLL, OP_VERIFY,
+    OP_0, OP_1, OP_BOOLAND, OP_CHECKSIG, OP_CHECKSIGFROMSTACK, OP_EQUAL, OP_EQUALVERIFY,
+    OP_GREATERTHAN, OP_GREATERTHANOREQUAL, OP_IF, OP_LESSTHAN, OP_LESSTHANOREQUAL, OP_NOT,
+    OP_NUMEQUAL, OP_NUMEQUALVERIFY, OP_NUMNOTEQUAL, OP_PICK, OP_PUSHCURRENTINPUTINDEX, OP_ROLL,
+    OP_VERIFY,
 };
 
 fn compile_asm(source: &str) -> Vec<String> {
@@ -17,6 +18,91 @@ fn contains_tokens(asm: &[String], expected: &[&str]) -> bool {
             .map(String::as_str)
             .eq(expected.iter().copied())
     })
+}
+
+#[test]
+fn composite_comparisons_are_boolean_expressions() {
+    for (ty, other) in [
+        ("Item", "{value: 1}"),
+        ("Nested", "{head: {value: 1}, tail: [2, 3, 4]}"),
+        ("int[1]", "[1]"),
+        ("int[3]", "[1, 2, 3]"),
+        ("Item[2]", "right"),
+        ("ScriptPubKey", "{program: 0x1234, version: 1}"),
+    ] {
+        let source = format!(
+            "struct Item {{ int value; }}
+             struct Nested {{ Item head; int[3] tail; }}
+             contract C() {{
+                 private function same({ty} left, {ty} right) bool {{ return left == right; }}
+                 function compare({ty} left, {ty} right, bool expected) {{
+                     bool equal = left == right;
+                     equal = left != right;
+                     require(equal == !expected);
+                     require(same(left, right) == expected);
+                     require(left == right || left != right);
+                     require(!(left == right && left != right));
+                     require((left == {other}) || ({other} != left));
+                     if (left == right) {{ require(expected); }} else {{ require(!expected); }}
+                 }}
+             }}"
+        );
+        for optimize in [false, true] {
+            let output = arkade_compiler::compile_sources_with_options(
+                "main.ark",
+                &[("main.ark".into(), source.clone())].into(),
+                arkade_compiler::CompileOptions { optimize },
+            )
+            .unwrap_or_else(|error| panic!("{ty}, optimize={optimize}: {error}"));
+            assert_eq!(output.functions.len(), 1);
+            assert_eq!(output.functions[0].leaves.len(), 1);
+            assert_eq!(output.functions[0].arkade.as_ref().unwrap().inputs.len(), 3);
+        }
+    }
+}
+
+#[test]
+fn composite_comparison_expressions_validate_operand_types() {
+    for (left, right, op) in [
+        ("Item", "Other", "=="),
+        ("Item", "int", "!="),
+        ("int", "Item", "=="),
+        ("int[1]", "int[2]", "=="),
+        ("bytes[1]", "bytes20[1]", "!="),
+        ("Item", "Item", "<"),
+        ("Item", "Item", "<="),
+        ("Item", "Item", ">"),
+        ("int[2]", "int[2]", ">"),
+        ("int[2]", "int[2]", ">="),
+    ] {
+        let source = format!(
+            "struct Item {{ int value; }} struct Other {{ int value; }}
+             contract C() {{ function compare({left} left, {right} right) {{
+                 require(true || (left {op} right));
+             }} }}"
+        );
+        let error = compile(&source)
+            .expect_err("invalid composite comparison")
+            .to_string();
+        assert!(error.contains("not defined"), "{source}: {error}");
+    }
+    let error = compile("struct Item { int value; } contract C() { function compare(Item left) { require(true || (left < {value: 1})); } }")
+        .expect_err("composite ordering is invalid even with a literal").to_string();
+    assert!(error.contains("not defined"), "{error}");
+    let ordering = &["'<' is not defined", "'right.missing' is undefined"][..];
+    let record = &["does not produce one stack item"][..];
+    for (comparison, diagnostics) in [
+        ("left < right.missing", ordering),
+        ("true || (left < right.missing)", ordering),
+        ("left == tx.assetGroups[0].outputs[0]", record),
+        ("true || left == tx.assetGroups[0].outputs[0]", record),
+    ] {
+        let error = compile(&format!("struct Item {{ int value; }} contract C() {{ function compare(Item left, Item right) {{ require({comparison}); }} }}"))
+            .expect_err("invalid composite comparison").to_string();
+        for diagnostic in diagnostics {
+            assert!(error.contains(diagnostic), "{comparison}: {error}");
+        }
+    }
 }
 
 #[test]
@@ -397,6 +483,39 @@ fn array_inequality_negates_the_folded_comparison() {
 }
 
 #[test]
+fn composite_comparison_expressions_fold_every_leaf_into_one_condition() {
+    for (op, folded) in [
+        ("==", &[OP_EQUAL, OP_BOOLAND, OP_IF][..]),
+        ("!=", &[OP_EQUAL, OP_BOOLAND, OP_NOT, OP_IF]),
+    ] {
+        let asm = compile_asm(&format!(
+            "struct Item {{ int value; bytes tag; }}
+             contract Compare() {{
+                 function compare(Item left, Item right, bool fallback) {{
+                     require(left {op} right || fallback);
+                 }}
+             }}"
+        ));
+        assert_eq!(
+            asm.iter().filter(|token| *token == OP_NUMEQUAL).count(),
+            1,
+            "{op}: the int leaf compares numerically: {asm:?}"
+        );
+        assert!(
+            contains_tokens(&asm, folded),
+            "{op}: the bytes leaf folds into the condition: {asm:?}"
+        );
+        assert_eq!(
+            asm.iter()
+                .filter(|token| *token == OP_EQUALVERIFY || *token == OP_NUMEQUALVERIFY)
+                .count(),
+            1,
+            "{op}: only the fallback witness check verifies, not a short-circuit operand: {asm:?}"
+        );
+    }
+}
+
+#[test]
 fn composite_comparison_literals_are_validated() {
     for (ty, literal, diagnostic) in [
         ("int[2]", "[1, true]", "expected 'int', got 'bool'"),
@@ -409,18 +528,44 @@ fn composite_comparison_literals_are_validated() {
             "{point: {x: 1, y: 2}, values: [1, true]}",
             "expected 'int', got 'bool'",
         ),
+        (
+            "Point[2]",
+            "[{x: 1, y: 2}]",
+            "expected 2 array elements, got 1",
+        ),
+        ("Point[2]", "[{x: 1, y: 2}, {x: 3}]", "missing field 'y'"),
+        (
+            "Point[2]",
+            "[{x: 1, y: 2}, {x: 3, y: 4, y: 5}]",
+            "duplicate field 'y'",
+        ),
+        (
+            "Point[2]",
+            "[{x: 1, y: 2}, {x: true, y: 4}]",
+            "expected 'int', got 'bool'",
+        ),
+        (
+            "Point[2]",
+            "{x: 1, y: 2}",
+            "expected 'Point[2]', got 'unknown'",
+        ),
     ] {
         for op in ["==", "!="] {
             for (left, right) in [("value", literal), (literal, "value")] {
-                let source = format!(
-                    "struct Point {{ int x; int y; }}
+                for comparison in [
+                    format!("{left} {op} {right}"),
+                    format!("true || ({left} {op} {right})"),
+                ] {
+                    let source = format!(
+                        "struct Point {{ int x; int y; }}
                      struct Nested {{ Point point; int[2] values; }}
                      contract C() {{
-                         function spend({ty} value) {{ require({left} {op} {right}); }}
+                         function spend({ty} value) {{ require({comparison}); }}
                      }}"
-                );
-                let error = compile(&source).expect_err(&source).to_string();
-                assert!(error.contains(diagnostic), "{source}: {error}");
+                    );
+                    let error = compile(&source).expect_err(&source).to_string();
+                    assert!(error.contains(diagnostic), "{source}: {error}");
+                }
             }
         }
     }
@@ -635,5 +780,42 @@ fn logical_skipped_helpers_do_not_guarantee_spend_enforcement() {
     }
     for expression in ["guarded() && skip", "guarded() || skip"] {
         compile(&format!("contract C(bool skip) {{ function compare() {{ @allow(unused-variable, \"kept\") let value = {expression}; value = !value; }} private function guarded() bool {{ require(true); return true; }} }}")).unwrap_or_else(|error| panic!("{expression}: {error}"));
+    }
+}
+
+#[test]
+fn a_literal_takes_the_type_of_what_it_is_compared_with() {
+    let wide = format!("0x{}", "ab".repeat(32));
+    let source = |params: &str, literal: &str| {
+        format!("struct Point {{ int x; int y; }}\ncontract C({params}) {{ function f() {{ require(value == {literal}); require({literal} != value); }} }}")
+    };
+    for (params, literal) in [
+        ("bytes[2] value", format!("[{wide}, 0x01]")),
+        ("Point[2] value", "[{x: 1, y: 2}, {x: 3, y: 4}]".to_string()),
+    ] {
+        let compiled = arkade_compiler::compile(&source(params, &literal));
+        assert!(compiled.is_ok(), "{literal}: {compiled:?}");
+    }
+    for (params, literal, expected) in [
+        (
+            "bytes[2] value",
+            "[0x01, 5]",
+            "element 1: expected 'bytes', got 'int'",
+        ),
+        (
+            "Point[2] value",
+            "[{x: 1, y: 2}, {x: true, y: 4}]",
+            "element 1, field 'x': expected 'int', got 'bool'",
+        ),
+        (
+            "int[2] value",
+            "[1, 2, 3]",
+            "expected 2 array elements, got 3",
+        ),
+    ] {
+        let error = arkade_compiler::compile(&source(params, literal))
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains(expected), "{literal}: {error}");
     }
 }

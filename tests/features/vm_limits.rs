@@ -336,3 +336,31 @@ fn signature_checks_that_may_be_false_warn() {
         assert_eq!(warnings(body), expected, "{body}");
     }
 }
+
+#[test]
+fn multisig_thresholds_are_checked_in_both_modes_where_folding_removes_the_call() {
+    for compile in [compile, crate::common::compile_unoptimized] {
+        for body in [
+            "if (false) { require(checkMultisig(k, s, 5)); }",
+            "require(false && checkMultisig(k, s, 1 + 4));",
+            "require(x == 1 || checkMultisig(k, s, 0));",
+            "for (i, key) in k { require(i == 0 || checkMultisig(k, s, i + 4)); }",
+        ] {
+            let source = format!("contract C() {{ function f(pubkey[2] k, signature[2] s, int x) {{ require(x == 1); {body} }} }}");
+            let error = compile(&source).expect_err(body).to_string();
+            assert!(
+                error.contains(
+                    "checkMultisig threshold must be between 1 and the number of public keys"
+                ),
+                "{body}: {error}"
+            );
+        }
+        for body in [
+            "if (false) { require(checkMultisig(k, s, 1 + 1)); }",
+            "for (i, key) in k { if (i == 5) { require(checkMultisig(k, s, i)); } }",
+        ] {
+            let source = format!("contract C() {{ function f(pubkey[2] k, signature[2] s, int x) {{ require(x == 1); {body} }} }}");
+            compile(&source).expect(body);
+        }
+    }
+}
