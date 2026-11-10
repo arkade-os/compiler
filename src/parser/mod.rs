@@ -95,7 +95,15 @@ fn readable_error(error: pest::error::Error<Rule>, source: &str) -> pest::error:
         Some((last, [])) => format!("expected {last}"),
         Some((last, rest)) => format!("expected {} or {last}", rest.join(", ")),
     };
-    let closing = ["';'", "')'", "'}'", "']'", "','", "an operator"];
+    let closing = [
+        "';'",
+        "')'",
+        "'}'",
+        "']'",
+        "','",
+        "an operator",
+        "'.' or '['",
+    ];
     let mut at = attempts.max_position;
     if let Some((word, start, end)) = lone_word(source, at) {
         let message = format!("`{word}` on its own is not a statement");

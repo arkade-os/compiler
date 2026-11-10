@@ -161,6 +161,7 @@ fn a_missing_token_is_reported_at_the_end_of_its_line() {
             ")",
         ),
         ("    require(checkSig(s, o);", 3, ";"),
+        ("    let x = o\n    require(checkSig(s, x));", 3, "o"),
     ] {
         let (found, spanned, message) = at_line(&body(statements));
         assert_eq!(
