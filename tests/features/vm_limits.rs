@@ -344,6 +344,7 @@ fn multisig_thresholds_are_checked_in_both_modes_where_folding_removes_the_call(
             "if (false) { require(checkMultisig(k, s, 5)); }",
             "require(false && checkMultisig(k, s, 1 + 4));",
             "require(x == 1 || checkMultisig(k, s, 0));",
+            "for (i, key) in k { require(i == 0 || checkMultisig(k, s, i + 4)); }",
         ] {
             let source = format!("contract C() {{ function f(pubkey[2] k, signature[2] s, int x) {{ require(x == 1); {body} }} }}");
             let error = compile(&source).expect_err(body).to_string();
@@ -354,7 +355,12 @@ fn multisig_thresholds_are_checked_in_both_modes_where_folding_removes_the_call(
                 "{body}: {error}"
             );
         }
-        let source = "contract C() { function f(pubkey[2] k, signature[2] s, int x) { require(x == 1); if (false) { require(checkMultisig(k, s, 1 + 1)); } } }";
-        compile(source).expect("threshold within the key count");
+        for body in [
+            "if (false) { require(checkMultisig(k, s, 1 + 1)); }",
+            "for (i, key) in k { if (i == 5) { require(checkMultisig(k, s, i)); } }",
+        ] {
+            let source = format!("contract C() {{ function f(pubkey[2] k, signature[2] s, int x) {{ require(x == 1); {body} }} }}");
+            compile(&source).expect(body);
+        }
     }
 }

@@ -171,7 +171,9 @@ impl Generator {
             return Err("checkMultisig key and signature counts must match".into());
         }
         let threshold = args.get(2);
-        let literal_threshold = multisig_threshold(threshold, count)?;
+        // Validation and folding reject an out-of-range constant on a reachable path; one left
+        // here is in a branch that folding removes, so it keeps the runtime check.
+        let literal_threshold = multisig_threshold(threshold, count).ok().flatten();
         // Keys need indexed reads, so computed arrays are bound once.
         if !matches!(&keys.kind, ExprKind::ArrayLiteral(_)) && keys.binding_path().is_none() {
             let baseline = self.stack.len();
