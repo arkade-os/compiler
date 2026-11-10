@@ -269,65 +269,6 @@ struct Typing<'a> {
 }
 
 impl Typing<'_> {
-    /// Type the literals in `expression` from `expected`, the type its position requires, where
-    /// their own elements cannot tell it: a struct literal takes the struct, an array literal the
-    /// element type, down through their fields and elements. Other expressions keep their type.
-    fn expect(&self, expression: &mut Expression, expected: &ArkType) {
-        match (&mut expression.kind, expected) {
-            (ExprKind::ArrayLiteral(elements), ArkType::Array(element, _)) => {
-                for value in elements.iter_mut() {
-                    self.expect(value, element);
-                }
-                expression.ty = ArkType::Array(element.clone(), elements.len());
-            }
-            (ExprKind::StructLiteral(fields), ArkType::Struct(name)) => {
-                for (field, value) in fields.iter_mut() {
-                    if let Some(ty) = self.field_type(name, field) {
-                        self.expect(value, &ty);
-                    }
-                }
-                expression.ty = expected.clone();
-            }
-            _ => {}
-        }
-    }
-
-    /// The type of `field` of the native or declared struct `structure`.
-    fn field_type(&self, structure: &str, field: &str) -> Option<ArkType> {
-        if let Some(fields) = crate::models::builtin_struct_fields(structure) {
-            let (_, ty) = fields.iter().find(|(name, _)| *name == field)?;
-            return Some(TypeName::parse(ty).ark_type());
-        }
-        let definition = self.structs.iter().find(|s| s.name == structure)?;
-        let field = definition.fields.iter().find(|f| f.name == field)?;
-        Some(field.param_type.ark_type())
-    }
-
-    /// In an equality, a struct or array literal takes the type of the value it is compared with.
-    fn equate(&self, left: &mut Expression, op: BinaryOperator, right: &mut Expression) {
-        let literal = |e: &Expression| {
-            matches!(
-                e.kind,
-                ExprKind::StructLiteral(_) | ExprKind::ArrayLiteral(_)
-            )
-        };
-        // An unresolved peer, as after an earlier error, would only hide the literal's own type.
-        fn resolved(ty: &ArkType) -> bool {
-            match ty {
-                ArkType::Array(element, _) => resolved(element),
-                ty => *ty != ArkType::Unknown,
-            }
-        }
-        if op.class() != OperatorClass::Equality {
-            return;
-        }
-        if literal(left) && !literal(right) && resolved(&right.ty) {
-            self.expect(left, &right.ty.clone());
-        } else if literal(right) && !literal(left) && resolved(&left.ty) {
-            self.expect(right, &left.ty.clone());
-        }
-    }
-
     fn statements(&self, statements: &mut [LocatedStatement], scope: &mut Scope) {
         for statement in statements {
             match &mut statement.statement {
@@ -340,7 +281,7 @@ impl Typing<'_> {
                         self.expression(value, scope);
                     }
                     if let Requirement::Comparison { left, op, right } = requirement {
-                        self.equate(left, *op, right);
+                        type_compared_literal(left, *op, right);
                     }
                 }
                 Statement::Declaration {
@@ -415,7 +356,7 @@ impl Typing<'_> {
             self.expression(child, scope);
         }
         if let ExprKind::BinaryOp { left, op, right } = &mut expression.kind {
-            self.equate(left, *op, right);
+            type_compared_literal(left, *op, right);
         }
         if let Some(returns) = self.returns {
             if let ExprKind::Call {
@@ -427,6 +368,42 @@ impl Typing<'_> {
             resolve_group_member(expression, scope);
         }
         expression.ty = infer_type(expression, scope);
+    }
+}
+
+/// A struct or array literal takes the resolved type of the value it is tested
+/// for equality with, as an initializer takes its declared type, while an array
+/// literal keeps its length; the validator checks the literal against that type.
+/// Two literals keep their own types, as typing one from the other would depend
+/// on operand order.
+fn type_compared_literal(left: &mut Expression, op: BinaryOperator, right: &mut Expression) {
+    if op.class() != OperatorClass::Equality {
+        return;
+    }
+    fn resolved(ty: &ArkType) -> bool {
+        match ty {
+            ArkType::Array(element, _) => resolved(element),
+            ty => *ty != ArkType::Unknown,
+        }
+    }
+    let literal = |e: &Expression| {
+        matches!(
+            e.kind,
+            ExprKind::ArrayLiteral(_) | ExprKind::StructLiteral(_)
+        )
+    };
+    let typed_by = |value: &Expression, peer: &Expression| match (&value.kind, &peer.ty) {
+        _ if literal(peer) || !resolved(&peer.ty) => None,
+        (ExprKind::ArrayLiteral(elements), ArkType::Array(element, _)) => {
+            Some(ArkType::Array(element.clone(), elements.len()))
+        }
+        (ExprKind::StructLiteral(_), ArkType::Struct(_)) => Some(peer.ty.clone()),
+        _ => None,
+    };
+    if let Some(ty) = typed_by(left, right) {
+        left.ty = ty;
+    } else if let Some(ty) = typed_by(right, left) {
+        right.ty = ty;
     }
 }
 

@@ -663,7 +663,7 @@ fn logical_skipped_helpers_do_not_guarantee_spend_enforcement() {
 fn a_literal_takes_the_type_of_what_it_is_compared_with() {
     let wide = format!("0x{}", "ab".repeat(32));
     let source = |params: &str, literal: &str| {
-        format!("struct Point {{ int x; int y; }}\ncontract C({params}) {{ function f() {{ require(value == {literal}); }} }}")
+        format!("struct Point {{ int x; int y; }}\ncontract C({params}) {{ function f() {{ require(value == {literal}); require({literal} != value); }} }}")
     };
     for (params, literal) in [
         ("bytes[2] value", format!("[{wide}, 0x01]")),
