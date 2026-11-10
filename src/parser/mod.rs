@@ -159,7 +159,12 @@ fn lone_word(source: &str, at: usize) -> Option<(&str, usize, usize)> {
     let word = &source[start..end];
     let starts_statement = source[..code_end(source, start)].ends_with([';', '{', '}']);
     let keyword = ["return", "else", "require", "let", "if", "for"].contains(&word);
-    let lone = word.starts_with(|c: char| c.is_ascii_alphabetic()) && starts_statement && !keyword;
+    // A word the error splits, as at the `é` of `héllo`, is not one on its own.
+    let split = source[end..].starts_with(char::is_alphanumeric);
+    let lone = word.starts_with(|c: char| c.is_ascii_alphabetic())
+        && starts_statement
+        && !keyword
+        && !split;
     lone.then_some((word, start, end))
 }
 

@@ -283,4 +283,6 @@ fn a_word_left_on_its_own_is_reported_at_the_word() {
             "{source}"
         );
     }
+    let message = at_line(&body("    require(checkSig(s, o));\n    héllo", "")).2;
+    assert!(!message.contains("on its own"), "{message}");
 }
