@@ -60,9 +60,9 @@ impl Generator {
         }
         if op == BinaryOperator::Ne {
             self.apply(Not, 1, 1)?;
-        }
-        if verify && op == BinaryOperator::Ne {
-            self.apply(Verify, 1, 0)?;
+            if verify {
+                self.apply(Verify, 1, 0)?;
+            }
         }
         Ok(())
     }

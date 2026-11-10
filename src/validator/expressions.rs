@@ -53,14 +53,13 @@ fn validate_comparison(
     let before = issues.len();
     validate_binding_expression(left, function_name, scopes, issues, !composite);
     validate_binding_expression(right, function_name, scopes, issues, !composite);
-    if issues.len() != before {
-        return;
-    }
     let (left, right) = (&left.ty, &right.ty);
     let bytes_like = crate::types::is_bytes_like;
     let compatible = match op.class() {
         class if composite && class != OperatorClass::Equality => false,
-        _ if *left == ArkType::Unknown || *right == ArkType::Unknown => return,
+        _ if issues.len() != before || *left == ArkType::Unknown || *right == ArkType::Unknown => {
+            return
+        }
         OperatorClass::Equality if composite => left == right,
         OperatorClass::Equality => {
             left == right

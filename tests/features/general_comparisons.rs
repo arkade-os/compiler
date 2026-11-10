@@ -1,8 +1,9 @@
 use crate::common::compile_unoptimized as compile;
 use arkade_compiler::opcodes::{
-    OP_0, OP_1, OP_BOOLAND, OP_CHECKSIG, OP_CHECKSIGFROMSTACK, OP_EQUAL, OP_GREATERTHAN,
-    OP_GREATERTHANOREQUAL, OP_LESSTHAN, OP_LESSTHANOREQUAL, OP_NOT, OP_NUMEQUAL, OP_NUMEQUALVERIFY,
-    OP_NUMNOTEQUAL, OP_PICK, OP_PUSHCURRENTINPUTINDEX, OP_ROLL, OP_VERIFY,
+    OP_0, OP_1, OP_BOOLAND, OP_CHECKSIG, OP_CHECKSIGFROMSTACK, OP_EQUAL, OP_EQUALVERIFY,
+    OP_GREATERTHAN, OP_GREATERTHANOREQUAL, OP_IF, OP_LESSTHAN, OP_LESSTHANOREQUAL, OP_NOT,
+    OP_NUMEQUAL, OP_NUMEQUALVERIFY, OP_NUMNOTEQUAL, OP_PICK, OP_PUSHCURRENTINPUTINDEX, OP_ROLL,
+    OP_VERIFY,
 };
 
 fn compile_asm(source: &str) -> Vec<String> {
@@ -88,6 +89,18 @@ fn composite_comparison_expressions_validate_operand_types() {
     let error = compile("struct Item { int value; } contract C() { function compare(Item left) { require(true || (left < {value: 1})); } }")
         .expect_err("composite ordering is invalid even with a literal").to_string();
     assert!(error.contains("not defined"), "{error}");
+    for comparison in ["left < right.missing", "true || (left < right.missing)"] {
+        let error = compile(&format!("struct Item {{ int value; }} contract C() {{ function compare(Item left, Item right) {{ require({comparison}); }} }}"))
+            .expect_err("composite ordering is invalid beside an operand error").to_string();
+        assert!(
+            error.contains("'<' is not defined"),
+            "{comparison}: {error}"
+        );
+        assert!(
+            error.contains("'right.missing' is undefined"),
+            "{comparison}: {error}"
+        );
+    }
 }
 
 #[test]
@@ -465,6 +478,37 @@ fn array_inequality_negates_the_folded_comparison() {
         contains_tokens(&asm, &[OP_BOOLAND, OP_NOT, OP_VERIFY]),
         "the folded result must be negated: {asm:?}"
     );
+}
+
+#[test]
+fn composite_comparison_expressions_fold_every_leaf_into_one_condition() {
+    for (op, folded) in [
+        ("==", &[OP_EQUAL, OP_BOOLAND, OP_IF][..]),
+        ("!=", &[OP_EQUAL, OP_BOOLAND, OP_NOT, OP_IF]),
+    ] {
+        let asm = compile_asm(&format!(
+            "struct Item {{ int value; bytes tag; }}
+             contract Compare() {{
+                 function compare(Item left, Item right, bool fallback) {{
+                     require(left {op} right || fallback);
+                 }}
+             }}"
+        ));
+        assert_eq!(
+            asm.iter().filter(|token| *token == OP_NUMEQUAL).count(),
+            1,
+            "{op}: the int leaf compares numerically: {asm:?}"
+        );
+        assert!(
+            contains_tokens(&asm, folded),
+            "{op}: the bytes leaf folds into the condition: {asm:?}"
+        );
+        assert!(
+            !asm.iter()
+                .any(|token| *token == OP_EQUALVERIFY || *token == OP_NUMEQUALVERIFY),
+            "{op}: a short-circuit operand must not verify: {asm:?}"
+        );
+    }
 }
 
 #[test]
