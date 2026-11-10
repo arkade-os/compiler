@@ -98,7 +98,7 @@ pub(crate) fn parse_tap_item(
             let preimage = parse_general_expression(f_inner.next().ok_or("Missing hash preimage")?)?;
             let preimage = operand_path(&preimage, constants).ok_or_else(|| {
                 format!(
-                    "hash preimage `{}` is not a declared input or constructor parameter",
+                    "hash preimage `{}` is not a tapscript input",
                     preimage.source_text()
                 )
             })?;
@@ -222,7 +222,7 @@ fn parse_time_value(
         .map(TapOperand::Name)
         .ok_or_else(|| {
             format!(
-                "timelock `{}` is not a literal, declared input, or constructor parameter",
+                "timelock `{}` is not a literal or scalar constructor parameter",
                 value.source_text()
             )
         })
