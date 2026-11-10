@@ -130,11 +130,9 @@ fn debug_writes_the_source_maps_next_to_the_artifact() {
 fn check_suggests_a_close_name_and_explains_its_code() {
     let typo = "contract C(pubkey owner) {\n  function f(signature sig) {\n    require(chekSig(sig, ownr));\n  }\n}\n";
     let (_, stdout) = check(&["main.ark", "--check"], &[("main.ark", typo)]);
-    assert!(stdout.contains("error[unknown-function]: unknown private function 'chekSig'; did you mean 'checkSig'?\n  help: replace with 'checkSig'"), "{stdout}");
+    assert!(stdout.contains("error[unknown-function]: unknown function 'chekSig'; did you mean 'checkSig'?\n  help: replace with 'checkSig'"), "{stdout}");
     assert!(
-        stdout.contains(
-            "error[unknown-name]: function 'f': binding 'ownr' is undefined; did you mean 'owner'?"
-        ),
+        stdout.contains("error[unknown-name]: binding 'ownr' is undefined; did you mean 'owner'?"),
         "{stdout}"
     );
 

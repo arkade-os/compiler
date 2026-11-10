@@ -1,0 +1,5 @@
+error[unknown-function]: unknown function 'chekSig'; did you mean 'checkSig'?
+  --> 3:13
+3 |     require(chekSig(sig, owner));
+  |             ^^^^^^^^^^^^^^^^^^^
+

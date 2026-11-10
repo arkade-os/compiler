@@ -306,7 +306,7 @@ fn cashscript_parity_rejections() {
         "contract Strict(pubkey owner) { function spend(signature sig, int amount) { require(checkSig(sig, owner)); } }",
     );
     assert!(
-        unused_param.contains("variable 'amount' in function 'spend' is never used"),
+        unused_param.contains("parameter 'amount' of function 'spend' is never used"),
         "{unused_param}"
     );
 }
@@ -744,7 +744,7 @@ fn a_parameter_read_only_by_dead_locals_is_never_used() {
     ] {
         let error = compile_error(&source(&body));
         assert!(
-            error.contains("variable 'amount' in function 'f' is never used"),
+            error.contains("parameter 'amount' of function 'f' is never used"),
             "{body}: {error}"
         );
     }
@@ -760,7 +760,7 @@ fn a_parameter_read_only_by_dead_locals_is_never_used() {
         .to_string();
     assert!(
         error.starts_with("fees.ark: validation error")
-            && error.contains("variable 'n' in function 'fee' is never used"),
+            && error.contains("parameter 'n' of function 'fee' is never used"),
         "{error}"
     );
 }

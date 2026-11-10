@@ -1,0 +1,5 @@
+error: expected ';'
+  --> 7:22
+7 |   function unilateral(signature sig) tapscript {
+  |                      ^
+

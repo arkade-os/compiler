@@ -546,7 +546,7 @@ fn a_helper_call_counts_as_a_use_and_an_empty_branch_does_not() {
         let error = arkade_compiler::compile(&source).unwrap_err().to_string();
         assert!(
             error.contains(&format!(
-                "variable '{unread}' in function 'spend' is never used"
+                "parameter '{unread}' of function 'spend' is never used"
             )),
             "{error}"
         );

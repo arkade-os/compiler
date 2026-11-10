@@ -14,7 +14,7 @@ pub(crate) fn function_pair_is_tapscript(pair: &Pair<Rule>) -> bool {
 pub(crate) fn parse_named_tapscript(
     pair: Pair<Rule>,
     constants: &[Constant],
-) -> Result<crate::models::NamedTapscript, String> {
+) -> Result<crate::models::NamedTapscript, CompileError> {
     let declaration = pair.as_span().into();
     let mut inner = pair.into_inner().peekable();
     if inner
@@ -23,7 +23,7 @@ pub(crate) fn parse_named_tapscript(
     {
         let visibility = inner.next().expect("visibility").as_str();
         if visibility != "public" {
-            return Err(format!("tapscript functions cannot be {visibility}"));
+            return Err(format!("tapscript functions cannot be {visibility}").into());
         }
     }
     let name = inner.next().ok_or("Missing tapscript name")?;
@@ -51,9 +51,11 @@ pub(crate) fn parse_named_tapscript(
                     Rule::this_property if part.as_str() == "expiry" => "this.expiry",
                     _ => continue,
                 };
-                return Err(format!("`{name}` is only available in covenant functions"));
+                let message = format!("`{name}` is only available in covenant functions");
+                return Err(CompileError::from(message).at(part.as_span().into()));
             }
-            items.push(parse_tap_item(expr, constants)?);
+            let at = expr.as_span().into();
+            items.push(parse_tap_item(expr, constants).map_err(|e| CompileError::from(e).at(at))?);
             if let Some(message) = inner.next() {
                 parse_string_literal(message.as_str())?;
             }
@@ -165,7 +167,8 @@ pub(crate) fn parse_tap_item(
             }
         }
         other => Err(format!(
-            "unsupported expression in tapscript require(): {other:?}"
+            "a tapscript require can check only signatures, hashes and timelocks, not {}",
+            super::rule_term(&other).unwrap_or_else(|| "this expression".to_string())
         )),
     }
 }

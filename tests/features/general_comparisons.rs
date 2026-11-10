@@ -753,7 +753,7 @@ fn logical_operands_require_booleans_even_when_skipped() {
         let error = compile(&format!("contract C(pubkey key, bytes32 message) {{ function compare(signature sig) {{ require({expression}); }} }}")).expect_err("invalid skipped expression").to_string();
         assert!(
             error.contains("undefined")
-                || error.contains("unknown private")
+                || error.contains("unknown function")
                 || error.contains("does not produce one stack item"),
             "{expression}: {error}"
         );

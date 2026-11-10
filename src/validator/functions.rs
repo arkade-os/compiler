@@ -184,8 +184,12 @@ fn validate_calls(
     }
     if let ExprKind::Call { name, args, .. } = &expression.kind {
         match contract.functions.iter().find(|f| f.name == *name) {
+            // `require(ok, 5);` parses as a call only because its message is not a string.
+            None if name == "require" && !value_position && args.len() == 2 => issues.push(
+                ValidationIssue::error("the message of require must be a string"),
+            ),
             None => {
-                let issue = ValidationIssue::error(format!("unknown private function '{name}'"))
+                let issue = ValidationIssue::error(format!("unknown function '{name}'"))
                     .coded(crate::errors::ErrorCode::UnknownFunction);
                 let own = contract.functions.iter().map(|f| f.name.as_str());
                 let builtins = crate::builtins::BUILTINS.iter().map(|b| b.name);

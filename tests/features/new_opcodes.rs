@@ -43,7 +43,7 @@ fn tunnel_indexes_require_integer_helper_returns() {
         );
         let error = compile(&source).unwrap_err().to_string();
         assert!(
-            error.contains("function 'spend': tunnel output index must be int, got"),
+            error.contains("tunnel output index must be int, got"),
             "{error}"
         );
     }

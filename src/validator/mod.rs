@@ -489,10 +489,13 @@ fn check_unused(contract: &Contract, issues: &mut Vec<ValidationIssue>) {
             .iter()
             .filter(|i| !used.contains(i.name.as_str()))
         {
-            issues.push(ValidationIssue::error(format!(
-                "input '{}' in tapscript '{}' is never used",
-                input.name, tapscript.name
-            )));
+            issues.push(
+                ValidationIssue::error(format!(
+                    "input '{}' in tapscript '{}' is never used",
+                    input.name, tapscript.name
+                ))
+                .at(input.span),
+            );
         }
     }
     for function in contract.functions.iter().filter(|f| !f.is_imported()) {
@@ -504,10 +507,10 @@ fn check_unused(contract: &Contract, issues: &mut Vec<ValidationIssue>) {
         {
             issues.push(
                 ValidationIssue::error(format!(
-                    "variable '{}' in function '{}' is never used",
+                    "parameter '{}' of function '{}' is never used",
                     parameter.name, function.name
                 ))
-                .at(function.span),
+                .at(parameter.span),
             );
         }
     }

@@ -5,7 +5,6 @@ use super::*;
 
 pub(super) fn validate_binding_requirement(
     requirement: &Requirement,
-    function_name: &str,
     scopes: &BindingScopes,
     issues: &mut Vec<ValidationIssue>,
 ) {
@@ -13,7 +12,7 @@ pub(super) fn validate_binding_requirement(
         Requirement::Expression(expression) => {
             let produces_value = !matches!(&expression.kind, ExprKind::Builtin { builtin, .. } if builtin.result.is_none());
             let before = issues.len();
-            validate_binding_expression(expression, function_name, scopes, issues, produces_value);
+            validate_binding_expression(expression, scopes, issues, produces_value);
             let condition = expression.ty.clone();
             // A bare find verifies the asset group exists; its index is dropped.
             if issues.len() == before
@@ -21,10 +20,13 @@ pub(super) fn validate_binding_requirement(
                 && !matches!(&expression.kind, ExprKind::GroupFind { .. })
                 && !matches!(condition, ArkType::Bool | ArkType::Unknown)
             {
-                issues.push(ValidationIssue::type_error(format!(
-                    "function '{function_name}': require condition has type '{}', expected bool",
-                    condition.as_str()
-                )));
+                issues.push(
+                    ValidationIssue::type_error(format!(
+                        "require condition has type '{}', expected bool",
+                        condition.as_str()
+                    ))
+                    .at(expression.span),
+                );
             }
         }
         Requirement::Comparison { left, op, right } => {
@@ -32,7 +34,7 @@ pub(super) fn validate_binding_requirement(
                 start: left.span.start,
                 end: right.span.end,
             };
-            validate_comparison(left, *op, right, span, function_name, scopes, issues);
+            validate_comparison(left, *op, right, span, scopes, issues);
         }
     }
 }
@@ -43,7 +45,6 @@ fn validate_comparison(
     op: BinaryOperator,
     right: &Expression,
     span: crate::diagnostics::Span,
-    function_name: &str,
     scopes: &BindingScopes,
     issues: &mut Vec<ValidationIssue>,
 ) {
@@ -51,7 +52,7 @@ fn validate_comparison(
     let mut composite = false;
     for operand in [left, right] {
         let whole = matches!(operand.ty, ArkType::Array(..) | ArkType::Struct(..));
-        validate_binding_expression(operand, function_name, scopes, issues, !whole);
+        validate_binding_expression(operand, scopes, issues, !whole);
         composite |= whole;
     }
     let (left, right) = (&left.ty, &right.ty);
@@ -74,7 +75,7 @@ fn validate_comparison(
     if !compatible {
         issues.push(
             ValidationIssue::type_error(format!(
-                "function '{function_name}': comparison '{op}' is not defined between '{}' and '{}'",
+                "comparison '{op}' is not defined between '{}' and '{}'",
                 left.as_str(),
                 right.as_str()
             ))
@@ -85,7 +86,6 @@ fn validate_comparison(
 
 pub(super) fn validate_value_expression(
     expression: &Expression,
-    function_name: &str,
     scopes: &BindingScopes,
     issues: &mut Vec<ValidationIssue>,
 ) {
@@ -96,12 +96,11 @@ pub(super) fn validate_value_expression(
         &expression.kind,
         ExprKind::StructLiteral(_) | ExprKind::ArrayLiteral(_)
     );
-    validate_binding_expression(expression, function_name, scopes, issues, scalar);
+    validate_binding_expression(expression, scopes, issues, scalar);
 }
 
 pub(super) fn validate_binding_expression(
     expression: &Expression,
-    function_name: &str,
     scopes: &BindingScopes,
     issues: &mut Vec<ValidationIssue>,
     value_position: bool,
@@ -115,7 +114,7 @@ pub(super) fn validate_binding_expression(
             "array"
         };
         issues.push(ValidationIssue::error(format!(
-            "function '{function_name}': {kind} expressions are composite values and cannot be used here",
+            "{kind} expressions are composite values and cannot be used here",
         )));
     }
     if value_position
@@ -124,9 +123,9 @@ pub(super) fn validate_binding_expression(
             ExprKind::GroupIOAccess { property: None, .. }
         ) || matches!(&expression.kind, ExprKind::Builtin { builtin, .. } if builtin.result.is_none()))
     {
-        issues.push(ValidationIssue::error(format!(
-            "function '{function_name}': expression does not produce one stack item"
-        )));
+        issues.push(ValidationIssue::error(
+            "expression does not produce one stack item",
+        ));
     }
     // An input's kind is only known at runtime, so `txid` on a local input fails the
     // spend like `controlAssetId` without control; a type check before `||`/`&&` guards it.
@@ -138,9 +137,9 @@ pub(super) fn validate_binding_expression(
             ..
         }
     ) {
-        issues.push(ValidationIssue::error(format!(
-            "function '{function_name}': asset group output records have no txid"
-        )));
+        issues.push(ValidationIssue::error(
+            "asset group output records have no txid",
+        ));
     }
 
     if let ExprKind::FieldAccess { value, .. } | ExprKind::IndexAccess { value, .. } =
@@ -150,9 +149,9 @@ pub(super) fn validate_binding_expression(
             &value.kind,
             ExprKind::StructLiteral(_) | ExprKind::ArrayLiteral(_)
         ) {
-            issues.push(ValidationIssue::error(format!(
-                "function '{function_name}': cannot read a field or element of a literal; declare it with a type first"
-            )));
+            issues.push(ValidationIssue::error(
+                "cannot read a field or element of a literal; declare it with a type first",
+            ));
         }
     }
 
@@ -167,7 +166,7 @@ pub(super) fn validate_binding_expression(
                 {
                     issues.push(
                         ValidationIssue::error(format!(
-                            "function '{function_name}': bytewise '{op}' operand has type '{}', expected 'bytes'",
+                            "bytewise '{op}' operand has type '{}', expected 'bytes'",
                             actual.as_str()
                         ))
                         .at(operand.span),
@@ -179,7 +178,7 @@ pub(super) fn validate_binding_expression(
             if let [Some(left), Some(right)] = widths {
                 if left != right {
                     issues.push(ValidationIssue::error(format!(
-                        "function '{function_name}': bytewise '{op}' operands must have equal lengths, got {left} and {right} bytes"
+                        "bytewise '{op}' operands must have equal lengths, got {left} and {right} bytes"
                     )));
                 }
             }
@@ -212,7 +211,7 @@ pub(super) fn validate_binding_expression(
                         };
                         issues.push(
                             ValidationIssue::type_error(format!(
-                                "function '{function_name}': cannot concatenate bytes with the {side} `{}` operand of `+`; {hint}",
+                                "cannot concatenate bytes with the {side} `{}` operand of `+`; {hint}",
                                 actual.as_str()
                             ))
                             .at(operand.span),
@@ -224,8 +223,7 @@ pub(super) fn validate_binding_expression(
                 if *actual != expected && *actual != ArkType::Unknown {
                     issues.push(
                         ValidationIssue::error(format!(
-                            "function '{}': {kind} '{}' operand has type '{}', expected '{}'",
-                            function_name,
+                            "{kind} '{}' operand has type '{}', expected '{}'",
                             op,
                             actual.as_str(),
                             expected.as_str()
@@ -242,25 +240,19 @@ pub(super) fn validate_binding_expression(
                 } else {
                     "division"
                 };
-                issues.push(
-                    ValidationIssue::error(format!("function '{function_name}': {what} by zero"))
-                        .at(right.span),
-                );
+                issues.push(ValidationIssue::error(format!("{what} by zero")).at(right.span));
             }
             if op.class() == OperatorClass::Shift
                 && literal_index(right).is_some_and(|(negative, value)| negative && value != "0")
             {
                 issues.push(
-                    ValidationIssue::error(format!(
-                        "function '{function_name}': shift count must not be negative"
-                    ))
-                    .at(right.span),
+                    ValidationIssue::error("shift count must not be negative").at(right.span),
                 );
             }
         }
         ExprKind::BinaryOp { left, op, right } if op.compares() => {
             let span = expression.span;
-            validate_comparison(left, *op, right, span, function_name, scopes, issues);
+            validate_comparison(left, *op, right, span, scopes, issues);
             children_checked = true;
         }
         ExprKind::Unary { op, value } => {
@@ -269,8 +261,7 @@ pub(super) fn validate_binding_expression(
             if actual != ArkType::Unknown && !binding_types_compatible(&expected, &actual) {
                 issues.push(
                     ValidationIssue::error(format!(
-                        "function '{}': unary '{}' operand has type '{}', expected '{}'",
-                        function_name,
+                        "unary '{}' operand has type '{}', expected '{}'",
                         operator,
                         actual.as_str(),
                         expected.as_str()
@@ -313,7 +304,7 @@ pub(super) fn validate_binding_expression(
                         &(&expected).into(),
                         operand,
                         &[],
-                        &format!("function '{function_name}': {name} operand"),
+                        &format!("{name} operand"),
                         issues,
                     );
                     continue;
@@ -328,32 +319,38 @@ pub(super) fn validate_binding_expression(
                                 &(&**element).into(),
                                 value,
                                 &[],
-                                &format!(
-                                    "function '{function_name}': {name} operand, element {index}"
-                                ),
+                                &format!("{name} operand, element {index}"),
                                 issues,
                             );
                         } else if actual != &ArkType::Unknown
                             && !binding_types_compatible(element, actual)
                         {
-                            issues.push(ValidationIssue::error(format!(
-                                "function '{function_name}': {name} '{}' has type '{}', expected '{}'",
-                                value.source_text(), actual.as_str(), element.as_str()
-                            )).at(value.span));
+                            issues.push(
+                                ValidationIssue::error(format!(
+                                    "{name} '{}' has type '{}', expected '{}'",
+                                    value.source_text(),
+                                    actual.as_str(),
+                                    element.as_str()
+                                ))
+                                .at(value.span),
+                            );
                         }
                     }
                     if elements.len() != *length {
-                        issues.push(ValidationIssue::error(format!(
-                            "function '{function_name}': {name} operand has {} elements, expected {length}",
-                            elements.len()
-                        )).at(operand.span));
+                        issues.push(
+                            ValidationIssue::error(format!(
+                                "{name} operand has {} elements, expected {length}",
+                                elements.len()
+                            ))
+                            .at(operand.span),
+                        );
                     }
                     continue;
                 }
                 if known && !binding_types_compatible(&expected, &actual) {
                     issues.push(
                         ValidationIssue::error(format!(
-                            "function '{function_name}': {name} operand has type '{}', expected '{}'",
+                            "{name} operand has type '{}', expected '{}'",
                             actual.as_str(),
                             expected.as_str()
                         ))
@@ -396,7 +393,7 @@ pub(super) fn validate_binding_expression(
                         .join(" or ");
                     issues.push(
                         ValidationIssue::error(format!(
-                            "function '{function_name}': {name} {operand_name} must be {allowed}, got {value}"
+                            "{name} {operand_name} must be {allowed}, got {value}"
                         ))
                         .at(operand.span),
                     );
@@ -411,9 +408,12 @@ pub(super) fn validate_binding_expression(
                         crate::compiler::constants::evaluate(operand, &mut |path| Err(path.key()))
                     {
                         if crate::compiler::Op::Push(value).pushes_more_than(64) {
-                            issues.push(ValidationIssue::error(format!(
-                                "function '{function_name}': modExp {label} must fit in 64 Script-number bytes"
-                            )).at(operand.span));
+                            issues.push(
+                                ValidationIssue::error(format!(
+                                    "modExp {label} must fit in 64 Script-number bytes"
+                                ))
+                                .at(operand.span),
+                            );
                         }
                     }
                 }
@@ -430,7 +430,7 @@ pub(super) fn validate_binding_expression(
                         .map_or(true, |t| t == 0 || t > *count)
                     {
                         issues.push(ValidationIssue::error(format!(
-                            "function '{function_name}': checkMultisig threshold must be between 1 and the number of public keys, got {value}"
+                            "checkMultisig threshold must be between 1 and the number of public keys, got {value}"
                         )).at(threshold.span));
                     }
                 }
@@ -450,15 +450,12 @@ pub(super) fn validate_binding_expression(
                 _ => None,
             };
             if let Some(rule) = byte_rule {
-                issues.push(
-                    ValidationIssue::error(format!("function '{function_name}': {name} {rule}"))
-                        .at(expression.span),
-                );
+                issues.push(ValidationIssue::error(format!("{name} {rule}")).at(expression.span));
             }
             // OP_ECPAIRING bounds its work at 16 pairs.
             if let Some(pairs) = length.filter(|&pairs| name == "ecPairing" && pairs > 16) {
                 issues.push(ValidationIssue::error(format!(
-                    "function '{function_name}': ecPairing supports at most 16 pairs, got {pairs}"
+                    "ecPairing supports at most 16 pairs, got {pairs}"
                 )));
             }
         }
@@ -480,7 +477,7 @@ pub(super) fn validate_binding_expression(
                 && !(target == "bytes" && actual == ArkType::Bool)
             {
                 issues.push(ValidationIssue::error(format!(
-                    "function '{function_name}': cannot cast '{}' to '{target}'; {hint}",
+                    "cannot cast '{}' to '{target}'; {hint}",
                     actual.as_str()
                 )));
             }
@@ -493,7 +490,7 @@ pub(super) fn validate_binding_expression(
             let actual = output_index.ty.clone();
             if actual != ArkType::Int {
                 issues.push(ValidationIssue::error(format!(
-                    "function '{function_name}': tunnel output index must be int, got '{}'",
+                    "tunnel output index must be int, got '{}'",
                     actual.as_str()
                 )));
             }
@@ -525,12 +522,12 @@ pub(super) fn validate_binding_expression(
         }
 
         ExprKind::StructLiteral(_) if value_position => {
-            issues.push(ValidationIssue::error(format!(
-                "function '{function_name}': struct literals may only initialize typed struct declarations"
-            )));
+            issues.push(ValidationIssue::error(
+                "struct literals may only initialize typed struct declarations",
+            ));
         }
         ExprKind::Name(path) if path.segments.is_empty() => {
-            validate_named_binding(&path.root, None, "binding", function_name, scopes, issues);
+            validate_named_binding(&path.root, None, "binding", scopes, issues);
         }
         // Inner accesses are validated first so a bad path reports only its first fault.
         ExprKind::FieldAccess { value, field } => {
@@ -543,12 +540,12 @@ pub(super) fn validate_binding_expression(
                     .iter()
                     .any(|segment| matches!(segment, crate::models::Segment::Index(_)));
                 if !indexed && find_binding(scopes, &array.key()).is_some() {
-                    validate_array_length(&array.key(), function_name, scopes, issues);
+                    validate_array_length(&array.key(), scopes, issues);
                     return;
                 }
             }
             let before = issues.len();
-            validate_value_expression(value, function_name, scopes, issues);
+            validate_value_expression(value, scopes, issues);
             if issues.len() == before {
                 if let Some(path) = expression.binding_path() {
                     let name = path.key();
@@ -557,16 +554,16 @@ pub(super) fn validate_binding_expression(
                         .filter(|&(_, field)| field == "length")
                         .filter(|_| find_binding(scopes, &name).is_none())
                     {
-                        validate_array_length(&array.key(), function_name, scopes, issues);
+                        validate_array_length(&array.key(), scopes, issues);
                     } else if find_binding(scopes, &name).is_none() {
                         issues.push(ValidationIssue::error(format!(
-                            "function '{function_name}': field '{}' is undefined",
+                            "field '{}' is undefined",
                             expression.source_text()
                         )));
                     }
                 } else if expression.ty == ArkType::Unknown && value.ty != ArkType::Unknown {
                     issues.push(ValidationIssue::error(format!(
-                        "function '{function_name}': value of type '{}' has no field '{field}'",
+                        "value of type '{}' has no field '{field}'",
                         value.ty.as_str()
                     )));
                 }
@@ -575,8 +572,8 @@ pub(super) fn validate_binding_expression(
         }
         ExprKind::IndexAccess { value, index } => {
             let before = issues.len();
-            validate_value_expression(value, function_name, scopes, issues);
-            validate_binding_expression(index, function_name, scopes, issues, true);
+            validate_value_expression(value, scopes, issues);
+            validate_binding_expression(index, scopes, issues, true);
             if issues.len() == before {
                 match (value.binding_path(), &value.ty) {
                     (Some(array), _) => {
@@ -584,21 +581,16 @@ pub(super) fn validate_binding_expression(
                             &array.key(),
                             &value.source_text(),
                             index,
-                            function_name,
                             scopes,
                             issues,
                         );
                     }
-                    (None, ArkType::Array(_, length)) => validate_index(
-                        index,
-                        Some((value.ty.as_str(), *length)),
-                        function_name,
-                        scopes,
-                        issues,
-                    ),
+                    (None, ArkType::Array(_, length)) => {
+                        validate_index(index, Some((value.ty.as_str(), *length)), scopes, issues)
+                    }
                     (None, ArkType::Unknown) => {}
                     (None, actual) => issues.push(ValidationIssue::error(format!(
-                        "function '{function_name}': value of type '{}' is not an array",
+                        "value of type '{}' is not an array",
                         actual.as_str()
                     ))),
                 }
@@ -606,23 +598,20 @@ pub(super) fn validate_binding_expression(
             children_checked = true;
         }
         ExprKind::ArrayIndex { array, index } => {
-            validate_array_index(
-                &array.key(),
-                &array.key(),
-                index,
-                function_name,
-                scopes,
-                issues,
-            );
+            validate_array_index(&array.key(), &array.key(), index, scopes, issues);
         }
         ExprKind::Name(path) => match path.split_last() {
             Some((array, "length")) if find_binding(scopes, &path.key()).is_none() => {
-                validate_array_length(&array.key(), function_name, scopes, issues);
+                validate_array_length(&array.key(), scopes, issues);
             }
             _ if find_binding(scopes, &path.root).is_some() => {
-                validate_named_binding(&path.key(), None, "field", function_name, scopes, issues);
+                validate_named_binding(&path.key(), None, "field", scopes, issues);
             }
-            _ => {}
+            _ => {
+                if let Some(error) = unknown_property(path) {
+                    issues.push(ValidationIssue::error(error));
+                }
+            }
         },
         ExprKind::ContractInstance { args, .. } => {
             for argument in args {
@@ -634,15 +623,15 @@ pub(super) fn validate_binding_expression(
                         if let Some(binding) = find_binding(scopes, name) {
                             if !matches!(binding.source, BindingSource::Constructor) {
                                 issues.push(ValidationIssue::error(format!(
-                                    "function '{function_name}': contract instance argument '{name}' is a runtime value; only constructor parameters and literals are supported"
+                                    "contract instance argument '{name}' is a runtime value; only constructor parameters and literals are supported"
                             )));
                             }
                         }
                     }
                     ExprKind::Literal(_) => {}
-                    _ => issues.push(ValidationIssue::error(format!(
-                        "function '{function_name}': computed contract arguments are not supported"
-                    ))),
+                    _ => issues.push(ValidationIssue::error(
+                        "computed contract arguments are not supported",
+                    )),
                 }
             }
         }
@@ -664,11 +653,10 @@ pub(super) fn validate_binding_expression(
                 | ExprKind::FieldAccess { .. }
                 | ExprKind::IndexAccess { .. }
         ) {
-            validate_value_expression(child, function_name, scopes, issues);
+            validate_value_expression(child, scopes, issues);
         } else {
             validate_binding_expression(
                 child,
-                function_name,
                 scopes,
                 issues,
                 !matches!(&expression.kind, ExprKind::ContractInstance { .. }),
@@ -677,18 +665,13 @@ pub(super) fn validate_binding_expression(
     }
 }
 
-fn validate_array_length(
-    array: &str,
-    function_name: &str,
-    scopes: &BindingScopes,
-    issues: &mut Vec<ValidationIssue>,
-) {
+fn validate_array_length(array: &str, scopes: &BindingScopes, issues: &mut Vec<ValidationIssue>) {
     if !matches!(
         find_binding(scopes, array).map(|binding| &binding.binding_type),
         Some(ArkType::Array(..))
     ) {
         issues.push(ValidationIssue::error(format!(
-            "function '{function_name}': '{array}' is not an array; '.length' is undefined"
+            "'{array}' is not an array; '.length' is undefined"
         )));
     }
 }
@@ -698,17 +681,16 @@ pub(super) fn validate_array_index(
     array: &str,
     written: &str,
     index: &Expression,
-    function_name: &str,
     scopes: &BindingScopes,
     issues: &mut Vec<ValidationIssue>,
 ) -> Option<(ArkType, BindingSource)> {
     if find_binding(scopes, array).is_some_and(|binding| !binding.initialized) {
-        validate_named_binding(array, None, "array", function_name, scopes, issues);
+        validate_named_binding(array, None, "array", scopes, issues);
     }
     let array_info = match find_binding(scopes, array) {
         None => {
             issues.push(ValidationIssue::error(format!(
-                "function '{function_name}': array '{written}' is undefined"
+                "array '{written}' is undefined"
             )));
             None
         }
@@ -719,7 +701,7 @@ pub(super) fn validate_array_index(
         }) => Some(((**element).clone(), *length, *source)),
         Some(_) => {
             issues.push(ValidationIssue::error(format!(
-                "function '{function_name}': binding '{written}' is not an array"
+                "binding '{written}' is not an array"
             )));
             None
         }
@@ -729,7 +711,6 @@ pub(super) fn validate_array_index(
         array_info
             .as_ref()
             .map(|(_, length, _)| (format!("{written}[{length}]"), *length)),
-        function_name,
         scopes,
         issues,
     );
@@ -740,7 +721,6 @@ pub(super) fn validate_array_index(
 fn validate_index(
     index: &Expression,
     array: Option<(String, usize)>,
-    function_name: &str,
     scopes: &BindingScopes,
     issues: &mut Vec<ValidationIssue>,
 ) {
@@ -748,8 +728,7 @@ fn validate_index(
     if !matches!(index_type, ArkType::Int | ArkType::Unknown) {
         issues.push(
             ValidationIssue::error(format!(
-                "function '{}': array index has type '{}', expected 'int'",
-                function_name,
+                "array index has type '{}', expected 'int'",
                 index_type.as_str()
             ))
             .at(index.span),
@@ -783,7 +762,7 @@ fn validate_index(
             let sign = if negative { "-" } else { "" };
             issues.push(
                 ValidationIssue::error(format!(
-                    "function '{function_name}': array index '{sign}{literal}' is out of range for '{array}'"
+                    "array index '{sign}{literal}' is out of range for '{array}'"
                 ))
                 .at(index.span),
             );
@@ -808,4 +787,52 @@ fn literal_index(mut expression: &Expression) -> Option<(bool, &str)> {
         }),
         _ => None,
     }
+}
+
+/// Why `path` names no transaction value, with the properties its owner has.
+fn unknown_property(path: &crate::models::Path) -> Option<String> {
+    use crate::models::Segment::Field;
+    use crate::properties::{InputProperty, OutputProperty, TxProperty};
+    if path.root != "tx" {
+        return None;
+    }
+    // An indexed list arrives as one field, such as `outputs[0]`.
+    let list =
+        |field: &str, name: &str| field.strip_prefix(name).is_some_and(|i| i.starts_with('['));
+    let (owner, name, expected): (_, _, Vec<&str>) = match path.segments.as_slice() {
+        [Field(name)] => (
+            "transaction",
+            name,
+            TxProperty::ALL.iter().map(|p| p.name()).collect(),
+        ),
+        [Field(field), Field(name)] if list(field, "inputs") => (
+            "input",
+            name,
+            InputProperty::ALL.iter().map(|p| p.name()).collect(),
+        ),
+        [Field(field), Field(name)] if list(field, "outputs") => (
+            "output",
+            name,
+            OutputProperty::ALL.iter().map(|p| p.name()).collect(),
+        ),
+        _ => return None,
+    };
+    // These exist, but only followed by an access, as in `tx.assetGroups[0]`.
+    let accessed = [
+        "input",
+        "inputs",
+        "outputs",
+        "assetGroups",
+        "intent",
+        "packet",
+        "assets",
+    ];
+    let name = name.split('[').next().unwrap_or_default();
+    if accessed.contains(&name) {
+        return Some(format!("'{}' is not a value on its own", path.key()));
+    }
+    Some(format!(
+        "unknown {owner} property '{name}'; expected one of {}",
+        expected.join(", ")
+    ))
 }

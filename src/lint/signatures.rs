@@ -9,7 +9,6 @@ use crate::operators::{BinaryOperator, UnaryOperator};
 pub(super) fn check(contract: &Contract, findings: &mut Vec<Finding>) {
     for function in contract.functions.iter().filter(|f| !f.is_imported()) {
         let mut results = Results {
-            function: &function.name,
             root: false,
             branches: Vec::new(),
             findings: Vec::new(),
@@ -21,14 +20,13 @@ pub(super) fn check(contract: &Contract, findings: &mut Vec<Finding>) {
 
 /// `branches` holds, per open expression, whether its children decide something, as an `if`
 /// condition, a `||` operand, a negation or a comparison does, rather than having to hold.
-struct Results<'f> {
-    function: &'f str,
+struct Results {
     root: bool,
     branches: Vec<bool>,
     findings: Vec<Finding>,
 }
 
-impl<'a> Visitor<'a> for Results<'_> {
+impl<'a> Visitor<'a> for Results {
     fn statement(&mut self, statement: &'a LocatedStatement) {
         self.root = matches!(
             statement.statement,
@@ -50,9 +48,9 @@ impl<'a> Visitor<'a> for Results<'_> {
                     Lint::SignatureMayFail,
                     expression.span,
                     format!(
-                        "function '{}': {} fails the spend on an invalid non-empty signature \
-                         instead of returning false; pass an empty signature where the check may fail",
-                        self.function, builtin.name
+                        "{} fails the spend on an invalid non-empty signature instead of \
+                         returning false; pass an empty signature where the check may fail",
+                        builtin.name
                     ),
                 ));
                 false
