@@ -148,11 +148,17 @@ fn emit_lowered(item: &Lowered, generator: &mut Generator) -> Result<bool> {
             Ok(continues)
         }
         Lowered::Bound {
-            name, value, body, ..
+            span,
+            name,
+            value,
+            body,
         } => {
             let ty = TypeName::from(&value.ty);
             generator.enter_scope();
+            // The value's opcodes map to the value, not the whole statement.
+            generator.asm.set_span(Some(value.span));
             generator.emit_let(name, value, &ty)?;
+            generator.asm.set_span(Some(*span));
             let continues = emit_body(body, generator)?;
             generator.exit_scope()?;
             Ok(continues)
