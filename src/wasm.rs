@@ -60,15 +60,18 @@ pub fn compile_sources(entry: &str, files: &str, optimize: Option<bool>) -> Resu
 /// Compile a virtual project and report every diagnostic with its position. Compilation
 /// errors are diagnostics, not a thrown error: the result is
 /// `{ artifact: string | null, debug: string | null, diagnostics: Diagnostic[] }`,
-/// where `debug` is the debug file JSON (`ContractJson::debug_info`) and each
-/// diagnostic has `severity`, `code`, `message`, `file` and, when located, 1-based `start` and
-/// `end` `{ line, column }` with columns counted in UTF-16 units, as editors count them.
+/// where `debug` is the debug file JSON (`ContractJson::debug_info`), built unless `debug` is
+/// `false`, and each diagnostic has `severity`, `code`, `message`, `file` and, when located,
+/// 1-based `start` and `end` `{ line, column }` with columns counted in UTF-16 units, as editors
+/// count them.
 #[wasm_bindgen]
 pub fn compile_sources_with_diagnostics(
     entry: &str,
     files: &str,
     optimize: Option<bool>,
+    debug: Option<bool>,
 ) -> Result<String, String> {
+    let with_debug = debug.unwrap_or(true);
     let files: std::collections::BTreeMap<String, String> =
         serde_json::from_str(files).map_err(|e| format!("Invalid source files: {e}"))?;
     let options = crate::CompileOptions {
@@ -78,14 +81,17 @@ pub fn compile_sources_with_diagnostics(
     let mut diagnostics = analysis.diagnostics();
     let mut artifact = None;
     let mut debug = None;
-    if analysis.contract().is_some() {
+    let failed = diagnostics
+        .iter()
+        .any(|d| d.severity == crate::Severity::Error);
+    if !failed && analysis.contract().is_some() {
         match analysis.compile(options) {
             Ok(output) => {
                 artifact = Some(
                     serde_json::to_string_pretty(&output)
                         .map_err(|e| format!("Serialization error: {e}"))?,
                 );
-                debug = Some(output.debug_info().to_string());
+                debug = with_debug.then(|| output.debug_info().to_string());
             }
             Err(errors) => diagnostics.extend(errors),
         }

@@ -148,7 +148,8 @@ fn validate_binding_statements(
                     ExprKind::ArrayLiteral(_)
                     | ExprKind::ArrayIndex { .. }
                     | ExprKind::FieldAccess { .. }
-                    | ExprKind::IndexAccess { .. } => {
+                    | ExprKind::IndexAccess { .. }
+                    | ExprKind::Name(_) => {
                         validate_value_expression(value, function_name, scopes, issues)
                     }
                     _ => validate_binding_expression(
@@ -197,6 +198,7 @@ fn validate_binding_statements(
                                 | ExprKind::ArrayIndex { .. }
                                 | ExprKind::FieldAccess { .. }
                                 | ExprKind::IndexAccess { .. }
+                                | ExprKind::Name(_)
                         )
                     {
                         issues.push(ValidationIssue::error(format!(
@@ -544,9 +546,18 @@ pub(super) fn validate_named_binding(
     issues: &mut Vec<ValidationIssue>,
 ) {
     match find_binding(scopes, name) {
-        None => issues.push(ValidationIssue::error(format!(
-            "function '{function_name}': {label} '{name}' is undefined"
-        ))),
+        None => {
+            let issue = ValidationIssue::error(format!(
+                "function '{function_name}': {label} '{name}' is undefined"
+            ))
+            .coded(crate::errors::ErrorCode::UnknownName);
+            let names = scopes.iter().flat_map(|frame| frame.keys().map(String::as_str));
+            let simple = names.filter(|n| !n.contains(['.', '[']));
+            issues.push(match crate::errors::closest(name, simple).filter(|_| label == "binding") {
+                Some(candidate) => issue.suggest(candidate, None),
+                None => issue,
+            });
+        }
         Some(binding) if !binding.initialized => issues.push(ValidationIssue::error(format!(
             "function '{function_name}': {label} '{name}' may be uninitialized; assign it a value before use (initialize arrays and structs as a whole)"
         ))),
