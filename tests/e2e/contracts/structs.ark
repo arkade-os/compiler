@@ -28,6 +28,15 @@ contract Structs(Account account) {
     require(supplied.a.b == 37, "nested function field");
     require(supplied.weights[index] == 43, "indexed struct array");
 
+    Rules copied = supplied;
+    let constructorWeights = account.rules.weights;
+    copied.a.b = 1;
+    constructorWeights[index] = 1;
+    require(supplied.a.b == 37, "struct copy initializer owns its fields");
+    require(account.rules.weights[index] == 21, "array copy initializer owns its elements");
+    require(copied.weights == supplied.weights, "struct copy initializer reads the source");
+    require(constructorWeights[2] == 23, "array copy initializer reads the source");
+
     Rules local = {
       weights: [supplied.weights[0], supplied.weights[1], supplied.weights[2]],
       a: { b: supplied.a.b },
@@ -128,8 +137,10 @@ contract Structs(Account account) {
     require(added.x == multiplied.x, "ecAdd x");
     require(added.y == multiplied.y, "ecAdd y");
     require(added == multiplied, "whole ec point equality");
+    let doubled = added;
     added = ecAdd(added, generator, 0);
     require(added == ecMul(generator, 3, 0), "whole native struct assignment");
+    require(doubled == multiplied, "native copy initializer keeps its value");
     added = ecMul(added, 2, 0);
     require(added == ecMul(generator, 6, 0), "native assignment reads previous point");
     currentOutpoint = tx.inputs[0].outpoint;
@@ -138,6 +149,8 @@ contract Structs(Account account) {
     ECPoint identity = { x: 0, y: 0 };
     require(ecAdd(identity, generator, 0) == generator, "ecAdd identity point");
     require(ecAdd((ecAdd(generator, generator, 0)), generator, 0) == ecMul(generator, 3, 0), "nested ecAdd");
+    require(ecAdd(generator, { y: generator.y, x: identity.x + generator.x }, 0) == ecMul(generator, 2, 0), "ecAdd point literal");
+    require(ecMul({ x: added.x, y: added.y }, 2, 0) == ecMul(generator, 12, 0), "ecMul point literal");
 
     require(checkSig(ownerSig, account.owner));
   }

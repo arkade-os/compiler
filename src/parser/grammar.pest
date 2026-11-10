@@ -237,11 +237,11 @@ rem_op = { "%" }
 
 // ─── Asset Lookups ─────────────────────────────────────────────────────────────
 
-asset_id_txid_operand = _{ identifier_property_access | identifier }
+asset_id_txid_operand = _{ general_expression }
 asset_id_gidx_operand = _{ general_expression }
 
 // Asset lookup on inputs/outputs: tx.inputs[i].assets.lookup(txid, gidx)
-// txid is a bytes32 identifier; gidx is an int expression (constants must be 0..65535).
+// txid is a bytes32 expression; gidx is an int expression (constants must be 0..65535).
 asset_lookup = {
     "tx" ~ "." ~ asset_lookup_source ~ array_access ~ "." ~ "assets"
         ~ "." ~ "lookup" ~ "(" ~ asset_id_txid_operand ~ "," ~ asset_id_gidx_operand ~ ")"

@@ -148,7 +148,8 @@ fn validate_binding_statements(
                     ExprKind::ArrayLiteral(_)
                     | ExprKind::ArrayIndex { .. }
                     | ExprKind::FieldAccess { .. }
-                    | ExprKind::IndexAccess { .. } => {
+                    | ExprKind::IndexAccess { .. }
+                    | ExprKind::Name(_) => {
                         validate_value_expression(value, function_name, scopes, issues)
                     }
                     _ => validate_binding_expression(
@@ -197,6 +198,7 @@ fn validate_binding_statements(
                                 | ExprKind::ArrayIndex { .. }
                                 | ExprKind::FieldAccess { .. }
                                 | ExprKind::IndexAccess { .. }
+                                | ExprKind::Name(_)
                         )
                     {
                         issues.push(ValidationIssue::error(format!(
