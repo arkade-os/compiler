@@ -91,14 +91,14 @@ fn validate_binding_statements(
         let first = issues.len();
         match &statement.statement {
             Statement::Call(expression) => {
-                validate_binding_expression(expression, function_name, scopes, issues, false)
+                validate_binding_expression(expression, scopes, issues, false)
             }
             Statement::Return(Some(expression)) => {
-                validate_value_expression(expression, function_name, scopes, issues)
+                validate_value_expression(expression, scopes, issues)
             }
             Statement::Return(None) => {}
             Statement::Require(requirement) => {
-                validate_binding_requirement(requirement, function_name, scopes, issues);
+                validate_binding_requirement(requirement, scopes, issues);
             }
             Statement::Declaration {
                 name,
@@ -143,18 +143,15 @@ fn validate_binding_statements(
                                 "struct literal needs a declared struct type",
                             ));
                         }
-                        validate_value_expression(value, function_name, scopes, issues);
+                        validate_value_expression(value, scopes, issues);
                     }
                     ExprKind::ArrayLiteral(_)
                     | ExprKind::ArrayIndex { .. }
                     | ExprKind::FieldAccess { .. }
                     | ExprKind::IndexAccess { .. }
-                    | ExprKind::Name(_) => {
-                        validate_value_expression(value, function_name, scopes, issues)
-                    }
+                    | ExprKind::Name(_) => validate_value_expression(value, scopes, issues),
                     _ => validate_binding_expression(
                         value,
-                        function_name,
                         scopes,
                         issues,
                         crate::models::expression_result_struct(value).is_none()
@@ -251,13 +248,7 @@ fn validate_binding_statements(
                 };
                 let composite_target =
                     matches!(target_type, Some(ArkType::Struct(_) | ArkType::Array(..)));
-                validate_binding_expression(
-                    value,
-                    function_name,
-                    scopes,
-                    issues,
-                    !composite_target,
-                );
+                validate_binding_expression(value, scopes, issues, !composite_target);
                 if let (Some(expected), ExprKind::StructLiteral(_) | ExprKind::ArrayLiteral(_)) =
                     (&target_type, &value.kind)
                 {
@@ -278,13 +269,7 @@ fn validate_binding_statements(
                 match target {
                     AssignmentTarget::Access(access) => {
                         let before = issues.len();
-                        validate_binding_expression(
-                            access,
-                            function_name,
-                            scopes,
-                            issues,
-                            !composite_target,
-                        );
+                        validate_binding_expression(access, scopes, issues, !composite_target);
                         // An invalid access already explains the target.
                         if issues.len() == before {
                             let expected = access.ty.clone();
@@ -355,7 +340,7 @@ fn validate_binding_statements(
                                 )));
                             }
                         }
-                        validate_binding_expression(index, function_name, scopes, issues, true);
+                        validate_binding_expression(index, scopes, issues, true);
                     }
                 }
                 if issues.len() == first {
@@ -385,7 +370,7 @@ fn validate_binding_statements(
                 then_body,
                 else_body,
             } => {
-                validate_binding_expression(condition, function_name, scopes, issues, true);
+                validate_binding_expression(condition, scopes, issues, true);
                 let condition_type = condition.ty.clone();
                 if condition_type != ArkType::Bool {
                     issues.push(ValidationIssue::error(format!(
@@ -458,7 +443,7 @@ fn validate_binding_statements(
                     | ExprKind::FieldAccess { .. }
                     | ExprKind::IndexAccess { .. } => {
                         let before = issues.len();
-                        validate_value_expression(iterable, function_name, scopes, issues);
+                        validate_value_expression(iterable, scopes, issues);
                         match iterable.ty.clone() {
                             ArkType::Array(element, _) => *element,
                             actual => {

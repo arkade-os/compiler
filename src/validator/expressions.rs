@@ -5,7 +5,6 @@ use super::*;
 
 pub(super) fn validate_binding_requirement(
     requirement: &Requirement,
-    function_name: &str,
     scopes: &BindingScopes,
     issues: &mut Vec<ValidationIssue>,
 ) {
@@ -13,7 +12,7 @@ pub(super) fn validate_binding_requirement(
         Requirement::Expression(expression) => {
             let produces_value = !matches!(&expression.kind, ExprKind::Builtin { builtin, .. } if builtin.result.is_none());
             let before = issues.len();
-            validate_binding_expression(expression, function_name, scopes, issues, produces_value);
+            validate_binding_expression(expression, scopes, issues, produces_value);
             let condition = expression.ty.clone();
             // A bare find verifies the asset group exists; its index is dropped.
             if issues.len() == before
@@ -53,8 +52,8 @@ pub(super) fn validate_binding_requirement(
                 }
             }
             let before = issues.len();
-            validate_binding_expression(left, function_name, scopes, issues, !composite);
-            validate_binding_expression(right, function_name, scopes, issues, !composite);
+            validate_binding_expression(left, scopes, issues, !composite);
+            validate_binding_expression(right, scopes, issues, !composite);
             if issues.len() == before {
                 let span = crate::diagnostics::Span {
                     start: left.span.start,
@@ -107,7 +106,6 @@ fn validate_scalar_comparison(
 
 pub(super) fn validate_value_expression(
     expression: &Expression,
-    function_name: &str,
     scopes: &BindingScopes,
     issues: &mut Vec<ValidationIssue>,
 ) {
@@ -118,12 +116,11 @@ pub(super) fn validate_value_expression(
         &expression.kind,
         ExprKind::StructLiteral(_) | ExprKind::ArrayLiteral(_)
     );
-    validate_binding_expression(expression, function_name, scopes, issues, scalar);
+    validate_binding_expression(expression, scopes, issues, scalar);
 }
 
 pub(super) fn validate_binding_expression(
     expression: &Expression,
-    function_name: &str,
     scopes: &BindingScopes,
     issues: &mut Vec<ValidationIssue>,
     value_position: bool,
@@ -516,7 +513,7 @@ pub(super) fn validate_binding_expression(
                 }
             }
             let before = issues.len();
-            validate_value_expression(value, function_name, scopes, issues);
+            validate_value_expression(value, scopes, issues);
             if issues.len() == before {
                 if let Some(path) = expression.binding_path() {
                     let name = path.key();
@@ -538,8 +535,8 @@ pub(super) fn validate_binding_expression(
         }
         ExprKind::IndexAccess { value, index } => {
             let before = issues.len();
-            validate_value_expression(value, function_name, scopes, issues);
-            validate_binding_expression(index, function_name, scopes, issues, true);
+            validate_value_expression(value, scopes, issues);
+            validate_binding_expression(index, scopes, issues, true);
             if issues.len() == before {
                 if let Some(array) = value.binding_path() {
                     validate_array_index(&array.key(), &value.source_text(), index, scopes, issues);
@@ -603,11 +600,10 @@ pub(super) fn validate_binding_expression(
                 | ExprKind::FieldAccess { .. }
                 | ExprKind::IndexAccess { .. }
         ) {
-            validate_value_expression(child, function_name, scopes, issues);
+            validate_value_expression(child, scopes, issues);
         } else {
             validate_binding_expression(
                 child,
-                function_name,
                 scopes,
                 issues,
                 !matches!(&expression.kind, ExprKind::ContractInstance { .. }),
