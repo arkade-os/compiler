@@ -8,7 +8,8 @@
 use std::collections::HashMap;
 
 use crate::models::{
-    AssignmentTarget, Contract, ExprKind, Expression, LocatedStatement, Path, Statement, TypeName,
+    AssignmentTarget, Contract, ExprKind, Expression, LocatedStatement, Path, Requirement,
+    Statement, TypeName,
 };
 use crate::operators::{BinaryOperator, OperatorClass, UnaryOperator};
 use crate::properties::{GroupIoProperty, GroupProperty};
@@ -279,6 +280,9 @@ impl Typing<'_> {
                     for value in requirement.expressions_mut() {
                         self.expression(value, scope);
                     }
+                    if let Requirement::Comparison { left, op, right } = requirement {
+                        type_compared_literal(left, *op, right);
+                    }
                 }
                 Statement::Declaration {
                     name,
@@ -351,6 +355,9 @@ impl Typing<'_> {
         for child in crate::models::child_exprs_mut(expression) {
             self.expression(child, scope);
         }
+        if let ExprKind::BinaryOp { left, op, right } = &mut expression.kind {
+            type_compared_literal(left, *op, right);
+        }
         if let Some(returns) = self.returns {
             if let ExprKind::Call {
                 name, return_type, ..
@@ -361,6 +368,42 @@ impl Typing<'_> {
             resolve_group_member(expression, scope);
         }
         expression.ty = infer_type(expression, scope);
+    }
+}
+
+/// A struct or array literal takes the resolved type of the value it is tested
+/// for equality with, as an initializer takes its declared type, while an array
+/// literal keeps its length; the validator checks the literal against that type.
+/// Two literals keep their own types, as typing one from the other would depend
+/// on operand order.
+fn type_compared_literal(left: &mut Expression, op: BinaryOperator, right: &mut Expression) {
+    if op.class() != OperatorClass::Equality {
+        return;
+    }
+    fn resolved(ty: &ArkType) -> bool {
+        match ty {
+            ArkType::Array(element, _) => resolved(element),
+            ty => *ty != ArkType::Unknown,
+        }
+    }
+    let literal = |e: &Expression| {
+        matches!(
+            e.kind,
+            ExprKind::ArrayLiteral(_) | ExprKind::StructLiteral(_)
+        )
+    };
+    let typed_by = |value: &Expression, peer: &Expression| match (&value.kind, &peer.ty) {
+        _ if literal(peer) || !resolved(&peer.ty) => None,
+        (ExprKind::ArrayLiteral(elements), ArkType::Array(element, _)) => {
+            Some(ArkType::Array(element.clone(), elements.len()))
+        }
+        (ExprKind::StructLiteral(_), ArkType::Struct(_)) => Some(peer.ty.clone()),
+        _ => None,
+    };
+    if let Some(ty) = typed_by(left, right) {
+        left.ty = ty;
+    } else if let Some(ty) = typed_by(right, left) {
+        right.ty = ty;
     }
 }
 
