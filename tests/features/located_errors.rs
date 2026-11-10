@@ -196,6 +196,17 @@ fn call_errors_name_the_problem() {
     ] {
         assert_eq!(at_line(&body(statement)).2, message, "{statement}");
     }
+    for statement in [
+        "require();",
+        "require(require(true));",
+        "require(true, \"m\", 1);",
+    ] {
+        let message = at_line(&body(statement)).2;
+        assert_ne!(
+            message, "the message of require must be a string",
+            "{statement}"
+        );
+    }
 }
 
 #[test]

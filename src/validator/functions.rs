@@ -171,9 +171,10 @@ fn validate_calls(
     let first = issues.len();
     if let ExprKind::Call { name, args, .. } = &expression.kind {
         match contract.functions.iter().find(|f| f.name == *name) {
-            None if name == "require" => issues.push(ValidationIssue::error(
-                "the message of require must be a string",
-            )),
+            // `require(ok, 5);` parses as a call only because its message is not a string.
+            None if name == "require" && !value_position && args.len() == 2 => issues.push(
+                ValidationIssue::error("the message of require must be a string"),
+            ),
             None => {
                 let issue = ValidationIssue::error(format!("unknown function '{name}'"))
                     .coded(crate::errors::ErrorCode::UnknownFunction);
