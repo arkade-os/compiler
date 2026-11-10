@@ -371,9 +371,11 @@ impl Typing<'_> {
     }
 }
 
-/// A struct or array literal whose layout inference leaves unresolved takes the
-/// resolved type of the value it is tested for equality with, as an initializer
-/// takes its declared type; the validator checks the literal against that type.
+/// A struct or array literal takes the resolved type of the value it is tested
+/// for equality with, as an initializer takes its declared type, while an array
+/// literal keeps its length; the validator checks the literal against that type.
+/// Two literals keep their own types, as typing one from the other would depend
+/// on operand order.
 fn type_compared_literal(left: &mut Expression, op: BinaryOperator, right: &mut Expression) {
     if op.class() != OperatorClass::Equality {
         return;
@@ -384,18 +386,24 @@ fn type_compared_literal(left: &mut Expression, op: BinaryOperator, right: &mut 
             ty => *ty != ArkType::Unknown,
         }
     }
-    let typed_by = |literal: &Expression, peer: &Expression| {
+    let literal = |e: &Expression| {
         matches!(
-            (&literal.kind, &peer.ty),
-            (ExprKind::ArrayLiteral(_), ArkType::Array(..))
-                | (ExprKind::StructLiteral(_), ArkType::Struct(_))
-        ) && !resolved(&literal.ty)
-            && resolved(&peer.ty)
+            e.kind,
+            ExprKind::ArrayLiteral(_) | ExprKind::StructLiteral(_)
+        )
     };
-    if typed_by(left, right) {
-        left.ty = right.ty.clone();
-    } else if typed_by(right, left) {
-        right.ty = left.ty.clone();
+    let typed_by = |value: &Expression, peer: &Expression| match (&value.kind, &peer.ty) {
+        _ if literal(peer) || !resolved(&peer.ty) => None,
+        (ExprKind::ArrayLiteral(elements), ArkType::Array(element, _)) => {
+            Some(ArkType::Array(element.clone(), elements.len()))
+        }
+        (ExprKind::StructLiteral(_), ArkType::Struct(_)) => Some(peer.ty.clone()),
+        _ => None,
+    };
+    if let Some(ty) = typed_by(left, right) {
+        left.ty = ty;
+    } else if let Some(ty) = typed_by(right, left) {
+        right.ty = ty;
     }
 }
 
