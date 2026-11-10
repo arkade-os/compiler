@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/sha1"
 	"crypto/sha256"
+	"encoding"
 	"encoding/gob"
 	"fmt"
 	"os"
@@ -171,18 +172,26 @@ contract Streaming() {
 	if err := gob.NewEncoder(&ctx).Encode(state); err != nil {
 		t.Fatal(err)
 	}
+	marshaled, err := state.(encoding.BinaryMarshaler).MarshalBinary()
+	if err != nil {
+		t.Fatal(err)
+	}
+	corrupted := bytes.Clone(ctx.Bytes())
+	corrupted[len(corrupted)-len(marshaled)] ^= 0xff
 	digest := sha256.Sum256([]byte("hello"))
 	for _, tc := range []struct {
-		name     string
-		expected []byte
-		wantErr  string
+		name          string
+		ctx, expected []byte
+		wantErr       string
 	}{
-		{"resumed digest", digest[:], ""},
-		{"wrong digest", make([]byte, 32), "false stack entry"},
-		{"short digest", digest[:31], "OP_EQUALVERIFY failed"},
+		{"resumed digest", ctx.Bytes(), digest[:], ""},
+		{"wrong digest", ctx.Bytes(), make([]byte, 32), "false stack entry"},
+		{"short digest", ctx.Bytes(), digest[:31], "OP_EQUALVERIFY failed"},
+		{"malformed context", []byte("garbage"), digest[:], "invalid hash state"},
+		{"corrupted state", corrupted, digest[:], "failed to load hash state"},
 	} {
 		t.Run("resume/"+tc.name, func(t *testing.T) {
-			spend(t, "resume", map[string][]byte{"ctx": ctx.Bytes(), "last": []byte("lo"), "expected": tc.expected}, tc.wantErr)
+			spend(t, "resume", map[string][]byte{"ctx": tc.ctx, "last": []byte("lo"), "expected": tc.expected}, tc.wantErr)
 		})
 	}
 }
