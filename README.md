@@ -351,14 +351,14 @@ Libraries can import other libraries, contracts, and struct files using the same
 | `signature` | 64-byte BIP340 Schnorr signature |
 | `bytes`, `bytes20`, `bytes32` | Byte arrays, unsized or fixed |
 | `int` | CScriptNum integer |
-| `bool` | Boolean |
+| `bool` | Boolean; a covenant witness must be empty (false) or `0x01` (true), and any other encoding fails the spend |
 | `asset` | Asset identifier |
 | `AssetGroup` | An asset group of the transaction; a witness or constructor value is its packet position |
 | `T[n]` | Fixed-size array of a scalar or struct type, `n` a positive integer literal or `int` constant |
 | `struct` | User-declared, nested structs and fixed-size arrays allowed |
 | `AssetId`, `Outpoint`, `ECPoint`, `G2Point`, `ScriptPubKey`, `AssetEntry`, `AssetLookup` | Native structs: `{txid, gidx}`, `{txid, vout}`, `{x, y}`, `{xC1, xC0, yC1, yC0}`, `{program, version}`, `{assetId, amount}`, `{amount, found}` |
 
-Arrays and structs can be constructor parameters, covenant parameters, or locals. Arrays contain scalars or structs; structs contain scalars, arrays, and nested structs. Indexed fields support literal and runtime indexes, such as `items[0].value` and `items[index].value`. Local arrays, structs, and covenant parameters support whole-value reassignment from matching values, helper results, and literals, such as `values = [1, 2, 3];` or `sc = ecAdd(sc, point, 0);`. Array element types and lengths must match the destination. Nested fields and indexed composite elements support the same assignments. The full right-hand side is evaluated before replacing any fields; constructor parameters remain immutable. `require` compares whole arrays and structs with `==` and `!=` when both sides have the same declared type. Tapscript inputs are scalars.
+Arrays and structs can be constructor parameters, covenant parameters, or locals. Arrays contain scalars or structs; structs contain scalars, arrays, and nested structs. Indexed fields support literal and runtime indexes, such as `items[0].value` and `items[index].value`. Helper results and native structs take the same suffixes, such as `make().value`, `getArray()[i]` and `tx.outputs[0].script.version`, evaluating each base and index once. Local arrays, structs, and covenant parameters support whole-value reassignment from matching values, helper results, and literals, such as `values = [1, 2, 3];` or `sc = ecAdd(sc, point, 0);`. Array element types and lengths must match the destination. Nested fields and indexed composite elements support the same assignments. The full right-hand side is evaluated before replacing any fields; constructor parameters remain immutable. Whole arrays and structs support `==` and `!=` when both sides have the same declared type. These comparisons return `bool` and work in bindings, conditions, helper returns, and short-circuit expressions such as `require(left == right || fallback);`. Tapscript inputs are scalars.
 
 ### Functions
 
@@ -459,7 +459,7 @@ x = <expr>;                        // reassignment keeps the declared type
 scale[x + 1] = 10;                 // runtime index with bounds checking
 p.primary.weight = 5;
 if (<expr>) { ... } else { ... }
-for (i, item) in arr { ... }       // unrolled at compile time
+for (i, item) in arr { ... }       // unrolled at compile time; a helper result or literal is evaluated once
 for (COUNT) { ... }                // COUNT is a non-negative compile-time int expression
 ```
 

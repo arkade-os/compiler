@@ -502,6 +502,65 @@ fn test_ec_operands_accept_point_values() {
 }
 
 #[test]
+fn test_ec_operands_accept_point_literals() {
+    let spend = |body: &str| {
+        format!(
+            "contract EllipticCurve() {{ function spend(ECPoint p, int a, int b) {{ {body} }} }}"
+        )
+    };
+    let source = spend(
+        "let sum = ecAdd(p, {y: max(a, b), x: abs(a)}, 0);
+        let product = ecMul({x: sum.y, y: a + b}, 7, 1);
+        require(product.x == sum.x);",
+    );
+    for output in [
+        compile(&source).unwrap(),
+        arkade_compiler::compile(&source).unwrap(),
+    ] {
+        let asm = crate::common::arkade_asm_tokens(&output, "spend");
+        // Each field is evaluated once, first field deepest, whatever the source order.
+        let at = |opcode: &str| {
+            assert_eq!(asm.iter().filter(|token| *token == opcode).count(), 1);
+            asm.iter().position(|token| token == opcode)
+        };
+        assert!(at("OP_ABS") < at("OP_MAX"), "{asm:?}");
+        assert!(contains_tokens(&asm, &["OP_MAX", "0", OP_ECADD]), "{asm:?}");
+        assert!(
+            contains_tokens(&asm, &[OP_ADD, "7", "1", OP_ECMUL]),
+            "{asm:?}"
+        );
+    }
+    for (body, message) in [
+        (
+            "require(ecAdd(p, {x: a}, 0) == p);",
+            "ecAdd operand: missing field 'y'",
+        ),
+        (
+            "require(ecAdd(p, {x: a, y: b, x: a}, 0) == p);",
+            "ecAdd operand: duplicate field 'x'",
+        ),
+        (
+            "require(ecMul({x: a, y: b, z: a}, 1, 0) == p);",
+            "ecMul operand: unknown field 'z'",
+        ),
+        (
+            "require(ecMul({x: true, y: b}, 1, 0) == p);",
+            "ecMul operand, field 'x': expected 'int', got 'bool'",
+        ),
+        (
+            "require(ecMul(p, {x: a, y: b}, 0) == p);",
+            "ecMul operand: expected 'int', got 'unknown'",
+        ),
+    ] {
+        let source = spend(body);
+        for result in [compile(&source), arkade_compiler::compile(&source)] {
+            let error = result.expect_err(body).to_string();
+            assert!(error.contains(message), "{body}: {error}");
+        }
+    }
+}
+
+#[test]
 fn test_native_result_type_must_match_declaration() {
     let error = compile(
         r#"
@@ -606,6 +665,47 @@ fn test_ec_pairing_takes_aligned_point_arrays() {
         error.contains("ecPairing supports at most 16 pairs, got 17"),
         "{error}"
     );
+    let error = compile(
+        "contract C(G2Point[1] g2) { function f() { require(ecPairing([{x: 1, y: 2}], g2, 2)); } }",
+    )
+    .expect_err("point struct literals need a typed declaration")
+    .to_string();
+    assert!(
+        error.contains("struct literals may only initialize a typed struct declaration"),
+        "{error}"
+    );
+}
+
+#[test]
+fn test_ec_pairing_evaluates_computed_point_arrays_once() {
+    for compile in [arkade_compiler::compile, compile] {
+        let output = compile(
+            r#"
+            contract EllipticCurve(ECPoint[2] g1, G2Point[2] g2) {
+                private function points(int n) ECPoint[2] { require(n == 1234); return g1; }
+                private function lines(int n) G2Point[2] { require(n == 5678); return g2; }
+                function pair(int n) { require(ecPairing(points(n), lines(n), 2)); }
+                function second(int n) { require(ecPairing(g1, lines(n), 2)); }
+            }
+        "#,
+        )
+        .expect("ecPairing accepts helper results on either side");
+        for (function, markers) in [("pair", &["1234", "5678"][..]), ("second", &["5678"])] {
+            let asm = crate::common::arkade_asm_tokens(&output, function);
+            let evaluated: Vec<_> = asm
+                .iter()
+                .filter(|token| markers.contains(&token.as_str()))
+                .collect();
+            assert_eq!(
+                evaluated, markers,
+                "each helper runs once, G1 first: {asm:?}"
+            );
+            assert!(
+                contains_tokens(&asm, &["OP_2", "2", OP_ECPAIRING]),
+                "{asm:?}"
+            );
+        }
+    }
 }
 
 #[test]

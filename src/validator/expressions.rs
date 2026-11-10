@@ -30,66 +30,46 @@ pub(super) fn validate_binding_requirement(
             }
         }
         Requirement::Comparison { left, op, right } => {
-            let left_type = left.ty.clone();
-            let right_type = right.ty.clone();
-            let composite = matches!(left_type, ArkType::Array(..) | ArkType::Struct(..))
-                || matches!(right_type, ArkType::Array(..) | ArkType::Struct(..));
-            if composite {
-                if op.class() != OperatorClass::Equality {
-                    issues.push(ValidationIssue::error(format!(
-                        "'{op}' is not defined for composite values"
-                    )));
-                } else if left_type != ArkType::Unknown
-                    && right_type != ArkType::Unknown
-                    && left_type != right_type
-                {
-                    issues.push(ValidationIssue::error(format!(
-                        "comparison '{}' is not defined between '{}' and '{}'",
-                        op,
-                        left_type.as_str(),
-                        right_type.as_str()
-                    )));
-                }
-            }
-            let before = issues.len();
-            validate_binding_expression(left, scopes, issues, !composite);
-            validate_binding_expression(right, scopes, issues, !composite);
-            if issues.len() == before {
-                let span = crate::diagnostics::Span {
-                    start: left.span.start,
-                    end: right.span.end,
-                };
-                validate_scalar_comparison(*op, [left_type, right_type], span, issues);
-            }
+            let span = crate::diagnostics::Span {
+                start: left.span.start,
+                end: right.span.end,
+            };
+            validate_comparison(left, *op, right, span, scopes, issues);
         }
     }
 }
 
-/// Scalar operand types of a comparison; composite operands are checked where they are bound.
-fn validate_scalar_comparison(
+/// Arrays and structs compare only with `==` and `!=`, against the same type.
+fn validate_comparison(
+    left: &Expression,
     op: BinaryOperator,
-    [left, right]: [ArkType; 2],
+    right: &Expression,
     span: crate::diagnostics::Span,
+    scopes: &BindingScopes,
     issues: &mut Vec<ValidationIssue>,
 ) {
-    let scalar = |t: &ArkType| {
-        !matches!(
-            t,
-            ArkType::Unknown | ArkType::Array(..) | ArkType::Struct(..)
-        )
-    };
-    if !scalar(&left) || !scalar(&right) {
-        return;
+    let before = issues.len();
+    let mut composite = false;
+    for operand in [left, right] {
+        let whole = matches!(operand.ty, ArkType::Array(..) | ArkType::Struct(..));
+        validate_binding_expression(operand, scopes, issues, !whole);
+        composite |= whole;
     }
+    let (left, right) = (&left.ty, &right.ty);
     let bytes_like = crate::types::is_bytes_like;
     let compatible = match op.class() {
+        class if composite && class != OperatorClass::Equality => false,
+        _ if issues.len() != before || *left == ArkType::Unknown || *right == ArkType::Unknown => {
+            return
+        }
+        OperatorClass::Equality if composite => left == right,
         OperatorClass::Equality => {
             left == right
-                || (bytes_like(&left) && right == ArkType::Bytes)
-                || (bytes_like(&right) && left == ArkType::Bytes)
+                || (bytes_like(left) && *right == ArkType::Bytes)
+                || (bytes_like(right) && *left == ArkType::Bytes)
         }
         // A bool is a script number on the stack, but ordering booleans is meaningless.
-        OperatorClass::Ordering => left == ArkType::Int && right == ArkType::Int,
+        OperatorClass::Ordering => *left == ArkType::Int && *right == ArkType::Int,
         _ => true,
     };
     if !compatible {
@@ -160,6 +140,19 @@ pub(super) fn validate_binding_expression(
         issues.push(ValidationIssue::error(
             "asset group output records have no txid",
         ));
+    }
+
+    if let ExprKind::FieldAccess { value, .. } | ExprKind::IndexAccess { value, .. } =
+        &expression.kind
+    {
+        if matches!(
+            &value.kind,
+            ExprKind::StructLiteral(_) | ExprKind::ArrayLiteral(_)
+        ) {
+            issues.push(ValidationIssue::error(
+                "cannot read a field or element of a literal; declare it with a type first",
+            ));
+        }
     }
 
     let registered_builtin = operands::operands(expression);
@@ -258,8 +251,9 @@ pub(super) fn validate_binding_expression(
             }
         }
         ExprKind::BinaryOp { left, op, right } if op.compares() => {
-            let types = [left, right].map(|operand| operand.ty.clone());
-            validate_scalar_comparison(*op, types, expression.span, issues);
+            let span = expression.span;
+            validate_comparison(left, *op, right, span, scopes, issues);
+            children_checked = true;
         }
         ExprKind::Unary { op, value } => {
             let (operator, expected) = (op.symbol(), ArkType::parse(op.operand_type()));
@@ -303,12 +297,33 @@ pub(super) fn validate_binding_expression(
                 // Composite operands are emitted field by field, so their type must be known.
                 let known = actual != ArkType::Unknown
                     || matches!(expected, ArkType::Struct(_) | ArkType::Array(..));
+                // A struct literal has no type of its own, so it is checked against the
+                // parameter type; signatures name only native structs.
+                if matches!(&operand.kind, ExprKind::StructLiteral(_)) {
+                    super::functions::validate_value(
+                        &(&expected).into(),
+                        operand,
+                        &[],
+                        &format!("{name} operand"),
+                        issues,
+                    );
+                    continue;
+                }
                 if let (ExprKind::ArrayLiteral(elements), ArkType::Array(element, length)) =
                     (&operand.kind, &expected)
                 {
-                    for value in elements {
+                    for (index, value) in elements.iter().enumerate() {
                         let actual = &value.ty;
-                        if actual != &ArkType::Unknown && !binding_types_compatible(element, actual)
+                        if matches!(&value.kind, ExprKind::StructLiteral(_)) {
+                            super::functions::validate_value(
+                                &(&**element).into(),
+                                value,
+                                &[],
+                                &format!("{name} operand, element {index}"),
+                                issues,
+                            );
+                        } else if actual != &ArkType::Unknown
+                            && !binding_types_compatible(element, actual)
                         {
                             issues.push(
                                 ValidationIssue::error(format!(
@@ -400,6 +415,23 @@ pub(super) fn validate_binding_expression(
                                 .at(operand.span),
                             );
                         }
+                    }
+                }
+            }
+            // Checked here rather than in emission, which folding can skip.
+            if let ("checkMultisig", Some(ArkType::Array(_, count)), Some(threshold)) =
+                (name, operands.first().map(|keys| &keys.ty), operands.get(2))
+            {
+                if let Ok(value) =
+                    crate::compiler::constants::evaluate(threshold, &mut |path| Err(path.key()))
+                {
+                    if value
+                        .parse::<usize>()
+                        .map_or(true, |t| t == 0 || t > *count)
+                    {
+                        issues.push(ValidationIssue::error(format!(
+                            "checkMultisig threshold must be between 1 and the number of public keys, got {value}"
+                        )).at(threshold.span));
                     }
                 }
             }
@@ -498,7 +530,7 @@ pub(super) fn validate_binding_expression(
             validate_named_binding(&path.root, None, "binding", scopes, issues);
         }
         // Inner accesses are validated first so a bad path reports only its first fault.
-        ExprKind::FieldAccess { value, .. } => {
+        ExprKind::FieldAccess { value, field } => {
             if let Some(array) = expression.binding_path().and_then(|path| {
                 let (array, field) = path.split_last()?;
                 (field == "length" && find_binding(scopes, &path.key()).is_none()).then_some(array)
@@ -529,6 +561,11 @@ pub(super) fn validate_binding_expression(
                             expression.source_text()
                         )));
                     }
+                } else if expression.ty == ArkType::Unknown && value.ty != ArkType::Unknown {
+                    issues.push(ValidationIssue::error(format!(
+                        "value of type '{}' has no field '{field}'",
+                        value.ty.as_str()
+                    )));
                 }
             }
             children_checked = true;
@@ -538,8 +575,24 @@ pub(super) fn validate_binding_expression(
             validate_value_expression(value, scopes, issues);
             validate_binding_expression(index, scopes, issues, true);
             if issues.len() == before {
-                if let Some(array) = value.binding_path() {
-                    validate_array_index(&array.key(), &value.source_text(), index, scopes, issues);
+                match (value.binding_path(), &value.ty) {
+                    (Some(array), _) => {
+                        validate_array_index(
+                            &array.key(),
+                            &value.source_text(),
+                            index,
+                            scopes,
+                            issues,
+                        );
+                    }
+                    (None, ArkType::Array(_, length)) => {
+                        validate_index(index, Some((value.ty.as_str(), *length)), scopes, issues)
+                    }
+                    (None, ArkType::Unknown) => {}
+                    (None, actual) => issues.push(ValidationIssue::error(format!(
+                        "value of type '{}' is not an array",
+                        actual.as_str()
+                    ))),
                 }
             }
             children_checked = true;
@@ -653,7 +706,24 @@ pub(super) fn validate_array_index(
             None
         }
     };
+    validate_index(
+        index,
+        array_info
+            .as_ref()
+            .map(|(_, length, _)| (format!("{written}[{length}]"), *length)),
+        scopes,
+        issues,
+    );
+    array_info.map(|(element_type, _, source)| (element_type, source))
+}
 
+/// Validate an int index into `array`: how diagnostics spell it, and its length.
+fn validate_index(
+    index: &Expression,
+    array: Option<(String, usize)>,
+    scopes: &BindingScopes,
+    issues: &mut Vec<ValidationIssue>,
+) {
     let index_type = index.ty.clone();
     if !matches!(index_type, ArkType::Int | ArkType::Unknown) {
         issues.push(
@@ -678,7 +748,7 @@ pub(super) fn validate_array_index(
     })
     .ok()
     .filter(|_| index_type == ArkType::Int);
-    if let (Some(literal), Some((_, length, _))) = (evaluated.as_deref(), array_info.as_ref()) {
+    if let (Some(literal), Some((array, length))) = (evaluated.as_deref(), array) {
         let (negative, literal) = match literal.strip_prefix('-') {
             Some(magnitude) => (true, magnitude),
             None => (false, literal),
@@ -686,20 +756,18 @@ pub(super) fn validate_array_index(
         let in_bounds = if negative {
             literal == "0"
         } else {
-            literal.parse::<usize>().is_ok_and(|index| index < *length)
+            literal.parse::<usize>().is_ok_and(|index| index < length)
         };
         if !in_bounds {
             let sign = if negative { "-" } else { "" };
             issues.push(
                 ValidationIssue::error(format!(
-                    "array index '{sign}{literal}' is out of range for '{written}[{length}]'"
+                    "array index '{sign}{literal}' is out of range for '{array}'"
                 ))
                 .at(index.span),
             );
         }
     }
-
-    array_info.map(|(element_type, _, source)| (element_type, source))
 }
 
 fn literal_index(mut expression: &Expression) -> Option<(bool, &str)> {

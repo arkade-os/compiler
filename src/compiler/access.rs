@@ -72,6 +72,9 @@ impl Generator {
     }
 
     pub(super) fn emit_access_value(&mut self, value: &Expression, ty: &TypeName) -> Result<()> {
+        if value.binding_path().is_none() {
+            return self.emit_computed_access(value, ty);
+        }
         let mut indices = Vec::new();
         let name = self.access_indices(value, &mut indices)?;
         let length = name
@@ -118,6 +121,26 @@ impl Generator {
         Ok(())
     }
 
+    /// Bind an access's computed root once, then read the access from that binding.
+    // ponytail: the read leaves are copied and the whole root dropped after, one copy and drop
+    // more than a move; consume the final reads if script size matters.
+    fn emit_computed_access(&mut self, value: &Expression, ty: &TypeName) -> Result<()> {
+        fn root(access: &mut Expression) -> &mut Expression {
+            match access.kind {
+                ExprKind::FieldAccess { ref mut value, .. }
+                | ExprKind::IndexAccess { ref mut value, .. } => root(value),
+                _ => access,
+            }
+        }
+        let mut access = value.clone();
+        let computed = root(&mut access).clone();
+        let width = self.width(ty)?;
+        self.with_bound_value(&computed, width, |generator, bound| {
+            *root(&mut access) = bound;
+            generator.emit_access_value(&access, ty)
+        })
+    }
+
     pub(super) fn assign_access(&mut self, value: &Expression) -> Result<()> {
         let mut indices = Vec::new();
         let name = self.access_indices(value, &mut indices)?;
@@ -155,6 +178,61 @@ impl Generator {
         Ok(())
     }
 
+    /// Evaluate `value` as `ty` into the local binding `name`.
+    pub(super) fn emit_let(&mut self, name: &str, value: &Expression, ty: &TypeName) -> Result<()> {
+        self.emit_typed_value(value, ty)?;
+        self.bind_value(name, ty)?;
+        self.bind_type(name, ty);
+        Ok(())
+    }
+
+    /// Evaluate `value` once into a stack binding, then let `read` emit through an expression
+    /// naming it. `width` is the size of what `read` leaves, not of `value`: those items are
+    /// kept and the binding dropped.
+    // TODO(ir): emission reads composite values only by binding path, so computed ones get a
+    // made-up name here. Remove once operands are IR values instead of paths.
+    pub(super) fn with_bound_value(
+        &mut self,
+        value: &Expression,
+        width: usize,
+        read: impl FnOnce(&mut Self, Expression) -> Result<()>,
+    ) -> Result<()> {
+        let baseline = self.stack.len();
+        let scope = self.scope.clone();
+        let pinned = std::mem::replace(&mut self.pinned_stack_len, baseline);
+        let ty = TypeName::from(&value.ty);
+        // A later call at this depth reuses the name only after this binding is dropped.
+        let name = format!("$bound:{baseline}");
+        self.emit_let(&name, value, &ty)?;
+        let mut bound = value.with_kind(ExprKind::Name(Path::new(name)));
+        bound.ty = value.ty.clone();
+        read(self, bound)?;
+        self.discard_call_frame(baseline, width)?;
+        self.last_reads.retain(|(_, index), _| *index < baseline);
+        self.scope = scope;
+        self.pinned_stack_len = pinned;
+        Ok(())
+    }
+
+    /// Emit a builtin call with argument `position` evaluated once.
+    fn emit_with_bound_arg(
+        &mut self,
+        call: &Expression,
+        position: usize,
+        emit: fn(&mut Self, &Expression) -> Result<()>,
+    ) -> Result<()> {
+        let ExprKind::Builtin { args, .. } = &call.kind else {
+            return Err("expected a builtin call".into());
+        };
+        self.with_bound_value(&args[position], 1, |generator, bound| {
+            let mut call = call.clone();
+            if let ExprKind::Builtin { args, .. } = &mut call.kind {
+                args[position] = bound;
+            }
+            emit(generator, &call)
+        })
+    }
+
     pub(super) fn emit_multisig(&mut self, expression: &Expression) -> Result<()> {
         let ExprKind::Builtin { args, .. } = &expression.kind else {
             return Err("expected checkMultisig".into());
@@ -171,29 +249,12 @@ impl Generator {
             return Err("checkMultisig key and signature counts must match".into());
         }
         let threshold = args.get(2);
-        let literal_threshold = multisig_threshold(threshold, count)?;
+        // Validation and folding reject an out-of-range constant on a reachable path; one left
+        // here is in a branch that folding removes, so it keeps the runtime check.
+        let literal_threshold = multisig_threshold(threshold, count).ok().flatten();
         // Keys need indexed reads, so computed arrays are bound once.
         if !matches!(&keys.kind, ExprKind::ArrayLiteral(_)) && keys.binding_path().is_none() {
-            let baseline = self.stack.len();
-            let scope = self.scope.clone();
-            let pinned = std::mem::replace(&mut self.pinned_stack_len, baseline);
-            let ty = TypeName::from(&keys.ty);
-            let name = format!("$multisig:{baseline}");
-            self.emit_typed_value(keys, &ty)?;
-            self.bind_value(&name, &ty)?;
-            self.bind_type(&name, &ty);
-            let mut normalized = expression.clone();
-            let ExprKind::Builtin { args, .. } = &mut normalized.kind else {
-                unreachable!("checkMultisig is a builtin call")
-            };
-            args[0] = keys.with_kind(ExprKind::Name(Path::new(name)));
-            args[0].ty = keys.ty.clone();
-            self.emit_multisig(&normalized)?;
-            self.discard_call_frame(baseline, 1)?;
-            self.last_reads.retain(|(_, index), _| *index < baseline);
-            self.scope = scope;
-            self.pinned_stack_len = pinned;
-            return Ok(());
+            return self.emit_with_bound_arg(expression, 0, Self::emit_multisig);
         }
         // Signatures need no binding: array emission leaves sig[0] on top for the checks.
         let signatures_type = TypeName::array(TypeName::Named("signature".into()), count);
@@ -299,11 +360,20 @@ impl Generator {
         let ArkType::Array(_, pairs) = g1.ty else {
             return Err("ecPairing G1 points must be an ECPoint array".into());
         };
+        // Pairs need indexed reads, so computed arrays are bound once, G1 first.
+        if let Some(position) = [g1, g2]
+            .iter()
+            .position(|points| points.binding_path().is_none())
+        {
+            if matches!(&args[position].kind, ExprKind::ArrayLiteral(points)
+                if points.iter().any(|point| matches!(point.kind, ExprKind::StructLiteral(_))))
+            {
+                return Err("struct literals may only initialize a typed struct declaration; composite values are not supported".into());
+            }
+            return self.emit_with_bound_arg(pairing, position, Self::emit_pairing);
+        }
         for index in 0..pairs {
             for (points, ty) in [(g1, "ECPoint"), (g2, "G2Point")] {
-                if points.binding_path().is_none() {
-                    return Err("ecPairing points must be array bindings; bind computed arrays with `let` first".into());
-                }
                 let index = Box::new(points.with_kind(ExprKind::Literal(index.to_string())));
                 let element = points.with_kind(match &points.kind {
                     ExprKind::Name(path) => ExprKind::ArrayIndex {

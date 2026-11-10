@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"fmt"
 	"maps"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -218,6 +220,112 @@ func TestStructArrays(t *testing.T) {
 				}
 			}
 			deployment := fundingTx(instance.pkScript, 10_000)
+			spending := spendingPSBTWithWitness(t, deployment, instance, 10_000, instance.pkScript, covenantWitness(t, contract, group, values))
+			requireVMResult(t, spending, emulatorKey.PubKey(), tc.wantErr)
+		})
+	}
+}
+
+func TestStructArrayLiteralComparisons(t *testing.T) {
+	items := "[{a: 1, inner: {b: 2}}, {a: 3, inner: {b: 4}}]"
+	outpoints := fmt.Sprintf("[{txid: 0x%s, vout: 2}, {txid: 0x%s, vout: 4}]", strings.Repeat("11", 32), strings.Repeat("33", 32))
+	source := filepath.Join(t.TempDir(), "literal_comparisons.ark")
+	err := os.WriteFile(source, []byte(fmt.Sprintf(`
+struct Inner { int b; }
+struct Item { int a; Inner inner; }
+contract LiteralComparisons() {
+    function equalRight(Item[2] items) { require(items == %[1]s); }
+    function equalLeft(Item[2] items) { require(%[1]s == items); }
+    function differRight(Item[2] items) { require(items != %[1]s); }
+    function differLeft(Item[2] items) { require(%[1]s != items); }
+    function nativeLeft(Outpoint[2] items) { require(%[2]s == items); }
+}`, items, outpoints)), 0600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	contract := compileArtifact(t, source)
+	serverKey, emulatorKey := fixedPrivateKey(1), fixedPrivateKey(2)
+	structItems := map[string][]byte{
+		"items.0.a": scriptInt(t, 1), "items.0.inner.b": scriptInt(t, 2),
+		"items.1.a": scriptInt(t, 3), "items.1.inner.b": scriptInt(t, 4),
+	}
+	nativeItems := map[string][]byte{
+		"items.0.txid": bytes.Repeat([]byte{0x11}, 32), "items.0.vout": scriptInt(t, 2),
+		"items.1.txid": bytes.Repeat([]byte{0x33}, 32), "items.1.vout": scriptInt(t, 4),
+	}
+	for _, tc := range []struct {
+		function             string
+		values               map[string][]byte
+		equalErr, unequalErr string
+	}{
+		{"equalRight", structItems, "", "VERIFY failed"},
+		{"equalLeft", structItems, "", "VERIFY failed"},
+		{"differRight", structItems, "false stack entry", ""},
+		{"differLeft", structItems, "false stack entry", ""},
+		{"nativeLeft", nativeItems, "", "VERIFY failed"},
+	} {
+		group := covenantGroup(t, contract, tc.function)
+		instance := instantiateGroup(t, contract, tc.function, nil, serverKey.PubKey(), emulatorKey.PubKey())
+		run := func(name string, values map[string][]byte, wantErr string) {
+			t.Run(tc.function+"/"+name, func(t *testing.T) {
+				deployment := fundingTx(instance.pkScript, 10_000)
+				witness := covenantWitness(t, contract, group, values)
+				spend := spendingPSBTWithWitness(t, deployment, instance, 10_000, instance.pkScript, witness)
+				requireVMResult(t, spend, emulatorKey.PubKey(), wantErr)
+			})
+		}
+		run("equal", tc.values, tc.equalErr)
+		for leaf, value := range tc.values {
+			values := maps.Clone(tc.values)
+			values[leaf] = append(slices.Clone(value[:len(value)-1]), value[len(value)-1]+0x10)
+			run(leaf+" differs", values, tc.unequalErr)
+		}
+	}
+}
+
+func TestComputedValueAccess(t *testing.T) {
+	source := filepath.Join(t.TempDir(), "access.ark")
+	if err := os.WriteFile(source, []byte(`
+        struct Point { int x; int y; }
+        struct Shape { Point[2] points; int tag; }
+        contract Access() {
+            private function shape(int seed) Shape {
+                require(seed > 0);
+                return { points: [{ x: seed, y: seed + 1 }, { x: seed + 2, y: seed + 3 }], tag: seed * 10 };
+            }
+            private function pair(int seed) int[2] { return [seed, seed + 1]; }
+            function spend(int seed, int index, int expected) {
+                Point corner = shape(seed).points[index];
+                require(corner.y == expected);
+                require(pair(seed)[1] == seed + 1);
+                require(index == 0 || shape(seed).tag == seed * 10);
+                require(tx.outputs[0].script.version == 1);
+                require(tx.outputs[0].script.program == tx.input.current.script.program);
+            }
+        }`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	contract := compileArtifact(t, source)
+	serverKey, emulatorKey := fixedPrivateKey(1), fixedPrivateKey(2)
+	group := covenantGroup(t, contract, "spend")
+	instance := instantiateGroup(t, contract, "spend", nil, serverKey.PubKey(), emulatorKey.PubKey())
+	deployment := fundingTx(instance.pkScript, 10_000)
+	for _, tc := range []struct {
+		name                  string
+		seed, index, expected int64
+		wantErr               string
+	}{
+		{name: "first element", seed: 5, index: 0, expected: 6},
+		{name: "second element", seed: 5, index: 1, expected: 8},
+		{name: "wrong field", seed: 5, index: 1, expected: 7, wantErr: "OP_NUMEQUALVERIFY failed"},
+		{name: "index past array", seed: 5, index: 2, expected: 8, wantErr: "OP_VERIFY failed"},
+		{name: "negative index", seed: 5, index: -1, expected: 8, wantErr: "OP_VERIFY failed"},
+		{name: "helper requirement", seed: 0, index: 0, expected: 1, wantErr: "OP_VERIFY failed"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			values := map[string][]byte{
+				"seed": scriptInt(t, tc.seed), "index": scriptInt(t, tc.index), "expected": scriptInt(t, tc.expected),
+			}
 			spending := spendingPSBTWithWitness(t, deployment, instance, 10_000, instance.pkScript, covenantWitness(t, contract, group, values))
 			requireVMResult(t, spending, emulatorKey.PubKey(), tc.wantErr)
 		})

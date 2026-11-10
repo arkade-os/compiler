@@ -18,6 +18,9 @@ contract Vault(pubkey owner) {
         for (i, part) in parts {
             require(part > i, \"ordered\");
         }
+        for (j, w) in [amount, 7] {
+            require(w > j);
+        }
         Fees.check(amount);
         require(double(amount) == 4);
     }
@@ -91,6 +94,8 @@ fn every_statement_maps_its_tokens_and_requires_carry_their_messages() {
                 "OP_GREATERTHAN",
                 Some("ordered"),
             ),
+            // A computed loop iterable maps the opcodes that evaluate it to itself.
+            ("[amount, 7]", "7", None),
             ("Fees.check(amount);", "OP_GREATERTHAN", None),
             ("return x * 2;", "OP_MUL", None),
             ("require(double(amount) == 4);", "OP_NUMEQUAL", None),

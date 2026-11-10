@@ -6,7 +6,7 @@
 use std::collections::BTreeMap;
 
 use crate::diagnostics::{Diagnostic, Span};
-use crate::models::{Contract, TapItem};
+use crate::models::{Contract, TapItem, TapOperand};
 
 pub(crate) mod attributes;
 mod expressions;
@@ -85,8 +85,14 @@ fn timelock_units(contract: &Contract, findings: &mut Vec<Finding>) {
     for tapscript in &contract.tapscripts {
         for item in &tapscript.items {
             let (call, value, raw) = match item {
-                TapItem::Older { value, unit: None } => ("older", value, "BIP68 sequence"),
-                TapItem::After { value, unit: None } => ("after", value, "nLockTime"),
+                TapItem::Older {
+                    value: TapOperand::Literal(value),
+                    unit: None,
+                } => ("older", value, "BIP68 sequence"),
+                TapItem::After {
+                    value: TapOperand::Literal(value),
+                    unit: None,
+                } => ("after", value, "nLockTime"),
                 _ => continue,
             };
             if value.parse::<i64>().is_ok() {
