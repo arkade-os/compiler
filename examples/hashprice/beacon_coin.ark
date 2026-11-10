@@ -1,0 +1,15 @@
+pragma arkade ^0.1.0;
+import "beacon_state.ark";
+
+// BlockHeaderCoin: (0x0102, 99); HashPriceCoin: (0x0104, 138).
+contract BeaconCoin(bytes stateTag, int stateLength) {
+  function continue() {
+    int vin = this.activeInputIndex;
+    require(tx.inputs[vin].assets.length == 1, "one identity asset");
+    require(tx.inputs[vin].assets[0].amount == 1, "one identity unit");
+    bytes state = BeaconState.input(vin);
+    BeaconState.checkState(state, stateTag, stateLength);
+    require(this.tunnel(vin), "coin preserved");
+    require(BeaconState.output(vin) == state, "state preserved");
+  }
+}
