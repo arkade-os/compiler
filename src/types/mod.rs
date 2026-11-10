@@ -367,7 +367,17 @@ impl Typing<'_> {
             }
             resolve_group_member(expression, scope);
         }
-        expression.ty = infer_type(expression, scope);
+        expression.ty = match &expression.kind {
+            // A computed value's member is typed as the same member of a binding of its type.
+            // TODO(ir): scopes key types by binding path, hence the made-up name `$`.
+            ExprKind::FieldAccess { value, field } if expression.binding_path().is_none() => {
+                let mut members = Scope::new();
+                bind_local_type(&mut members, "$", None, value.ty.clone(), self.structs);
+                let member = expression.with_kind(ExprKind::Name(Path::new("$").field(field)));
+                infer_type(&member, &members)
+            }
+            _ => infer_type(expression, scope),
+        };
     }
 }
 

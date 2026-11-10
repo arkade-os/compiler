@@ -143,6 +143,19 @@ pub(super) fn validate_binding_expression(
         )));
     }
 
+    if let ExprKind::FieldAccess { value, .. } | ExprKind::IndexAccess { value, .. } =
+        &expression.kind
+    {
+        if matches!(
+            &value.kind,
+            ExprKind::StructLiteral(_) | ExprKind::ArrayLiteral(_)
+        ) {
+            issues.push(ValidationIssue::error(format!(
+                "function '{function_name}': cannot read a field or element of a literal; declare it with a type first"
+            )));
+        }
+    }
+
     let registered_builtin = operands::operands(expression);
     let mut children_checked = false;
 
@@ -520,7 +533,7 @@ pub(super) fn validate_binding_expression(
             validate_named_binding(&path.root, None, "binding", function_name, scopes, issues);
         }
         // Inner accesses are validated first so a bad path reports only its first fault.
-        ExprKind::FieldAccess { value, .. } => {
+        ExprKind::FieldAccess { value, field } => {
             if let Some(array) = expression.binding_path().and_then(|path| {
                 let (array, field) = path.split_last()?;
                 (field == "length" && find_binding(scopes, &path.key()).is_none()).then_some(array)
@@ -551,6 +564,11 @@ pub(super) fn validate_binding_expression(
                             expression.source_text()
                         )));
                     }
+                } else if expression.ty == ArkType::Unknown && value.ty != ArkType::Unknown {
+                    issues.push(ValidationIssue::error(format!(
+                        "function '{function_name}': value of type '{}' has no field '{field}'",
+                        value.ty.as_str()
+                    )));
                 }
             }
             children_checked = true;
@@ -560,15 +578,29 @@ pub(super) fn validate_binding_expression(
             validate_value_expression(value, function_name, scopes, issues);
             validate_binding_expression(index, function_name, scopes, issues, true);
             if issues.len() == before {
-                if let Some(array) = value.binding_path() {
-                    validate_array_index(
-                        &array.key(),
-                        &value.source_text(),
+                match (value.binding_path(), &value.ty) {
+                    (Some(array), _) => {
+                        validate_array_index(
+                            &array.key(),
+                            &value.source_text(),
+                            index,
+                            function_name,
+                            scopes,
+                            issues,
+                        );
+                    }
+                    (None, ArkType::Array(_, length)) => validate_index(
                         index,
+                        Some((value.ty.as_str(), *length)),
                         function_name,
                         scopes,
                         issues,
-                    );
+                    ),
+                    (None, ArkType::Unknown) => {}
+                    (None, actual) => issues.push(ValidationIssue::error(format!(
+                        "function '{function_name}': value of type '{}' is not an array",
+                        actual.as_str()
+                    ))),
                 }
             }
             children_checked = true;
@@ -692,7 +724,26 @@ pub(super) fn validate_array_index(
             None
         }
     };
+    validate_index(
+        index,
+        array_info
+            .as_ref()
+            .map(|(_, length, _)| (format!("{written}[{length}]"), *length)),
+        function_name,
+        scopes,
+        issues,
+    );
+    array_info.map(|(element_type, _, source)| (element_type, source))
+}
 
+/// Validate an int index into `array`: how diagnostics spell it, and its length.
+fn validate_index(
+    index: &Expression,
+    array: Option<(String, usize)>,
+    function_name: &str,
+    scopes: &BindingScopes,
+    issues: &mut Vec<ValidationIssue>,
+) {
     let index_type = index.ty.clone();
     if !matches!(index_type, ArkType::Int | ArkType::Unknown) {
         issues.push(
@@ -718,7 +769,7 @@ pub(super) fn validate_array_index(
     })
     .ok()
     .filter(|_| index_type == ArkType::Int);
-    if let (Some(literal), Some((_, length, _))) = (evaluated.as_deref(), array_info.as_ref()) {
+    if let (Some(literal), Some((array, length))) = (evaluated.as_deref(), array) {
         let (negative, literal) = match literal.strip_prefix('-') {
             Some(magnitude) => (true, magnitude),
             None => (false, literal),
@@ -726,20 +777,18 @@ pub(super) fn validate_array_index(
         let in_bounds = if negative {
             literal == "0"
         } else {
-            literal.parse::<usize>().is_ok_and(|index| index < *length)
+            literal.parse::<usize>().is_ok_and(|index| index < length)
         };
         if !in_bounds {
             let sign = if negative { "-" } else { "" };
             issues.push(
                 ValidationIssue::error(format!(
-                    "function '{function_name}': array index '{sign}{literal}' is out of range for '{written}[{length}]'"
+                    "function '{function_name}': array index '{sign}{literal}' is out of range for '{array}'"
                 ))
                 .at(index.span),
             );
         }
     }
-
-    array_info.map(|(element_type, _, source)| (element_type, source))
 }
 
 fn literal_index(mut expression: &Expression) -> Option<(bool, &str)> {

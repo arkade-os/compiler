@@ -98,14 +98,19 @@ fn fold_expression(expression: &mut Expression, scope: &Scope) -> Result<(), Str
         }
     }
     let access = match &expression.kind {
-        ExprKind::ArrayIndex { array, index } => Some((array.clone(), index)),
-        ExprKind::IndexAccess { value, index } => value.binding_path().map(|array| (array, index)),
+        ExprKind::ArrayIndex { array, index } => {
+            Some((array.to_string(), scope.get(&array.key()), index))
+        }
+        ExprKind::IndexAccess { value, index } => match (value.binding_path(), &value.ty) {
+            (Some(array), _) => Some((array.to_string(), scope.get(&array.key()), index)),
+            // A computed array is spelled by its element type, as in 'int[2]'.
+            (None, ArkType::Array(element, _)) => Some((element.as_str(), Some(&value.ty), index)),
+            (None, _) => None,
+        },
         _ => None,
     };
-    if let Some((array, index)) = access {
-        if let (Some(ArkType::Array(_, length)), ExprKind::Literal(index)) =
-            (scope.get(&array.key()), &index.kind)
-        {
+    if let Some((array, ty, index)) = access {
+        if let (Some(ArkType::Array(_, length)), ExprKind::Literal(index)) = (ty, &index.kind) {
             if !index.parse::<usize>().is_ok_and(|index| index < *length) {
                 return Err(format!(
                     "array index '{index}' is out of range for '{array}[{length}]'"

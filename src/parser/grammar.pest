@@ -175,9 +175,9 @@ unary_atom = { (sub_op | not_op)* ~ (parenthesized_expr | byte_literal | bool_li
 
 parenthesized_expr = { "(" ~ general_expression ~ ")" }
 
-// Primary expressions (atoms)
+// Primary expressions (atoms); field and index suffixes apply to any typed result.
 primary_expr = {
-    parenthesized_expr |
+    (parenthesized_expr |
     tunnel |
     intent_field |
     intent_has |
@@ -207,7 +207,7 @@ primary_expr = {
     byte_literal |
     bool_literal |
     number_literal |
-    identifier
+    identifier) ~ binding_suffix*
 }
 
 // Static array length: arr.length — folded to a literal at compile time

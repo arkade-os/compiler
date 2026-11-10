@@ -20,13 +20,23 @@ pub(super) enum Lowered {
         iterations: Vec<Vec<Lowered>>,
         guarded: bool,
     },
+    /// `value` evaluated once into the local `name`, which `body` reads.
+    // TODO(ir): a made-up name for the same reason as `Generator::with_bound_value`.
+    Bound {
+        span: Span,
+        name: String,
+        value: Expression,
+        body: Vec<Lowered>,
+    },
 }
 
 impl Lowered {
     pub(super) fn span(&self) -> Span {
         match self {
             Lowered::Simple(statement) => statement.span,
-            Lowered::If { span, .. } | Lowered::Unrolled { span, .. } => *span,
+            Lowered::If { span, .. }
+            | Lowered::Unrolled { span, .. }
+            | Lowered::Bound { span, .. } => *span,
         }
     }
 
@@ -50,6 +60,7 @@ pub(super) fn contains_return(body: &[Lowered]) -> bool {
             ..
         } => contains_return(then_body) || else_body.as_deref().is_some_and(contains_return),
         Lowered::Unrolled { iterations, .. } => iterations.iter().any(|body| contains_return(body)),
+        Lowered::Bound { body, .. } => contains_return(body),
     })
 }
 
@@ -65,6 +76,7 @@ fn falls_through(body: &[Lowered]) -> bool {
         Lowered::Unrolled { iterations, .. } => {
             iterations.last().is_none_or(|body| falls_through(body))
         }
+        Lowered::Bound { body, .. } => falls_through(body),
     })
 }
 
@@ -145,6 +157,36 @@ fn lower_statement(
             let types::ArkType::Array(_, length) = iterable.ty else {
                 return Err("unsupported loop iterable".into());
             };
+            if iterable.binding_path().is_none() {
+                // Nested loops start at distinct offsets, so their names never collide.
+                let name = format!("$iterable:{}", span.start);
+                let ty = TypeName::from(&iterable.ty);
+                let mut items = iterable.with_kind(ExprKind::Name(Path::new(&name)));
+                items.ty = iterable.ty.clone();
+                let looped = LocatedStatement {
+                    statement: Statement::ForIn {
+                        index_var,
+                        value_var,
+                        iterable: items,
+                        body,
+                    },
+                    ..statement
+                };
+                let mut inner = scope.clone();
+                types::bind_local_type(
+                    &mut inner,
+                    &name,
+                    Some(&ty),
+                    types::ArkType::Unknown,
+                    structs,
+                );
+                return Ok(Some(Lowered::Bound {
+                    span,
+                    body: lower(&[looped], &mut inner, structs, fold)?,
+                    name,
+                    value: iterable,
+                }));
+            }
             let iterations = (0..length).map(|k| {
                 let mut substituted =
                     substitute_loop_body(&body, &index_var, &value_var, k, &iterable);
@@ -260,6 +302,12 @@ fn calls(body: &[Lowered], found: &mut Vec<(String, Span)>) {
             }
             Lowered::Unrolled { iterations, .. } => {
                 iterations.iter().for_each(|body| calls(body, found));
+            }
+            Lowered::Bound {
+                span, value, body, ..
+            } => {
+                walk(value, *span, found);
+                calls(body, found);
             }
         }
     }

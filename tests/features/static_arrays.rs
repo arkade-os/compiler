@@ -1,7 +1,7 @@
 use crate::common::compile_unoptimized as compile;
 use arkade_compiler::opcodes::{
-    OP_ADD, OP_CAT, OP_CHECKSIGFROMSTACK, OP_DUP, OP_GREATERTHANOREQUAL, OP_LESSTHAN, OP_PUT,
-    OP_VERIFY,
+    OP_ADD, OP_CAT, OP_CHECKSIGFROMSTACK, OP_DUP, OP_GREATERTHANOREQUAL, OP_LESSTHAN,
+    OP_NUMNOTEQUAL, OP_PUT, OP_VERIFY,
 };
 
 fn contains_tokens(asm: &[String], expected: &[&str]) -> bool {
@@ -557,4 +557,46 @@ contract Local() {
         contains_tokens(&asm, &["9", "OP_1", OP_PUT]),
         "the write must replace the element at its own depth, not index 0's: {asm:?}"
     );
+}
+
+#[test]
+fn loops_evaluate_computed_arrays_once() {
+    let source = r#"
+struct Point { int x; int y; }
+struct Shape { Point[2] points; }
+contract Loops() {
+    private function values(int v) int[2] { require(v != 7); return [v, v + 1]; }
+    private function points(int v) Point[2] { return [{ x: v, y: v + 1 }, { x: v + 1, y: v + 2 }]; }
+    private function shape(int v) Shape { return { points: points(v) }; }
+    function spend(int v) {
+        for (i, item) in values(v) { require(item == v + i); require(item >= v); }
+        for (i, p) in points(v) { require(p.y == p.x + 1); }
+        for (i, w) in [v, v + 1] { require(w == v + i); }
+        for (i, p) in shape(v).points { for (j, q) in points(p.y) { require(q.x == p.y + j); } }
+    }
+}
+"#;
+    for output in [arkade_compiler::compile(source), compile(source)] {
+        let output = output.expect("fixed-size array expressions are loop iterables");
+        assert_eq!(
+            crate::common::opcode_count_in_arkade(&output, "spend", OP_NUMNOTEQUAL),
+            1,
+            "the helper runs once, not once per element or read: {:?}",
+            crate::common::arkade_asm_tokens(&output, "spend")
+        );
+    }
+
+    for (iterable, expected) in [
+        ("[v, true]", "element 1: expected 'int', got 'bool'"),
+        ("[{ x: v }]", "cannot infer the element type"),
+        ("[[v, 1], [2, v]]", "array literal of arrays"),
+        ("abs(v)", "loop iterable has type 'int', expected array"),
+    ] {
+        let error = compile(&format!(
+            "struct P {{ int x; }} contract C() {{ function spend(int v) {{ for (i, w) in {iterable} {{ require(i >= 0); }} }} }}"
+        ))
+        .expect_err(iterable)
+        .to_string();
+        assert!(error.contains(expected), "{iterable}: {error}");
+    }
 }
