@@ -501,13 +501,15 @@ fn validate_binding_statements(
                             }
                             ArkType::Array(element, _) => *element,
                             actual => {
+                                // A computed iterable has no name to print, so the issue points at it.
                                 if issues.len() == before {
-                                    issues.push(ValidationIssue::error(format!(
-                                        "function '{}': loop iterable '{}' has type '{}', expected array",
-                                        function_name,
-                                        iterable.source_text(),
-                                        actual.as_str()
-                                    )));
+                                    issues.push(
+                                        ValidationIssue::error(format!(
+                                            "function '{function_name}': loop iterable has type '{}', expected array",
+                                            actual.as_str()
+                                        ))
+                                        .at(iterable.span),
+                                    );
                                 }
                                 ArkType::Unknown
                             }
