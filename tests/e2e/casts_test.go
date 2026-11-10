@@ -102,14 +102,14 @@ contract ScalarBytes() {
 	}{
 		{"false", nil, nil, ""},
 		{"true", []byte{1}, []byte{1}, ""},
-		{"nonzero", []byte{2}, []byte{1}, ""},
-		{"negative", []byte{0x81}, []byte{1}, ""},
-		{"wide integer", scriptInt(t, 1<<40), []byte{1}, ""},
-		{"beyond int64", []byte{0, 0, 0, 0, 0, 0, 0, 0, 1}, []byte{1}, ""},
+		{"nonzero", []byte{2}, []byte{1}, "OP_EQUALVERIFY failed"},
+		{"negative", []byte{0x81}, []byte{1}, "OP_EQUALVERIFY failed"},
+		{"wide integer", scriptInt(t, 1<<40), []byte{1}, "OP_EQUALVERIFY failed"},
+		{"beyond int64", []byte{0, 0, 0, 0, 0, 0, 0, 0, 1}, []byte{1}, "OP_EQUALVERIFY failed"},
 		{"padded false", []byte{0}, nil, "not minimally encoded"},
 		{"negative zero", []byte{0x80}, nil, "not minimally encoded"},
 		{"padded true", []byte{1, 0}, []byte{1}, "not minimally encoded"},
-		{"incorrect expected", []byte{2}, []byte{2}, "false stack entry"},
+		{"incorrect expected", []byte{1}, []byte{2}, "false stack entry"},
 	} {
 		t.Run("bool/"+tc.name, func(t *testing.T) {
 			values := map[string][]byte{"flag": tc.value, "expected": tc.expected}

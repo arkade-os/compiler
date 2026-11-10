@@ -34,7 +34,7 @@ pub enum ArkType {
     Bytes32,
     /// Standard Bitcoin script integer (CScriptNum, variable-length LE)
     Int,
-    /// Boolean (0x00 = false, 0x01 = true as CScriptNum)
+    /// Boolean: empty is false and 0x01 is true, the only encodings a witness may use
     Bool,
     /// Taproot Asset identifier
     Asset,

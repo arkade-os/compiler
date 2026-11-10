@@ -88,7 +88,8 @@ fn fold_expression(expression: &mut Expression, scope: &Scope) -> Result<(), Str
     for child in crate::models::child_exprs_mut(expression) {
         fold_expression(child, scope)?;
     }
-    // Unoptimized builds fold only to check, so a threshold that folds out of range fails here.
+    // A threshold that is constant only once loops unroll fails here; unoptimized builds fold
+    // only to check.
     if let ExprKind::Builtin { builtin, args } = &expression.kind {
         if let (crate::builtins::Lowering::Multisig, Some(ArkType::Array(_, count))) =
             (&builtin.lowering, args.first().map(|keys| &keys.ty))

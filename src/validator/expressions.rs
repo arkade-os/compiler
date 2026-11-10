@@ -405,6 +405,23 @@ pub(super) fn validate_binding_expression(
                     }
                 }
             }
+            // Checked here rather than in emission, which folding can skip.
+            if let ("checkMultisig", Some(ArkType::Array(_, count)), Some(threshold)) =
+                (name, operands.first().map(|keys| &keys.ty), operands.get(2))
+            {
+                if let Ok(value) =
+                    crate::compiler::constants::evaluate(threshold, &mut |path| Err(path.key()))
+                {
+                    if value
+                        .parse::<usize>()
+                        .map_or(true, |t| t == 0 || t > *count)
+                    {
+                        issues.push(ValidationIssue::error(format!(
+                            "function '{function_name}': checkMultisig threshold must be between 1 and the number of public keys, got {value}"
+                        )).at(threshold.span));
+                    }
+                }
+            }
             let width = |index: usize| {
                 operands
                     .get(index)
