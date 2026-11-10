@@ -26,6 +26,7 @@ contract ReceiveMarker(
   // input from input 1. The marker must be at input 0 (PUSHCURRENTINPUTINDEX),
   // and input 1 must have been spent through the OApp.receive() Arkade
   // closure with the OApp control singleton attached.
+  @allow(unsigned-spend-path, "consumed only beside an OApp state input spent through OApp.receive with its control singleton")
   function consume() {
     // (1) the marker is at the expected input position.
     require(this.activeInputIndex == 0, "marker input position");

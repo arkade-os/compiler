@@ -40,7 +40,7 @@ fn parse_errors_use_source_terms() {
         (
             "require(checkSig(s, pk), \"x\"); ",
             "1:84",
-            "expected '}', a constant or a function",
+            "expected '}', an attribute, a constant or a function",
         ),
     ];
     for (body, at, expected) in cases {

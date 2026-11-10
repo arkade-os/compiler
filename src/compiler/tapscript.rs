@@ -28,22 +28,59 @@ impl ClosureClass {
             ClosureClass::Multisig | ClosureClass::CltvMultisig | ClosureClass::ConditionMultisig
         )
     }
-    pub fn is_exit(&self) -> bool {
-        matches!(
-            self,
-            ClosureClass::CsvMultisig | ClosureClass::ConditionCsvMultisig
-        )
-    }
 }
 
 #[derive(Debug, Clone)]
 pub struct Closure {
     pub class: ClosureClass,
-    pub condition: Option<(HashFn, String)>, // (hashFn, hash value name)
     pub preimage_width: Option<usize>,
-    pub timelock: Option<(String, Option<TimeUnit>)>, // CSV or CLTV bound and its unit
     pub keys: Vec<KeyExpr>,
     pub threshold: Option<u16>,
+}
+
+/// An operand the leaf script pushes. The script is fixed when the address is
+/// made, so no tapscript input can be one; inputs reach the leaf only as witness
+/// elements it consumes: the preimage and the signatures. `Constructor` takes
+/// any name; `LeafScript` is what keeps inputs out.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Pushed {
+    /// Assembled as written: a number, a hex string or `OP_0`.
+    Literal(String),
+    Constructor(String),
+    /// A constructor pubkey tweaked by `func`'s covenant hash.
+    TweakedConstructor {
+        base: String,
+        func: String,
+    },
+    /// The emulator key tweaked by `func`'s covenant hash.
+    Emulator(String),
+    /// A value the server supplies, by its placeholder.
+    Server(&'static str),
+}
+
+impl Pushed {
+    fn asm(&self) -> String {
+        match self {
+            Pushed::Literal(token) => token.clone(),
+            Pushed::Constructor(name) => format!("<{name}>"),
+            Pushed::TweakedConstructor { base, func } => format!("<TWEAK:{base}:{func}>"),
+            Pushed::Emulator(func) => format!("<EMULATOR_KEY:{func}>"),
+            Pushed::Server(placeholder) => format!("<{placeholder}>"),
+        }
+    }
+}
+
+/// A closure whose pushed operands are resolved; what leaf emission reads. Its
+/// fields are private, so only this module builds one: `validate_arkd_rules`,
+/// once it has refused every tapscript input in a pushed slot, and the
+/// synthesized default leaf.
+#[derive(Debug, Clone)]
+pub struct LeafScript {
+    /// The digest, the preimage width it pins, and the hash the preimage must match.
+    condition: Option<(HashFn, Option<usize>, Pushed)>,
+    /// The bound, and whether it is a CSV rather than a CLTV.
+    timelock: Option<(Pushed, bool)>,
+    keys: Vec<Pushed>,
 }
 
 /// Assemble a tapscript body into exactly one closure, enforcing the
@@ -149,9 +186,7 @@ pub fn assemble_closure(ts: &NamedTapscript) -> Result<Closure, String> {
 
     Ok(Closure {
         class,
-        condition,
         preimage_width,
-        timelock,
         keys,
         threshold,
     })
@@ -177,19 +212,10 @@ pub fn validate_closure_shape(c: &Closure, ts_name: &str) -> Result<(), String> 
     Ok(())
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Binding {
-    /// Leaf name matches a covenant function; bare `emulator` is implicitly tweaked.
-    NameMatched,
-    /// Unmatched leaf that explicitly tweaks exactly one function's emulator key.
-    Tweaked(String),
-    /// Unmatched leaf with no emulator binding at all.
-    Standalone,
-}
-
-/// Resolve a tapscript's binding and enforce the `emulator` rule + key
-/// resolution (§5.3). `contract` supplies the covenant function names.
-pub fn resolve_binding(contract: &Contract, ts: &NamedTapscript) -> Result<Binding, String> {
+/// Enforce the `emulator` binding rule (§5.3): a leaf named after a covenant
+/// function includes bare `emulator`; any other leaf tweaks at most one
+/// function's emulator key. `contract` supplies the covenant function names.
+pub fn resolve_binding(contract: &Contract, ts: &NamedTapscript) -> Result<(), String> {
     if contract
         .functions
         .iter()
@@ -235,7 +261,7 @@ pub fn resolve_binding(contract: &Contract, ts: &NamedTapscript) -> Result<Bindi
                 ts.name
             ));
         }
-        return Ok(Binding::NameMatched);
+        return Ok(());
     }
 
     // Unmatched leaf: bare emulator forbidden.
@@ -250,7 +276,7 @@ pub fn resolve_binding(contract: &Contract, ts: &NamedTapscript) -> Result<Bindi
     // Validate explicit tweak targets: all must reference one existing function.
     let unique_targets: std::collections::BTreeSet<String> = tweak_targets.into_iter().collect();
     match unique_targets.len() {
-        0 => Ok(Binding::Standalone),
+        0 => Ok(()),
         1 => {
             let func = unique_targets.iter().next().expect("one target");
             if !contract
@@ -263,7 +289,7 @@ pub fn resolve_binding(contract: &Contract, ts: &NamedTapscript) -> Result<Bindi
                     ts.name
                 ));
             }
-            Ok(Binding::Tweaked(func.clone()))
+            Ok(())
         }
         _ => Err(format!(
             "ambiguous emulator tweak targets in tapscript `{}`",
@@ -276,7 +302,7 @@ pub fn resolve_binding(contract: &Contract, ts: &NamedTapscript) -> Result<Bindi
 ///
 /// Bare `emulator` names the tapscript itself. `tweak(base, func)` names `func`.
 /// A leaf can name only one function, so it has one `leaves` array to join.
-fn shared_tweak_func(ts_name: &str, keys: &[KeyExpr]) -> Result<Option<String>, String> {
+pub(crate) fn shared_tweak_func(ts_name: &str, keys: &[KeyExpr]) -> Result<Option<String>, String> {
     let mut target: Option<String> = None;
     for key in keys {
         let func = match key {
@@ -297,37 +323,51 @@ fn shared_tweak_func(ts_name: &str, keys: &[KeyExpr]) -> Result<Option<String>, 
     Ok(target)
 }
 
-/// arkd structural rules F2/F3/E1 + key resolution (§5.3).
+/// arkd structural rules F2/F3/E1, and resolution of every operand the leaf
+/// script pushes (§5.3).
 pub fn validate_arkd_rules(
     contract: &Contract,
     ts: &NamedTapscript,
     c: &Closure,
-) -> Result<(), String> {
+) -> Result<LeafScript, String> {
     let constructor_scope =
         crate::types::build_scope_with_structs(&contract.parameters, &contract.structs);
-    // Pubkeys in scope: constructor pubkey params + pubkey tapscript inputs.
-    let in_scope = |name: &str| -> bool {
-        name == SERVER
-            || name == EMULATOR
-            || constructor_scope.get(name) == Some(&ArkType::Bytes)
-            || ts
-                .inputs
-                .iter()
-                .any(|p| p.name == name && p.param_type.name() == Some("pubkey"))
+    let is_input = |name: &str| ts.inputs.iter().any(|p| p.name == name);
+    // The type of a scalar constructor binding the script pushes as `role`.
+    let fixed = |name: &str, role: &str| -> Result<Option<ArkType>, String> {
+        if is_input(name) {
+            return Err(format!(
+                "tapscript `{}`: `{name}` is a tapscript input, but a {role} is part of the \
+                 leaf script, which is fixed when the address is made; take it from a \
+                 constructor parameter",
+                ts.name
+            ));
+        }
+        Ok(constructor_scope
+            .get(name)
+            .filter(|t| !matches!(t, ArkType::Struct(_) | ArkType::Array(..)))
+            .cloned())
     };
 
-    // Key resolution.
     let mut constructor_tweak_funcs: std::collections::BTreeMap<
         String,
         std::collections::BTreeSet<String>,
     > = std::collections::BTreeMap::new();
+    let mut keys = Vec::with_capacity(c.keys.len());
     for k in &c.keys {
-        match k {
-            KeyExpr::Ident(id) if !in_scope(id) => {
-                return Err(format!("unknown key `{id}` in tapscript `{}`", ts.name));
+        keys.push(match k {
+            KeyExpr::Ident(id) if id == SERVER => Pushed::Server("SERVER_KEY"),
+            // `resolve_binding` admits a bare `emulator` only on a leaf named after its function.
+            KeyExpr::Ident(id) if id == EMULATOR => Pushed::Emulator(ts.name.clone()),
+            KeyExpr::Tweak { base, func } if base == EMULATOR => Pushed::Emulator(func.clone()),
+            KeyExpr::Ident(id) => {
+                if fixed(id, "key")? != Some(ArkType::Bytes) {
+                    return Err(format!("unknown key `{id}` in tapscript `{}`", ts.name));
+                }
+                Pushed::Constructor(id.clone())
             }
-            KeyExpr::Tweak { base, func } if base != EMULATOR => {
-                if constructor_scope.get(base) != Some(&ArkType::Bytes) {
+            KeyExpr::Tweak { base, func } => {
+                if fixed(base, "key")? != Some(ArkType::Bytes) {
                     return Err(format!(
                         "tweak({base}, {func}) in tapscript `{}`: `{base}` is not a constructor pubkey",
                         ts.name
@@ -347,9 +387,12 @@ pub fn validate_arkd_rules(
                     .entry(base.clone())
                     .or_default()
                     .insert(func.clone());
+                Pushed::TweakedConstructor {
+                    base: base.clone(),
+                    func: func.clone(),
+                }
             }
-            _ => {}
-        }
+        });
     }
     for (base, funcs) in &constructor_tweak_funcs {
         if funcs.len() > 1 {
@@ -362,20 +405,6 @@ pub fn validate_arkd_rules(
     // Bare `emulator` names this tapscript. Every tweak must name that same function.
     shared_tweak_func(&ts.name, &c.keys)?;
 
-    // Any scalar constructor binding or tapscript input.
-    let name_declared = |name: &str| -> bool {
-        constructor_scope.get(name).is_some_and(|binding_type| {
-            !matches!(binding_type, ArkType::Struct(_) | ArkType::Array(..))
-        }) || ts.inputs.iter().any(|p| p.name == name)
-    };
-    let name_type = |name: &str| -> Option<ArkType> {
-        constructor_scope.get(name).cloned().or_else(|| {
-            ts.inputs
-                .iter()
-                .find(|p| p.name == name)
-                .map(|p| p.param_type.ark_type())
-        })
-    };
     // A declared `signature` input.
     let sig_input = |name: &str| -> bool {
         ts.inputs
@@ -410,8 +439,10 @@ pub fn validate_arkd_rules(
         }
     }
 
-    // Named condition operands must resolve to inputs or constructor parameters.
-    // Hash values may also be byte literals; timelocks may be numeric literals.
+    // The preimage comes from the witness. The hash and the timelock are pushed,
+    // and may also be literals.
+    let mut condition = None;
+    let mut timelock = None;
     for item in &ts.items {
         match item {
             TapItem::Hash {
@@ -419,27 +450,41 @@ pub fn validate_arkd_rules(
                 preimage,
                 hash,
             } => {
-                if !name_declared(preimage) {
+                if !is_input(preimage) {
+                    let why = if constructor_scope.contains_key(preimage) {
+                        "a constructor parameter, but the leaf consumes its preimage from the \
+                         witness; declare it as a tapscript input"
+                    } else {
+                        "not a tapscript input"
+                    };
                     return Err(format!(
-                        "tapscript `{}`: hash preimage `{preimage}` is not a declared input or constructor parameter",
+                        "tapscript `{}`: hash preimage `{preimage}` is {why}",
                         ts.name
                     ));
                 }
-                if !hash.starts_with("0x") && !name_declared(hash) {
-                    return Err(format!(
-                        "tapscript `{}`: hash value `{hash}` is not a declared input or constructor parameter",
-                        ts.name
-                    ));
-                }
-                if let Some(t) = name_type(hash).filter(|t| !digest_accepts(hash_fn, t)) {
-                    return Err(format!(
-                        "tapscript `{}`: {} value `{hash}` has type '{}', expected {}",
-                        ts.name,
-                        hash_fn.name(),
-                        t.as_str(),
-                        hash_fn.digest_type()
-                    ));
-                }
+                let hash_operand = if hash == "0x" {
+                    Pushed::Literal("OP_0".to_string())
+                } else if hash.starts_with("0x") {
+                    Pushed::Literal(hash.clone())
+                } else {
+                    let Some(t) = fixed(hash, "hash value")? else {
+                        return Err(format!(
+                            "tapscript `{}`: hash value `{hash}` is not a scalar constructor parameter",
+                            ts.name
+                        ));
+                    };
+                    if !digest_accepts(hash_fn, &t) {
+                        return Err(format!(
+                            "tapscript `{}`: {} value `{hash}` has type '{}', expected {}",
+                            ts.name,
+                            hash_fn.name(),
+                            t.as_str(),
+                            hash_fn.digest_type()
+                        ));
+                    }
+                    Pushed::Constructor(hash.clone())
+                };
+                condition = Some((hash_fn.clone(), c.preimage_width, hash_operand));
             }
             TapItem::Older { value, unit } | TapItem::After { value, unit } => {
                 let csv = matches!(item, TapItem::Older { .. });
@@ -449,6 +494,7 @@ pub fn validate_arkd_rules(
                     Some(TimeUnit::Seconds) => format!("seconds({value})"),
                     None => value.clone(),
                 };
+                timelock = Some((timelock_operand(value, *unit, csv), csv));
                 if csv && value == SERVER_EXIT_DELAY {
                     if unit.is_some() {
                         return Err(format!(
@@ -459,8 +505,9 @@ pub fn validate_arkd_rules(
                     continue;
                 }
                 let Some(n) = timelock_number(value) else {
+                    let declared = fixed(value, "timelock")?;
                     if unit.is_some() {
-                        let hint = if name_declared(value) {
+                        let hint = if declared.is_some() {
                             format!("; pass `{value}` without a unit to push it raw")
                         } else {
                             String::new()
@@ -470,20 +517,22 @@ pub fn validate_arkd_rules(
                             ts.name
                         ));
                     }
-                    if !name_declared(value) {
-                        return Err(format!(
-                            "tapscript `{}`: timelock `{value}` is not a literal, declared input, or constructor parameter",
-                            ts.name
-                        ));
+                    match declared {
+                        None => {
+                            return Err(format!(
+                                "tapscript `{}`: timelock `{value}` is not a literal or scalar constructor parameter",
+                                ts.name
+                            ))
+                        }
+                        Some(t) if t != ArkType::Int => {
+                            return Err(format!(
+                                "tapscript `{}`: timelock `{value}` has type '{}', expected 'int'",
+                                ts.name,
+                                t.as_str()
+                            ))
+                        }
+                        Some(_) => continue,
                     }
-                    if let Some(t) = name_type(value).filter(|t| *t != ArkType::Int) {
-                        return Err(format!(
-                            "tapscript `{}`: timelock `{value}` has type '{}', expected 'int'",
-                            ts.name,
-                            t.as_str()
-                        ));
-                    }
-                    continue;
                 };
                 const MAX: i128 = u32::MAX as i128;
                 let (valid, expected) = match (csv, unit) {
@@ -531,19 +580,11 @@ pub fn validate_arkd_rules(
     // literal locktimes with a known block-type policy; with literals-only and
     // no policy source wired yet, defer to arkd. (Placeholder for future config.)
 
-    Ok(())
-}
-
-/// Lower a key operand to its ASM placeholder. `leaf_func` is the function name
-/// used for a name-matched leaf's bare `emulator`.
-pub fn key_placeholder(k: &KeyExpr, leaf_func: &str) -> String {
-    match k {
-        KeyExpr::Ident(id) if id == SERVER => "<SERVER_KEY>".to_string(),
-        KeyExpr::Ident(id) if id == EMULATOR => format!("<EMULATOR_KEY:{leaf_func}>"),
-        KeyExpr::Ident(id) => format!("<{id}>"),
-        KeyExpr::Tweak { base, func } if base == EMULATOR => format!("<EMULATOR_KEY:{func}>"),
-        KeyExpr::Tweak { base, func } => format!("<TWEAK:{base}:{func}>"),
-    }
+    Ok(LeafScript {
+        condition,
+        timelock,
+        keys,
+    })
 }
 
 /// The value of a numeric timelock operand, or `None` for a name. Out-of-range
@@ -560,24 +601,26 @@ fn timelock_number(value: &str) -> Option<i128> {
     }))
 }
 
-/// Emit a timelock operand: `serverExitDelay` as arkd's unilateral exit delay,
+/// A timelock operand: `serverExitDelay` as arkd's unilateral exit delay,
 /// `seconds(n)` in a CSV as its BIP68 time-based sequence, any other number
-/// as-is, else a `<param>` placeholder pushing the raw value.
-fn timelock_operand(value: &str, unit: Option<TimeUnit>, csv: bool) -> String {
+/// as-is, else the constructor parameter pushing the raw value.
+fn timelock_operand(value: &str, unit: Option<TimeUnit>, csv: bool) -> Pushed {
     if value == SERVER_EXIT_DELAY {
-        return "<SERVER_EXIT_DELAY>".to_string();
+        return Pushed::Server("SERVER_EXIT_DELAY");
     }
     match timelock_number(value) {
-        Some(n) if csv && unit == Some(TimeUnit::Seconds) => ((n / 512) | (1 << 22)).to_string(),
-        Some(n) => n.to_string(),
-        None => format!("<{value}>"),
+        Some(n) if csv && unit == Some(TimeUnit::Seconds) => {
+            Pushed::Literal(((n / 512) | (1 << 22)).to_string())
+        }
+        Some(n) => Pushed::Literal(n.to_string()),
+        None => Pushed::Constructor(value.to_string()),
     }
 }
 
 /// Emit the multisig suffix (N-of-N CHECKSIG chain).
-fn emit_multisig(keys: &[KeyExpr], leaf_func: &str, asm: &mut Vec<String>) {
+fn emit_multisig(keys: &[Pushed], asm: &mut Vec<String>) {
     for (i, k) in keys.iter().enumerate() {
-        asm.push(key_placeholder(k, leaf_func));
+        asm.push(k.asm());
         if i == keys.len() - 1 {
             asm.push(OP_CHECKSIG.to_string());
         } else {
@@ -587,17 +630,12 @@ fn emit_multisig(keys: &[KeyExpr], leaf_func: &str, asm: &mut Vec<String>) {
 }
 
 /// Assemble the full leaf ASM in arkd's closure byte order: condition? · timelock? · multisig.
-pub fn emit_leaf_asm(c: &Closure, ts_name: &str, binding: &Binding) -> Vec<String> {
+pub fn emit_leaf_asm(script: &LeafScript) -> Vec<String> {
     let mut asm = Vec::new();
-    // The function name used for a bare `emulator` placeholder.
-    let leaf_func = match binding {
-        Binding::Tweaked(f) => f.as_str(),
-        _ => ts_name,
-    };
 
     // Condition prefix.
-    if let Some((hash_fn, hash)) = &c.condition {
-        if let Some(width) = c.preimage_width {
+    if let Some((hash_fn, preimage_width, hash)) = &script.condition {
+        if let Some(width) = preimage_width {
             asm.extend([
                 OP_SIZE.to_string(),
                 width.to_string(),
@@ -605,22 +643,15 @@ pub fn emit_leaf_asm(c: &Closure, ts_name: &str, binding: &Binding) -> Vec<Strin
             ]);
         }
         asm.push(hash_fn.opcode().to_string());
-        asm.push(if hash == "0x" {
-            "OP_0".to_string()
-        } else if hash.starts_with("0x") {
-            hash.clone()
-        } else {
-            format!("<{hash}>")
-        });
+        asm.push(hash.asm());
         asm.push(OP_EQUAL.to_string());
         asm.push(OP_VERIFY.to_string());
     }
 
     // Timelock prefix.
-    if let Some((value, unit)) = &c.timelock {
-        let csv = c.class.is_exit();
-        asm.push(timelock_operand(value, *unit, csv));
-        let op = if csv {
+    if let Some((bound, csv)) = &script.timelock {
+        asm.push(bound.asm());
+        let op = if *csv {
             OP_CHECKSEQUENCEVERIFY
         } else {
             OP_CHECKLOCKTIMEVERIFY
@@ -629,7 +660,7 @@ pub fn emit_leaf_asm(c: &Closure, ts_name: &str, binding: &Binding) -> Vec<Strin
         asm.push(OP_DROP.to_string());
     }
 
-    emit_multisig(&c.keys, leaf_func, &mut asm);
+    emit_multisig(&script.keys, &mut asm);
     asm
 }
 
@@ -669,8 +700,7 @@ fn push_witness_param(p: &Parameter, injected: bool, out: &mut Vec<WitnessElemen
 
 /// An author-written leaf that passed its checks, with what emission needs from them.
 pub(crate) struct CheckedLeaf {
-    closure: Closure,
-    binding: Binding,
+    script: LeafScript,
     group_key: String,
 }
 
@@ -682,14 +712,10 @@ pub(crate) fn check_tapscript(
 ) -> Result<CheckedLeaf, String> {
     let closure = assemble_closure(ts)?;
     validate_closure_shape(&closure, &ts.name)?;
-    let binding = resolve_binding(contract, ts)?;
-    validate_arkd_rules(contract, ts, &closure)?;
+    resolve_binding(contract, ts)?;
+    let script = validate_arkd_rules(contract, ts, &closure)?;
     let group_key = shared_tweak_func(&ts.name, &closure.keys)?.unwrap_or_else(|| ts.name.clone());
-    Ok(CheckedLeaf {
-        closure,
-        binding,
-        group_key,
-    })
+    Ok(CheckedLeaf { script, group_key })
 }
 
 /// Build the unified `functions[]` ABI: one group per covenant function plus
@@ -712,7 +738,7 @@ pub(crate) fn build_function_groups(
         return Err("internal compiler error: checked leaves do not match the tapscripts".into());
     }
     for (ts, leaf) in contract.tapscripts.iter().zip(leaves) {
-        let mut asm = emit_leaf_asm(&leaf.closure, &ts.name, &leaf.binding);
+        let mut asm = emit_leaf_asm(&leaf.script);
         resolve_constructor_field_placeholders(&mut asm, contract)?;
         grouped
             .entry(leaf.group_key.clone())
@@ -794,19 +820,10 @@ fn leaf_signs_emulator(leaf: &AbiLeaf) -> bool {
 
 /// The §5.4 default collaborative leaf: checkMultisig([server, tweak(emulator, fn)], …, 2).
 fn synthesize_default_leaf(func: &str) -> AbiLeaf {
-    let closure = Closure {
-        class: ClosureClass::Multisig,
+    let script = LeafScript {
         condition: None,
-        preimage_width: None,
         timelock: None,
-        keys: vec![
-            KeyExpr::Ident(SERVER.into()),
-            KeyExpr::Tweak {
-                base: EMULATOR.into(),
-                func: func.into(),
-            },
-        ],
-        threshold: Some(2),
+        keys: vec![Pushed::Server("SERVER_KEY"), Pushed::Emulator(func.into())],
     };
     let sig_encoding = ArkType::Signature.encoding().to_string();
     AbiLeaf {
@@ -825,7 +842,7 @@ fn synthesize_default_leaf(func: &str) -> AbiLeaf {
                 injected: true,
             },
         ],
-        asm: emit_leaf_asm(&closure, func, &Binding::NameMatched),
+        asm: emit_leaf_asm(&script),
     }
 }
 
@@ -838,6 +855,7 @@ mod tests {
         NamedTapscript {
             span: Default::default(),
             declaration: Default::default(),
+            attributes: vec![],
             name: "t".into(),
             inputs: vec![],
             items,
@@ -892,7 +910,6 @@ mod tests {
         ]))
         .unwrap();
         assert_eq!(c.class, ClosureClass::CsvMultisig);
-        assert!(c.class.is_exit());
     }
 
     #[test]
@@ -1004,6 +1021,8 @@ mod tests {
             span: Default::default(),
             name: "C".into(),
             is_library: false,
+            declaration: Default::default(),
+            attributes: vec![],
             structs: vec![],
             parameters: vec![
                 Parameter {
@@ -1029,6 +1048,7 @@ mod tests {
                     is_static: false,
                     is_exported: false,
                     return_type: None,
+                    attributes: vec![],
                 })
                 .collect(),
             tapscripts,
@@ -1063,16 +1083,17 @@ mod tests {
 
     #[test]
     fn name_matched_requires_bare_emulator() {
-        // claim covenant exists; leaf named claim with bare emulator → NameMatched
+        // claim covenant exists; leaf named claim with bare emulator → accepted
         let leaf = NamedTapscript {
             span: Default::default(),
             declaration: Default::default(),
+            attributes: vec![],
             name: "claim".into(),
             inputs: vec![],
             items: vec![sig(vec![ident("server"), ident("emulator")])],
         };
         let c = contract_with(&["claim"], vec![leaf.clone()]);
-        assert_eq!(resolve_binding(&c, &leaf).unwrap(), Binding::NameMatched);
+        resolve_binding(&c, &leaf).unwrap();
     }
 
     #[test]
@@ -1080,6 +1101,7 @@ mod tests {
         let leaf = NamedTapscript {
             span: Default::default(),
             declaration: Default::default(),
+            attributes: vec![],
             name: "claim".into(),
             inputs: vec![],
             items: vec![sig(vec![ident("server"), ident("owner")])],
@@ -1094,6 +1116,7 @@ mod tests {
         let leaf = NamedTapscript {
             span: Default::default(),
             declaration: Default::default(),
+            attributes: vec![],
             name: "weird".into(),
             inputs: vec![],
             items: vec![sig(vec![ident("server"), ident("emulator")])],
@@ -1108,6 +1131,7 @@ mod tests {
         let leaf = NamedTapscript {
             span: Default::default(),
             declaration: Default::default(),
+            attributes: vec![],
             name: "direct".into(),
             inputs: vec![],
             items: vec![sig(vec![KeyExpr::Tweak {
@@ -1116,9 +1140,10 @@ mod tests {
             }])],
         };
         let c = contract_with(&["claim"], vec![leaf.clone()]);
+        resolve_binding(&c, &leaf).unwrap();
         assert_eq!(
-            resolve_binding(&c, &leaf).unwrap(),
-            Binding::Tweaked("claim".into())
+            shared_tweak_func(&leaf.name, &closure_of(&leaf).keys).unwrap(),
+            Some("claim".into())
         );
     }
 
@@ -1127,6 +1152,7 @@ mod tests {
         let leaf = NamedTapscript {
             span: Default::default(),
             declaration: Default::default(),
+            attributes: vec![],
             name: "claim".into(),
             inputs: vec![],
             items: vec![sig(vec![KeyExpr::Tweak {
@@ -1144,6 +1170,7 @@ mod tests {
         let leaf = NamedTapscript {
             span: Default::default(),
             declaration: Default::default(),
+            attributes: vec![],
             name: "direct".into(),
             inputs: vec![],
             items: vec![sig(vec![KeyExpr::Tweak {
@@ -1160,6 +1187,7 @@ mod tests {
         let leaf = NamedTapscript {
             span: Default::default(),
             declaration: Default::default(),
+            attributes: vec![],
             name: "direct".into(),
             inputs: vec![],
             items: vec![sig(vec![
@@ -1183,16 +1211,31 @@ mod tests {
         let leaf = NamedTapscript {
             span: Default::default(),
             declaration: Default::default(),
+            attributes: vec![],
             name: "unilateral".into(),
             inputs: vec![],
             items: vec![sig(vec![ident("owner")])],
         };
         let c = contract_with(&["claim"], vec![leaf.clone()]);
-        assert_eq!(resolve_binding(&c, &leaf).unwrap(), Binding::Standalone);
+        resolve_binding(&c, &leaf).unwrap();
     }
 
     fn closure_of(leaf: &NamedTapscript) -> Closure {
         assemble_closure(leaf).unwrap()
+    }
+
+    /// The leaf's assembly, resolved against a contract with these constructor parameters.
+    fn leaf_asm(params: &[(&str, &str)], leaf: &NamedTapscript) -> Vec<String> {
+        let mut c = contract_with(&[], vec![leaf.clone()]);
+        c.parameters = params
+            .iter()
+            .map(|(name, param_type)| Parameter {
+                span: Default::default(),
+                name: (*name).into(),
+                param_type: (*param_type).into(),
+            })
+            .collect();
+        emit_leaf_asm(&validate_arkd_rules(&c, leaf, &closure_of(leaf)).unwrap())
     }
 
     #[test]
@@ -1200,13 +1243,14 @@ mod tests {
         let leaf = NamedTapscript {
             span: Default::default(),
             declaration: Default::default(),
+            attributes: vec![],
             name: "liquidate".into(),
             inputs: sig_params(2),
             items: vec![sig(vec![ident("owner"), ident("backup")])],
         };
         let c = contract_with(&[], vec![leaf.clone()]);
         let cl = closure_of(&leaf);
-        let _binding = resolve_binding(&c, &leaf).unwrap();
+        resolve_binding(&c, &leaf).unwrap();
         let err = validate_arkd_rules(&c, &leaf, &cl).unwrap_err();
         assert!(err.contains("server"), "got: {err}");
     }
@@ -1216,6 +1260,7 @@ mod tests {
         let leaf = NamedTapscript {
             span: Default::default(),
             declaration: Default::default(),
+            attributes: vec![],
             name: "unilateral".into(),
             inputs: sig_params(1),
             items: vec![
@@ -1228,7 +1273,7 @@ mod tests {
         };
         let c = contract_with(&[], vec![leaf.clone()]);
         let cl = closure_of(&leaf);
-        let _binding = resolve_binding(&c, &leaf).unwrap();
+        resolve_binding(&c, &leaf).unwrap();
         assert!(validate_arkd_rules(&c, &leaf, &cl).is_ok());
     }
 
@@ -1237,13 +1282,14 @@ mod tests {
         let leaf = NamedTapscript {
             span: Default::default(),
             declaration: Default::default(),
+            attributes: vec![],
             name: "x".into(),
             inputs: vec![],
             items: vec![sig(vec![ident("server"), ident("ghost")])],
         };
         let c = contract_with(&[], vec![leaf.clone()]);
         let cl = closure_of(&leaf);
-        let _binding = resolve_binding(&c, &leaf).unwrap();
+        resolve_binding(&c, &leaf).unwrap();
         let err = validate_arkd_rules(&c, &leaf, &cl).unwrap_err();
         assert!(err.contains("unknown key"), "got: {err}");
     }
@@ -1343,6 +1389,7 @@ mod tests {
             let leaf = NamedTapscript {
                 span: Default::default(),
                 declaration: Default::default(),
+                attributes: vec![],
                 name: "exit".into(),
                 inputs: sig_params(2),
                 items: vec![timelock, sig(vec![ident("server"), ident("owner")])],
@@ -1360,18 +1407,13 @@ mod tests {
     #[test]
     fn only_csv_seconds_are_encoded() {
         use TimeUnit::{Blocks, Seconds};
-        assert_eq!(timelock_operand("1024", Some(Seconds), true), "4194306");
-        assert_eq!(timelock_operand("144", Some(Blocks), true), "144");
-        assert_eq!(timelock_operand("144", None, true), "144");
-        assert_eq!(timelock_operand("exitDelay", None, true), "<exitDelay>");
-        assert_eq!(
-            timelock_operand("serverExitDelay", None, true),
-            "<SERVER_EXIT_DELAY>"
-        );
-        assert_eq!(
-            timelock_operand("1700000000", Some(Seconds), false),
-            "1700000000"
-        );
+        let asm = |value, unit, csv| timelock_operand(value, unit, csv).asm();
+        assert_eq!(asm("1024", Some(Seconds), true), "4194306");
+        assert_eq!(asm("144", Some(Blocks), true), "144");
+        assert_eq!(asm("144", None, true), "144");
+        assert_eq!(asm("exitDelay", None, true), "<exitDelay>");
+        assert_eq!(asm("serverExitDelay", None, true), "<SERVER_EXIT_DELAY>");
+        assert_eq!(asm("1700000000", Some(Seconds), false), "1700000000");
     }
 
     #[test]
@@ -1380,6 +1422,7 @@ mod tests {
         let leaf = NamedTapscript {
             span: Default::default(),
             declaration: Default::default(),
+            attributes: vec![],
             name: "x".into(),
             inputs: vec![Parameter {
                 span: Default::default(),
@@ -1394,7 +1437,7 @@ mod tests {
         };
         let c = contract_with(&["x"], vec![leaf.clone()]);
         let cl = closure_of(&leaf);
-        let _binding = resolve_binding(&c, &leaf).unwrap();
+        resolve_binding(&c, &leaf).unwrap();
         let err = validate_arkd_rules(&c, &leaf, &cl).unwrap_err();
         assert!(err.contains("align 1:1"), "got: {err}");
     }
@@ -1405,6 +1448,7 @@ mod tests {
         let leaf = NamedTapscript {
             span: Default::default(),
             declaration: Default::default(),
+            attributes: vec![],
             name: "x".into(),
             inputs: vec![],
             items: vec![TapItem::Sig {
@@ -1415,7 +1459,7 @@ mod tests {
         };
         let c = contract_with(&[], vec![leaf.clone()]);
         let cl = closure_of(&leaf);
-        let _binding = resolve_binding(&c, &leaf).unwrap();
+        resolve_binding(&c, &leaf).unwrap();
         let err = validate_arkd_rules(&c, &leaf, &cl).unwrap_err();
         assert!(
             err.contains("not a declared `signature` input"),
@@ -1429,6 +1473,7 @@ mod tests {
         let leaf = NamedTapscript {
             span: Default::default(),
             declaration: Default::default(),
+            attributes: vec![],
             name: "exit".into(),
             inputs: sig_params(1),
             items: vec![
@@ -1441,7 +1486,7 @@ mod tests {
         };
         let c = contract_with(&[], vec![leaf.clone()]);
         let cl = closure_of(&leaf);
-        let _binding = resolve_binding(&c, &leaf).unwrap();
+        resolve_binding(&c, &leaf).unwrap();
         let err = validate_arkd_rules(&c, &leaf, &cl).unwrap_err();
         assert!(err.contains("timelock `typoDelay`"), "got: {err}");
     }
@@ -1452,6 +1497,7 @@ mod tests {
         let leaf = NamedTapscript {
             span: Default::default(),
             declaration: Default::default(),
+            attributes: vec![],
             name: "claim".into(),
             inputs: vec![
                 Parameter {
@@ -1480,7 +1526,7 @@ mod tests {
         };
         let c = contract_with(&[], vec![leaf.clone()]);
         let cl = closure_of(&leaf);
-        let _binding = resolve_binding(&c, &leaf).unwrap();
+        resolve_binding(&c, &leaf).unwrap();
         let err = validate_arkd_rules(&c, &leaf, &cl).unwrap_err();
         assert!(err.contains("hash value `typoHash`"), "got: {err}");
     }
@@ -1496,6 +1542,7 @@ mod tests {
         let leaf = NamedTapscript {
             span: Default::default(),
             declaration: Default::default(),
+            attributes: vec![],
             name: "claim".into(),
             inputs: vec![
                 Parameter {
@@ -1520,11 +1567,14 @@ mod tests {
                     preimage: "preimage".into(),
                     hash: "preimageHash".into(),
                 },
-                sig(vec![ident("server"), ident("emulator")]),
+                TapItem::Sig {
+                    keys: vec![ident("server"), ident("emulator")],
+                    sigs: vec!["serverSig".into(), "emulatorSig".into()],
+                    threshold: None,
+                },
             ],
         };
-        let c = assemble_closure(&leaf).unwrap();
-        let asm = emit_leaf_asm(&c, "claim", &Binding::NameMatched);
+        let asm = leaf_asm(&[("preimageHash", "bytes20")], &leaf);
         assert_eq!(
             asm,
             vec![
@@ -1550,8 +1600,9 @@ mod tests {
         let leaf = NamedTapscript {
             span: Default::default(),
             declaration: Default::default(),
+            attributes: vec![],
             name: "refund".into(),
-            inputs: vec![],
+            inputs: sig_params(2),
             items: vec![
                 TapItem::After {
                     value: "refundTime".into(),
@@ -1560,8 +1611,7 @@ mod tests {
                 sig(vec![ident("server"), ident("emulator")]),
             ],
         };
-        let c = assemble_closure(&leaf).unwrap();
-        let asm = emit_leaf_asm(&c, "refund", &Binding::NameMatched);
+        let asm = leaf_asm(&[("refundTime", "int")], &leaf);
         assert_eq!(
             asm,
             vec![
@@ -1581,6 +1631,7 @@ mod tests {
         let leaf = NamedTapscript {
             span: Default::default(),
             declaration: Default::default(),
+            attributes: vec![],
             name: "unilateral".into(),
             inputs: vec![Parameter {
                 span: Default::default(),
@@ -1599,8 +1650,7 @@ mod tests {
                 },
             ],
         };
-        let c = assemble_closure(&leaf).unwrap();
-        let asm = emit_leaf_asm(&c, "unilateral", &Binding::Standalone);
+        let asm = leaf_asm(&[("sender", "pubkey")], &leaf);
         assert_eq!(
             asm,
             vec![
@@ -1728,7 +1778,7 @@ contract Demo(pubkey insurer) {
 pragma arkade ^0.1.0;
 contract Demo(pubkey insurer) {
   function claim() { require(tx.input.current.value >= 1, "funded"); }
-  function race(pubkey owner, signature ownerSig, signature insurerSig) tapscript {
+  function race(signature ownerSig, signature insurerSig) tapscript {
     require(checkMultisig([server, tweak(owner, claim)], [ownerSig, insurerSig], 2));
   }
 }

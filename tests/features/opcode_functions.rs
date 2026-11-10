@@ -155,13 +155,21 @@ fn test_sha256_initialize() {
         asm_str.contains(OP_SHA256INITIALIZE),
         "Expected {OP_SHA256INITIALIZE} in ASM: {asm_str}"
     );
+
+    let error = compile(&code.replace("let ctx", "bytes32 ctx"))
+        .expect_err("a streaming context is not a digest")
+        .to_string();
+    assert!(
+        error.contains("declares type 'bytes32' but initializer has type 'bytes'"),
+        "{error}"
+    );
 }
 
 #[test]
 fn test_sha256_update() {
     let code = r#"
         contract StreamingHasher(pubkey owner) {
-            function updateHash(signature ownerSig, bytes32 ctx, bytes32 chunk) {
+            function updateHash(signature ownerSig, bytes ctx, bytes32 chunk) {
                 require(checkSig(ownerSig, owner));
                 let newCtx = sha256Update(ctx, chunk);
                 require(newCtx == newCtx);
@@ -188,9 +196,9 @@ fn test_sha256_update() {
 fn test_sha256_finalize() {
     let code = r#"
         contract StreamingHasher(pubkey owner) {
-            function finalizeHash(signature ownerSig, bytes32 ctx, bytes32 lastChunk) {
+            function finalizeHash(signature ownerSig, bytes ctx, bytes32 lastChunk) {
                 require(checkSig(ownerSig, owner));
-                let hash = sha256Finalize(ctx, lastChunk);
+                bytes32 hash = sha256Finalize(ctx, lastChunk);
                 require(hash == hash);
             }
         }
@@ -629,12 +637,12 @@ fn modexp_group_index_and_sha256_builtins_reject_mistyped_operands() {
             "sha256Initialize operand has type 'int', expected 'bytes'",
         ),
         (
-            "bytes32 ctx, int x",
+            "bytes ctx, int x",
             "let r = sha256Update(ctx, x);",
             "sha256Update operand has type 'int', expected 'bytes'",
         ),
         (
-            "bytes32 ctx, int x",
+            "bytes ctx, int x",
             "let r = sha256Finalize(ctx, x);",
             "sha256Finalize operand has type 'int', expected 'bytes'",
         ),
@@ -650,11 +658,6 @@ fn bytes32_operands_accept_only_32_byte_literals() {
     let word = format!("0x{}", "01".repeat(32));
     let short = format!("0x{}", "01".repeat(31));
     for (params, statement) in [
-        ("bytes d", "let r = sha256Update(LIT, d); require(r == r);"),
-        (
-            "bytes d",
-            "let r = sha256Finalize(LIT, d); require(r == r);",
-        ),
         (
             "pubkey p, pubkey q",
             "require(ecMulScalarVerify(LIT, p, q));",
@@ -813,11 +816,11 @@ fn unary_negation_precedence_and_spend_shape() {
         ("modExp(-2, 3, 5)", "2 OP_NEGATE 3 5 OP_MODEXP"),
     ] {
         let source = format!(
-            "contract Unary() {{ function spend() {{ let result = {expression}; require(result == result); }} }}"
+            "contract Unary() {{ function spend() {{ let result = {expression}; @allow(self-comparison, \"any result type\") require(result == result); }} }}"
         );
         let output = compile(&source).unwrap_or_else(|error| panic!("{expression}: {error}"));
         assert!(
-            output.warnings.is_empty(),
+            crate::common::feature_warnings(&output).is_empty(),
             "{expression}: {:?}",
             output.warnings
         );
@@ -856,7 +859,11 @@ fn unary_negation_in_loops_and_conditions() {
     "#,
     )
     .expect("negated loop operands compile");
-    assert!(output.warnings.is_empty(), "{:?}", output.warnings);
+    assert!(
+        crate::common::feature_warnings(&output).is_empty(),
+        "{:?}",
+        output.warnings
+    );
     let asm = crate::common::arkade_asm(&output, "spend");
     for index in 0..2 {
         assert!(
