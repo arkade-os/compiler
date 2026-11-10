@@ -12,7 +12,6 @@ use crate::models::{
     Requirement, Statement, TapItem, EMULATOR,
 };
 use crate::properties::{OutputProperty, ThisProperty, TxProperty};
-use crate::validator::operand_root;
 
 /// An output the function constrains at a fixed place; outputs at a computed index are not
 /// tracked.
@@ -167,16 +166,16 @@ fn spending_paths<'a>(
             })
             .unwrap_or_default();
         let bound = shared_tweak_func(&tapscript.name, keys).ok().flatten();
-        if keys.iter().any(
-            |key| matches!(key, KeyExpr::Ident(base) | KeyExpr::Tweak { base, .. } if base == EMULATOR),
-        ) {
+        if keys.iter().any(|key| {
+            key.is_emulator() || matches!(key, KeyExpr::Tweak { base, .. } if base == EMULATOR)
+        }) {
             emulated.extend(bound.clone());
         }
         // Every key of a leaf signs. The server and emulator co-sign every offchain spend, and a
         // tweaked key's enclave signs whatever its covenant passes, so only a constructor key
         // authorizes the spend.
         let signed = keys.iter().any(|key| {
-            matches!(key, KeyExpr::Ident(name) if contract.parameters.iter().any(|p| p.name == operand_root(name)))
+            matches!(key, KeyExpr::Ident(path) if contract.parameters.iter().any(|p| p.name == path.root))
         });
         let covenant = bound.and_then(|name| covenants.iter().find(|(f, _)| f.name == name));
         paths.push((signed, covenant.copied()));

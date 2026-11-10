@@ -1,7 +1,7 @@
 use crate::diagnostics::{CompileError, Span};
 use crate::models::{
-    ArraySize, AssignmentTarget, Constant, Contract, ExprKind, Expression, KeyExpr,
-    LocatedStatement, Path, Requirement, Statement, TapItem, TypeName,
+    ArraySize, AssignmentTarget, Constant, Contract, ExprKind, Expression, LocatedStatement, Path,
+    Requirement, Statement, TypeName,
 };
 use crate::operators::{BinaryOperator, OperatorClass, UnaryOperator};
 use std::collections::HashMap;
@@ -31,29 +31,6 @@ pub(crate) fn fold(contract: &mut Contract) -> Result<Vec<(Path, Span)>, Compile
     for tapscript in &mut contract.tapscripts {
         for input in &mut tapscript.inputs {
             fold_type(&mut input.param_type, &values).map_err(at(input.span))?;
-        }
-        for item in &mut tapscript.items {
-            match item {
-                TapItem::Older { value, .. } | TapItem::After { value, .. } => {
-                    if let Some(text) = values.get(value.as_str()) {
-                        *value = text.clone();
-                    }
-                }
-                TapItem::Hash { preimage, hash, .. } => {
-                    fold_named_index(preimage, &values);
-                    fold_named_index(hash, &values);
-                }
-                TapItem::Sig { keys, sigs, .. } => {
-                    for key in keys {
-                        if let KeyExpr::Ident(name) = key {
-                            fold_named_index(name, &values);
-                        }
-                    }
-                    for name in sigs {
-                        fold_named_index(name, &values);
-                    }
-                }
-            }
         }
     }
     Ok(uses)
@@ -473,24 +450,5 @@ fn fold_expression(
     }
     for child in crate::models::child_exprs_mut(expression) {
         fold_expression(child, values, uses);
-    }
-}
-
-fn fold_named_index(name: &mut String, values: &HashMap<String, String>) {
-    if let Some(value) = values.get(name).filter(|value| value.starts_with("0x")) {
-        *name = value.clone();
-        return;
-    }
-    let mut cursor = 0;
-    while let Some(open) = name[cursor..].find('[').map(|offset| cursor + offset + 1) {
-        let Some(close) = name[open..].find(']').map(|offset| open + offset) else {
-            break;
-        };
-        cursor = if let Some(value) = values.get(&name[open..close]) {
-            name.replace_range(open..close, value);
-            open + value.len() + 1
-        } else {
-            close + 1
-        };
     }
 }

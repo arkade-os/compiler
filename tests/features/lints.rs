@@ -464,7 +464,7 @@ fn a_read_by_a_dead_local_does_not_count_as_a_use() {
 #[test]
 fn a_tapscript_reading_an_element_or_field_uses_its_parameter() {
     let source = r#"struct Policy { pubkey owner; bytes32 lockHash; }
-    contract Vault(pubkey[2] guardians, Policy policy, int exitDelay, int unused) {
+    contract Vault(pubkey[2] guardians, Policy policy, Policy[2] backups, int exitDelay, int unused) {
         function exit(signature g0Sig, signature g1Sig) tapscript {
             require(older(exitDelay));
             require(checkMultisig([guardians[0], guardians[1]], [g0Sig, g1Sig], 2));
@@ -472,6 +472,9 @@ fn a_tapscript_reading_an_element_or_field_uses_its_parameter() {
         function claim(bytes32 preimage, signature serverSig, signature ownerSig) tapscript {
             require(sha256(preimage) == policy.lockHash);
             require(checkMultisig([server, policy.owner], [serverSig, ownerSig], 2));
+        }
+        function recover(signature serverSig, signature backupSig) tapscript {
+            require(checkMultisig([server, backups[1].owner], [serverSig, backupSig], 2));
         }
     }"#;
     let messages: Vec<String> = diagnostics_with(source, &Levels::default())

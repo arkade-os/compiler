@@ -3,7 +3,7 @@
 
 use crate::models::{
     AbiFunctionGroup, AbiLeaf, ArkadeCovenant, Contract, HashFn, KeyExpr, NamedTapscript,
-    Parameter, TapItem, TimeUnit, WitnessElement,
+    Parameter, Path, TapItem, TimeUnit, WitnessElement,
 };
 use crate::models::{EMULATOR, SERVER, SERVER_EXIT_DELAY};
 use crate::opcodes::{
@@ -82,16 +82,16 @@ pub fn assemble_closure(ts: &NamedTapscript) -> Result<Closure, String> {
                         ts.name
                     ));
                 }
-                condition = Some((hash_fn.clone(), hash.clone()));
-                preimage_width =
-                    ts.inputs
-                        .iter()
-                        .find(|p| p.name == *preimage)
-                        .and_then(|p| match p.param_type.ark_type() {
-                            ArkType::Bytes20 => Some(20),
-                            ArkType::Bytes32 => Some(32),
-                            _ => None,
-                        });
+                condition = Some((hash_fn.clone(), hash.to_string()));
+                preimage_width = ts
+                    .inputs
+                    .iter()
+                    .find(|p| *preimage == *p.name)
+                    .and_then(|p| match p.param_type.ark_type() {
+                        ArkType::Bytes20 => Some(20),
+                        ArkType::Bytes32 => Some(32),
+                        _ => None,
+                    });
             }
             TapItem::Older { value, unit } | TapItem::After { value, unit } => {
                 if multisig.is_some() {
@@ -106,7 +106,7 @@ pub fn assemble_closure(ts: &NamedTapscript) -> Result<Closure, String> {
                         ts.name
                     ));
                 }
-                timelock = Some((value.clone(), *unit));
+                timelock = Some((value.to_string(), *unit));
                 is_csv = matches!(item, TapItem::Older { .. });
             }
             TapItem::Sig {
@@ -323,7 +323,7 @@ pub fn validate_arkd_rules(
     > = std::collections::BTreeMap::new();
     for k in &c.keys {
         match k {
-            KeyExpr::Ident(id) if !in_scope(id) => {
+            KeyExpr::Ident(id) if !in_scope(&id.key()) => {
                 return Err(format!("unknown key `{id}` in tapscript `{}`", ts.name));
             }
             KeyExpr::Tweak { base, func } if base != EMULATOR => {
@@ -400,7 +400,7 @@ pub fn validate_arkd_rules(
                 ));
             }
             for s in sigs {
-                if !sig_input(s) {
+                if !sig_input(&s.key()) {
                     return Err(format!(
                         "tapscript `{}`: signature operand `{s}` is not a declared `signature` input",
                         ts.name
@@ -419,19 +419,22 @@ pub fn validate_arkd_rules(
                 preimage,
                 hash,
             } => {
-                if !name_declared(preimage) {
+                if !name_declared(&preimage.key()) {
                     return Err(format!(
                         "tapscript `{}`: hash preimage `{preimage}` is not a declared input or constructor parameter",
                         ts.name
                     ));
                 }
-                if !hash.starts_with("0x") && !name_declared(hash) {
+                let Some(hash) = hash.path().map(Path::key) else {
+                    continue;
+                };
+                if !name_declared(&hash) {
                     return Err(format!(
                         "tapscript `{}`: hash value `{hash}` is not a declared input or constructor parameter",
                         ts.name
                     ));
                 }
-                if let Some(t) = name_type(hash).filter(|t| !digest_accepts(hash_fn, t)) {
+                if let Some(t) = name_type(&hash).filter(|t| !digest_accepts(hash_fn, t)) {
                     return Err(format!(
                         "tapscript `{}`: {} value `{hash}` has type '{}', expected {}",
                         ts.name,
@@ -444,6 +447,7 @@ pub fn validate_arkd_rules(
             TapItem::Older { value, unit } | TapItem::After { value, unit } => {
                 let csv = matches!(item, TapItem::Older { .. });
                 let call = if csv { "older" } else { "after" };
+                let value = value.to_string();
                 let operand = match unit {
                     Some(TimeUnit::Blocks) => format!("blocks({value})"),
                     Some(TimeUnit::Seconds) => format!("seconds({value})"),
@@ -458,9 +462,9 @@ pub fn validate_arkd_rules(
                     }
                     continue;
                 }
-                let Some(n) = timelock_number(value) else {
+                let Some(n) = timelock_number(&value) else {
                     if unit.is_some() {
-                        let hint = if name_declared(value) {
+                        let hint = if name_declared(&value) {
                             format!("; pass `{value}` without a unit to push it raw")
                         } else {
                             String::new()
@@ -470,13 +474,13 @@ pub fn validate_arkd_rules(
                             ts.name
                         ));
                     }
-                    if !name_declared(value) {
+                    if !name_declared(&value) {
                         return Err(format!(
                             "tapscript `{}`: timelock `{value}` is not a literal, declared input, or constructor parameter",
                             ts.name
                         ));
                     }
-                    if let Some(t) = name_type(value).filter(|t| *t != ArkType::Int) {
+                    if let Some(t) = name_type(&value).filter(|t| *t != ArkType::Int) {
                         return Err(format!(
                             "tapscript `{}`: timelock `{value}` has type '{}', expected 'int'",
                             ts.name,
@@ -650,7 +654,7 @@ fn injected_signature_names(ts: &NamedTapscript) -> std::collections::HashSet<St
         if let TapItem::Sig { keys, sigs, .. } = item {
             for (key, sig) in keys.iter().zip(sigs) {
                 if key.is_cosigner() {
-                    names.insert(sig.clone());
+                    names.insert(sig.to_string());
                 }
             }
         }
@@ -832,7 +836,7 @@ fn synthesize_default_leaf(func: &str) -> AbiLeaf {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::{Contract, Function, Parameter};
+    use crate::models::{Contract, Function, Parameter, TapOperand};
 
     fn ts(items: Vec<TapItem>) -> NamedTapscript {
         NamedTapscript {
@@ -866,7 +870,7 @@ mod tests {
             TapItem::Hash {
                 hash_fn: HashFn::Hash160,
                 preimage: "preimage".into(),
-                hash: "preimageHash".into(),
+                hash: TapOperand::Name("preimageHash".into()),
             },
             TapItem::Sig {
                 keys: vec![ident("server"), ident("emulator")],
@@ -882,7 +886,7 @@ mod tests {
     fn older_then_multisig_is_csv_exit() {
         let c = assemble_closure(&ts(vec![
             TapItem::Older {
-                value: "512".into(),
+                value: TapOperand::Literal("512".into()),
                 unit: None,
             },
             TapItem::Sig {
@@ -900,7 +904,7 @@ mod tests {
     fn after_then_multisig_is_cltv_forfeit() {
         let c = assemble_closure(&ts(vec![
             TapItem::After {
-                value: "cancelTime".into(),
+                value: TapOperand::Name("cancelTime".into()),
                 unit: None,
             },
             TapItem::Sig {
@@ -919,10 +923,10 @@ mod tests {
             TapItem::Hash {
                 hash_fn: HashFn::Hash160,
                 preimage: "p".into(),
-                hash: "h".into(),
+                hash: TapOperand::Name("h".into()),
             },
             TapItem::After {
-                value: "t".into(),
+                value: TapOperand::Name("t".into()),
                 unit: None,
             },
             TapItem::Sig {
@@ -941,7 +945,7 @@ mod tests {
     #[test]
     fn missing_multisig_is_rejected() {
         let err = assemble_closure(&ts(vec![TapItem::Older {
-            value: "x".into(),
+            value: TapOperand::Name("x".into()),
             unit: None,
         }]))
         .unwrap_err();
@@ -959,7 +963,7 @@ mod tests {
             TapItem::Hash {
                 hash_fn: HashFn::Hash160,
                 preimage: "p".into(),
-                hash: "h".into(),
+                hash: TapOperand::Name("h".into()),
             },
         ]))
         .unwrap_err();
@@ -1045,7 +1049,7 @@ mod tests {
         let sigs = keys
             .iter()
             .enumerate()
-            .map(|(i, _)| format!("s{i}"))
+            .map(|(i, _)| Path::new(format!("s{i}")))
             .collect();
         TapItem::Sig {
             keys,
@@ -1234,7 +1238,7 @@ mod tests {
             inputs: sig_params(1),
             items: vec![
                 TapItem::Older {
-                    value: "512".into(),
+                    value: TapOperand::Literal("512".into()),
                     unit: None,
                 },
                 sig(vec![ident("owner")]),
@@ -1343,7 +1347,10 @@ mod tests {
                 Some("Unix timestamp in 500000000..=4294967295"),
             ),
         ] {
-            let value = value.to_string();
+            let value = match value.parse::<i128>() {
+                Ok(_) => TapOperand::Literal(value.to_string()),
+                Err(_) => TapOperand::Name(value.into()),
+            };
             let timelock = if csv {
                 TapItem::Older {
                     value: value.clone(),
@@ -1452,7 +1459,7 @@ mod tests {
             inputs: sig_params(1),
             items: vec![
                 TapItem::After {
-                    value: "typoDelay".into(),
+                    value: TapOperand::Name("typoDelay".into()),
                     unit: None,
                 },
                 sig(vec![ident("owner")]),
@@ -1489,7 +1496,7 @@ mod tests {
                 TapItem::Hash {
                     hash_fn: HashFn::Hash160,
                     preimage: "preimage".into(),
-                    hash: "typoHash".into(),
+                    hash: TapOperand::Name("typoHash".into()),
                 },
                 TapItem::Sig {
                     keys: vec![ident("server")],
@@ -1539,7 +1546,7 @@ mod tests {
                 TapItem::Hash {
                     hash_fn: HashFn::Hash160,
                     preimage: "preimage".into(),
-                    hash: "preimageHash".into(),
+                    hash: TapOperand::Name("preimageHash".into()),
                 },
                 sig(vec![ident("server"), ident("emulator")]),
             ],
@@ -1576,7 +1583,7 @@ mod tests {
             inputs: vec![],
             items: vec![
                 TapItem::After {
-                    value: "refundTime".into(),
+                    value: TapOperand::Name("refundTime".into()),
                     unit: None,
                 },
                 sig(vec![ident("server"), ident("emulator")]),
@@ -1612,7 +1619,7 @@ mod tests {
             }],
             items: vec![
                 TapItem::Older {
-                    value: "512".into(),
+                    value: TapOperand::Literal("512".into()),
                     unit: Some(TimeUnit::Seconds),
                 },
                 TapItem::Sig {
