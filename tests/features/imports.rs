@@ -596,7 +596,7 @@ fn imported_helpers_check_returns_recursion_and_namespace_shadowing() {
 #[test]
 fn qualified_static_calls_are_distinct_from_group_methods() {
     project("main.ark", &[
-        ("main.ark", r#"import "helper.ark"; contract Main(bytes32 txid) { function spend(int index) { require(Helper.controlIs(txid, index)); } }"#),
+        ("main.ark", r#"import "helper.ark"; contract Main(bytes32 txid) { function spend(int index) { require(Helper.controlIs(txid, index)); require(Helper.controlIs(sha256(txid), index)); } }"#),
         ("helper.ark", "contract Helper() { static function controlIs(bytes32 txid, int index) bool { return index == size(txid) - 32; } }"),
     ]).unwrap();
 }
