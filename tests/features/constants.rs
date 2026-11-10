@@ -163,14 +163,20 @@ fn constant_indices_fold_in_named_operands() {
             arkade_inputs(&literal, "spend")
         );
     }
-    let source = "contract Vault(pubkey[2] keys, bytes32[2] hashes) { const int FIRST = 0; function exit(signature sig, bytes preimage) tapscript { require(sha256(preimage) == hashes[FIRST]); require(older(10)); require(checkSig(sig, keys[FIRST])); } }";
-    let output = compile(source).unwrap();
+    let source = "contract Vault(pubkey[2] keys, bytes32[2] hashes, int[2] delays) { const int FIRST = 0; function exit(signature sig, bytes preimage) tapscript { require(sha256(preimage) == hashes[FIRST]); require(older(delays[FIRST])); require(checkSig(sig, keys[FIRST])); } }";
     let literal = compile(&source.replace("[FIRST]", "[0]")).unwrap();
-    assert_eq!(
-        leaf_asm(&output, "exit", "exit"),
-        leaf_asm(&literal, "exit", "exit")
-    );
-    assert_eq!(witness_names(&output, "exit", "exit"), ["sig", "preimage"]);
+    let spaced = source
+        .replace("[FIRST]", "[ FIRST ] ")
+        .replace("(preimage)", "(preimage )")
+        .replace("(sig,", "(sig ,");
+    for source in [source, &spaced] {
+        let output = compile(source).unwrap_or_else(|e| panic!("{source}: {e}"));
+        assert_eq!(
+            leaf_asm(&output, "exit", "exit"),
+            leaf_asm(&literal, "exit", "exit")
+        );
+        assert_eq!(witness_names(&output, "exit", "exit"), ["sig", "preimage"]);
+    }
 
     for value in ["2", "true"] {
         let ty = if value == "true" { "bool" } else { "int" };
