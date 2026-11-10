@@ -28,74 +28,47 @@ pub(super) fn validate_binding_requirement(
             }
         }
         Requirement::Comparison { left, op, right } => {
-            let left_type = left.ty.clone();
-            let right_type = right.ty.clone();
-            let composite = matches!(left_type, ArkType::Array(..) | ArkType::Struct(..))
-                || matches!(right_type, ArkType::Array(..) | ArkType::Struct(..));
-            if composite {
-                if op.class() != OperatorClass::Equality {
-                    issues.push(ValidationIssue::error(format!(
-                        "function '{function_name}': '{op}' is not defined for composite values"
-                    )));
-                } else if left_type != ArkType::Unknown
-                    && right_type != ArkType::Unknown
-                    && left_type != right_type
-                {
-                    issues.push(ValidationIssue::error(format!(
-                        "function '{}': comparison '{}' is not defined between '{}' and '{}'",
-                        function_name,
-                        op,
-                        left_type.as_str(),
-                        right_type.as_str()
-                    )));
-                }
-            }
-            let before = issues.len();
-            validate_binding_expression(left, function_name, scopes, issues, !composite);
-            validate_binding_expression(right, function_name, scopes, issues, !composite);
-            if issues.len() == before {
-                let span = crate::diagnostics::Span {
-                    start: left.span.start,
-                    end: right.span.end,
-                };
-                validate_scalar_comparison(
-                    *op,
-                    [left_type, right_type],
-                    span,
-                    function_name,
-                    issues,
-                );
-            }
+            let span = crate::diagnostics::Span {
+                start: left.span.start,
+                end: right.span.end,
+            };
+            validate_comparison(left, *op, right, span, function_name, scopes, issues);
         }
     }
 }
 
-/// Scalar operand types of a comparison; composite operands are checked where they are bound.
-fn validate_scalar_comparison(
+/// Arrays and structs compare only with `==` and `!=`, against the same type.
+fn validate_comparison(
+    left: &Expression,
     op: BinaryOperator,
-    [left, right]: [ArkType; 2],
+    right: &Expression,
     span: crate::diagnostics::Span,
     function_name: &str,
+    scopes: &BindingScopes,
     issues: &mut Vec<ValidationIssue>,
 ) {
-    let scalar = |t: &ArkType| {
-        !matches!(
-            t,
-            ArkType::Unknown | ArkType::Array(..) | ArkType::Struct(..)
-        )
-    };
-    if !scalar(&left) || !scalar(&right) {
-        return;
+    let before = issues.len();
+    let mut composite = false;
+    for operand in [left, right] {
+        let whole = matches!(operand.ty, ArkType::Array(..) | ArkType::Struct(..));
+        validate_binding_expression(operand, function_name, scopes, issues, !whole);
+        composite |= whole;
     }
+    let (left, right) = (&left.ty, &right.ty);
     let bytes_like = crate::types::is_bytes_like;
     let compatible = match op.class() {
+        class if composite && class != OperatorClass::Equality => false,
+        _ if issues.len() != before || *left == ArkType::Unknown || *right == ArkType::Unknown => {
+            return
+        }
+        OperatorClass::Equality if composite => left == right,
         OperatorClass::Equality => {
             left == right
-                || (bytes_like(&left) && right == ArkType::Bytes)
-                || (bytes_like(&right) && left == ArkType::Bytes)
+                || (bytes_like(left) && *right == ArkType::Bytes)
+                || (bytes_like(right) && *left == ArkType::Bytes)
         }
         // A bool is a script number on the stack, but ordering booleans is meaningless.
-        OperatorClass::Ordering => left == ArkType::Int && right == ArkType::Int,
+        OperatorClass::Ordering => *left == ArkType::Int && *right == ArkType::Int,
         _ => true,
     };
     if !compatible {
@@ -273,8 +246,9 @@ pub(super) fn validate_binding_expression(
             }
         }
         ExprKind::BinaryOp { left, op, right } if op.compares() => {
-            let types = [left, right].map(|operand| operand.ty.clone());
-            validate_scalar_comparison(*op, types, expression.span, function_name, issues);
+            let span = expression.span;
+            validate_comparison(left, *op, right, span, function_name, scopes, issues);
+            children_checked = true;
         }
         ExprKind::Unary { op, value } => {
             let (operator, expected) = (op.symbol(), ArkType::parse(op.operand_type()));
