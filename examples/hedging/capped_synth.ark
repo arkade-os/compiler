@@ -1,0 +1,256 @@
+// CappedSynth Contract  (SKETCH — design alternative to InventoryHedge)
+//
+// A perpetual, BTC-settled, *margined* synthetic — a bounded contract-for-
+// difference between two parties. It is InventoryHedge with three changes that
+// turn a fully-funded forward into a capital-efficient, capped "perp":
+//
+//   1. PnL is struck against an entryPrice (not an absolute fiat claim), so the
+//      posted pot can be MARGIN (< notional). That is the capital efficiency a
+//      market maker actually wants when hedging residual delta.
+//   2. The headline path `settle` is COOPERATIVE: both legs co-sign the
+//      settlement price. No oracle, hence zero adverse selection (doc §9.b) —
+//      a co-signed price cannot be lag-arbitraged because neither side will
+//      sign a transaction whose outputs use a price it did not agree to.
+//   3. The oracle path survives only as a FALLBACK for an unresponsive
+//      counterparty, and it CHARGES the adverse-selection premium (exitFeeBps)
+//      to the initiator instead of waving it away.
+//
+// Why no liquidation engine (the whole point):
+//   Every settlement clamps each leg's payout into [0, totalCollateral]. The
+//   pot bounds the loss by construction — the claim leg can lose at most its own
+//   margin, the long leg at most its own. There is therefore NOTHING to
+//   liquidate and no keeper to run. This is the design rung that fits Arkade's
+//   settlement-container model: on Bitcoin you can have self-custody OR fast
+//   liquidations, not both, so build the instrument that needs no liquidations.
+//   The price of that is a payout CAP (the tail beyond the pot is unhedged) —
+//   acceptable for a delta-flat hedger whose underlying loss is itself bounded.
+//
+// Margin / PnL model (sats), claim leg = SHORT BTC / long fiat:
+//   newNotionalFiat = notionalFiat × (1 + fundingRatePerSec × elapsed / 1e12)
+//   entrySats       = newNotionalFiat × 1e8 / entryPrice    (value at strike)
+//   settleSats      = newNotionalFiat × 1e8 / settlePrice   (value now)
+//   claimPnL        = settleSats − entrySats   (short gains as price falls)
+//   gross           = claimMargin + claimPnL
+//   claimPayout     = clamp(gross, 0, totalCollateral)
+//   longPayout      = totalCollateral − claimPayout
+//   => claim net ∈ [−claimMargin, longMargin]; symmetric, fully bounded.
+//
+// INT64 CEILING (fail-closed, inherited verbatim from inventory_hedge.ark):
+// `newNotionalFiat × 1e8` overflows signed int64 past ~9.2e10 minor units.
+// OP_MUL64 is emitted with OP_VERIFY, so an overflow ABORTS settlement rather
+// than producing a wrong payout — a liveness ceiling on size, not a theft
+// vector. Size positions well under the bound.
+//
+// Funding: inherited from InventoryHedge — accrues into notionalFiat, guarded
+// >= 0 at every update. (A truer perp would transfer margin between legs rather
+// than resize notional; deferred — the resize model is the already-audited one.)
+//
+// Oracle model (Fuji-style): msg = sha256(ticker || price || timestamp), price
+// and timestamp as 8-byte LE; freshness tx.offchainTime − oracleTime <= 600s.
+
+import "single_sig.ark";
+
+options {
+  server = server;
+  exit = exit;
+}
+
+contract CappedSynth(
+  pubkey  claimPk,            // SHORT-BTC / long-fiat leg (the hedging desk)
+  pubkey  longPk,            // LONG-BTC leg (treasury / counterparty)
+  pubkey  oraclePk,          // price feed key; only its signatures are accepted
+  bytes32 ticker,            // BTC/<fiat> feed id (e.g. sha256("BTC/USD"))
+  int     entryPrice,        // BTC/fiat strike, RFQ-signed at open; immutable
+  int     notionalFiat,      // synthetic size, fiat minor units; mutates on funding
+  int     totalCollateral,   // margin pot in sats (claimMargin + longMargin)
+  int     claimMargin,       // sats the claim leg posted; long posted the rest
+  int     fundingRatePerSec, // signed fixed-point scale 1e12; updates enforce >= 0
+  int     lastUpdate,        // unix seconds; basis for funding accrual
+  int     exitFeeBps,        // adverse-selection premium charged on the oracle fallback
+  int     exit               // exit timelock in blocks
+) {
+
+  // -------------------------------------------------------------------------
+  // TRANSFER — desk reassigns its leg to a new key. Pure key swap, no oracle.
+  // -------------------------------------------------------------------------
+  function transfer(signature claimSig, pubkey newClaimPk) {
+    require(checkSig(claimSig, claimPk), "invalid claim sig");
+
+    require(
+      tx.outputs[0].scriptPubKey == new CappedSynth(
+        newClaimPk, longPk, oraclePk, ticker, entryPrice,
+        notionalFiat, totalCollateral, claimMargin, fundingRatePerSec,
+        lastUpdate, exitFeeBps, exit
+      ),
+      "invalid transfer output"
+    );
+    require(tx.outputs[0].value >= totalCollateral, "collateral not preserved");
+  }
+
+  // -------------------------------------------------------------------------
+  // ADD MARGIN — either leg tops up the pot. More margin is always safe for the
+  // counterparty (it can only raise the cap), so no oracle / ratio check. The
+  // depositor also raises its own claimMargin iff it is the claim leg.
+  // -------------------------------------------------------------------------
+  function addMargin(signature longSig, int amount) {
+    require(checkSig(longSig, longPk), "invalid long-leg sig");
+    require(amount > 0, "zero amount");
+
+    int newTotalCollateral = totalCollateral + amount;
+
+    require(
+      tx.outputs[0].scriptPubKey == new CappedSynth(
+        claimPk, longPk, oraclePk, ticker, entryPrice,
+        notionalFiat, newTotalCollateral, claimMargin, fundingRatePerSec,
+        lastUpdate, exitFeeBps, exit
+      ),
+      "invalid output"
+    );
+    require(tx.outputs[0].value >= newTotalCollateral, "margin not deposited");
+  }
+
+  // -------------------------------------------------------------------------
+  // UPDATE FUNDING — long leg rolls accrued funding into notionalFiat and sets a
+  // new rate. Inherited verbatim from InventoryHedge, including the >= 0 guard
+  // and the negative-initial-rate KNOWN LIMITATION (unsupported by convention;
+  // a validating factory would seal it — out of scope for the sketch).
+  // -------------------------------------------------------------------------
+  function updateFunding(signature longSig, int newFundingRatePerSec) {
+    require(checkSig(longSig, longPk), "invalid long-leg sig");
+    require(newFundingRatePerSec >= 0, "negative funding rate disallowed");
+
+    int elapsed           = tx.offchainTime - lastUpdate;
+    require(elapsed >= 0, "clock regression");
+    int rateElapsedScaled = fundingRatePerSec * elapsed / 1000000;
+    int delta             = notionalFiat * rateElapsedScaled / 1000000;
+    int newNotionalFiat   = notionalFiat + delta;
+    require(newNotionalFiat > 0, "notional wiped by funding");
+    if (fundingRatePerSec != 0) {
+      require(delta > 0, "no accrual; wait longer");
+    }
+
+    require(
+      tx.outputs[0].scriptPubKey == new CappedSynth(
+        claimPk, longPk, oraclePk, ticker, entryPrice,
+        newNotionalFiat, totalCollateral, claimMargin, newFundingRatePerSec,
+        tx.offchainTime, exitFeeBps, exit
+      ),
+      "invalid update output"
+    );
+    require(tx.outputs[0].value >= totalCollateral, "collateral not preserved");
+  }
+
+  // -------------------------------------------------------------------------
+  // SETTLE — COOPERATIVE close at a co-signed price. THE primary path.
+  // Both legs sign the spending tx, whose outputs are derived from settlePrice;
+  // neither will sign outputs computed from a price it rejects, so settlePrice
+  // is agreed by construction. No oracle => zero adverse selection, no fee.
+  // -------------------------------------------------------------------------
+  function settle(
+    signature claimSig,
+    signature longSig,
+    int       settlePrice
+  ) {
+    require(checkSig(claimSig, claimPk), "invalid claim sig");
+    require(checkSig(longSig, longPk), "invalid long-leg sig");
+    require(settlePrice > 0, "invalid settle price");
+
+    int elapsed           = tx.offchainTime - lastUpdate;
+    require(elapsed >= 0, "clock regression");
+    int rateElapsedScaled = fundingRatePerSec * elapsed / 1000000;
+    int delta             = notionalFiat * rateElapsedScaled / 1000000;
+    int newNotionalFiat   = notionalFiat + delta;
+    require(newNotionalFiat > 0, "notional wiped by funding");
+
+    int entrySats  = newNotionalFiat * 100000000 / entryPrice;
+    int settleSats = newNotionalFiat * 100000000 / settlePrice;
+    int gross      = claimMargin + settleSats - entrySats;
+
+    // clamp(gross, 0, totalCollateral) with dust-aware second output.
+    if (gross <= 0) {
+      // claim lost >= its margin: long takes the whole pot.
+      require(tx.outputs[0].value >= totalCollateral, "long leg underpaid");
+      require(tx.outputs[0].scriptPubKey == new SingleSig(longPk), "output 0 not long leg");
+    } else {
+      if (gross >= totalCollateral) {
+        // claim gained >= long's margin: claim takes the whole pot.
+        require(tx.outputs[0].value >= totalCollateral, "claim underpaid");
+        require(tx.outputs[0].scriptPubKey == new SingleSig(claimPk), "output 0 not claim");
+      } else {
+        require(tx.outputs[0].value >= gross, "claim underpaid");
+        require(tx.outputs[0].scriptPubKey == new SingleSig(claimPk), "output 0 not claim");
+        int longPayout = totalCollateral - gross;
+        if (longPayout > 330) {
+          require(tx.outputs[1].value >= longPayout, "long leg underpaid");
+          require(tx.outputs[1].scriptPubKey == new SingleSig(longPk), "output 1 not long leg");
+        }
+      }
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // SETTLE (ORACLE FALLBACK) — claim-initiated close when the long leg is
+  // unresponsive. Same clamp math, but the claim leg pays exitFeeBps of its
+  // gross payout to the long leg: the adverse-selection premium for holding the
+  // oracle-delay timing option (doc §9.b). A symmetric long-initiated variant
+  // mirrors this with the fee flowing the other way (omitted in the sketch).
+  // A production build would also collar settlePrice and/or gate this leaf
+  // behind a cooperative-settle timeout in blocks (tx.time) — deferred.
+  // -------------------------------------------------------------------------
+  function settleOracleClaim(
+    signature claimSig,
+    int       oraclePrice,
+    int       oracleTime,
+    signature oracleSig
+  ) {
+    require(checkSig(claimSig, claimPk), "invalid claim sig");
+    require(oraclePrice > 0, "invalid oracle price");
+    require(exitFeeBps >= 0, "invalid exit fee");
+
+    int oracleAge = tx.offchainTime - oracleTime;
+    require(oracleAge >= 0, "future-dated oracle");
+    require(oracleAge <= 600, "stale oracle");
+
+    let oracleMsg = sha256(ticker + oraclePrice + oracleTime);
+    require(checkSigFromStack(oracleSig, oraclePk, oracleMsg), "invalid oracle signature");
+
+    int elapsed           = tx.offchainTime - lastUpdate;
+    require(elapsed >= 0, "clock regression");
+    int rateElapsedScaled = fundingRatePerSec * elapsed / 1000000;
+    int delta             = notionalFiat * rateElapsedScaled / 1000000;
+    int newNotionalFiat   = notionalFiat + delta;
+    require(newNotionalFiat > 0, "notional wiped by funding");
+
+    int entrySats  = newNotionalFiat * 100000000 / entryPrice;
+    int settleSats = newNotionalFiat * 100000000 / oraclePrice;
+    int gross      = claimMargin + settleSats - entrySats;
+
+    if (gross <= 0) {
+      // claim wiped: nothing to fee, long takes the whole pot.
+      require(tx.outputs[0].value >= totalCollateral, "long leg underpaid");
+      require(tx.outputs[0].scriptPubKey == new SingleSig(longPk), "output 0 not long leg");
+    } else {
+      if (gross >= totalCollateral) {
+        // claim maxed: skim the fee off the cap, remainder of pot to long.
+        int feeMax       = totalCollateral * exitFeeBps / 10000;
+        int claimMaxNet  = totalCollateral - feeMax;
+        require(tx.outputs[0].value >= claimMaxNet, "claim underpaid");
+        require(tx.outputs[0].scriptPubKey == new SingleSig(claimPk), "output 0 not claim");
+        if (feeMax > 330) {
+          require(tx.outputs[1].value >= feeMax, "long leg fee underpaid");
+          require(tx.outputs[1].scriptPubKey == new SingleSig(longPk), "output 1 not long leg");
+        }
+      } else {
+        int fee        = gross * exitFeeBps / 10000;
+        int claimNet   = gross - fee;
+        int longPayout = totalCollateral - claimNet;
+        require(tx.outputs[0].value >= claimNet, "claim underpaid");
+        require(tx.outputs[0].scriptPubKey == new SingleSig(claimPk), "output 0 not claim");
+        if (longPayout > 330) {
+          require(tx.outputs[1].value >= longPayout, "long leg underpaid");
+          require(tx.outputs[1].scriptPubKey == new SingleSig(longPk), "output 1 not long leg");
+        }
+      }
+    }
+  }
+}

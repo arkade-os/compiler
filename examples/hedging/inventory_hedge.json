@@ -1,0 +1,1454 @@
+{
+  "contractName": "InventoryHedge",
+  "constructorInputs": [
+    {
+      "name": "claimPk",
+      "type": "pubkey"
+    },
+    {
+      "name": "longPk",
+      "type": "pubkey"
+    },
+    {
+      "name": "oraclePk",
+      "type": "pubkey"
+    },
+    {
+      "name": "ticker",
+      "type": "bytes32"
+    },
+    {
+      "name": "targetFiat",
+      "type": "int"
+    },
+    {
+      "name": "totalCollateral",
+      "type": "int"
+    },
+    {
+      "name": "fundingRatePerSec",
+      "type": "int"
+    },
+    {
+      "name": "lastUpdate",
+      "type": "int"
+    },
+    {
+      "name": "collateralRatioPct",
+      "type": "int"
+    },
+    {
+      "name": "exit",
+      "type": "int"
+    }
+  ],
+  "functions": [
+    {
+      "name": "transfer",
+      "functionInputs": [
+        {
+          "name": "claimSig",
+          "type": "signature"
+        },
+        {
+          "name": "newClaimPk",
+          "type": "pubkey"
+        }
+      ],
+      "witnessSchema": [
+        {
+          "name": "claimSig",
+          "type": "signature",
+          "encoding": "schnorr-64"
+        },
+        {
+          "name": "newClaimPk",
+          "type": "pubkey",
+          "encoding": "compressed-33"
+        },
+        {
+          "name": "serverSig",
+          "type": "signature",
+          "encoding": "schnorr-64"
+        }
+      ],
+      "serverVariant": true,
+      "require": [
+        {
+          "type": "signature"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "serverSignature"
+        }
+      ],
+      "asm": [
+        "<claimPk>",
+        "<claimSig>",
+        "OP_CHECKSIG",
+        "0",
+        "OP_INSPECTOUTPUTSCRIPTPUBKEY",
+        "<VTXO:InventoryHedge(<newClaimPk>,<longPk>,<oraclePk>,<ticker>,<targetFiat>,<totalCollateral>,<fundingRatePerSec>,<lastUpdate>,<collateralRatioPct>,<exit>)>",
+        "OP_EQUAL",
+        "0",
+        "OP_INSPECTOUTPUTVALUE",
+        "<totalCollateral>",
+        "OP_GREATERTHANOREQUAL64",
+        "OP_VERIFY",
+        "<SERVER_KEY>",
+        "<serverSig>",
+        "OP_CHECKSIG"
+      ]
+    },
+    {
+      "name": "transfer",
+      "functionInputs": [
+        {
+          "name": "claimSig",
+          "type": "signature"
+        },
+        {
+          "name": "newClaimPk",
+          "type": "pubkey"
+        },
+        {
+          "name": "claimPkSig",
+          "type": "signature"
+        },
+        {
+          "name": "longPkSig",
+          "type": "signature"
+        },
+        {
+          "name": "newClaimPkSig",
+          "type": "signature"
+        }
+      ],
+      "witnessSchema": [
+        {
+          "name": "claimPkSig",
+          "type": "signature",
+          "encoding": "schnorr-64"
+        },
+        {
+          "name": "longPkSig",
+          "type": "signature",
+          "encoding": "schnorr-64"
+        },
+        {
+          "name": "newClaimPkSig",
+          "type": "signature",
+          "encoding": "schnorr-64"
+        }
+      ],
+      "serverVariant": false,
+      "require": [
+        {
+          "type": "nOfNMultisig",
+          "message": "3-of-3 signatures required (introspection fallback)"
+        },
+        {
+          "type": "older",
+          "message": "Exit timelock of exit blocks"
+        }
+      ],
+      "asm": [
+        "<claimPk>",
+        "<claimPkSig>",
+        "OP_CHECKSIGVERIFY",
+        "<longPk>",
+        "<longPkSig>",
+        "OP_CHECKSIGVERIFY",
+        "<newClaimPk>",
+        "<newClaimPkSig>",
+        "OP_CHECKSIG",
+        "<exit>",
+        "OP_CHECKSEQUENCEVERIFY",
+        "OP_DROP"
+      ]
+    },
+    {
+      "name": "updateFunding",
+      "functionInputs": [
+        {
+          "name": "longSig",
+          "type": "signature"
+        },
+        {
+          "name": "newFundingRatePerSec",
+          "type": "int"
+        }
+      ],
+      "witnessSchema": [
+        {
+          "name": "longSig",
+          "type": "signature",
+          "encoding": "schnorr-64"
+        },
+        {
+          "name": "newFundingRatePerSec",
+          "type": "int",
+          "encoding": "scriptnum"
+        },
+        {
+          "name": "serverSig",
+          "type": "signature",
+          "encoding": "schnorr-64"
+        }
+      ],
+      "serverVariant": true,
+      "require": [
+        {
+          "type": "signature"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "serverSignature"
+        }
+      ],
+      "asm": [
+        "<longPk>",
+        "<longSig>",
+        "OP_CHECKSIG",
+        "<newFundingRatePerSec>",
+        "OP_GREATERTHANOREQUAL",
+        "0",
+        "<tx.offchainTime >",
+        "<lastUpdate>",
+        "OP_SCRIPTNUMTOLE64",
+        "OP_SUB64",
+        "OP_VERIFY",
+        "<elapsed>",
+        "OP_GREATERTHANOREQUAL",
+        "0",
+        "<fundingRatePerSec>",
+        "OP_SCRIPTNUMTOLE64",
+        "<elapsed>",
+        "OP_SCRIPTNUMTOLE64",
+        "OP_MUL64",
+        "OP_VERIFY",
+        "1000000",
+        "OP_DIV64",
+        "OP_VERIFY",
+        "<targetFiat>",
+        "OP_SCRIPTNUMTOLE64",
+        "<rateElapsedScaled>",
+        "OP_SCRIPTNUMTOLE64",
+        "OP_MUL64",
+        "OP_VERIFY",
+        "1000000",
+        "OP_DIV64",
+        "OP_VERIFY",
+        "<targetFiat>",
+        "OP_SCRIPTNUMTOLE64",
+        "<delta>",
+        "OP_SCRIPTNUMTOLE64",
+        "OP_ADD64",
+        "OP_VERIFY",
+        "<newTargetFiat>",
+        "0",
+        "OP_GREATERTHAN",
+        "<fundingRatePerSec>",
+        "OP_SCRIPTNUMTOLE64",
+        "0",
+        "OP_EQUAL",
+        "OP_NOT",
+        "OP_IF",
+        "<delta>",
+        "0",
+        "OP_GREATERTHAN",
+        "OP_ENDIF",
+        "0",
+        "OP_INSPECTOUTPUTSCRIPTPUBKEY",
+        "<VTXO:InventoryHedge(<claimPk>,<longPk>,<oraclePk>,<ticker>,<newTargetFiat>,<totalCollateral>,<newFundingRatePerSec>,<tx.offchainTime>,<collateralRatioPct>,<exit>)>",
+        "OP_EQUAL",
+        "0",
+        "OP_INSPECTOUTPUTVALUE",
+        "<totalCollateral>",
+        "OP_GREATERTHANOREQUAL64",
+        "OP_VERIFY",
+        "<SERVER_KEY>",
+        "<serverSig>",
+        "OP_CHECKSIG"
+      ]
+    },
+    {
+      "name": "updateFunding",
+      "functionInputs": [
+        {
+          "name": "longSig",
+          "type": "signature"
+        },
+        {
+          "name": "newFundingRatePerSec",
+          "type": "int"
+        },
+        {
+          "name": "claimPkSig",
+          "type": "signature"
+        },
+        {
+          "name": "longPkSig",
+          "type": "signature"
+        }
+      ],
+      "witnessSchema": [
+        {
+          "name": "claimPkSig",
+          "type": "signature",
+          "encoding": "schnorr-64"
+        },
+        {
+          "name": "longPkSig",
+          "type": "signature",
+          "encoding": "schnorr-64"
+        }
+      ],
+      "serverVariant": false,
+      "require": [
+        {
+          "type": "nOfNMultisig",
+          "message": "2-of-2 signatures required (introspection fallback)"
+        },
+        {
+          "type": "older",
+          "message": "Exit timelock of exit blocks"
+        }
+      ],
+      "asm": [
+        "<claimPk>",
+        "<claimPkSig>",
+        "OP_CHECKSIGVERIFY",
+        "<longPk>",
+        "<longPkSig>",
+        "OP_CHECKSIG",
+        "<exit>",
+        "OP_CHECKSEQUENCEVERIFY",
+        "OP_DROP"
+      ]
+    },
+    {
+      "name": "addCapital",
+      "functionInputs": [
+        {
+          "name": "longSig",
+          "type": "signature"
+        },
+        {
+          "name": "amount",
+          "type": "int"
+        }
+      ],
+      "witnessSchema": [
+        {
+          "name": "longSig",
+          "type": "signature",
+          "encoding": "schnorr-64"
+        },
+        {
+          "name": "amount",
+          "type": "int",
+          "encoding": "scriptnum"
+        },
+        {
+          "name": "serverSig",
+          "type": "signature",
+          "encoding": "schnorr-64"
+        }
+      ],
+      "serverVariant": true,
+      "require": [
+        {
+          "type": "signature"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "serverSignature"
+        }
+      ],
+      "asm": [
+        "<longPk>",
+        "<longSig>",
+        "OP_CHECKSIG",
+        "<amount>",
+        "0",
+        "OP_GREATERTHAN",
+        "<totalCollateral>",
+        "OP_SCRIPTNUMTOLE64",
+        "<amount>",
+        "OP_SCRIPTNUMTOLE64",
+        "OP_ADD64",
+        "OP_VERIFY",
+        "0",
+        "OP_INSPECTOUTPUTSCRIPTPUBKEY",
+        "<VTXO:InventoryHedge(<claimPk>,<longPk>,<oraclePk>,<ticker>,<targetFiat>,<newTotalCollateral>,<fundingRatePerSec>,<lastUpdate>,<collateralRatioPct>,<exit>)>",
+        "OP_EQUAL",
+        "0",
+        "OP_INSPECTOUTPUTVALUE",
+        "<newTotalCollateral>",
+        "OP_GREATERTHANOREQUAL64",
+        "OP_VERIFY",
+        "<SERVER_KEY>",
+        "<serverSig>",
+        "OP_CHECKSIG"
+      ]
+    },
+    {
+      "name": "addCapital",
+      "functionInputs": [
+        {
+          "name": "longSig",
+          "type": "signature"
+        },
+        {
+          "name": "amount",
+          "type": "int"
+        },
+        {
+          "name": "claimPkSig",
+          "type": "signature"
+        },
+        {
+          "name": "longPkSig",
+          "type": "signature"
+        }
+      ],
+      "witnessSchema": [
+        {
+          "name": "claimPkSig",
+          "type": "signature",
+          "encoding": "schnorr-64"
+        },
+        {
+          "name": "longPkSig",
+          "type": "signature",
+          "encoding": "schnorr-64"
+        }
+      ],
+      "serverVariant": false,
+      "require": [
+        {
+          "type": "nOfNMultisig",
+          "message": "2-of-2 signatures required (introspection fallback)"
+        },
+        {
+          "type": "older",
+          "message": "Exit timelock of exit blocks"
+        }
+      ],
+      "asm": [
+        "<claimPk>",
+        "<claimPkSig>",
+        "OP_CHECKSIGVERIFY",
+        "<longPk>",
+        "<longPkSig>",
+        "OP_CHECKSIG",
+        "<exit>",
+        "OP_CHECKSEQUENCEVERIFY",
+        "OP_DROP"
+      ]
+    },
+    {
+      "name": "removeCapital",
+      "functionInputs": [
+        {
+          "name": "longSig",
+          "type": "signature"
+        },
+        {
+          "name": "amount",
+          "type": "int"
+        },
+        {
+          "name": "oraclePrice",
+          "type": "int"
+        },
+        {
+          "name": "oracleTime",
+          "type": "int"
+        },
+        {
+          "name": "oracleSig",
+          "type": "signature"
+        }
+      ],
+      "witnessSchema": [
+        {
+          "name": "longSig",
+          "type": "signature",
+          "encoding": "schnorr-64"
+        },
+        {
+          "name": "amount",
+          "type": "int",
+          "encoding": "scriptnum"
+        },
+        {
+          "name": "oraclePrice",
+          "type": "int",
+          "encoding": "scriptnum"
+        },
+        {
+          "name": "oracleTime",
+          "type": "int",
+          "encoding": "scriptnum"
+        },
+        {
+          "name": "oracleSig",
+          "type": "signature",
+          "encoding": "schnorr-64"
+        },
+        {
+          "name": "serverSig",
+          "type": "signature",
+          "encoding": "schnorr-64"
+        }
+      ],
+      "serverVariant": true,
+      "require": [
+        {
+          "type": "signature"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "signatureFromStack"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "serverSignature"
+        }
+      ],
+      "asm": [
+        "<longPk>",
+        "<longSig>",
+        "OP_CHECKSIG",
+        "<amount>",
+        "0",
+        "OP_GREATERTHAN",
+        "<oraclePrice>",
+        "0",
+        "OP_GREATERTHAN",
+        "<collateralRatioPct>",
+        "OP_GREATERTHANOREQUAL",
+        "0",
+        "<tx.offchainTime >",
+        "<oracleTime>",
+        "OP_SCRIPTNUMTOLE64",
+        "OP_SUB64",
+        "OP_VERIFY",
+        "<oracleAge>",
+        "OP_GREATERTHANOREQUAL",
+        "0",
+        "<oracleAge>",
+        "600",
+        "OP_LESSTHANOREQUAL",
+        "<ticker>",
+        "<oraclePrice>",
+        "OP_SCRIPTNUMTOLE64",
+        "OP_CAT",
+        "<oracleTime>",
+        "OP_SCRIPTNUMTOLE64",
+        "OP_CAT",
+        "OP_SHA256",
+        "<oracleMsg>",
+        "<oraclePk>",
+        "<oracleSig>",
+        "OP_CHECKSIGFROMSTACK",
+        "<tx.offchainTime >",
+        "<lastUpdate>",
+        "OP_SCRIPTNUMTOLE64",
+        "OP_SUB64",
+        "OP_VERIFY",
+        "<elapsed>",
+        "OP_GREATERTHANOREQUAL",
+        "0",
+        "<fundingRatePerSec>",
+        "OP_SCRIPTNUMTOLE64",
+        "<elapsed>",
+        "OP_SCRIPTNUMTOLE64",
+        "OP_MUL64",
+        "OP_VERIFY",
+        "1000000",
+        "OP_DIV64",
+        "OP_VERIFY",
+        "<targetFiat>",
+        "OP_SCRIPTNUMTOLE64",
+        "<rateElapsedScaled>",
+        "OP_SCRIPTNUMTOLE64",
+        "OP_MUL64",
+        "OP_VERIFY",
+        "1000000",
+        "OP_DIV64",
+        "OP_VERIFY",
+        "<targetFiat>",
+        "OP_SCRIPTNUMTOLE64",
+        "<delta>",
+        "OP_SCRIPTNUMTOLE64",
+        "OP_ADD64",
+        "OP_VERIFY",
+        "<newTargetFiat>",
+        "0",
+        "OP_GREATERTHAN",
+        "<newTargetFiat>",
+        "OP_SCRIPTNUMTOLE64",
+        "100000000",
+        "OP_MUL64",
+        "OP_VERIFY",
+        "<oraclePrice>",
+        "OP_SCRIPTNUMTOLE64",
+        "OP_DIV64",
+        "OP_VERIFY",
+        "<currentClaimBase>",
+        "OP_SCRIPTNUMTOLE64",
+        "100",
+        "<collateralRatioPct>",
+        "OP_SCRIPTNUMTOLE64",
+        "OP_ADD64",
+        "OP_VERIFY",
+        "OP_MUL64",
+        "OP_VERIFY",
+        "100",
+        "OP_DIV64",
+        "OP_VERIFY",
+        "<totalCollateral>",
+        "OP_SCRIPTNUMTOLE64",
+        "<amount>",
+        "OP_SCRIPTNUMTOLE64",
+        "OP_SUB64",
+        "OP_VERIFY",
+        "<newTotalCollateral>",
+        "OP_GREATERTHANOREQUAL",
+        "<minCollateral>",
+        "0",
+        "OP_INSPECTOUTPUTSCRIPTPUBKEY",
+        "<VTXO:InventoryHedge(<claimPk>,<longPk>,<oraclePk>,<ticker>,<targetFiat>,<newTotalCollateral>,<fundingRatePerSec>,<lastUpdate>,<collateralRatioPct>,<exit>)>",
+        "OP_EQUAL",
+        "0",
+        "OP_INSPECTOUTPUTVALUE",
+        "<newTotalCollateral>",
+        "OP_GREATERTHANOREQUAL64",
+        "OP_VERIFY",
+        "1",
+        "OP_INSPECTOUTPUTSCRIPTPUBKEY",
+        "<VTXO:SingleSig(<longPk>)>",
+        "OP_EQUAL",
+        "1",
+        "OP_INSPECTOUTPUTVALUE",
+        "<amount>",
+        "OP_GREATERTHANOREQUAL64",
+        "OP_VERIFY",
+        "<SERVER_KEY>",
+        "<serverSig>",
+        "OP_CHECKSIG"
+      ]
+    },
+    {
+      "name": "removeCapital",
+      "functionInputs": [
+        {
+          "name": "longSig",
+          "type": "signature"
+        },
+        {
+          "name": "amount",
+          "type": "int"
+        },
+        {
+          "name": "oraclePrice",
+          "type": "int"
+        },
+        {
+          "name": "oracleTime",
+          "type": "int"
+        },
+        {
+          "name": "oracleSig",
+          "type": "signature"
+        },
+        {
+          "name": "claimPkSig",
+          "type": "signature"
+        },
+        {
+          "name": "longPkSig",
+          "type": "signature"
+        }
+      ],
+      "witnessSchema": [
+        {
+          "name": "claimPkSig",
+          "type": "signature",
+          "encoding": "schnorr-64"
+        },
+        {
+          "name": "longPkSig",
+          "type": "signature",
+          "encoding": "schnorr-64"
+        }
+      ],
+      "serverVariant": false,
+      "require": [
+        {
+          "type": "nOfNMultisig",
+          "message": "2-of-2 signatures required (introspection fallback)"
+        },
+        {
+          "type": "older",
+          "message": "Exit timelock of exit blocks"
+        }
+      ],
+      "asm": [
+        "<claimPk>",
+        "<claimPkSig>",
+        "OP_CHECKSIGVERIFY",
+        "<longPk>",
+        "<longPkSig>",
+        "OP_CHECKSIG",
+        "<exit>",
+        "OP_CHECKSEQUENCEVERIFY",
+        "OP_DROP"
+      ]
+    },
+    {
+      "name": "redeem",
+      "functionInputs": [
+        {
+          "name": "claimSig",
+          "type": "signature"
+        },
+        {
+          "name": "oraclePrice",
+          "type": "int"
+        },
+        {
+          "name": "oracleTime",
+          "type": "int"
+        },
+        {
+          "name": "oracleSig",
+          "type": "signature"
+        }
+      ],
+      "witnessSchema": [
+        {
+          "name": "claimSig",
+          "type": "signature",
+          "encoding": "schnorr-64"
+        },
+        {
+          "name": "oraclePrice",
+          "type": "int",
+          "encoding": "scriptnum"
+        },
+        {
+          "name": "oracleTime",
+          "type": "int",
+          "encoding": "scriptnum"
+        },
+        {
+          "name": "oracleSig",
+          "type": "signature",
+          "encoding": "schnorr-64"
+        },
+        {
+          "name": "serverSig",
+          "type": "signature",
+          "encoding": "schnorr-64"
+        }
+      ],
+      "serverVariant": true,
+      "require": [
+        {
+          "type": "signature"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "signatureFromStack"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "serverSignature"
+        }
+      ],
+      "asm": [
+        "<claimPk>",
+        "<claimSig>",
+        "OP_CHECKSIG",
+        "<oraclePrice>",
+        "0",
+        "OP_GREATERTHAN",
+        "<tx.offchainTime >",
+        "<oracleTime>",
+        "OP_SCRIPTNUMTOLE64",
+        "OP_SUB64",
+        "OP_VERIFY",
+        "<oracleAge>",
+        "OP_GREATERTHANOREQUAL",
+        "0",
+        "<oracleAge>",
+        "600",
+        "OP_LESSTHANOREQUAL",
+        "<ticker>",
+        "<oraclePrice>",
+        "OP_SCRIPTNUMTOLE64",
+        "OP_CAT",
+        "<oracleTime>",
+        "OP_SCRIPTNUMTOLE64",
+        "OP_CAT",
+        "OP_SHA256",
+        "<oracleMsg>",
+        "<oraclePk>",
+        "<oracleSig>",
+        "OP_CHECKSIGFROMSTACK",
+        "<tx.offchainTime >",
+        "<lastUpdate>",
+        "OP_SCRIPTNUMTOLE64",
+        "OP_SUB64",
+        "OP_VERIFY",
+        "<elapsed>",
+        "OP_GREATERTHANOREQUAL",
+        "0",
+        "<fundingRatePerSec>",
+        "OP_SCRIPTNUMTOLE64",
+        "<elapsed>",
+        "OP_SCRIPTNUMTOLE64",
+        "OP_MUL64",
+        "OP_VERIFY",
+        "1000000",
+        "OP_DIV64",
+        "OP_VERIFY",
+        "<targetFiat>",
+        "OP_SCRIPTNUMTOLE64",
+        "<rateElapsedScaled>",
+        "OP_SCRIPTNUMTOLE64",
+        "OP_MUL64",
+        "OP_VERIFY",
+        "1000000",
+        "OP_DIV64",
+        "OP_VERIFY",
+        "<targetFiat>",
+        "OP_SCRIPTNUMTOLE64",
+        "<delta>",
+        "OP_SCRIPTNUMTOLE64",
+        "OP_ADD64",
+        "OP_VERIFY",
+        "<newTargetFiat>",
+        "OP_SCRIPTNUMTOLE64",
+        "100000000",
+        "OP_MUL64",
+        "OP_VERIFY",
+        "<oraclePrice>",
+        "OP_SCRIPTNUMTOLE64",
+        "OP_DIV64",
+        "OP_VERIFY",
+        "<claimRaw>",
+        "OP_SCRIPTNUMTOLE64",
+        "0",
+        "OP_LESSTHANOREQUAL64",
+        "OP_VERIFY",
+        "OP_IF",
+        "0",
+        "OP_INSPECTOUTPUTVALUE",
+        "<totalCollateral>",
+        "OP_GREATERTHANOREQUAL64",
+        "OP_VERIFY",
+        "0",
+        "OP_INSPECTOUTPUTSCRIPTPUBKEY",
+        "<VTXO:SingleSig(<longPk>)>",
+        "OP_EQUAL",
+        "OP_ELSE",
+        "<claimRaw>",
+        "OP_SCRIPTNUMTOLE64",
+        "<totalCollateral>",
+        "OP_SCRIPTNUMTOLE64",
+        "OP_GREATERTHANOREQUAL64",
+        "OP_VERIFY",
+        "OP_IF",
+        "0",
+        "OP_INSPECTOUTPUTVALUE",
+        "<totalCollateral>",
+        "OP_GREATERTHANOREQUAL64",
+        "OP_VERIFY",
+        "0",
+        "OP_INSPECTOUTPUTSCRIPTPUBKEY",
+        "<VTXO:SingleSig(<claimPk>)>",
+        "OP_EQUAL",
+        "OP_ELSE",
+        "0",
+        "OP_INSPECTOUTPUTVALUE",
+        "<claimRaw>",
+        "OP_GREATERTHANOREQUAL64",
+        "OP_VERIFY",
+        "0",
+        "OP_INSPECTOUTPUTSCRIPTPUBKEY",
+        "<VTXO:SingleSig(<claimPk>)>",
+        "OP_EQUAL",
+        "<totalCollateral>",
+        "OP_SCRIPTNUMTOLE64",
+        "<claimRaw>",
+        "OP_SCRIPTNUMTOLE64",
+        "OP_SUB64",
+        "OP_VERIFY",
+        "<longPayout>",
+        "OP_SCRIPTNUMTOLE64",
+        "330",
+        "OP_GREATERTHAN64",
+        "OP_VERIFY",
+        "OP_IF",
+        "1",
+        "OP_INSPECTOUTPUTVALUE",
+        "<longPayout>",
+        "OP_GREATERTHANOREQUAL64",
+        "OP_VERIFY",
+        "1",
+        "OP_INSPECTOUTPUTSCRIPTPUBKEY",
+        "<VTXO:SingleSig(<longPk>)>",
+        "OP_EQUAL",
+        "OP_ENDIF",
+        "OP_ENDIF",
+        "OP_ENDIF",
+        "<SERVER_KEY>",
+        "<serverSig>",
+        "OP_CHECKSIG"
+      ]
+    },
+    {
+      "name": "redeem",
+      "functionInputs": [
+        {
+          "name": "claimSig",
+          "type": "signature"
+        },
+        {
+          "name": "oraclePrice",
+          "type": "int"
+        },
+        {
+          "name": "oracleTime",
+          "type": "int"
+        },
+        {
+          "name": "oracleSig",
+          "type": "signature"
+        },
+        {
+          "name": "claimPkSig",
+          "type": "signature"
+        },
+        {
+          "name": "longPkSig",
+          "type": "signature"
+        }
+      ],
+      "witnessSchema": [
+        {
+          "name": "claimPkSig",
+          "type": "signature",
+          "encoding": "schnorr-64"
+        },
+        {
+          "name": "longPkSig",
+          "type": "signature",
+          "encoding": "schnorr-64"
+        }
+      ],
+      "serverVariant": false,
+      "require": [
+        {
+          "type": "nOfNMultisig",
+          "message": "2-of-2 signatures required (introspection fallback)"
+        },
+        {
+          "type": "older",
+          "message": "Exit timelock of exit blocks"
+        }
+      ],
+      "asm": [
+        "<claimPk>",
+        "<claimPkSig>",
+        "OP_CHECKSIGVERIFY",
+        "<longPk>",
+        "<longPkSig>",
+        "OP_CHECKSIG",
+        "<exit>",
+        "OP_CHECKSEQUENCEVERIFY",
+        "OP_DROP"
+      ]
+    },
+    {
+      "name": "withdraw",
+      "functionInputs": [
+        {
+          "name": "longSig",
+          "type": "signature"
+        },
+        {
+          "name": "oraclePrice",
+          "type": "int"
+        },
+        {
+          "name": "oracleTime",
+          "type": "int"
+        },
+        {
+          "name": "oracleSig",
+          "type": "signature"
+        }
+      ],
+      "witnessSchema": [
+        {
+          "name": "longSig",
+          "type": "signature",
+          "encoding": "schnorr-64"
+        },
+        {
+          "name": "oraclePrice",
+          "type": "int",
+          "encoding": "scriptnum"
+        },
+        {
+          "name": "oracleTime",
+          "type": "int",
+          "encoding": "scriptnum"
+        },
+        {
+          "name": "oracleSig",
+          "type": "signature",
+          "encoding": "schnorr-64"
+        },
+        {
+          "name": "serverSig",
+          "type": "signature",
+          "encoding": "schnorr-64"
+        }
+      ],
+      "serverVariant": true,
+      "require": [
+        {
+          "type": "signature"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "signatureFromStack"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "comparison"
+        },
+        {
+          "type": "serverSignature"
+        }
+      ],
+      "asm": [
+        "<longPk>",
+        "<longSig>",
+        "OP_CHECKSIG",
+        "<oraclePrice>",
+        "0",
+        "OP_GREATERTHAN",
+        "<tx.offchainTime >",
+        "<oracleTime>",
+        "OP_SCRIPTNUMTOLE64",
+        "OP_SUB64",
+        "OP_VERIFY",
+        "<oracleAge>",
+        "OP_GREATERTHANOREQUAL",
+        "0",
+        "<oracleAge>",
+        "600",
+        "OP_LESSTHANOREQUAL",
+        "<ticker>",
+        "<oraclePrice>",
+        "OP_SCRIPTNUMTOLE64",
+        "OP_CAT",
+        "<oracleTime>",
+        "OP_SCRIPTNUMTOLE64",
+        "OP_CAT",
+        "OP_SHA256",
+        "<oracleMsg>",
+        "<oraclePk>",
+        "<oracleSig>",
+        "OP_CHECKSIGFROMSTACK",
+        "<tx.offchainTime >",
+        "<lastUpdate>",
+        "OP_SCRIPTNUMTOLE64",
+        "OP_SUB64",
+        "OP_VERIFY",
+        "<elapsed>",
+        "OP_GREATERTHANOREQUAL",
+        "0",
+        "<fundingRatePerSec>",
+        "OP_SCRIPTNUMTOLE64",
+        "<elapsed>",
+        "OP_SCRIPTNUMTOLE64",
+        "OP_MUL64",
+        "OP_VERIFY",
+        "1000000",
+        "OP_DIV64",
+        "OP_VERIFY",
+        "<targetFiat>",
+        "OP_SCRIPTNUMTOLE64",
+        "<rateElapsedScaled>",
+        "OP_SCRIPTNUMTOLE64",
+        "OP_MUL64",
+        "OP_VERIFY",
+        "1000000",
+        "OP_DIV64",
+        "OP_VERIFY",
+        "<targetFiat>",
+        "OP_SCRIPTNUMTOLE64",
+        "<delta>",
+        "OP_SCRIPTNUMTOLE64",
+        "OP_ADD64",
+        "OP_VERIFY",
+        "<newTargetFiat>",
+        "OP_SCRIPTNUMTOLE64",
+        "100000000",
+        "OP_MUL64",
+        "OP_VERIFY",
+        "<oraclePrice>",
+        "OP_SCRIPTNUMTOLE64",
+        "OP_DIV64",
+        "OP_VERIFY",
+        "<claimRaw>",
+        "OP_SCRIPTNUMTOLE64",
+        "0",
+        "OP_LESSTHANOREQUAL64",
+        "OP_VERIFY",
+        "OP_IF",
+        "0",
+        "OP_INSPECTOUTPUTVALUE",
+        "<totalCollateral>",
+        "OP_GREATERTHANOREQUAL64",
+        "OP_VERIFY",
+        "0",
+        "OP_INSPECTOUTPUTSCRIPTPUBKEY",
+        "<VTXO:SingleSig(<longPk>)>",
+        "OP_EQUAL",
+        "OP_ELSE",
+        "<claimRaw>",
+        "OP_SCRIPTNUMTOLE64",
+        "<totalCollateral>",
+        "OP_SCRIPTNUMTOLE64",
+        "OP_GREATERTHANOREQUAL64",
+        "OP_VERIFY",
+        "OP_IF",
+        "0",
+        "OP_INSPECTOUTPUTVALUE",
+        "<totalCollateral>",
+        "OP_GREATERTHANOREQUAL64",
+        "OP_VERIFY",
+        "0",
+        "OP_INSPECTOUTPUTSCRIPTPUBKEY",
+        "<VTXO:SingleSig(<claimPk>)>",
+        "OP_EQUAL",
+        "OP_ELSE",
+        "0",
+        "OP_INSPECTOUTPUTVALUE",
+        "<claimRaw>",
+        "OP_GREATERTHANOREQUAL64",
+        "OP_VERIFY",
+        "0",
+        "OP_INSPECTOUTPUTSCRIPTPUBKEY",
+        "<VTXO:SingleSig(<claimPk>)>",
+        "OP_EQUAL",
+        "<totalCollateral>",
+        "OP_SCRIPTNUMTOLE64",
+        "<claimRaw>",
+        "OP_SCRIPTNUMTOLE64",
+        "OP_SUB64",
+        "OP_VERIFY",
+        "<longPayout>",
+        "OP_SCRIPTNUMTOLE64",
+        "330",
+        "OP_GREATERTHAN64",
+        "OP_VERIFY",
+        "OP_IF",
+        "1",
+        "OP_INSPECTOUTPUTVALUE",
+        "<longPayout>",
+        "OP_GREATERTHANOREQUAL64",
+        "OP_VERIFY",
+        "1",
+        "OP_INSPECTOUTPUTSCRIPTPUBKEY",
+        "<VTXO:SingleSig(<longPk>)>",
+        "OP_EQUAL",
+        "OP_ENDIF",
+        "OP_ENDIF",
+        "OP_ENDIF",
+        "<SERVER_KEY>",
+        "<serverSig>",
+        "OP_CHECKSIG"
+      ]
+    },
+    {
+      "name": "withdraw",
+      "functionInputs": [
+        {
+          "name": "longSig",
+          "type": "signature"
+        },
+        {
+          "name": "oraclePrice",
+          "type": "int"
+        },
+        {
+          "name": "oracleTime",
+          "type": "int"
+        },
+        {
+          "name": "oracleSig",
+          "type": "signature"
+        },
+        {
+          "name": "claimPkSig",
+          "type": "signature"
+        },
+        {
+          "name": "longPkSig",
+          "type": "signature"
+        }
+      ],
+      "witnessSchema": [
+        {
+          "name": "claimPkSig",
+          "type": "signature",
+          "encoding": "schnorr-64"
+        },
+        {
+          "name": "longPkSig",
+          "type": "signature",
+          "encoding": "schnorr-64"
+        }
+      ],
+      "serverVariant": false,
+      "require": [
+        {
+          "type": "nOfNMultisig",
+          "message": "2-of-2 signatures required (introspection fallback)"
+        },
+        {
+          "type": "older",
+          "message": "Exit timelock of exit blocks"
+        }
+      ],
+      "asm": [
+        "<claimPk>",
+        "<claimPkSig>",
+        "OP_CHECKSIGVERIFY",
+        "<longPk>",
+        "<longPkSig>",
+        "OP_CHECKSIG",
+        "<exit>",
+        "OP_CHECKSEQUENCEVERIFY",
+        "OP_DROP"
+      ]
+    }
+  ],
+  "source": "\nimport \"single_sig.ark\";\n\noptions {\n  server = server;\n  exit = exit;\n}\n\ncontract InventoryHedge(\n  pubkey  claimPk,\n  pubkey  longPk,\n  pubkey  oraclePk,\n  bytes32 ticker,\n  int     targetFiat,\n  int     totalCollateral,\n  int     fundingRatePerSec,\n  int     lastUpdate,\n  int     collateralRatioPct,\n  int     exit\n) {\n\n  function transfer(signature claimSig, pubkey newClaimPk) {\n    require(checkSig(claimSig, claimPk), \"invalid claim sig\");\n\n    require(\n      tx.outputs[0].scriptPubKey == new InventoryHedge(\n        newClaimPk, longPk, oraclePk, ticker,\n        targetFiat, totalCollateral, fundingRatePerSec, lastUpdate,\n        collateralRatioPct, exit\n      ),\n      \"invalid transfer output\"\n    );\n    require(tx.outputs[0].value >= totalCollateral, \"collateral not preserved\");\n  }\n\n  function updateFunding(signature longSig, int newFundingRatePerSec) {\n    require(checkSig(longSig, longPk), \"invalid long-leg sig\");\n    require(newFundingRatePerSec >= 0, \"negative funding rate disallowed\");\n\n    int elapsed           = tx.offchainTime - lastUpdate;\n    require(elapsed >= 0, \"clock regression\");\n    int rateElapsedScaled = fundingRatePerSec * elapsed / 1000000;\n    int delta             = targetFiat * rateElapsedScaled / 1000000;\n    int newTargetFiat     = targetFiat + delta;\n    require(newTargetFiat > 0, \"claim wiped by funding\");\n\n    if (fundingRatePerSec != 0) {\n      require(delta > 0, \"no accrual; wait longer\");\n    }\n\n    require(\n      tx.outputs[0].scriptPubKey == new InventoryHedge(\n        claimPk, longPk, oraclePk, ticker,\n        newTargetFiat, totalCollateral, newFundingRatePerSec, tx.offchainTime,\n        collateralRatioPct, exit\n      ),\n      \"invalid update output\"\n    );\n    require(tx.outputs[0].value >= totalCollateral, \"collateral not preserved\");\n  }\n\n  function addCapital(signature longSig, int amount) {\n    require(checkSig(longSig, longPk), \"invalid long-leg sig\");\n    require(amount > 0, \"zero amount\");\n\n    int newTotalCollateral = totalCollateral + amount;\n\n    require(\n      tx.outputs[0].scriptPubKey == new InventoryHedge(\n        claimPk, longPk, oraclePk, ticker,\n        targetFiat, newTotalCollateral, fundingRatePerSec, lastUpdate,\n        collateralRatioPct, exit\n      ),\n      \"invalid output\"\n    );\n    require(tx.outputs[0].value >= newTotalCollateral, \"collateral not deposited\");\n  }\n\n  function removeCapital(\n    signature longSig,\n    int       amount,\n    int       oraclePrice,\n    int       oracleTime,\n    signature oracleSig\n  ) {\n    require(checkSig(longSig, longPk), \"invalid long-leg sig\");\n    require(amount > 0, \"zero amount\");\n    require(oraclePrice > 0, \"invalid oracle price\");\n    require(collateralRatioPct >= 0, \"invalid collateral ratio\");\n\n    int oracleAge = tx.offchainTime - oracleTime;\n    require(oracleAge >= 0, \"future-dated oracle\");\n    require(oracleAge <= 600, \"stale oracle\");\n\n    let oracleMsg = sha256(ticker + oraclePrice + oracleTime);\n    require(checkSigFromStack(oracleSig, oraclePk, oracleMsg), \"invalid oracle signature\");\n\n    int elapsed            = tx.offchainTime - lastUpdate;\n    require(elapsed >= 0, \"clock regression\");\n    int rateElapsedScaled  = fundingRatePerSec * elapsed / 1000000;\n    int delta              = targetFiat * rateElapsedScaled / 1000000;\n    int newTargetFiat      = targetFiat + delta;\n    require(newTargetFiat > 0, \"claim wiped by funding\");\n    int currentClaimBase   = newTargetFiat * 100000000 / oraclePrice;\n    int minCollateral      = currentClaimBase * (100 + collateralRatioPct) / 100;\n    int newTotalCollateral = totalCollateral - amount;\n    require(newTotalCollateral >= minCollateral, \"would breach collateral ratio\");\n\n    require(\n      tx.outputs[0].scriptPubKey == new InventoryHedge(\n        claimPk, longPk, oraclePk, ticker,\n        targetFiat, newTotalCollateral, fundingRatePerSec, lastUpdate,\n        collateralRatioPct, exit\n      ),\n      \"invalid vault output\"\n    );\n    require(tx.outputs[0].value >= newTotalCollateral, \"vault underfunded\");\n    require(tx.outputs[1].scriptPubKey == new SingleSig(longPk), \"output 1 not long leg\");\n    require(tx.outputs[1].value >= amount, \"long leg underpaid\");\n  }\n\n  function redeem(\n    signature claimSig,\n    int       oraclePrice,\n    int       oracleTime,\n    signature oracleSig\n  ) {\n    require(checkSig(claimSig, claimPk), \"invalid claim sig\");\n    require(oraclePrice > 0, \"invalid oracle price\");\n\n    int oracleAge = tx.offchainTime - oracleTime;\n    require(oracleAge >= 0, \"future-dated oracle\");\n    require(oracleAge <= 600, \"stale oracle\");\n\n    let oracleMsg = sha256(ticker + oraclePrice + oracleTime);\n    require(checkSigFromStack(oracleSig, oraclePk, oracleMsg), \"invalid oracle signature\");\n\n    int elapsed           = tx.offchainTime - lastUpdate;\n    require(elapsed >= 0, \"clock regression\");\n    int rateElapsedScaled = fundingRatePerSec * elapsed / 1000000;\n    int delta             = targetFiat * rateElapsedScaled / 1000000;\n    int newTargetFiat     = targetFiat + delta;\n    int claimRaw          = newTargetFiat * 100000000 / oraclePrice;\n\n    if (claimRaw <= 0) {\n      require(tx.outputs[0].value >= totalCollateral, \"long leg underpaid\");\n      require(tx.outputs[0].scriptPubKey == new SingleSig(longPk), \"output 0 not long leg\");\n    } else {\n      if (claimRaw >= totalCollateral) {\n        require(tx.outputs[0].value >= totalCollateral, \"claim underpaid\");\n        require(tx.outputs[0].scriptPubKey == new SingleSig(claimPk), \"output 0 not claim\");\n      } else {\n        require(tx.outputs[0].value >= claimRaw, \"claim underpaid\");\n        require(tx.outputs[0].scriptPubKey == new SingleSig(claimPk), \"output 0 not claim\");\n        int longPayout = totalCollateral - claimRaw;\n        if (longPayout > 330) {\n          require(tx.outputs[1].value >= longPayout, \"long leg underpaid\");\n          require(tx.outputs[1].scriptPubKey == new SingleSig(longPk), \"output 1 not long leg\");\n        }\n      }\n    }\n  }\n\n  function withdraw(\n    signature longSig,\n    int       oraclePrice,\n    int       oracleTime,\n    signature oracleSig\n  ) {\n    require(checkSig(longSig, longPk), \"invalid long-leg sig\");\n    require(oraclePrice > 0, \"invalid oracle price\");\n\n    int oracleAge = tx.offchainTime - oracleTime;\n    require(oracleAge >= 0, \"future-dated oracle\");\n    require(oracleAge <= 600, \"stale oracle\");\n\n    let oracleMsg = sha256(ticker + oraclePrice + oracleTime);\n    require(checkSigFromStack(oracleSig, oraclePk, oracleMsg), \"invalid oracle signature\");\n\n    int elapsed           = tx.offchainTime - lastUpdate;\n    require(elapsed >= 0, \"clock regression\");\n    int rateElapsedScaled = fundingRatePerSec * elapsed / 1000000;\n    int delta             = targetFiat * rateElapsedScaled / 1000000;\n    int newTargetFiat     = targetFiat + delta;\n    int claimRaw          = newTargetFiat * 100000000 / oraclePrice;\n\n    if (claimRaw <= 0) {\n      require(tx.outputs[0].value >= totalCollateral, \"long leg underpaid\");\n      require(tx.outputs[0].scriptPubKey == new SingleSig(longPk), \"output 0 not long leg\");\n    } else {\n      if (claimRaw >= totalCollateral) {\n        require(tx.outputs[0].value >= totalCollateral, \"claim underpaid\");\n        require(tx.outputs[0].scriptPubKey == new SingleSig(claimPk), \"output 0 not claim\");\n      } else {\n        require(tx.outputs[0].value >= claimRaw, \"claim underpaid\");\n        require(tx.outputs[0].scriptPubKey == new SingleSig(claimPk), \"output 0 not claim\");\n        int longPayout = totalCollateral - claimRaw;\n        if (longPayout > 330) {\n          require(tx.outputs[1].value >= longPayout, \"long leg underpaid\");\n          require(tx.outputs[1].scriptPubKey == new SingleSig(longPk), \"output 1 not long leg\");\n        }\n      }\n    }\n  }\n}",
+  "compiler": {
+    "name": "arkade-compiler",
+    "version": "0.1.0"
+  },
+  "updatedAt": "2026-06-10T15:38:51.159632771+00:00",
+  "warnings": [
+    "warning[type]: fn transfer: comparison '>=' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
+    "warning[type]: fn updateFunding: comparison '>=' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
+    "warning[type]: fn addCapital: comparison '>=' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
+    "warning[type]: fn removeCapital: comparison '>=' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
+    "warning[type]: fn removeCapital: comparison '>=' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
+    "warning[type]: fn redeem: comparison '>=' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
+    "warning[type]: fn redeem: comparison '>=' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
+    "warning[type]: fn redeem: comparison '>=' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
+    "warning[type]: fn redeem: comparison '>=' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
+    "warning[type]: fn withdraw: comparison '>=' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
+    "warning[type]: fn withdraw: comparison '>=' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
+    "warning[type]: fn withdraw: comparison '>=' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
+    "warning[type]: fn withdraw: comparison '>=' mixes uint64le ('uint64le') with scriptnum ('int') — implicit conversion applied; use le64ToScriptNum() for explicit control",
+    "warning[output-invariant]: fn 'transfer' (serverVariant=false): placeholder <newClaimPk> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'newClaimPk'",
+    "warning[output-invariant]: fn 'updateFunding' (serverVariant=true): placeholder <tx.offchainTime > is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'tx.offchainTime '",
+    "warning[output-invariant]: fn 'updateFunding' (serverVariant=true): placeholder <elapsed> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'elapsed'",
+    "warning[output-invariant]: fn 'updateFunding' (serverVariant=true): placeholder <elapsed> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'elapsed'",
+    "warning[output-invariant]: fn 'updateFunding' (serverVariant=true): placeholder <rateElapsedScaled> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'rateElapsedScaled'",
+    "warning[output-invariant]: fn 'updateFunding' (serverVariant=true): placeholder <delta> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'delta'",
+    "warning[output-invariant]: fn 'updateFunding' (serverVariant=true): placeholder <newTargetFiat> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'newTargetFiat'",
+    "warning[output-invariant]: fn 'updateFunding' (serverVariant=true): placeholder <delta> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'delta'",
+    "warning[output-invariant]: fn 'addCapital' (serverVariant=true): placeholder <newTotalCollateral> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'newTotalCollateral'",
+    "warning[output-invariant]: fn 'removeCapital' (serverVariant=true): placeholder <tx.offchainTime > is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'tx.offchainTime '",
+    "warning[output-invariant]: fn 'removeCapital' (serverVariant=true): placeholder <oracleAge> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'oracleAge'",
+    "warning[output-invariant]: fn 'removeCapital' (serverVariant=true): placeholder <oracleAge> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'oracleAge'",
+    "warning[output-invariant]: fn 'removeCapital' (serverVariant=true): placeholder <oracleMsg> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'oracleMsg'",
+    "warning[output-invariant]: fn 'removeCapital' (serverVariant=true): placeholder <tx.offchainTime > is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'tx.offchainTime '",
+    "warning[output-invariant]: fn 'removeCapital' (serverVariant=true): placeholder <elapsed> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'elapsed'",
+    "warning[output-invariant]: fn 'removeCapital' (serverVariant=true): placeholder <elapsed> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'elapsed'",
+    "warning[output-invariant]: fn 'removeCapital' (serverVariant=true): placeholder <rateElapsedScaled> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'rateElapsedScaled'",
+    "warning[output-invariant]: fn 'removeCapital' (serverVariant=true): placeholder <delta> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'delta'",
+    "warning[output-invariant]: fn 'removeCapital' (serverVariant=true): placeholder <newTargetFiat> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'newTargetFiat'",
+    "warning[output-invariant]: fn 'removeCapital' (serverVariant=true): placeholder <newTargetFiat> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'newTargetFiat'",
+    "warning[output-invariant]: fn 'removeCapital' (serverVariant=true): placeholder <currentClaimBase> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'currentClaimBase'",
+    "warning[output-invariant]: fn 'removeCapital' (serverVariant=true): placeholder <newTotalCollateral> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'newTotalCollateral'",
+    "warning[output-invariant]: fn 'removeCapital' (serverVariant=true): placeholder <minCollateral> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'minCollateral'",
+    "warning[output-invariant]: fn 'removeCapital' (serverVariant=true): placeholder <newTotalCollateral> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'newTotalCollateral'",
+    "warning[output-invariant]: fn 'redeem' (serverVariant=true): placeholder <tx.offchainTime > is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'tx.offchainTime '",
+    "warning[output-invariant]: fn 'redeem' (serverVariant=true): placeholder <oracleAge> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'oracleAge'",
+    "warning[output-invariant]: fn 'redeem' (serverVariant=true): placeholder <oracleAge> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'oracleAge'",
+    "warning[output-invariant]: fn 'redeem' (serverVariant=true): placeholder <oracleMsg> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'oracleMsg'",
+    "warning[output-invariant]: fn 'redeem' (serverVariant=true): placeholder <tx.offchainTime > is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'tx.offchainTime '",
+    "warning[output-invariant]: fn 'redeem' (serverVariant=true): placeholder <elapsed> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'elapsed'",
+    "warning[output-invariant]: fn 'redeem' (serverVariant=true): placeholder <elapsed> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'elapsed'",
+    "warning[output-invariant]: fn 'redeem' (serverVariant=true): placeholder <rateElapsedScaled> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'rateElapsedScaled'",
+    "warning[output-invariant]: fn 'redeem' (serverVariant=true): placeholder <delta> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'delta'",
+    "warning[output-invariant]: fn 'redeem' (serverVariant=true): placeholder <newTargetFiat> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'newTargetFiat'",
+    "warning[output-invariant]: fn 'redeem' (serverVariant=true): placeholder <claimRaw> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'claimRaw'",
+    "warning[output-invariant]: fn 'redeem' (serverVariant=true): placeholder <claimRaw> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'claimRaw'",
+    "warning[output-invariant]: fn 'redeem' (serverVariant=true): placeholder <claimRaw> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'claimRaw'",
+    "warning[output-invariant]: fn 'redeem' (serverVariant=true): placeholder <claimRaw> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'claimRaw'",
+    "warning[output-invariant]: fn 'redeem' (serverVariant=true): placeholder <longPayout> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'longPayout'",
+    "warning[output-invariant]: fn 'redeem' (serverVariant=true): placeholder <longPayout> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'longPayout'",
+    "warning[output-invariant]: fn 'withdraw' (serverVariant=true): placeholder <tx.offchainTime > is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'tx.offchainTime '",
+    "warning[output-invariant]: fn 'withdraw' (serverVariant=true): placeholder <oracleAge> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'oracleAge'",
+    "warning[output-invariant]: fn 'withdraw' (serverVariant=true): placeholder <oracleAge> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'oracleAge'",
+    "warning[output-invariant]: fn 'withdraw' (serverVariant=true): placeholder <oracleMsg> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'oracleMsg'",
+    "warning[output-invariant]: fn 'withdraw' (serverVariant=true): placeholder <tx.offchainTime > is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'tx.offchainTime '",
+    "warning[output-invariant]: fn 'withdraw' (serverVariant=true): placeholder <elapsed> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'elapsed'",
+    "warning[output-invariant]: fn 'withdraw' (serverVariant=true): placeholder <elapsed> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'elapsed'",
+    "warning[output-invariant]: fn 'withdraw' (serverVariant=true): placeholder <rateElapsedScaled> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'rateElapsedScaled'",
+    "warning[output-invariant]: fn 'withdraw' (serverVariant=true): placeholder <delta> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'delta'",
+    "warning[output-invariant]: fn 'withdraw' (serverVariant=true): placeholder <newTargetFiat> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'newTargetFiat'",
+    "warning[output-invariant]: fn 'withdraw' (serverVariant=true): placeholder <claimRaw> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'claimRaw'",
+    "warning[output-invariant]: fn 'withdraw' (serverVariant=true): placeholder <claimRaw> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'claimRaw'",
+    "warning[output-invariant]: fn 'withdraw' (serverVariant=true): placeholder <claimRaw> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'claimRaw'",
+    "warning[output-invariant]: fn 'withdraw' (serverVariant=true): placeholder <claimRaw> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'claimRaw'",
+    "warning[output-invariant]: fn 'withdraw' (serverVariant=true): placeholder <longPayout> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'longPayout'",
+    "warning[output-invariant]: fn 'withdraw' (serverVariant=true): placeholder <longPayout> is not in witnessSchema or constructorInputs; this transaction cannot be constructed without a binding for 'longPayout'"
+  ]
+}
