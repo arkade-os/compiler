@@ -2,10 +2,10 @@ pragma arkade ^0.1.0;
 
 // Cash-settled note on a hashprice attestation.
 //
-// Input 0 is the attestation, spent through consume. Input 1 is this note.
-// The attestation's previous packet is the quote the minter copied from the
-// beacon. Consuming the asset burns it, so the same unit cannot settle a
-// second note or be paid to another script.
+// Input 0 is one cloned attestation, spent through consume. Input 1 is this
+// note. settle checks that input 0 carries this asset id, then reads its
+// packet. consume leaves the asset on no output, so the same unit cannot
+// settle again or be paid to another script.
 //
 //   hashprice > strike → holder gets collateral * (hashprice - strike) / hashprice
 //   otherwise           → holder gets 0

@@ -33,7 +33,7 @@ const projects = {
     },
     hashprice: {
         name: 'Hashprice',
-        description: 'Header-verified hashprice. One asset backs the beacon and the minter; an attestation is copied or burned, and a note settles by consuming it',
+        description: 'Header-verified hashprice. One asset backs the beacon, the minter, and the attestations it clones; a note settles by consuming one',
         files: {
             'hashprice_beacon.ark': contracts.hashprice_beacon,
             'hashprice_minter.ark': contracts.hashprice_minter,

@@ -8,7 +8,7 @@ hash256(tip header) || num2bin(height, 8) || num2bin(hashprice, 16)
 
 The tip hash is the raw `hash256` digest, the same bytes the next header stores at offset 4.
 
-`update` takes the next six headers. Each one must name the previous hash, repeat the checkpoint `nBits`, and hash at or under that compact target. The six heights stay inside one 2016-block difficulty epoch and one halving era. A trailing `0x00` on the digest keeps it a positive integer: Arkade integers use the high bit as a sign. The newest header's timestamp has to be in the past (`checkTime`). The beacon's asset is copied onto itself: one input, one output, and a delta of 0. A fresh issuance or a positive delta of this id fails, so the spend cannot mint a second coin of it.
+`update` takes the next six headers and spends the beacon together with the minter. Each header must name the previous hash, repeat the checkpoint `nBits`, and hash at or under that compact target. The six heights stay inside one 2016-block difficulty epoch and one halving era. A trailing `0x00` on the digest keeps it a positive integer: Arkade integers use the high bit as a sign. The newest header's timestamp has to be in the past (`checkTime`). Both coins come back on the same scripts, with the new packet and the same amounts: two inputs, two outputs, and a delta of 0. The minter's script is copied from its own input. A fresh issuance or a positive delta of this id fails.
 
 The published integer is a subsidy-only forward quote, in sats per PH/s per day:
 
@@ -25,11 +25,11 @@ At a ten-minute pace `clamped / 3000` is 1, so this is `subsidy * 86400 * 10^15 
 
 `passthrough` copies the script, value, asset, and packet.
 
-`hashprice_minter.ark` holds the rest of the same asset. `mint` spends the beacon through `authorize`. The beacon's packet is copied onto the mint transaction, one unit is paid to `hashprice_attestation.ark`, and the remainder stays on the minter. One unit is left on the minter, so the pool cannot be emptied. The beacon copies the co-spent coin's script onto its own output and will only pay the split unit to the attestation, so the id cannot be redirected onto another program. `copy` forwards the pool without creating an attestation.
+`hashprice_minter.ark` holds the rest of the same asset. `advance` is input 1 of that header transaction: it requires the beacon program on input 0 and output 0, then copies the supply onto itself. `mint` spends the minter alone. It copies the packet onto four `hashprice_attestation.ark` outputs of one unit each and leaves the rest on the minter, so the next header update still has a coin to spend. The pool has to stay larger than four. `copy` forwards the pool and its packet without cloning.
 
-An attestation is one unit of that asset. Its quote is the packet it was minted with, not a constructor argument, so the minter's script does not change from one quote to the next. `copy` carries the packet and the asset onto the same script. `consume` burns the asset: the group has one input and no outputs. There is no path that pays an attestation to any other script. Burning a receipt is open; the minter can publish another until only its last unit remains.
+An attestation is one unit of that asset. Its quote is the packet it was minted with, not a constructor argument, so the minter's script does not change from one quote to the next. `copy` carries the packet and the asset onto the same script. `consume` burns the asset: the group has one input and no outputs. There is no path that pays an attestation to any other script. Burning a receipt is open; the minter can clone another four until the remainder is no longer larger than four.
 
-`hashprice_option.ark` is the consumer. Input 0 is the attestation, spent through `consume`, and input 1 is the note. It checks that input 0 is this attestation program, that the packet is past the checkpoint (so `update` produced the number), and that the asset is burned. The payoff is a covered call on that integer. `hashprice` and `strike` share the scale above.
+`hashprice_option.ark` is the consumer. Input 0 is one attestation, spent through `consume`, and input 1 is the note. It checks that input 0 carries this asset id, reads that input's packet, and checks that the asset is burned. The packet has to be past the checkpoint, so `update` produced the number. The payoff is a covered call on that integer. `hashprice` and `strike` share the scale above.
 
 ```text
 hashprice > strike → holder gets collateral * (hashprice - strike) / hashprice

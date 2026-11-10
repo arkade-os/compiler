@@ -26,9 +26,10 @@ const (
 	hashpriceCollateral  = int64(50_000)
 	hashpriceDust        = int64(330)
 	hashpriceStateType   = 16
-	// The beacon holds one unit. The minter holds the rest and must keep one
-	// back, so a pool of four can publish three attestations.
-	hashpricePool = uint64(4)
+	// The beacon holds one unit. The minter starts with eight and each mint
+	// clones four attestations, leaving the rest for the next header update.
+	hashpricePool   = uint64(8)
+	hashpriceFanout = uint64(4)
 	// 0x1f00ffff is difficulty 2^-16, about 2^16 hashes, so a test can mine
 	// the six headers. The covenant applies the same compact-target and
 	// hashprice formula it would use for a mainnet epoch.
@@ -77,26 +78,23 @@ func TestHashprice(t *testing.T) {
 			"shared.gidx":      scriptInt(t, int64(shared.Index)),
 		}
 	}
-	deploy := func(height int64) (sharedTree, sharedTree) {
+	deploy := func(height int64) sharedTree {
 		t.Helper()
-		attestation := instantiateSharedTree(
-			t, attestationContract, []string{"copy", "consume"}, parameters(height),
+		return instantiateSharedTree(
+			t, beaconContract, []string{"update", "passthrough"}, parameters(height),
 			serverKey.PubKey(), emulatorKey.PubKey(),
 		)
-		values := parameters(height)
-		values[attestationKey] = attestation.pkScript[2:]
-		beacon := instantiateSharedTree(
-			t, beaconContract, []string{"update", "passthrough", "authorize"}, values,
-			serverKey.PubKey(), emulatorKey.PubKey(),
-		)
-		return beacon, attestation
 	}
-	beacon, attestation := deploy(checkpointHeight)
+	beacon := deploy(checkpointHeight)
+	attestation := instantiateSharedTree(
+		t, attestationContract, []string{"copy", "consume"}, parameters(checkpointHeight),
+		serverKey.PubKey(), emulatorKey.PubKey(),
+	)
 	minterValues := parameters(checkpointHeight)
 	minterValues[beaconKey] = beacon.pkScript[2:]
 	minterValues[attestationKey] = attestation.pkScript[2:]
 	minter := instantiateSharedTree(
-		t, minterContract, []string{"mint", "copy"}, minterValues,
+		t, minterContract, []string{"advance", "mint", "copy"}, minterValues,
 		serverKey.PubKey(), emulatorKey.PubKey(),
 	)
 	chain := mineChain(t, checkpoint, hashpriceHeaderAt, hashpriceStep)
@@ -129,26 +127,34 @@ func TestHashprice(t *testing.T) {
 		[]asset.AssetInput{assetIn(0, 1)},
 		[]asset.AssetOutput{assetOut(0, 1)},
 	)
-	minted := assetMovement(
+	pair := assetMovement(
 		[]asset.AssetInput{assetIn(0, 1), assetIn(1, hashpricePool)},
-		[]asset.AssetOutput{assetOut(0, 1), assetOut(1, hashpricePool-1), assetOut(2, 1)},
+		[]asset.AssetOutput{assetOut(0, 1), assetOut(1, hashpricePool)},
+	)
+	cloned := assetMovement(
+		[]asset.AssetInput{assetIn(0, hashpricePool)},
+		[]asset.AssetOutput{
+			assetOut(0, hashpricePool-hashpriceFanout),
+			assetOut(1, 1), assetOut(2, 1), assetOut(3, 1), assetOut(4, 1),
+		},
 	)
 	burned := assetMovement([]asset.AssetInput{assetIn(0, 1)}, nil)
+	clones := []*wire.TxOut{minterOut, attestationOut, attestationOut, attestationOut, attestationOut}
 
 	update := func(prev *wire.MsgTx, headers [][]byte, output *wire.TxOut, state []byte, packet asset.Packet) *psbt.Packet {
 		t.Helper()
 		group := covenantGroup(t, beaconContract, "update")
 		witness := covenantWitness(t, beaconContract, group, headerWitness(headers))
-		return hashpriceTx(t, []covenantInput{{
-			prev: prev, path: beacon.paths["update"], witness: witness,
-		}}, []*wire.TxOut{output}, packet, state)
-	}
-	mint := func(prev *wire.MsgTx, state []byte, outs []*wire.TxOut, packet asset.Packet) *psbt.Packet {
-		t.Helper()
 		return hashpriceTx(t, []covenantInput{
-			{prev: prev, path: beacon.paths["authorize"]},
-			{prev: fundingTx(minter.pkScript, hashpriceBeaconValue), path: minter.paths["mint"]},
-		}, outs, packet, state)
+			{prev: prev, path: beacon.paths["update"], witness: witness},
+			{prev: fundingTx(minter.pkScript, hashpriceBeaconValue), path: minter.paths["advance"]},
+		}, []*wire.TxOut{output, minterOut}, packet, state)
+	}
+	mint := func(prev *wire.MsgTx, vout uint32, state []byte, outs []*wire.TxOut, packet asset.Packet) *psbt.Packet {
+		t.Helper()
+		return hashpriceTx(t, []covenantInput{{
+			prev: prev, vout: vout, path: minter.paths["mint"],
+		}}, outs, packet, state)
 	}
 	optionOf := func(collateral int64, strike *big.Int) instantiatedGroup {
 		t.Helper()
@@ -182,11 +188,11 @@ func TestHashprice(t *testing.T) {
 
 	t.Run("update", func(t *testing.T) {
 		t.Run("six headers publish the extrapolated hashprice", func(t *testing.T) {
-			requireVMResult(t, update(genesis, chain.headers, continued, published, held), emulatorKey.PubKey(), "")
+			requireVMResult(t, update(genesis, chain.headers, continued, published, pair), emulatorKey.PubKey(), "")
 		})
 		t.Run("a faster window extrapolates a lower hashprice", func(t *testing.T) {
 			state := beaconState(t, fast.tip, checkpointHeight+6, fastPrice)
-			requireVMResult(t, update(genesis, fast.headers, continued, state, held), emulatorKey.PubKey(), "")
+			requireVMResult(t, update(genesis, fast.headers, continued, state, pair), emulatorKey.PubKey(), "")
 		})
 		t.Run("passthrough copies the checkpoint packet", func(t *testing.T) {
 			requireVMResult(t, hashpriceTx(t, []covenantInput{
@@ -202,7 +208,7 @@ func TestHashprice(t *testing.T) {
 			requireVMResult(t, update(prev, chain.headers, continued, published, held), emulatorKey.PubKey(), "OP_EQUALVERIFY failed")
 		})
 		t.Run("a window that crosses a retarget is rejected", func(t *testing.T) {
-			retarget, _ := deploy(2010)
+			retarget := deploy(2010)
 			prev := fundBeacon(t, retarget.pkScript, beaconState(t, checkpoint, 2010, big.NewInt(0)))
 			group := covenantGroup(t, beaconContract, "update")
 			witness := covenantWitness(t, beaconContract, group, headerWitness(chain.headers))
@@ -212,7 +218,7 @@ func TestHashprice(t *testing.T) {
 			requireVMResult(t, spent, emulatorKey.PubKey(), "OP_NUMEQUALVERIFY failed")
 		})
 		t.Run("a window that crosses a halving is rejected", func(t *testing.T) {
-			halving, _ := deploy(209994)
+			halving := deploy(209994)
 			prev := fundBeacon(t, halving.pkScript, beaconState(t, checkpoint, 209994, big.NewInt(0)))
 			group := covenantGroup(t, beaconContract, "update")
 			witness := covenantWitness(t, beaconContract, group, headerWitness(chain.headers))
@@ -254,100 +260,137 @@ func TestHashprice(t *testing.T) {
 		})
 		t.Run("the asset cannot be inflated", func(t *testing.T) {
 			inflated := assetMovement(
-				[]asset.AssetInput{assetIn(0, 1)},
-				[]asset.AssetOutput{assetOut(0, 1), assetOut(1, 1)},
+				[]asset.AssetInput{assetIn(0, 1), assetIn(1, hashpricePool)},
+				[]asset.AssetOutput{assetOut(0, 1), assetOut(1, hashpricePool+1)},
 			)
 			requireVMResult(t, update(genesis, chain.headers, continued, published, inflated), emulatorKey.PubKey(), "OP_NUMEQUALVERIFY failed")
+		})
+		t.Run("the minter cannot move to another script", func(t *testing.T) {
+			spent := hashpriceTx(t, []covenantInput{
+				{prev: genesis, path: beacon.paths["update"], witness: covenantWitness(t, beaconContract, covenantGroup(t, beaconContract, "update"), headerWitness(chain.headers))},
+				{prev: fundingTx(minter.pkScript, hashpriceBeaconValue), path: minter.paths["advance"]},
+			}, []*wire.TxOut{continued, pay(hashpriceBeaconValue, writerProgram)}, pair, published)
+			requireVMResult(t, spent, emulatorKey.PubKey(), "OP_EQUALVERIFY failed")
 		})
 	})
 
 	t.Run("mint", func(t *testing.T) {
-		updated := update(genesis, chain.headers, continued, published, held)
+		updated := update(genesis, chain.headers, continued, published, pair)
 		requireVMResult(t, updated, emulatorKey.PubKey(), "")
-		split := []*wire.TxOut{continued, minterOut, attestationOut}
 
-		t.Run("one unit is copied onto an attestation", func(t *testing.T) {
-			requireVMResult(t, mint(updated.UnsignedTx, published, split, minted), emulatorKey.PubKey(), "")
+		t.Run("the minter clones four attestations and keeps the rest", func(t *testing.T) {
+			requireVMResult(t, mint(updated.UnsignedTx, 1, published, clones, cloned), emulatorKey.PubKey(), "")
 		})
-		t.Run("the published packet has to be the beacon's packet", func(t *testing.T) {
+		t.Run("the published packet has to be the minter's packet", func(t *testing.T) {
 			moved := append([]byte{}, published...)
 			moved[55] ^= 0xff
-			requireVMResult(t, mint(updated.UnsignedTx, moved, split, minted), emulatorKey.PubKey(), "OP_EQUALVERIFY failed")
+			requireVMResult(t, mint(updated.UnsignedTx, 1, moved, clones, cloned), emulatorKey.PubKey(), "OP_EQUALVERIFY failed")
 		})
 		t.Run("the genesis packet cannot be attested", func(t *testing.T) {
+			seeded := fundBeacon(t, minter.pkScript, beaconState(t, checkpoint, checkpointHeight, big.NewInt(0)))
 			requireVMResult(t, mint(
-				genesis, beaconState(t, checkpoint, checkpointHeight, big.NewInt(0)), split, minted,
+				seeded, 0, beaconState(t, checkpoint, checkpointHeight, big.NewInt(0)), clones, cloned,
 			), emulatorKey.PubKey(), "OP_VERIFY failed")
 		})
-		t.Run("the new unit cannot use another script", func(t *testing.T) {
-			hijacked := []*wire.TxOut{continued, minterOut, pay(hashpriceBeaconValue, writerProgram)}
-			requireVMResult(t, mint(updated.UnsignedTx, published, hijacked, minted), emulatorKey.PubKey(), "OP_EQUALVERIFY failed")
+		t.Run("a clone cannot use another script", func(t *testing.T) {
+			hijacked := []*wire.TxOut{minterOut, attestationOut, pay(hashpriceBeaconValue, writerProgram), attestationOut, attestationOut}
+			requireVMResult(t, mint(updated.UnsignedTx, 1, published, hijacked, cloned), emulatorKey.PubKey(), "OP_EQUALVERIFY failed")
 		})
 		t.Run("the pool cannot move to another script", func(t *testing.T) {
-			hijacked := []*wire.TxOut{continued, pay(hashpriceBeaconValue, writerProgram), attestationOut}
-			requireVMResult(t, mint(updated.UnsignedTx, published, hijacked, minted), emulatorKey.PubKey(), "OP_EQUALVERIFY failed")
+			hijacked := []*wire.TxOut{pay(hashpriceBeaconValue, writerProgram), attestationOut, attestationOut, attestationOut, attestationOut}
+			requireVMResult(t, mint(updated.UnsignedTx, 1, published, hijacked, cloned), emulatorKey.PubKey(), "does not preserve source script")
 		})
 		t.Run("a positive delta is rejected", func(t *testing.T) {
 			inflated := assetMovement(
-				[]asset.AssetInput{assetIn(0, 1), assetIn(1, hashpricePool)},
-				[]asset.AssetOutput{assetOut(0, 1), assetOut(1, hashpricePool), assetOut(2, 1)},
+				[]asset.AssetInput{assetIn(0, hashpricePool)},
+				[]asset.AssetOutput{
+					assetOut(0, hashpricePool),
+					assetOut(1, 1), assetOut(2, 1), assetOut(3, 1), assetOut(4, 1),
+				},
 			)
-			requireVMResult(t, mint(updated.UnsignedTx, published, split, inflated), emulatorKey.PubKey(), "OP_NUMEQUALVERIFY failed")
+			requireVMResult(t, mint(updated.UnsignedTx, 1, published, clones, inflated), emulatorKey.PubKey(), "OP_NUMEQUALVERIFY failed")
 		})
-		t.Run("a different beacon program cannot mint", func(t *testing.T) {
-			// authorize copies whatever script it is spending. The minter is
-			// what requires that script to be this beacon.
-			foreign := fundBeacon(t, p2trScript(t, []byte{0x51}), published)
-			outs := []*wire.TxOut{
+		t.Run("the remainder cannot mint again", func(t *testing.T) {
+			created := mint(updated.UnsignedTx, 1, published, clones, cloned)
+			requireVMResult(t, created, emulatorKey.PubKey(), "")
+			rest := hashpricePool - hashpriceFanout
+			again := assetMovement(
+				[]asset.AssetInput{assetIn(0, rest)},
+				[]asset.AssetOutput{
+					assetOut(0, rest),
+					assetOut(1, 1), assetOut(2, 1), assetOut(3, 1), assetOut(4, 1),
+				},
+			)
+			requireVMResult(t, mint(created.UnsignedTx, 0, published, clones, again), emulatorKey.PubKey(), "OP_VERIFY failed")
+		})
+		t.Run("a different verifier cannot advance the minter", func(t *testing.T) {
+			foreign := fundBeacon(t, p2trScript(t, []byte{0x51}), beaconState(t, checkpoint, checkpointHeight, big.NewInt(0)))
+			witness := covenantWitness(t, beaconContract, covenantGroup(t, beaconContract, "update"), headerWitness(chain.headers))
+			spent := hashpriceTx(t, []covenantInput{
+				{prev: foreign, path: beacon.paths["update"], witness: witness},
+				{prev: fundingTx(minter.pkScript, hashpriceBeaconValue), path: minter.paths["advance"]},
+			}, []*wire.TxOut{
 				beaconOut(hashpriceBeaconValue, foreign.TxOut[0].PkScript),
 				minterOut,
-				attestationOut,
-			}
-			requireVMResult(t, mint(foreign, published, outs, minted), emulatorKey.PubKey(), "OP_EQUALVERIFY failed")
+			}, pair, published)
+			requireVMResult(t, spent, emulatorKey.PubKey(), "OP_EQUALVERIFY failed")
 		})
-		t.Run("the pool copies onto the minter", func(t *testing.T) {
+		t.Run("the pool copies its packet onto the minter", func(t *testing.T) {
+			seeded := fundBeacon(t, minter.pkScript, published)
 			pool := assetMovement(
 				[]asset.AssetInput{assetIn(0, hashpricePool)},
 				[]asset.AssetOutput{assetOut(0, hashpricePool)},
 			)
 			requireVMResult(t, hashpriceTx(t, []covenantInput{{
-				prev: fundingTx(minter.pkScript, hashpriceBeaconValue), path: minter.paths["copy"],
+				prev: seeded, path: minter.paths["copy"],
 			}}, []*wire.TxOut{minterOut}, pool, published), emulatorKey.PubKey(), "")
 		})
+		t.Run("a pool copy cannot change the packet", func(t *testing.T) {
+			seeded := fundBeacon(t, minter.pkScript, published)
+			moved := append([]byte{}, published...)
+			moved[55] ^= 0xff
+			pool := assetMovement(
+				[]asset.AssetInput{assetIn(0, hashpricePool)},
+				[]asset.AssetOutput{assetOut(0, hashpricePool)},
+			)
+			requireVMResult(t, hashpriceTx(t, []covenantInput{{
+				prev: seeded, path: minter.paths["copy"],
+			}}, []*wire.TxOut{minterOut}, pool, moved), emulatorKey.PubKey(), "OP_EQUALVERIFY failed")
+		})
 		t.Run("an attestation copies its packet and its script", func(t *testing.T) {
-			created := mint(updated.UnsignedTx, published, split, minted)
+			created := mint(updated.UnsignedTx, 1, published, clones, cloned)
 			requireVMResult(t, created, emulatorKey.PubKey(), "")
 			requireVMResult(t, hashpriceTx(t, []covenantInput{{
-				prev: created.UnsignedTx, vout: 2, path: attestation.paths["copy"],
+				prev: created.UnsignedTx, vout: 1, path: attestation.paths["copy"],
 			}}, []*wire.TxOut{attestationOut}, held, published), emulatorKey.PubKey(), "")
 		})
 		t.Run("an attestation copy cannot change the packet", func(t *testing.T) {
-			created := mint(updated.UnsignedTx, published, split, minted)
+			created := mint(updated.UnsignedTx, 1, published, clones, cloned)
 			requireVMResult(t, created, emulatorKey.PubKey(), "")
 			moved := append([]byte{}, published...)
 			moved[55] ^= 0xff
 			requireVMResult(t, hashpriceTx(t, []covenantInput{{
-				prev: created.UnsignedTx, vout: 2, path: attestation.paths["copy"],
+				prev: created.UnsignedTx, vout: 1, path: attestation.paths["copy"],
 			}}, []*wire.TxOut{attestationOut}, held, moved), emulatorKey.PubKey(), "OP_EQUALVERIFY failed")
 		})
 		t.Run("an attestation cannot be paid to another script", func(t *testing.T) {
-			created := mint(updated.UnsignedTx, published, split, minted)
+			created := mint(updated.UnsignedTx, 1, published, clones, cloned)
 			requireVMResult(t, created, emulatorKey.PubKey(), "")
 			requireVMResult(t, hashpriceTx(t, []covenantInput{{
-				prev: created.UnsignedTx, vout: 2, path: attestation.paths["copy"],
+				prev: created.UnsignedTx, vout: 1, path: attestation.paths["copy"],
 			}}, []*wire.TxOut{pay(hashpriceBeaconValue, writerProgram)}, held, published), emulatorKey.PubKey(), "does not preserve source script")
 		})
 	})
 
 	t.Run("settle", func(t *testing.T) {
-		updated := update(genesis, chain.headers, continued, published, held)
+		updated := update(genesis, chain.headers, continued, published, pair)
 		requireVMResult(t, updated, emulatorKey.PubKey(), "")
-		created := mint(updated.UnsignedTx, published, []*wire.TxOut{continued, minterOut, attestationOut}, minted)
+		created := mint(updated.UnsignedTx, 1, published, clones, cloned)
 		requireVMResult(t, created, emulatorKey.PubKey(), "")
 
 		t.Run("an in-the-money note pays the holder and the writer", func(t *testing.T) {
 			carried := hashpriceTx(t, []covenantInput{{
-				prev: created.UnsignedTx, vout: 2, path: attestation.paths["copy"],
+				prev: created.UnsignedTx, vout: 1, path: attestation.paths["copy"],
 			}}, []*wire.TxOut{attestationOut}, held, published)
 			requireVMResult(t, carried, emulatorKey.PubKey(), "")
 			requireVMResult(t, settle(carried.UnsignedTx, 0, standard, hashpriceCollateral, []*wire.TxOut{
@@ -357,7 +400,7 @@ func TestHashprice(t *testing.T) {
 		})
 		t.Run("out of the money the writer keeps the collateral", func(t *testing.T) {
 			requireVMResult(t, settle(
-				created.UnsignedTx, 2, optionOf(hashpriceCollateral, price), hashpriceCollateral,
+				created.UnsignedTx, 1, optionOf(hashpriceCollateral, price), hashpriceCollateral,
 				[]*wire.TxOut{pay(hashpriceCollateral, writerProgram)},
 			), emulatorKey.PubKey(), "")
 		})
@@ -369,7 +412,7 @@ func TestHashprice(t *testing.T) {
 				t.Fatalf("dust fixture holder payout %d is outside 1..%d", holder, hashpriceDust)
 			}
 			requireVMResult(t, settle(
-				created.UnsignedTx, 2, optionOf(hashpriceCollateral, dustStrike), hashpriceCollateral,
+				created.UnsignedTx, 1, optionOf(hashpriceCollateral, dustStrike), hashpriceCollateral,
 				[]*wire.TxOut{pay(hashpriceCollateral, writerProgram)},
 			), emulatorKey.PubKey(), "")
 		})
@@ -391,7 +434,7 @@ func TestHashprice(t *testing.T) {
 		})
 		t.Run("consuming the attestation cannot leave the asset behind", func(t *testing.T) {
 			left := hashpriceTx(t, []covenantInput{
-				{prev: created.UnsignedTx, vout: 2, path: attestation.paths["consume"]},
+				{prev: created.UnsignedTx, vout: 1, path: attestation.paths["consume"]},
 				{prev: fundingTx(standard.pkScript, hashpriceCollateral), path: scriptPath{covenant: standard.covenant, leaf: standard.tapLeafScript}},
 			}, []*wire.TxOut{
 				pay(holderAmt, holderProgram),
@@ -400,13 +443,13 @@ func TestHashprice(t *testing.T) {
 			requireVMResult(t, left, emulatorKey.PubKey(), "OP_NUMEQUALVERIFY failed")
 		})
 		t.Run("the holder cannot be shorted", func(t *testing.T) {
-			requireVMResult(t, settle(created.UnsignedTx, 2, standard, hashpriceCollateral, []*wire.TxOut{
+			requireVMResult(t, settle(created.UnsignedTx, 1, standard, hashpriceCollateral, []*wire.TxOut{
 				pay(holderAmt-1, holderProgram),
 				pay(writerAmt+1, writerProgram),
 			}), emulatorKey.PubKey(), "OP_VERIFY failed")
 		})
 		t.Run("the holder payout cannot be redirected", func(t *testing.T) {
-			requireVMResult(t, settle(created.UnsignedTx, 2, standard, hashpriceCollateral, []*wire.TxOut{
+			requireVMResult(t, settle(created.UnsignedTx, 1, standard, hashpriceCollateral, []*wire.TxOut{
 				pay(holderAmt, writerProgram),
 				pay(writerAmt, writerProgram),
 			}), emulatorKey.PubKey(), "OP_EQUALVERIFY failed")

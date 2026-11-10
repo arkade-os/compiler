@@ -23,7 +23,7 @@ fn names(out: &arkade_compiler::models::ContractJson) -> Vec<&str> {
 fn beacon_derives_hashprice_from_six_headers() {
     let out = compile("examples/hashprice/hashprice_beacon.ark");
     assert_eq!(out.name, "HashpriceBeacon");
-    assert_eq!(names(&out), ["update", "passthrough", "authorize"]);
+    assert_eq!(names(&out), ["update", "passthrough"]);
 
     let update = arkade_asm(&out, "update");
     assert!(
@@ -39,6 +39,10 @@ fn beacon_derives_hashprice_from_six_headers() {
     assert!(update.contains(OP_INSPECTPACKET), "{update}");
     assert!(update.contains(OP_INSPECTASSETGROUPSUM), "{update}");
     assert!(update.contains(OP_TUNNEL), "{update}");
+    assert!(
+        !update.contains("CONTRACT:"),
+        "the minter is copied from its own input: {update}"
+    );
     assert_eq!(arkade_inputs(&out, "update"), ["headers"]);
 
     let passthrough = arkade_asm(&out, "passthrough");
@@ -53,35 +57,30 @@ fn beacon_derives_hashprice_from_six_headers() {
         "passthrough copies the packet and does not re-hash headers"
     );
     assert!(arkade_inputs(&out, "passthrough").is_empty());
-
-    let authorize = arkade_asm(&out, "authorize");
-    assert!(
-        authorize.contains("<CONTRACT:HashpriceAttestation("),
-        "the split unit has to land on the attestation: {authorize}"
-    );
-    assert!(
-        !authorize.contains("CONTRACT:HashpriceMinter("),
-        "the beacon copies the co-spent script instead of naming the minter: {authorize}"
-    );
-    assert!(authorize.contains(OP_INSPECTASSETGROUPSUM), "{authorize}");
-    assert!(!authorize.contains(OP_HASH256), "{authorize}");
-    assert!(arkade_inputs(&out, "authorize").is_empty());
 }
 
 #[test]
 fn minter_and_attestation_share_the_beacon_asset() {
     let minter = compile("examples/hashprice/hashprice_minter.ark");
     assert_eq!(minter.name, "HashpriceMinter");
-    assert_eq!(names(&minter), ["mint", "copy"]);
+    assert_eq!(names(&minter), ["advance", "mint", "copy"]);
+
+    let advance = arkade_asm(&minter, "advance");
+    assert!(
+        advance.contains("<CONTRACT:HashpriceBeacon("),
+        "advance must spend the beacon: {advance}"
+    );
+    assert!(advance.contains(OP_INSPECTASSETGROUPNUM), "{advance}");
+    assert!(arkade_inputs(&minter, "advance").is_empty());
 
     let mint = arkade_asm(&minter, "mint");
     assert!(
-        mint.contains("<CONTRACT:HashpriceBeacon("),
-        "mint must spend the beacon: {mint}"
+        !mint.contains("CONTRACT:HashpriceBeacon("),
+        "mint spends the minter alone: {mint}"
     );
     assert!(
         mint.contains("<CONTRACT:HashpriceAttestation("),
-        "the new unit must be an attestation: {mint}"
+        "each clone must be an attestation: {mint}"
     );
     assert!(mint.contains(OP_INSPECTASSETGROUPNUM), "{mint}");
     assert!(mint.contains(OP_INSPECTASSETGROUPSUM), "{mint}");
