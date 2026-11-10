@@ -362,6 +362,7 @@ impl Typing<'_> {
         }
         expression.ty = match &expression.kind {
             // A computed value's member is typed as the same member of a binding of its type.
+            // TODO(ir): scopes key types by binding path, hence the made-up name `$`.
             ExprKind::FieldAccess { value, field } if expression.binding_path().is_none() => {
                 let mut members = Scope::new();
                 bind_local_type(&mut members, "$", None, value.ty.clone(), self.structs);

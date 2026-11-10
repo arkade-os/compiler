@@ -125,30 +125,23 @@ impl Generator {
     // ponytail: the read leaves are copied and the whole root dropped after, one copy and drop
     // more than a move; consume the final reads if script size matters.
     fn emit_computed_access(&mut self, value: &Expression, ty: &TypeName) -> Result<()> {
-        let baseline = self.stack.len();
-        let scope = self.scope.clone();
-        let pinned = std::mem::replace(&mut self.pinned_stack_len, baseline);
-        let mut access = value.clone();
-        let mut root = &mut access;
-        while matches!(
-            root.kind,
-            ExprKind::FieldAccess { .. } | ExprKind::IndexAccess { .. }
-        ) {
-            // An access's first child is the value it reads from.
-            root = crate::models::child_exprs_mut(root).swap_remove(0);
+        fn root(mut access: &mut Expression) -> &mut Expression {
+            while matches!(
+                access.kind,
+                ExprKind::FieldAccess { .. } | ExprKind::IndexAccess { .. }
+            ) {
+                // An access's first child is the value it reads from.
+                access = crate::models::child_exprs_mut(access).swap_remove(0);
+            }
+            access
         }
-        let root_type = TypeName::from(&root.ty);
-        let name = Path::new(format!("$access:{baseline}"));
-        self.emit_typed_value(root, &root_type)?;
-        self.bind_value(&name.root, &root_type)?;
-        self.bind_type(&name.root, &root_type);
-        root.kind = ExprKind::Name(name);
-        self.emit_access_value(&access, ty)?;
-        self.discard_call_frame(baseline, self.width(ty)?)?;
-        self.last_reads.retain(|(_, index), _| *index < baseline);
-        self.scope = scope;
-        self.pinned_stack_len = pinned;
-        Ok(())
+        let mut access = value.clone();
+        let computed = root(&mut access).clone();
+        let width = self.width(ty)?;
+        self.with_bound_value(&computed, width, |generator, bound| {
+            *root(&mut access) = bound;
+            generator.emit_access_value(&access, ty)
+        })
     }
 
     pub(super) fn assign_access(&mut self, value: &Expression) -> Result<()> {
@@ -188,36 +181,57 @@ impl Generator {
         Ok(())
     }
 
-    /// Emit a builtin call with argument `position` evaluated once into a local binding,
-    /// which `emit` then reads by name.
+    /// Evaluate `value` as `ty` into the local binding `name`.
+    pub(super) fn emit_let(&mut self, name: &str, value: &Expression, ty: &TypeName) -> Result<()> {
+        self.emit_typed_value(value, ty)?;
+        self.bind_value(name, ty)?;
+        self.bind_type(name, ty);
+        Ok(())
+    }
+
+    /// Evaluate `value` once into a stack binding, then let `read` emit through an expression
+    /// naming it; the `width` items `read` leaves are kept and the binding dropped.
+    // TODO(ir): emission reads composite values only by binding path, so computed ones get a
+    // made-up name here. Remove once operands are IR values instead of paths.
+    pub(super) fn with_bound_value(
+        &mut self,
+        value: &Expression,
+        width: usize,
+        read: impl FnOnce(&mut Self, Expression) -> Result<()>,
+    ) -> Result<()> {
+        let baseline = self.stack.len();
+        let scope = self.scope.clone();
+        let pinned = std::mem::replace(&mut self.pinned_stack_len, baseline);
+        let ty = TypeName::from(&value.ty);
+        let name = format!("$bound:{baseline}");
+        self.emit_let(&name, value, &ty)?;
+        let mut bound = value.with_kind(ExprKind::Name(Path::new(name)));
+        bound.ty = value.ty.clone();
+        read(self, bound)?;
+        self.discard_call_frame(baseline, width)?;
+        self.last_reads.retain(|(_, index), _| *index < baseline);
+        self.scope = scope;
+        self.pinned_stack_len = pinned;
+        Ok(())
+    }
+
+    /// Emit a builtin call with argument `position` evaluated once.
     fn emit_with_bound_arg(
         &mut self,
         call: &Expression,
         position: usize,
         emit: fn(&mut Self, &Expression) -> Result<()>,
     ) -> Result<()> {
-        let mut normalized = call.clone();
-        let ExprKind::Builtin { args, .. } = &mut normalized.kind else {
+        let ExprKind::Builtin { args, .. } = &call.kind else {
             return Err("expected a builtin call".into());
         };
-        let value = &mut args[position];
-        let baseline = self.stack.len();
-        let scope = self.scope.clone();
-        let pinned = std::mem::replace(&mut self.pinned_stack_len, baseline);
-        let ark_type = value.ty.clone();
-        let ty = TypeName::from(&ark_type);
-        let name = format!("$arg:{baseline}");
-        self.emit_typed_value(value, &ty)?;
-        self.bind_value(&name, &ty)?;
-        self.bind_type(&name, &ty);
-        *value = value.with_kind(ExprKind::Name(Path::new(name)));
-        value.ty = ark_type;
-        emit(self, &normalized)?;
-        self.discard_call_frame(baseline, 1)?;
-        self.last_reads.retain(|(_, index), _| *index < baseline);
-        self.scope = scope;
-        self.pinned_stack_len = pinned;
-        Ok(())
+        self.with_bound_value(&args[position], 1, |generator, bound| {
+            let mut call = call.clone();
+            if let ExprKind::Builtin { args, .. } = &mut call.kind {
+                args[position] = bound;
+            }
+            emit(generator, &call)
+        })
     }
 
     pub(super) fn emit_multisig(&mut self, expression: &Expression) -> Result<()> {

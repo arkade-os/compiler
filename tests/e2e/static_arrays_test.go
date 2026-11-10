@@ -153,14 +153,17 @@ func TestComputedLoopIterables(t *testing.T) {
 	source := filepath.Join(t.TempDir(), "loops.ark")
 	err := os.WriteFile(source, []byte(`
 struct Point { int x; int y; }
+struct Shape { Point[2] points; }
 contract Loops() {
     private function values(int v) int[2] { require(v != 7); return [v, v + 1]; }
     private function points(int v) Point[2] { return [{ x: v, y: v * 2 }, { x: v + 1, y: v * 3 }]; }
+    private function shape(int v) Shape { return { points: points(v) }; }
     function spend(int v, int expected) {
         int total = 0;
         for (i, item) in values(v) { total = total + item * (i + 1); }
         for (i, p) in points(v) { total = total + p.y - p.x * i; }
         for (i, w) in [v, 5] { total = total + w * i; }
+        for (i, p) in shape(v).points { total = total + p.x * i; }
         require(total == expected);
     }
 }`), 0600)
@@ -173,7 +176,7 @@ contract Loops() {
 	instance := instantiateGroup(t, contract, "spend", nil, serverKey.PubKey(), emulatorKey.PubKey())
 	deployment := fundingTx(instance.pkScript, 10_000)
 	// Each loop's terms differ when its elements or fields are read out of order.
-	total := func(v int64) int64 { return (v + (v+1)*2) + (2*v + 3*v - (v + 1)) + 5 }
+	total := func(v int64) int64 { return (v + (v+1)*2) + (2*v + 3*v - (v + 1)) + 5 + (v + 1) }
 	for _, tc := range []struct {
 		name     string
 		v, delta int64

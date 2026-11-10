@@ -255,10 +255,6 @@ fn computed_result_accesses_reject_invalid_members_and_indexes() {
             "require([1, 2][0] == 1);",
             "cannot read a field or element of a literal",
         ),
-        (
-            "for (i, p) in shape().points { require(p.x == i); }",
-            "unsupported loop iterable",
-        ),
     ] {
         let source = format!(
             "struct Point {{ int x; int y; }} struct Shape {{ Point[2] points; }} contract C() {{

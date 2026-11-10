@@ -563,13 +563,16 @@ contract Local() {
 fn loops_evaluate_computed_arrays_once() {
     let source = r#"
 struct Point { int x; int y; }
+struct Shape { Point[2] points; }
 contract Loops() {
     private function values(int v) int[2] { require(v != 7); return [v, v + 1]; }
     private function points(int v) Point[2] { return [{ x: v, y: v + 1 }, { x: v + 1, y: v + 2 }]; }
+    private function shape(int v) Shape { return { points: points(v) }; }
     function spend(int v) {
         for (i, item) in values(v) { require(item == v + i); require(item >= v); }
         for (i, p) in points(v) { require(p.y == p.x + 1); }
         for (i, w) in [v, v + 1] { require(w == v + i); }
+        for (i, p) in shape(v).points { for (j, q) in points(p.y) { require(q.x == p.y + j); } }
     }
 }
 "#;

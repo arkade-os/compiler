@@ -147,6 +147,16 @@ fn emit_lowered(item: &Lowered, generator: &mut Generator) -> Result<bool> {
             }
             Ok(continues)
         }
+        Lowered::Bound {
+            name, value, body, ..
+        } => {
+            let ty = TypeName::from(&value.ty);
+            generator.enter_scope();
+            generator.emit_let(name, value, &ty)?;
+            let continues = emit_body(body, generator)?;
+            generator.exit_scope()?;
+            Ok(continues)
+        }
     }
 }
 
@@ -186,9 +196,7 @@ fn emit_statement(stmt: &LocatedStatement, generator: &mut Generator) -> Result<
                 })
                 .or_else(|| generator.composite_type(value));
             if let Some(ty) = &result_type {
-                generator.emit_typed_value(value, ty)?;
-                generator.bind_value(name, ty)?;
-                generator.bind_type(name, ty);
+                generator.emit_let(name, value, ty)?;
             } else {
                 generator.emit_expression(value)?;
                 generator.bind_local(Path::new(name))?;
