@@ -409,6 +409,27 @@ fn composite_comparison_literals_are_validated() {
             "{point: {x: 1, y: 2}, values: [1, true]}",
             "expected 'int', got 'bool'",
         ),
+        (
+            "Point[2]",
+            "[{x: 1, y: 2}]",
+            "expected 2 array elements, got 1",
+        ),
+        ("Point[2]", "[{x: 1, y: 2}, {x: 3}]", "missing field 'y'"),
+        (
+            "Point[2]",
+            "[{x: 1, y: 2}, {x: 3, y: 4, y: 5}]",
+            "duplicate field 'y'",
+        ),
+        (
+            "Point[2]",
+            "[{x: 1, y: 2}, {x: true, y: 4}]",
+            "expected 'int', got 'bool'",
+        ),
+        (
+            "Point[2]",
+            "{x: 1, y: 2}",
+            "expected 'Point[2]', got 'unknown'",
+        ),
     ] {
         for op in ["==", "!="] {
             for (left, right) in [("value", literal), (literal, "value")] {
