@@ -513,7 +513,13 @@ fn check_unused(contract: &Contract, issues: &mut Vec<ValidationIssue>) {
     }
 }
 
-/// The names a tapscript's items read.
+/// The binding a tapscript operand reads: `guardians` for `guardians[0]`, `policy` for
+/// `policy.owner`.
+pub(crate) fn operand_root(operand: &str) -> &str {
+    operand.split(['.', '[']).next().unwrap_or_default()
+}
+
+/// The bindings a tapscript's items read.
 pub(crate) fn tapscript_reads(tapscript: &crate::models::NamedTapscript) -> HashSet<&str> {
     let mut used = HashSet::new();
     for item in &tapscript.items {
@@ -530,7 +536,7 @@ pub(crate) fn tapscript_reads(tapscript: &crate::models::NamedTapscript) -> Hash
             }
         }
     }
-    used
+    used.into_iter().map(operand_root).collect()
 }
 
 // ─── Tests ────────────────────────────────────────────────────────────────────

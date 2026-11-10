@@ -12,6 +12,7 @@ use crate::models::{
     Requirement, Statement, TapItem, EMULATOR,
 };
 use crate::properties::{OutputProperty, ThisProperty, TxProperty};
+use crate::validator::operand_root;
 
 /// An output the function constrains at a fixed place; outputs at a computed index are not
 /// tracked.
@@ -175,7 +176,7 @@ fn spending_paths<'a>(
         // tweaked key's enclave signs whatever its covenant passes, so only a constructor key
         // authorizes the spend.
         let signed = keys.iter().any(|key| {
-            matches!(key, KeyExpr::Ident(name) if contract.parameters.iter().any(|p| &p.name == name))
+            matches!(key, KeyExpr::Ident(name) if contract.parameters.iter().any(|p| p.name == operand_root(name)))
         });
         let covenant = bound.and_then(|name| covenants.iter().find(|(f, _)| f.name == name));
         paths.push((signed, covenant.copied()));
