@@ -561,14 +561,20 @@ fn parse_statement(
             branches.push(then_block.as_span().into());
             let then_body = parse_block(function_name, then_block, constants)?;
 
-            let else_body = if let Some(else_block) = inner.next() {
-                branches.push(else_block.as_span().into());
-                Some(parse_block(function_name, else_block, constants)?)
-            } else {
-                // The pair also takes the whitespace and comments before where an `else` would be.
-                span.end = branches[0].end;
-                None
-            };
+            let else_body =
+                if let Some(else_block) = inner.find(|p| p.as_rule() != Rule::else_keyword) {
+                    branches.push(else_block.as_span().into());
+                    Some(match else_block.as_rule() {
+                        Rule::if_stmt => {
+                            parse_statements(function_name, std::iter::once(else_block), constants)?
+                        }
+                        _ => parse_block(function_name, else_block, constants)?,
+                    })
+                } else {
+                    // The pair also takes the whitespace and comments before where an `else` would be.
+                    span.end = branches[0].end;
+                    None
+                };
 
             Statement::IfElse {
                 condition,
@@ -1344,6 +1350,43 @@ contract Demo(pubkey first, pubkey second) {{
                     "checkMultisig without signatures must fail for `{modifier}` functions"
                 );
             }
+        }
+    }
+
+    #[test]
+    fn else_if_is_an_else_block_holding_one_if() {
+        let contract = parse(
+            "contract C() { function spend(int x) {
+                if (x == 1) { require(x > 0); } else if (x == 2) { require(x > 1); }
+                else if (x == 3) { require(x > 2); } else { require(x > 3); }
+            } }",
+        )
+        .unwrap();
+        let mut statement = &contract.functions[0].statements[0].statement;
+        let mut arms = 1;
+        while let Statement::IfElse {
+            else_body: Some(body),
+            ..
+        } = statement
+        {
+            arms += 1;
+            match body.as_slice() {
+                [nested] if matches!(nested.statement, Statement::IfElse { .. }) => {
+                    statement = &nested.statement
+                }
+                [_] => break,
+                _ => panic!("{body:?}"),
+            }
+        }
+        assert_eq!(arms, 4);
+        for chain in [
+            "elseif (x == 2) { require(x > 1); }",
+            "else if x == 2 { require(x > 1); }",
+        ] {
+            let source = format!(
+                "contract C() {{ function spend(int x) {{ if (x == 1) {{ require(x > 0); }} {chain} }} }}"
+            );
+            assert!(parse(&source).is_err(), "{chain}");
         }
     }
 }

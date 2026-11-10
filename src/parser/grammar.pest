@@ -86,11 +86,11 @@ statement_kind = _{
     variable_declaration
 }
 
-// If statement with optional else. There is no `else if`; `Path::either` in
-// `src/lint/functions.rs` relies on that, see its ponytail note.
+// If statement with optional else; `else if` is an else block holding one `if`.
 if_stmt = {
-    "if" ~ "(" ~ general_expression ~ ")" ~ block ~ ("else" ~ block)?
+    "if" ~ "(" ~ general_expression ~ ")" ~ block ~ (else_keyword ~ (if_stmt | block))?
 }
+else_keyword = @{ "else" ~ !(ASCII_ALPHANUMERIC | "_") }
 
 // For loop statement (compile-time unrolled)
 for_stmt = { for_in_stmt | for_count_stmt }

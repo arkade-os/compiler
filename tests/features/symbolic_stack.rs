@@ -762,3 +762,21 @@ contract C() {
         ]
     );
 }
+
+#[test]
+fn else_if_compiles_as_the_nested_else_block() {
+    let contract = |body: &str| {
+        format!("contract C() {{ function spend(int x, int y) {{ {body} require(y > 0); }} }}")
+    };
+    let chained = contract(
+        "if (x == 1) { y = y + 1; } else if (x == 2) { y = y * 2; } else { require(x > 2); }",
+    );
+    let nested = contract(
+        "if (x == 1) { y = y + 1; } else { if (x == 2) { y = y * 2; } else { require(x > 2); } }",
+    );
+    for compile in [compile, arkade_compiler::compile] {
+        let asm = |source: &str| crate::common::arkade_asm(&compile(source).unwrap(), "spend");
+        assert_eq!(asm(&chained), asm(&nested));
+        assert_eq!(asm(&chained).matches(OP_IF).count(), 2, "{}", asm(&chained));
+    }
+}
