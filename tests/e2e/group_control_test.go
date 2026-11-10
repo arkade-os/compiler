@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	"crypto/sha256"
 	"os"
 	"path/filepath"
 	"testing"
@@ -70,6 +71,60 @@ contract GroupControl() {
 			}
 			spend := spendingPSBTWithWitness(t, deployment, instance, 10_000, instance.pkScript,
 				covenantWitness(t, contract, group, values), extension.Packet(tc.packet))
+			requireVMResult(t, spend, emulatorKey.PubKey(), tc.wantErr)
+		})
+	}
+}
+
+func TestComputedAssetIdTxid(t *testing.T) {
+	source := filepath.Join(t.TempDir(), "computed_txid.ark")
+	err := os.WriteFile(source, []byte(`
+contract ComputedTxid() {
+    function spend(bytes d) {
+        require(tx.outputs[0].assets.has(sha256(d), 3));
+        require(tx.assetGroups[0].controlIs(id(d), 2));
+    }
+    private function id(bytes d) bytes32 { return sha256(d); }
+}`), 0600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	contract := compileArtifact(t, source)
+	serverKey, emulatorKey := fixedPrivateKey(1), fixedPrivateKey(2)
+	group := covenantGroup(t, contract, "spend")
+	instance := instantiateGroup(t, contract, "spend", nil, serverKey.PubKey(), emulatorKey.PubKey())
+	deployment := fundingTx(instance.pkScript, 10_000)
+
+	preimage := []byte("computed asset id")
+	txid := chainhash.Hash(sha256.Sum256(preimage))
+	transferId := asset.AssetId{Txid: txid, Index: 3}
+	transfer := asset.AssetGroup{
+		AssetId: &transferId,
+		Inputs:  []asset.AssetInput{{Type: asset.AssetInputTypeLocal, Vin: 0, Amount: 7}},
+		Outputs: []asset.AssetOutput{{Type: asset.AssetOutputTypeLocal, Vout: 0, Amount: 7}},
+	}
+	for _, tc := range []struct {
+		name     string
+		preimage []byte
+		control  chainhash.Hash
+		wantErr  string
+	}{
+		{"computed ids", preimage, txid, ""},
+		{"wrong preimage", []byte("other"), txid, "OP_VERIFY failed"},
+		{"wrong control", preimage, chainhash.Hash{9}, "false stack entry"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			control, err := asset.NewAssetRefFromId(asset.AssetId{Txid: tc.control, Index: 2})
+			if err != nil {
+				t.Fatal(err)
+			}
+			issuance := asset.AssetGroup{
+				ControlAsset: control,
+				Outputs:      []asset.AssetOutput{{Type: asset.AssetOutputTypeLocal, Vout: 0, Amount: 5}},
+			}
+			spend := spendingPSBTWithWitness(t, deployment, instance, 10_000, instance.pkScript,
+				covenantWitness(t, contract, group, map[string][]byte{"d": tc.preimage}),
+				extension.Packet(asset.Packet{issuance, transfer}))
 			requireVMResult(t, spend, emulatorKey.PubKey(), tc.wantErr)
 		})
 	}
