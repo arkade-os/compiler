@@ -100,12 +100,12 @@ fn fold_expression(expression: &mut Expression, scope: &Scope) -> Result<(), Str
         ExprKind::ArrayIndex { array, index } => {
             Some((array.to_string(), scope.get(&array.key()), index))
         }
-        ExprKind::IndexAccess { value, index } => Some(match (value.binding_path(), &value.ty) {
-            (Some(array), _) => (array.to_string(), scope.get(&array.key()), index),
+        ExprKind::IndexAccess { value, index } => match (value.binding_path(), &value.ty) {
+            (Some(array), _) => Some((array.to_string(), scope.get(&array.key()), index)),
             // A computed array is spelled by its element type, as in 'int[2]'.
-            (None, ArkType::Array(element, _)) => (element.as_str(), Some(&value.ty), index),
-            (None, _) => (String::new(), None, index),
-        }),
+            (None, ArkType::Array(element, _)) => Some((element.as_str(), Some(&value.ty), index)),
+            (None, _) => None,
+        },
         _ => None,
     };
     if let Some((array, ty, index)) = access {
