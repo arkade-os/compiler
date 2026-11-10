@@ -319,12 +319,35 @@ pub(super) fn validate_binding_expression(
                 // Composite operands are emitted field by field, so their type must be known.
                 let known = actual != ArkType::Unknown
                     || matches!(expected, ArkType::Struct(_) | ArkType::Array(..));
+                // A struct literal has no type of its own, so it is checked against the
+                // parameter type; signatures name only native structs.
+                if matches!(&operand.kind, ExprKind::StructLiteral(_)) {
+                    super::functions::validate_value(
+                        &(&expected).into(),
+                        operand,
+                        &[],
+                        &format!("function '{function_name}': {name} operand"),
+                        issues,
+                    );
+                    continue;
+                }
                 if let (ExprKind::ArrayLiteral(elements), ArkType::Array(element, length)) =
                     (&operand.kind, &expected)
                 {
-                    for value in elements {
+                    for (index, value) in elements.iter().enumerate() {
                         let actual = &value.ty;
-                        if actual != &ArkType::Unknown && !binding_types_compatible(element, actual)
+                        if matches!(&value.kind, ExprKind::StructLiteral(_)) {
+                            super::functions::validate_value(
+                                &(&**element).into(),
+                                value,
+                                &[],
+                                &format!(
+                                    "function '{function_name}': {name} operand, element {index}"
+                                ),
+                                issues,
+                            );
+                        } else if actual != &ArkType::Unknown
+                            && !binding_types_compatible(element, actual)
                         {
                             issues.push(ValidationIssue::error(format!(
                                 "function '{function_name}': {name} '{}' has type '{}', expected '{}'",
