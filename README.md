@@ -351,7 +351,7 @@ Libraries can import other libraries, contracts, and struct files using the same
 | `signature` | 64-byte BIP340 Schnorr signature |
 | `bytes`, `bytes20`, `bytes32` | Byte arrays, unsized or fixed |
 | `int` | CScriptNum integer |
-| `bool` | Boolean |
+| `bool` | Boolean; a covenant witness must be empty (false) or `0x01` (true), and any other encoding fails the spend |
 | `asset` | Asset identifier |
 | `AssetGroup` | An asset group of the transaction; a witness or constructor value is its packet position |
 | `T[n]` | Fixed-size array of a scalar or struct type, `n` a positive integer literal or `int` constant |
