@@ -28,12 +28,13 @@ export function compile_sources(entry: string, files: string, optimize?: boolean
 /**
  * Compile a virtual project and report every diagnostic with its position. Compilation
  * errors are diagnostics, not a thrown error: the result is
- * `{ artifact: string | null, debug: string | null, warnings: string[], diagnostics: Diagnostic[] }`,
- * where `debug` is the debug file JSON (`ContractJson::debug_info`) and each
- * diagnostic has `severity`, `code`, `message`, `file` and, when located, 1-based `start` and
- * `end` `{ line, column }` with columns counted in UTF-16 units, as editors count them.
+ * `{ artifact: string | null, debug: string | null, diagnostics: Diagnostic[] }`,
+ * where `debug` is the debug file JSON (`ContractJson::debug_info`), built unless `debug` is
+ * `false`, and each diagnostic has `severity`, `code`, `message`, `file` and, when located,
+ * 1-based `start` and `end` `{ line, column }` with columns counted in UTF-16 units, as editors
+ * count them.
  */
-export function compile_sources_with_diagnostics(entry: string, files: string, optimize?: boolean | null): string;
+export function compile_sources_with_diagnostics(entry: string, files: string, optimize?: boolean | null, debug?: boolean | null): string;
 
 /**
  * The names usable at 1-based `line` and UTF-16 `column` of `entry`, for completion:
@@ -78,7 +79,7 @@ export interface InitOutput {
     readonly check_sources: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
     readonly compile: (a: number, b: number) => [number, number, number, number];
     readonly compile_sources: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
-    readonly compile_sources_with_diagnostics: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
+    readonly compile_sources_with_diagnostics: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number, number];
     readonly completions_at: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number, number];
     readonly symbol_at: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number, number];
     readonly validate: (a: number, b: number) => [number, number, number];
