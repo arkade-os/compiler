@@ -250,6 +250,10 @@ fn an_unknown_transaction_property_is_reported_by_validation() {
         message,
         "unknown output property 'valu'; expected one of value, witnessVersion, script"
     );
+    for access in ["tx.assetGroups", "tx.outputs[0]", "tx.outputs[0].assets"] {
+        let message = at_line(&source.replace("tx.outputs[0].valu", access)).2;
+        assert_eq!(message, format!("'{access}' is not a value on its own"));
+    }
 }
 
 #[test]
