@@ -513,20 +513,28 @@ fn check_unused(contract: &Contract, issues: &mut Vec<ValidationIssue>) {
     }
 }
 
-/// The names a tapscript's items read.
+/// The bindings a tapscript's items read: `guardians` for `guardians[0]`, `policy` for
+/// `policy.owner`.
 pub(crate) fn tapscript_reads(tapscript: &crate::models::NamedTapscript) -> HashSet<&str> {
     let mut used = HashSet::new();
     for item in &tapscript.items {
         match item {
-            TapItem::Hash { preimage, hash, .. } => used.extend([preimage.as_str(), hash]),
+            TapItem::Hash { preimage, hash, .. } => {
+                used.extend(
+                    std::iter::once(preimage)
+                        .chain(hash.path())
+                        .map(|p| &*p.root),
+                );
+            }
             TapItem::Older { value, .. } | TapItem::After { value, .. } => {
-                used.insert(value);
+                used.extend(value.path().map(|p| &*p.root));
             }
             TapItem::Sig { keys, sigs, .. } => {
                 used.extend(keys.iter().map(|key| match key {
-                    KeyExpr::Ident(name) | KeyExpr::Tweak { base: name, .. } => name.as_str(),
+                    KeyExpr::Ident(path) => &*path.root,
+                    KeyExpr::Tweak { base, .. } => base,
                 }));
-                used.extend(sigs.iter().map(String::as_str));
+                used.extend(sigs.iter().map(|p| &*p.root));
             }
         }
     }
