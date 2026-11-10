@@ -125,15 +125,12 @@ impl Generator {
     // ponytail: the read leaves are copied and the whole root dropped after, one copy and drop
     // more than a move; consume the final reads if script size matters.
     fn emit_computed_access(&mut self, value: &Expression, ty: &TypeName) -> Result<()> {
-        fn root(mut access: &mut Expression) -> &mut Expression {
-            while matches!(
-                access.kind,
-                ExprKind::FieldAccess { .. } | ExprKind::IndexAccess { .. }
-            ) {
-                // An access's first child is the value it reads from.
-                access = crate::models::child_exprs_mut(access).swap_remove(0);
+        fn root(access: &mut Expression) -> &mut Expression {
+            match access.kind {
+                ExprKind::FieldAccess { ref mut value, .. }
+                | ExprKind::IndexAccess { ref mut value, .. } => root(value),
+                _ => access,
             }
-            access
         }
         let mut access = value.clone();
         let computed = root(&mut access).clone();
@@ -190,7 +187,8 @@ impl Generator {
     }
 
     /// Evaluate `value` once into a stack binding, then let `read` emit through an expression
-    /// naming it; the `width` items `read` leaves are kept and the binding dropped.
+    /// naming it. `width` is the size of what `read` leaves, not of `value`: those items are
+    /// kept and the binding dropped.
     // TODO(ir): emission reads composite values only by binding path, so computed ones get a
     // made-up name here. Remove once operands are IR values instead of paths.
     pub(super) fn with_bound_value(
@@ -203,6 +201,7 @@ impl Generator {
         let scope = self.scope.clone();
         let pinned = std::mem::replace(&mut self.pinned_stack_len, baseline);
         let ty = TypeName::from(&value.ty);
+        // A later call at this depth reuses the name only after this binding is dropped.
         let name = format!("$bound:{baseline}");
         self.emit_let(&name, value, &ty)?;
         let mut bound = value.with_kind(ExprKind::Name(Path::new(name)));
