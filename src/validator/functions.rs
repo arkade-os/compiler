@@ -174,7 +174,20 @@ fn validate_calls(
             None if name == "require" => issues.push(ValidationIssue::error(
                 "the message of require must be a string",
             )),
-            None => issues.push(ValidationIssue::error(format!("unknown function '{name}'"))),
+            None => {
+                let issue = ValidationIssue::error(format!("unknown function '{name}'"))
+                    .coded(crate::errors::ErrorCode::UnknownFunction);
+                let own = contract.functions.iter().map(|f| f.name.as_str());
+                let builtins = crate::builtins::BUILTINS.iter().map(|b| b.name);
+                let span = crate::diagnostics::Span {
+                    start: expression.span.start,
+                    end: expression.span.start + name.len(),
+                };
+                issues.push(match crate::errors::closest(name, own.chain(builtins)) {
+                    Some(candidate) => issue.suggest(candidate, Some(span)),
+                    None => issue,
+                });
+            }
             Some(function) => {
                 if !function.is_private {
                     issues.push(ValidationIssue::error(format!(

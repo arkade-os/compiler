@@ -1,0 +1,15 @@
+A `checkSigFromStack` message that is a witness parameter used nowhere else.
+
+The signature then proves only that someone signed some message, not that it is about this spend, so one signed message authorizes any spend, forever.
+
+The lint follows the witness only within the function it belongs to: a witness passed to a helper that checks it is not reported.
+
+Fix: derive the message from what the spend must match, such as the input's outpoint, the amount and the recipient.
+
+```solidity
+let outpoint = tx.input.current.outpoint;
+let message = sha256(outpoint.txid + num2bin(outpoint.vout, 4) + num2bin(amount, 8) + recipient);
+require(checkSigFromStack(sig, oracle, message));
+```
+
+Reported on the checkSigFromStack call, so an attribute on the statement holding it, its function or the contract applies to it.

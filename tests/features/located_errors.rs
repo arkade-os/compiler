@@ -180,7 +180,10 @@ fn call_errors_name_the_problem() {
         format!("contract C(pubkey o) {{\n  function f(signature s) {{\n    {statement}\n    require(checkSig(s, o));\n  }}\n}}\n")
     };
     for (statement, message) in [
-        ("require(chekSig(s, o));", "unknown function 'chekSig'"),
+        (
+            "require(chekSig(s, o));",
+            "unknown function 'chekSig'; did you mean 'checkSig'?",
+        ),
         (
             "require(true, 5);",
             "the message of require must be a string",

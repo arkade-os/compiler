@@ -79,6 +79,7 @@ contract OptionVault(
     require(top <= hi, "slice late");
   }
 
+  @allow(unsigned-spend-path, "oracle-signed prices settle the option, and the outputs pay the holder and the writer")
   function settle(
     int[3] price0,
     int[3] time0,

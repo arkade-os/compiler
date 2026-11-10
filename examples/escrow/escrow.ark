@@ -23,6 +23,7 @@ contract Escrow(
 ) {
   const int DUST = 330;
 
+  @allow(unsigned-spend-path, "the oracle attestation authorizes the release, and the outputs pay party B and party A")
   function complete(bytes32 oracleMsg, signature oracleSig) {
     require(tx.numInputs == 1, "single-input spend required");
     require(sha256(oracleMsg) == oracleMessageHash, "unexpected attestation");
@@ -42,6 +43,7 @@ contract Escrow(
     }
   }
 
+  @allow(unsigned-spend-path, "anyone may refund after the timeout, and the output pays party A")
   function cancel() {
     require(tx.numInputs == 1, "single-input spend required");
     require(checkTime(timeoutAt), "timeout not reached");

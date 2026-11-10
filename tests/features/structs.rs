@@ -596,21 +596,63 @@ contract C() { function spend() { let point = { x: 1, y: 2 }; require(true); } }
 }
 
 #[test]
-fn whole_struct_copy_and_constructor_field_assignment_are_rejected() {
-    let copy = compile(
-        r#"
-struct Point { int x; int y; }
-contract C(Point initial) {
-    function spend() {
-        Point copied = initial;
-        require(copied.x == 1);
+fn composite_copy_initializers_and_constructor_field_assignment() {
+    let contract = |copies: &str| {
+        format!(
+            r#"
+struct Point {{ int x; int y; }}
+struct Box {{ Point corner; int[2] values; }}
+contract C(Point initial, Box box) {{
+    function spend(AssetId id, int next) {{
+        {copies}
+        copied.x = next;
+        values[1] = corner.y;
+        require(copied.x == values[0] && named.gidx == initial.x);
+    }}
+}}
+"#
+        )
+    };
+    let initialized = compile(&contract(
+        "Point copied = initial; let corner = box.corner; int[2] values = box.values; let named = id;",
+    ))
+    .expect("named composite copy initializers");
+    let assigned = compile(&contract(
+        "Point copied; copied = initial; Point corner; corner = box.corner; \
+         int[2] values; values = box.values; AssetId named; named = id;",
+    ))
+    .expect("deferred whole-value assignment");
+    assert_eq!(
+        crate::common::arkade_asm_tokens(&initialized, "spend"),
+        crate::common::arkade_asm_tokens(&assigned, "spend"),
+        "a copy initializer emits the whole-value assignment"
+    );
+
+    for (copy, expected) in [
+        (
+            "Box copied = initial;",
+            "declares type 'Box' but initializer has type 'Point'",
+        ),
+        (
+            "int[3] copied = box.values;",
+            "declares type 'int[3]' but initializer has type 'int[2]'",
+        ),
+        (
+            "Point p; Point copied = p;",
+            "binding 'p' may be uninitialized",
+        ),
+        (
+            "int[2] v; let copied = v;",
+            "binding 'v' may be uninitialized",
+        ),
+    ] {
+        let source = format!(
+            "struct Point {{ int x; int y; }} struct Box {{ Point corner; int[2] values; }} \
+             contract C(Point initial, Box box) {{ function spend() {{ {copy} require(true); }} }}"
+        );
+        let error = compile(&source).expect_err(copy).to_string();
+        assert!(error.contains(expected), "{copy}: {error}");
     }
-}
-"#,
-    )
-    .expect_err("whole struct copy")
-    .to_string();
-    assert!(copy.contains("matching struct value"), "{copy}");
 
     let mutation = compile(
         r#"

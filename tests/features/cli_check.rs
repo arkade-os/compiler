@@ -26,7 +26,7 @@ fn check_reports_every_error_with_its_location_and_fails() {
     let lines: Vec<_> = stdout.lines().collect();
     assert_eq!(lines.len(), 2, "{stdout}");
     assert!(
-        lines[0].starts_with("main.ark:3:17: error[validation]: "),
+        lines[0].starts_with("main.ark:3:17: error[unknown-name]: "),
         "{stdout}"
     );
     assert!(lines[0].contains("binding 'y' is undefined"), "{stdout}");
@@ -124,4 +124,35 @@ fn debug_writes_the_source_maps_next_to_the_artifact() {
         .as_array()
         .unwrap()
         .is_empty());
+}
+
+#[test]
+fn check_suggests_a_close_name_and_explains_its_code() {
+    let typo = "contract C(pubkey owner) {\n  function f(signature sig) {\n    require(chekSig(sig, ownr));\n  }\n}\n";
+    let (_, stdout) = check(&["main.ark", "--check"], &[("main.ark", typo)]);
+    assert!(stdout.contains("error[unknown-function]: unknown function 'chekSig'; did you mean 'checkSig'?\n  help: replace with 'checkSig'"), "{stdout}");
+    assert!(
+        stdout.contains("error[unknown-name]: binding 'ownr' is undefined; did you mean 'owner'?"),
+        "{stdout}"
+    );
+
+    let (_, json) = check(&["main.ark", "--check", "--json"], &[("main.ark", typo)]);
+    let diagnostics: serde_json::Value = serde_json::from_str(&json).unwrap();
+    let suggestion = &diagnostics[0]["suggestions"][0];
+    assert_eq!(suggestion["replacement"], "checkSig");
+    assert_eq!(
+        suggestion["start"],
+        serde_json::json!({ "line": 3, "column": 13 })
+    );
+    assert_eq!(
+        suggestion["end"],
+        serde_json::json!({ "line": 3, "column": 20 })
+    );
+
+    let (status, explained) = check(&["--explain", "unknown-name"], &[]);
+    assert_eq!(status, 0);
+    assert!(
+        explained.starts_with("unknown-name: error\n\n"),
+        "{explained}"
+    );
 }

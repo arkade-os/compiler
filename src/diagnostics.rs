@@ -54,6 +54,15 @@ pub fn to_json(diagnostic: &Diagnostic, source: Option<&str>) -> serde_json::Val
         "file": diagnostic.file,
         "start": start,
         "end": end,
+        "suggestions": diagnostic.suggestions.iter().map(|suggestion| {
+            let [start, end] = range_json(source, Some(suggestion.span));
+            serde_json::json!({
+                "message": suggestion.message,
+                "start": start,
+                "end": end,
+                "replacement": suggestion.replacement,
+            })
+        }).collect::<Vec<_>>(),
     })
 }
 
@@ -85,15 +94,28 @@ pub enum Severity {
 /// One diagnostic, tied to the file (and, where known, the byte span) that
 /// produced it.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct Diagnostic {
     pub severity: Severity,
     /// Which pass raised this: `"validation"` (semantic checks), `"type"` (type checker),
-    /// `"emission"` (code generation) or `"internal"` (a compiler bug). `None` for parse, import
-    /// and file errors.
+    /// `"emission"` (code generation), `"internal"` (a compiler bug) or a lint's id. `None` for
+    /// parse, import and file errors.
     pub code: Option<String>,
     pub message: String,
     pub file: String,
     pub span: Option<Span>,
+    /// The lint this reports, whose level decides its severity.
+    pub lint: Option<crate::lint::Lint>,
+    /// Edits that may fix it, for editors to offer and agents to apply.
+    pub suggestions: Vec<Suggestion>,
+}
+
+/// Replacing `span` with `replacement`, described by `message`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Suggestion {
+    pub message: String,
+    pub span: Span,
+    pub replacement: String,
 }
 
 impl Diagnostic {
@@ -104,6 +126,8 @@ impl Diagnostic {
             message: message.into(),
             file: file.into(),
             span: None,
+            lint: None,
+            suggestions: Vec::new(),
         }
     }
 
@@ -114,6 +138,8 @@ impl Diagnostic {
             message: message.into(),
             file: file.into(),
             span: None,
+            lint: None,
+            suggestions: Vec::new(),
         }
     }
 
@@ -124,6 +150,17 @@ impl Diagnostic {
 
     pub(crate) fn with_code(mut self, code: &str) -> Self {
         self.code = Some(code.to_string());
+        self
+    }
+
+    pub(crate) fn with_suggestions(mut self, suggestions: Vec<Suggestion>) -> Self {
+        self.suggestions = suggestions;
+        self
+    }
+
+    pub(crate) fn with_lint(mut self, lint: crate::lint::Lint) -> Self {
+        self.code = Some(lint.id().to_string());
+        self.lint = Some(lint);
         self
     }
 }
@@ -201,8 +238,13 @@ pub(crate) fn render_errors(diagnostics: &[Diagnostic], source: &str) -> String 
         .map(|d| {
             let message = located(&d.message, d.span, source);
             match d.code.as_deref() {
-                Some("validation") => format!("validation error: {message}"),
+                Some(code)
+                    if code == "validation" || code.parse::<crate::errors::ErrorCode>().is_ok() =>
+                {
+                    format!("validation error: {message}")
+                }
                 Some("type") => format!("type error: {message}"),
+                Some(code) if d.lint.is_some() => format!("error[{code}]: {message}"),
                 _ => message,
             }
         })

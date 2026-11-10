@@ -1,2 +1,5 @@
-warning[validation]: constructor parameter 'unused' is never used
+warning[unused-parameter]: constructor parameter 'unused' is never used
+  --> 1:44
+1 | contract Vault(pubkey owner, int exit, int unused) {
+  |                                            ^^^^^^
 
