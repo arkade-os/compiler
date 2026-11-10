@@ -28,45 +28,47 @@ pub(super) fn validate_binding_requirement(
             }
         }
         Requirement::Comparison { left, op, right } => {
-            let left_type = left.ty.clone();
-            let right_type = right.ty.clone();
-            let composite = matches!(left_type, ArkType::Array(..) | ArkType::Struct(..))
-                || matches!(right_type, ArkType::Array(..) | ArkType::Struct(..));
-            let before = issues.len();
-            validate_binding_expression(left, function_name, scopes, issues, !composite);
-            validate_binding_expression(right, function_name, scopes, issues, !composite);
-            if issues.len() == before {
-                let span = crate::diagnostics::Span {
-                    start: left.span.start,
-                    end: right.span.end,
-                };
-                validate_comparison(*op, [left_type, right_type], span, function_name, issues);
-            }
+            let span = crate::diagnostics::Span {
+                start: left.span.start,
+                end: right.span.end,
+            };
+            validate_comparison(left, *op, right, span, function_name, scopes, issues);
         }
     }
 }
 
+/// Arrays and structs compare only with `==` and `!=`, against the same type.
 fn validate_comparison(
+    left: &Expression,
     op: BinaryOperator,
-    [left, right]: [ArkType; 2],
+    right: &Expression,
     span: crate::diagnostics::Span,
     function_name: &str,
+    scopes: &BindingScopes,
     issues: &mut Vec<ValidationIssue>,
 ) {
+    let composite = [left, right]
+        .iter()
+        .any(|operand| matches!(operand.ty, ArkType::Array(..) | ArkType::Struct(..)));
+    let before = issues.len();
+    validate_binding_expression(left, function_name, scopes, issues, !composite);
+    validate_binding_expression(right, function_name, scopes, issues, !composite);
+    if issues.len() != before {
+        return;
+    }
+    let (left, right) = (&left.ty, &right.ty);
     let bytes_like = crate::types::is_bytes_like;
-    let composite = matches!(left, ArkType::Array(..) | ArkType::Struct(..))
-        || matches!(right, ArkType::Array(..) | ArkType::Struct(..));
     let compatible = match op.class() {
         class if composite && class != OperatorClass::Equality => false,
-        _ if left == ArkType::Unknown || right == ArkType::Unknown => return,
+        _ if *left == ArkType::Unknown || *right == ArkType::Unknown => return,
         OperatorClass::Equality if composite => left == right,
         OperatorClass::Equality => {
             left == right
-                || (bytes_like(&left) && right == ArkType::Bytes)
-                || (bytes_like(&right) && left == ArkType::Bytes)
+                || (bytes_like(left) && *right == ArkType::Bytes)
+                || (bytes_like(right) && *left == ArkType::Bytes)
         }
         // A bool is a script number on the stack, but ordering booleans is meaningless.
-        OperatorClass::Ordering => left == ArkType::Int && right == ArkType::Int,
+        OperatorClass::Ordering => *left == ArkType::Int && *right == ArkType::Int,
         _ => true,
     };
     if !compatible {
@@ -244,13 +246,8 @@ pub(super) fn validate_binding_expression(
             }
         }
         ExprKind::BinaryOp { left, op, right } if op.compares() => {
-            let types = [left, right].map(|operand| operand.ty.clone());
-            let composite = types
-                .iter()
-                .any(|ty| matches!(ty, ArkType::Array(..) | ArkType::Struct(..)));
-            validate_comparison(*op, types, expression.span, function_name, issues);
-            validate_binding_expression(left, function_name, scopes, issues, !composite);
-            validate_binding_expression(right, function_name, scopes, issues, !composite);
+            let span = expression.span;
+            validate_comparison(left, *op, right, span, function_name, scopes, issues);
             children_checked = true;
         }
         ExprKind::Unary { op, value } => {

@@ -336,7 +336,7 @@ impl Generator {
                         let ty = self
                             .composite_type(left)
                             .or_else(|| self.composite_type(right))
-                            .expect("extracted comparisons have composite operands");
+                            .ok_or("invalid comparison marker")?;
                         self.emit_composite_comparison(left, *op, right, &ty, false)?;
                     } else if matches!(&value.kind, ExprKind::Call { .. }) {
                         self.emit_call(value)?;
