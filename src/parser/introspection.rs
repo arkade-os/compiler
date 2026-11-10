@@ -249,8 +249,6 @@ pub(crate) fn parse_tx_property_to_expr(pair: Pair<Rule>) -> Result<Expression, 
     let span: crate::diagnostics::Span = pair.as_span().into();
     let text = without_trivia(pair.as_str());
 
-    reject_malformed_asset_call(&text)?;
-
     let body = pair.into_inner().next().ok_or("Missing tx property")?;
     let mut parts = body.into_inner();
     let first = parts.next().ok_or("Missing tx property")?;
@@ -282,6 +280,7 @@ pub(crate) fn parse_tx_property_to_expr(pair: Pair<Rule>) -> Result<Expression, 
             })
         }
         _ => {
+            reject_malformed_asset_call(&text)?;
             // `tx.input.current` without a property it accepts reads as a plain property path.
             let mut names = std::iter::once(first.as_str())
                 .chain(parts.map(|suffix| suffix.as_str().trim_start_matches('.').trim()));
@@ -319,7 +318,7 @@ fn parse_asset_group_access(
             }
         } else {
             ExprKind::GroupFind {
-                asset_txid: Box::new(parse_asset_id_txid(first)?),
+                asset_txid: Box::new(parse_general_expression(first)?),
                 asset_gidx: Box::new(parse_general_expression(
                     operands.next().ok_or("Missing asset group gidx")?,
                 )?),

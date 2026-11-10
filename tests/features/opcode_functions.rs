@@ -155,13 +155,21 @@ fn test_sha256_initialize() {
         asm_str.contains(OP_SHA256INITIALIZE),
         "Expected {OP_SHA256INITIALIZE} in ASM: {asm_str}"
     );
+
+    let error = compile(&code.replace("let ctx", "bytes32 ctx"))
+        .expect_err("a streaming context is not a digest")
+        .to_string();
+    assert!(
+        error.contains("declares type 'bytes32' but initializer has type 'bytes'"),
+        "{error}"
+    );
 }
 
 #[test]
 fn test_sha256_update() {
     let code = r#"
         contract StreamingHasher(pubkey owner) {
-            function updateHash(signature ownerSig, bytes32 ctx, bytes32 chunk) {
+            function updateHash(signature ownerSig, bytes ctx, bytes32 chunk) {
                 require(checkSig(ownerSig, owner));
                 let newCtx = sha256Update(ctx, chunk);
                 require(newCtx == newCtx);
@@ -188,9 +196,9 @@ fn test_sha256_update() {
 fn test_sha256_finalize() {
     let code = r#"
         contract StreamingHasher(pubkey owner) {
-            function finalizeHash(signature ownerSig, bytes32 ctx, bytes32 lastChunk) {
+            function finalizeHash(signature ownerSig, bytes ctx, bytes32 lastChunk) {
                 require(checkSig(ownerSig, owner));
-                let hash = sha256Finalize(ctx, lastChunk);
+                bytes32 hash = sha256Finalize(ctx, lastChunk);
                 require(hash == hash);
             }
         }
@@ -494,6 +502,65 @@ fn test_ec_operands_accept_point_values() {
 }
 
 #[test]
+fn test_ec_operands_accept_point_literals() {
+    let spend = |body: &str| {
+        format!(
+            "contract EllipticCurve() {{ function spend(ECPoint p, int a, int b) {{ {body} }} }}"
+        )
+    };
+    let source = spend(
+        "let sum = ecAdd(p, {y: max(a, b), x: abs(a)}, 0);
+        let product = ecMul({x: sum.y, y: a + b}, 7, 1);
+        require(product.x == sum.x);",
+    );
+    for output in [
+        compile(&source).unwrap(),
+        arkade_compiler::compile(&source).unwrap(),
+    ] {
+        let asm = crate::common::arkade_asm_tokens(&output, "spend");
+        // Each field is evaluated once, first field deepest, whatever the source order.
+        let at = |opcode: &str| {
+            assert_eq!(asm.iter().filter(|token| *token == opcode).count(), 1);
+            asm.iter().position(|token| token == opcode)
+        };
+        assert!(at("OP_ABS") < at("OP_MAX"), "{asm:?}");
+        assert!(contains_tokens(&asm, &["OP_MAX", "0", OP_ECADD]), "{asm:?}");
+        assert!(
+            contains_tokens(&asm, &[OP_ADD, "7", "1", OP_ECMUL]),
+            "{asm:?}"
+        );
+    }
+    for (body, message) in [
+        (
+            "require(ecAdd(p, {x: a}, 0) == p);",
+            "ecAdd operand: missing field 'y'",
+        ),
+        (
+            "require(ecAdd(p, {x: a, y: b, x: a}, 0) == p);",
+            "ecAdd operand: duplicate field 'x'",
+        ),
+        (
+            "require(ecMul({x: a, y: b, z: a}, 1, 0) == p);",
+            "ecMul operand: unknown field 'z'",
+        ),
+        (
+            "require(ecMul({x: true, y: b}, 1, 0) == p);",
+            "ecMul operand, field 'x': expected 'int', got 'bool'",
+        ),
+        (
+            "require(ecMul(p, {x: a, y: b}, 0) == p);",
+            "ecMul operand: expected 'int', got 'unknown'",
+        ),
+    ] {
+        let source = spend(body);
+        for result in [compile(&source), arkade_compiler::compile(&source)] {
+            let error = result.expect_err(body).to_string();
+            assert!(error.contains(message), "{body}: {error}");
+        }
+    }
+}
+
+#[test]
 fn test_native_result_type_must_match_declaration() {
     let error = compile(
         r#"
@@ -629,12 +696,12 @@ fn modexp_group_index_and_sha256_builtins_reject_mistyped_operands() {
             "sha256Initialize operand has type 'int', expected 'bytes'",
         ),
         (
-            "bytes32 ctx, int x",
+            "bytes ctx, int x",
             "let r = sha256Update(ctx, x);",
             "sha256Update operand has type 'int', expected 'bytes'",
         ),
         (
-            "bytes32 ctx, int x",
+            "bytes ctx, int x",
             "let r = sha256Finalize(ctx, x);",
             "sha256Finalize operand has type 'int', expected 'bytes'",
         ),
@@ -650,11 +717,6 @@ fn bytes32_operands_accept_only_32_byte_literals() {
     let word = format!("0x{}", "01".repeat(32));
     let short = format!("0x{}", "01".repeat(31));
     for (params, statement) in [
-        ("bytes d", "let r = sha256Update(LIT, d); require(r == r);"),
-        (
-            "bytes d",
-            "let r = sha256Finalize(LIT, d); require(r == r);",
-        ),
         (
             "pubkey p, pubkey q",
             "require(ecMulScalarVerify(LIT, p, q));",
@@ -813,11 +875,11 @@ fn unary_negation_precedence_and_spend_shape() {
         ("modExp(-2, 3, 5)", "2 OP_NEGATE 3 5 OP_MODEXP"),
     ] {
         let source = format!(
-            "contract Unary() {{ function spend() {{ let result = {expression}; require(result == result); }} }}"
+            "contract Unary() {{ function spend() {{ let result = {expression}; @allow(self-comparison, \"any result type\") require(result == result); }} }}"
         );
         let output = compile(&source).unwrap_or_else(|error| panic!("{expression}: {error}"));
         assert!(
-            output.warnings.is_empty(),
+            crate::common::feature_warnings(&output).is_empty(),
             "{expression}: {:?}",
             output.warnings
         );
@@ -856,7 +918,11 @@ fn unary_negation_in_loops_and_conditions() {
     "#,
     )
     .expect("negated loop operands compile");
-    assert!(output.warnings.is_empty(), "{:?}", output.warnings);
+    assert!(
+        crate::common::feature_warnings(&output).is_empty(),
+        "{:?}",
+        output.warnings
+    );
     let asm = crate::common::arkade_asm(&output, "spend");
     for index in 0..2 {
         assert!(

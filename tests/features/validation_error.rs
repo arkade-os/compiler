@@ -40,7 +40,7 @@ fn parse_errors_use_source_terms() {
         (
             "require(checkSig(s, pk), \"x\"); ",
             "1:84",
-            "expected '}', a constant or a function",
+            "expected '}', an attribute, a constant or a function",
         ),
     ];
     for (body, at, expected) in cases {
@@ -479,6 +479,43 @@ fn builtin_calls_take_arity_and_reserved_names_from_the_registry() {
             && !error.contains("composite values"),
         "{error}"
     );
+}
+
+#[test]
+fn skipped_builtin_literal_operands_are_validated_in_both_modes() {
+    for (call, expected) in [
+        (
+            "checkMultisig([{notAKey: false}], [sig])",
+            "checkMultisig operand, element 0: expected 'bytes', got 'unknown'",
+        ),
+        (
+            "checkMultisig([key], [{notASig: false}])",
+            "checkMultisig operand, element 0: expected 'signature', got 'unknown'",
+        ),
+        (
+            "ecPairing([{x: true, y: 2}], [g2], 2)",
+            "ecPairing operand, element 0, field 'x': expected 'int', got 'bool'",
+        ),
+        (
+            "ecPairing([{x: 1}], [g2], 2)",
+            "ecPairing operand, element 0: missing field 'y'",
+        ),
+        (
+            "sha256({a: 1}) == 0x00",
+            "sha256 operand: expected 'bytes', got 'unknown'",
+        ),
+    ] {
+        let source = format!(
+            "contract C(pubkey key, G2Point g2) {{ function spend(signature sig) {{ require(true || {call}); }} }}"
+        );
+        for result in [
+            compile(&source),
+            crate::common::compile_unoptimized(&source),
+        ] {
+            let error = result.expect_err(call).to_string();
+            assert!(error.contains(expected), "{call}: {error}");
+        }
+    }
 }
 
 #[test]

@@ -577,9 +577,9 @@ contract C(pubkey owner, bytes32 hash) {
 "#,
     )
     .expect("logical calls and bindings");
-    assert_eq!(output.warnings.len(), 3, "{:?}", output.warnings);
-    assert!(output
-        .warnings
+    let warnings = crate::common::feature_warnings(&output);
+    assert_eq!(warnings.len(), 3, "{warnings:?}");
+    assert!(warnings
         .iter()
         .all(|warning| warning.contains("invalid non-empty signature")));
     assert_eq!(output.functions.len(), 1);
@@ -648,14 +648,14 @@ fn logical_skipped_helpers_do_not_guarantee_spend_enforcement() {
         "skip || guarded()",
         "skip || (skip && guarded())",
     ] {
-        let error = compile(&format!("contract C() {{ function compare(bool skip) {{ let value = {expression}; value = !value; }} private function guarded() bool {{ require(true); return true; }} }}")).expect_err("skippable requirement").to_string();
+        let error = compile(&format!("contract C(bool skip) {{ function compare() {{ let value = {expression}; value = !value; }} private function guarded() bool {{ require(true); return true; }} }}")).expect_err("skippable requirement").to_string();
         assert!(
             error.contains("spend path with no require"),
             "{expression}: {error}"
         );
     }
     for expression in ["guarded() && skip", "guarded() || skip"] {
-        compile(&format!("contract C() {{ function compare(bool skip) {{ let value = {expression}; value = !value; }} private function guarded() bool {{ require(true); return true; }} }}")).unwrap_or_else(|error| panic!("{expression}: {error}"));
+        compile(&format!("contract C(bool skip) {{ function compare() {{ @allow(unused-variable, \"kept\") let value = {expression}; value = !value; }} private function guarded() bool {{ require(true); return true; }} }}")).unwrap_or_else(|error| panic!("{expression}: {error}"));
     }
 }
 

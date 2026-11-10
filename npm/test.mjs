@@ -72,6 +72,9 @@ try {
     assert.deepEqual(normalized(artifact), normalized(JSON.parse(raw.artifact)));
     assert.deepEqual(result.debug, JSON.parse(raw.debug));
     assert.deepEqual(result.diagnostics, raw.diagnostics);
+    const withoutDebug = await esm.compile(input, { debug: false });
+    assert.equal(withoutDebug.debug, null);
+    assert.deepEqual(normalized(withoutDebug.artifact), normalized(artifact));
     const unoptimized = (await esm.compile(input, { optimize: false })).artifact;
     assert.deepEqual(normalized(unoptimized), normalized(JSON.parse(JSON.parse(wasm.compile_sources_with_diagnostics(input.entry, files, false)).artifact)));
     const symbol = await esm.symbolAt(input, position);
@@ -96,7 +99,7 @@ try {
 
     const typecheck = `import { compile, check, symbolAt, completionsAt, version, type CompileInput, type CompileOptions, type CompileResult, type Completions, type DebugInfo, type Diagnostic, type Position, type SymbolInfo } from '@arkade-os/compiler';
 const input: CompileInput = { entry: 'main.ark', files: { 'main.ark': '' } };
-const options: CompileOptions = { optimize: false };
+const options: CompileOptions = { optimize: false, debug: false };
 const result: Promise<CompileResult> = compile(input, options);
 const position: Position = { line: 1, column: 1 };
 const symbol: Promise<SymbolInfo | null> = symbolAt(input, position);
@@ -110,7 +113,7 @@ compile({ entry: 'main.ark', files: { 'main.ark': 42 } });
 void (await compile(input)).artifact.contractName;
 declare const narrowed: CompileResult;
 if (narrowed.artifact !== null) {
-    const map: DebugInfo = narrowed.debug;
+    const map: DebugInfo | null = narrowed.debug;
     void map;
 }
 `;
