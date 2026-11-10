@@ -1,19 +1,20 @@
 pragma arkade ^0.1.0;
 
-// Cash-settled note on the hashprice HashpriceBeacon has already published.
+// Cash-settled note on a hashprice attestation.
 //
-// Input 0 is the beacon, spent through passthrough. Input 1 is this note.
-// Output 0 continues the beacon with the same script, value, control asset,
-// and state packet. The rest pays the holder and the writer.
+// Input 0 is the attestation, spent through consume. Input 1 is this note.
+// The attestation's previous packet is the quote the minter copied from the
+// beacon. Consuming the asset burns it, so the same unit cannot settle a
+// second note or be paid to another script.
 //
 //   hashprice > strike → holder gets collateral * (hashprice - strike) / hashprice
 //   otherwise           → holder gets 0
 // A leg of 330 sats or less is folded into the other output. Hashprice and
 // strike use the beacon's scale: sats per PH/s per day, subsidy only.
-// Settlement reads a beacon that has moved past its checkpoint, so the
+// Settlement reads an attestation whose packet is past the checkpoint, so the
 // number was produced by update rather than by the issuer's genesis packet.
 
-import "hashprice_beacon.ark";
+import "hashprice_attestation.ark";
 
 contract HashpriceOption(
   pubkey holderPk,
@@ -25,33 +26,32 @@ contract HashpriceOption(
   bytes32 checkpoint,
   int checkpointHeight,
   int bits,
-  AssetId control
+  AssetId shared
 ) {
   const int STATE = 16;
   const int DUST = 330;
 
-  @allow(unsigned-spend-path, "the beacon's header-derived hashprice settles the note, and the outputs pay the holder and the writer")
+  @allow(unsigned-spend-path, "the attestation's header-derived hashprice settles the note, and the outputs pay the holder and the writer")
   function settle() {
     require(this.activeInputIndex == 1, "note is input 1");
     require(strike > 0, "strike");
     require(collateral > 0, "collateral");
 
-    let beacon = new HashpriceBeacon(checkpoint, checkpointHeight, bits, control);
-    require(tx.inputs[0].script == beacon, "beacon");
+    let attestation = new HashpriceAttestation(checkpoint, checkpointHeight, bits, shared);
+    require(tx.inputs[0].script == attestation, "attestation");
+    require(tx.inputs[0].assets.lookup(shared.txid, shared.gidx) == 1, "attestation");
 
     let state = tx.inputs[0].packet(STATE);
     require(size(state) == 56, "state");
-    require(tx.packet(STATE) == state, "state moved");
     int height = bin2num(substr(state, 32, 8));
     require(height > checkpointHeight, "checkpoint");
     int hashprice = bin2num(substr(state, 40, 16));
     require(hashprice > 0, "hashprice");
 
-    require(tx.outputs[0].script == beacon, "beacon output");
-    require(tx.outputs[0].value >= tx.inputs[0].value, "beacon value");
-    int held = tx.inputs[0].assets.lookup(control.txid, control.gidx);
-    require(held > 0, "control");
-    require(tx.outputs[0].assets.lookup(control.txid, control.gidx) == held, "control moved");
+    let group = tx.assetGroups.find(shared.txid, shared.gidx);
+    require(group.isFresh == false, "fresh");
+    require(group.numInputs == 1, "consumed");
+    require(group.numOutputs == 0, "consumed");
 
     int locked = tx.input.current.value;
     require(locked >= collateral, "underfunded");
@@ -64,19 +64,19 @@ contract HashpriceOption(
     int writerAmt = locked - holderAmt;
 
     // Bound once. The three arms below are alternatives, and each one reads this output.
-    let payout = tx.outputs[1].script;
+    let payout = tx.outputs[0].script;
     if (holderAmt > DUST && writerAmt > DUST) {
-      require(tx.outputs[1].value >= holderAmt, "holder short");
+      require(tx.outputs[0].value >= holderAmt, "holder short");
       require(payout == holderScript, "holder script");
-      require(tx.outputs[2].value >= writerAmt, "writer short");
-      require(tx.outputs[2].script == writerScript, "writer script");
+      require(tx.outputs[1].value >= writerAmt, "writer short");
+      require(tx.outputs[1].script == writerScript, "writer script");
     }
     if (holderAmt <= DUST) {
-      require(tx.outputs[1].value >= locked, "writer short");
+      require(tx.outputs[0].value >= locked, "writer short");
       require(payout == writerScript, "writer script");
     }
     if (writerAmt <= DUST && holderAmt > DUST) {
-      require(tx.outputs[1].value >= locked, "holder short");
+      require(tx.outputs[0].value >= locked, "holder short");
       require(payout == holderScript, "holder script");
     }
   }

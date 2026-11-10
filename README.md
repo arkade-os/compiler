@@ -184,7 +184,7 @@ Arrays are fixed-size and part of the type. Loops unroll at compile time, one co
 | `struct_vault`, `threshold_oracle` | Structs, arrays, loops, oracle quorum |
 | `fuji_safe`, `stability`, `bonds` | Stateful contracts that recreate themselves with `new` |
 | `option` | Cash-settled covered call and limited put with an on-stack oracle TWAP |
-| `hashprice` | Beacon that derives a subsidy-only hashprice from six chained block headers, and a note that settles by reading it; `examples/hashprice/test.sh` runs it on the Arkade VM |
+| `hashprice` | Beacon and minter that share one asset id. Six headers set the quote; an attestation of that asset is copied or burned, and a note settles by consuming it. `examples/hashprice/test.sh` runs it on the Arkade VM |
 | `layerzero` | Packet introspection, `substr`/`cat`/`bin2num`, cross-input binding via `arkadeScriptHash` |
 | `arkade_kitties` | NFT breeding with asset-group introspection |
 

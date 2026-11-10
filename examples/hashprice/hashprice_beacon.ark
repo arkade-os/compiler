@@ -1,8 +1,7 @@
 pragma arkade ^0.1.0;
 
 // HashpriceBeacon carries a Bitcoin tip and the hashprice that tip implies.
-// The issuer fixes one header as the checkpoint and a control asset that
-// singles out this coin. Packet 16 holds the state:
+// The issuer fixes one header as the checkpoint. Packet 16 holds the state:
 //
 //   hash256(tip header) || num2bin(height, 8) || num2bin(hashprice, 16)
 //
@@ -27,13 +26,21 @@ pragma arkade ^0.1.0;
 // subsidy is 5_000_000_000 >> (height / 210_000). At a ten-minute pace the
 // clamp ratio is 1, which is subsidy * 86400 * 10^15 / (difficulty * 2^32).
 // Six headers show work extending this tip. Heavier-chain selection needs a
-// longer header chain. passthrough copies the coin so another input can read it.
+// longer header chain.
+//
+// This coin, the minter, and every attestation share one asset id. update and
+// passthrough copy this coin onto itself: one input, one output, delta 0.
+// authorize is the minter's co-spend. This coin is copied, the other coin's
+// script is copied onto its own output, and one unit is paid to
+// HashpriceAttestation. A positive delta or a fresh issuance of this id fails.
+
+import "hashprice_attestation.ark";
 
 contract HashpriceBeacon(
   bytes32 checkpoint,
   int checkpointHeight,
   int bits,
-  AssetId control
+  AssetId shared
 ) {
   const int STATE = 16;
   const int EPOCH = 2016;
@@ -85,7 +92,17 @@ contract HashpriceBeacon(
     return price;
   }
 
-  @allow(unsigned-spend-path, "six linked headers of work authorize the next hashprice, and the control asset stays on this beacon")
+  // This coin is the only input and the only output of the shared asset.
+  private function sole() {
+    let group = tx.assetGroups.find(shared.txid, shared.gidx);
+    require(group.isFresh == false, "fresh");
+    require(group.delta == 0, "copied");
+    require(group.numInputs == 1, "copied");
+    require(group.numOutputs == 1, "copied");
+    require(group.sumInputs > 0, "copied");
+  }
+
+  @allow(unsigned-spend-path, "six linked headers of work authorize the next hashprice, and this coin's asset is copied onto the beacon")
   function update(bytes[6] headers) {
     require(this.activeInputIndex == 0, "beacon is input 0");
 
@@ -114,17 +131,49 @@ contract HashpriceBeacon(
     int tipHeight = height + 6;
     int price = quote(tipHeight, closed - opened, target);
     require(tx.packet(STATE) == previous + num2bin(tipHeight, 8) + num2bin(price, 16), "published");
-    require(tx.inputs[0].assets.lookup(control.txid, control.gidx) > 0, "control");
+    sole();
     require(this.tunnel(0, {
       script: true, value: true, assets: true
     }));
   }
 
-  @allow(unsigned-spend-path, "anyone may forward the beacon unchanged so another contract can read it")
+  @allow(unsigned-spend-path, "anyone may forward the beacon unchanged, and its asset is copied onto this script")
   function passthrough() {
     require(this.activeInputIndex == 0, "beacon is input 0");
     require(tx.packet(STATE) == tx.inputs[0].packet(STATE), "state");
-    require(tx.inputs[0].assets.lookup(control.txid, control.gidx) > 0, "control");
+    sole();
     require(this.tunnel(0));
+  }
+
+  // Input 0 is this beacon. Input 1 is the minter. Output 0 copies this coin,
+  // output 1 copies the minter's script, and output 2 is the attestation.
+  @allow(unsigned-spend-path, "this coin's asset is copied, and the one unit that leaves the co-spent coin lands on the attestation")
+  function authorize() {
+    require(this.activeInputIndex == 0, "beacon is input 0");
+
+    let state = tx.inputs[0].packet(STATE);
+    require(size(state) == 56, "state");
+    require(tx.packet(STATE) == state, "state");
+    int height = bin2num(substr(state, 32, 8));
+    int hashprice = bin2num(substr(state, 40, 16));
+    require(height > checkpointHeight, "checkpoint");
+    require(hashprice > 0, "hashprice");
+
+    require(this.tunnel(0));
+
+    int mine = tx.inputs[0].assets.lookup(shared.txid, shared.gidx);
+    let group = tx.assetGroups.find(shared.txid, shared.gidx);
+    require(group.isFresh == false, "fresh");
+    require(group.delta == 0, "copied");
+    require(group.numInputs == 2, "participants");
+    require(group.numOutputs == 3, "split");
+    int kept = group.sumInputs - mine - 1;
+    require(kept > 0, "pool");
+    require(tx.outputs[1].script == tx.inputs[1].script, "pool script");
+    require(tx.outputs[1].assets.lookup(shared.txid, shared.gidx) == kept, "pool");
+
+    let attestation = new HashpriceAttestation(checkpoint, checkpointHeight, bits, shared);
+    require(tx.outputs[2].script == attestation, "attestation");
+    require(tx.outputs[2].assets.lookup(shared.txid, shared.gidx) == 1, "attestation");
   }
 }

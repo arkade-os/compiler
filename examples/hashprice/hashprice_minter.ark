@@ -1,0 +1,78 @@
+pragma arkade ^0.1.0;
+
+// Holds the unissued supply of the asset HashpriceBeacon also carries.
+//
+// mint spends the beacon through authorize. The beacon's packet becomes this
+// transaction's packet, which is the quote an attestation later reads, and
+// one unit is paid to HashpriceAttestation. The rest stays on this script.
+// One unit is left here so the pool cannot be emptied. copy forwards the
+// pool without creating an attestation. Both paths refuse a fresh issuance
+// or a positive delta of this asset id.
+
+import "hashprice_attestation.ark";
+import "hashprice_beacon.ark";
+
+contract HashpriceMinter(
+  bytes32 checkpoint,
+  int checkpointHeight,
+  int bits,
+  AssetId shared
+) {
+  const int STATE = 16;
+
+  private function sole() {
+    let group = tx.assetGroups.find(shared.txid, shared.gidx);
+    require(group.isFresh == false, "fresh");
+    require(group.delta == 0, "copied");
+    require(group.numInputs == 1, "copied");
+    require(group.numOutputs == 1, "copied");
+    require(group.sumInputs > 0, "copied");
+  }
+
+  @allow(unsigned-spend-path, "one unit of this supply is copied onto the attestation, and the rest stays here")
+  function mint() {
+    require(this.activeInputIndex == 1, "minter is input 1");
+
+    let beacon = new HashpriceBeacon(checkpoint, checkpointHeight, bits, shared);
+    require(tx.inputs[0].script == beacon, "beacon");
+    require(tx.outputs[0].script == beacon, "beacon output");
+    require(tx.outputs[0].value >= tx.inputs[0].value, "beacon value");
+
+    let state = tx.inputs[0].packet(STATE);
+    require(size(state) == 56, "state");
+    require(tx.packet(STATE) == state, "state");
+    int height = bin2num(substr(state, 32, 8));
+    int hashprice = bin2num(substr(state, 40, 16));
+    require(height > checkpointHeight, "checkpoint");
+    require(hashprice > 0, "hashprice");
+
+    int carried = tx.inputs[0].assets.lookup(shared.txid, shared.gidx);
+    require(tx.outputs[0].assets.lookup(shared.txid, shared.gidx) == carried, "beacon asset");
+
+    int pool = tx.inputs[1].assets.lookup(shared.txid, shared.gidx);
+    require(pool > 1, "pool");
+    // The shared asset is the exception: it drops by one. Any other asset on
+    // this coin has to be copied with the script and the value.
+    require(this.tunnel(1, {
+      script: true, value: true, assets: true
+    }, [shared]));
+    require(tx.outputs[1].assets.lookup(shared.txid, shared.gidx) == pool - 1, "pool");
+
+    let attestation = new HashpriceAttestation(checkpoint, checkpointHeight, bits, shared);
+    require(tx.outputs[2].script == attestation, "attestation");
+    require(tx.outputs[2].assets.lookup(shared.txid, shared.gidx) == 1, "attestation");
+
+    let group = tx.assetGroups.find(shared.txid, shared.gidx);
+    require(group.isFresh == false, "fresh");
+    require(group.delta == 0, "copied");
+    require(group.numInputs == 2, "participants");
+    require(group.numOutputs == 3, "split");
+  }
+
+  @allow(unsigned-spend-path, "the supply is copied onto this minter")
+  function copy() {
+    require(this.activeInputIndex == 0, "minter is input 0");
+    sole();
+    require(this.tunnel(0));
+  }
+}
