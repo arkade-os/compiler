@@ -273,7 +273,7 @@ fn generate_requirement_asm(req: &Requirement, generator: &mut Generator) -> Res
                 .composite_type(left)
                 .or_else(|| generator.composite_type(right))
             {
-                return generator.emit_composite_requirement(left, *op, right, &ty);
+                return generator.emit_composite_comparison(left, *op, right, &ty, true);
             }
             generator.emit_expression(left)?;
             generator.emit_expression(right)?;
