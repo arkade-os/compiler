@@ -152,3 +152,9 @@ pub fn analyze_file(path: impl AsRef<std::path::Path>) -> Analysis {
 pub fn check(entry: &str, files: &std::collections::BTreeMap<String, String>) -> Vec<Diagnostic> {
     imports::check_sources(entry, files)
 }
+
+/// Every builtin function and `tx`/`this` member as JSON: its parameters, its result or type,
+/// and its docs. Builtins and properties come from the tables the compiler itself reads.
+pub fn builtin_docs() -> String {
+    builtins::docs()
+}

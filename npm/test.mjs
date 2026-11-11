@@ -82,6 +82,8 @@ try {
     assert.equal(symbol.name, 'sig');
     const completions = await esm.completionsAt(input, completionPosition);
     assert.deepEqual(completions, JSON.parse(wasm.completions_at(input.entry, files, completionPosition.line, completionPosition.column)));
+    const docs = await esm.builtinDocs();
+    assert.deepEqual(docs, JSON.parse(wasm.builtin_docs()));
     const diagnostics = await esm.check(invalidSource);
     assert.deepEqual(diagnostics, JSON.parse(wasm.check_sources(invalidSource.entry, JSON.stringify(invalidSource.files))));
     // Source errors are diagnostics with a null artifact, not rejections.
@@ -97,7 +99,7 @@ try {
     await assert.rejects(esm.symbolAt(nested, { line: 1, column: 1 }), error => !(error instanceof TypeError));
     assert.deepEqual(await esm.symbolAt(input, position), symbol);
 
-    const typecheck = `import { compile, check, symbolAt, completionsAt, version, type CompileInput, type CompileOptions, type CompileResult, type Completions, type DebugInfo, type Diagnostic, type Position, type SymbolInfo } from '@arkade-os/compiler';
+    const typecheck = `import { compile, check, symbolAt, completionsAt, builtinDocs, version, type BuiltinDocs, type CompileInput, type CompileOptions, type CompileResult, type Completions, type DebugInfo, type Diagnostic, type Position, type SymbolInfo } from '@arkade-os/compiler';
 const input: CompileInput = { entry: 'main.ark', files: { 'main.ark': '' } };
 const options: CompileOptions = { optimize: false, debug: false };
 const result: Promise<CompileResult> = compile(input, options);
@@ -105,8 +107,9 @@ const position: Position = { line: 1, column: 1 };
 const symbol: Promise<SymbolInfo | null> = symbolAt(input, position);
 const table: Promise<Completions> = completionsAt(input, position);
 const diagnostics: Promise<Diagnostic[]> = check(input, options);
+const docs: Promise<BuiltinDocs> = builtinDocs();
 const compilerVersion: Promise<string> = version();
-void result; void symbol; void table; void diagnostics; void compilerVersion;
+void result; void symbol; void table; void docs; void diagnostics; void compilerVersion;
 // @ts-expect-error Source content must be a string.
 compile({ entry: 'main.ark', files: { 'main.ark': 42 } });
 // @ts-expect-error A failed compile has no artifact.
@@ -153,15 +156,16 @@ if (narrowed.artifact !== null) {
     assert.match(failure.message, /fetch/i);
     await context.unroute(wasmUrl);
     const browserResult = await page.evaluate(async ({ input, invalidSource, position, completionPosition }) => {
-        const [compilerVersion, symbol, completions, parseFailure, ...results] = await Promise.all([
+        const [compilerVersion, symbol, completions, docs, parseFailure, ...results] = await Promise.all([
             window.compiler.version(), window.compiler.symbolAt(input, position), window.compiler.completionsAt(input, completionPosition),
-            window.compiler.compile(invalidSource), ...Array.from({ length: 12 }, () => window.compiler.compile(input)),
+            window.compiler.builtinDocs(), window.compiler.compile(invalidSource), ...Array.from({ length: 12 }, () => window.compiler.compile(input)),
         ]);
-        return { compilerVersion, symbol, completions, parseFailure, results };
+        return { compilerVersion, symbol, completions, docs, parseFailure, results };
     }, { input, invalidSource, position, completionPosition });
     assert.equal(browserResult.compilerVersion, manifest.version);
     assert.deepEqual(browserResult.symbol, symbol);
     assert.deepEqual(browserResult.completions, completions);
+    assert.deepEqual(browserResult.docs, docs);
     assert.deepEqual(browserResult.parseFailure, parseFailure);
     for (const result of browserResult.results) assert.deepEqual(normalized(result.artifact), normalized(artifact));
     assert.equal(served.filter(file => file.endsWith('.wasm')).length, 1, 'concurrent browser initialization fetched WASM more than once');

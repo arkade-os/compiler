@@ -132,6 +132,20 @@ export interface DebugInfo {
     functions: Record<string, { sourceMap: SourceRange[] }>;
 }
 
+export interface BuiltinDoc {
+    params?: string[];
+    result?: string;
+    type?: string;
+    index?: string;
+    tapscript?: boolean;
+    doc: string;
+}
+
+export interface BuiltinDocs {
+    functions: Record<string, BuiltinDoc>;
+    members: Record<string, BuiltinDoc>;
+}
+
 /**
  * Source errors are diagnostics with a `null` artifact, not a rejection. `diagnostics` lists every
  * error and warning, warnings included on success. `debug` is `null` with `{ debug: false }`.
@@ -210,6 +224,11 @@ export async function completionsAt(input: CompileInput, position: Position): Pr
     const { entry, files } = serializeInput(input);
     const [line, column] = serializePosition(position);
     return call(wasm => wasm.completions_at(entry, files, line, column));
+}
+
+/** Every builtin function and `tx`/`this` member, with its signature and docs. */
+export async function builtinDocs(): Promise<BuiltinDocs> {
+    return call(wasm => wasm.builtin_docs());
 }
 
 /** Read the version from the installed WASM compiler. */
