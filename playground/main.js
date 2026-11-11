@@ -802,6 +802,9 @@ function promptNewStandaloneFile() {
 async function initCompiler() {
     try {
         const ver = await version();
+        // The builtins come from the compiler, so the tokenizer is set again to highlight them.
+        window.arkadeUseDocs(await compilerBuiltinDocs());
+        monaco.languages.setMonarchTokensProvider('arkade', window.arkadeMonarch);
         wasmReady = true;
         document.getElementById('compiler-version').textContent = `v${ver}`;
         document.getElementById('footer-version').textContent = `v${ver}`;
@@ -1227,14 +1230,7 @@ function initMonaco() {
         }
     });
 
-    const builtinDocs = compilerBuiltinDocs().catch(err => {
-        console.warn('Failed to load the builtin docs:', err);
-        return { functions: {}, members: {} };
-    });
-
-    require(['vs/editor/editor.main'], async function() {
-        window.arkadeUseDocs(await builtinDocs);
-
+    require(['vs/editor/editor.main'], function() {
         // Register Arkade language
         monaco.languages.register({ id: 'arkade' });
 

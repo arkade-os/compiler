@@ -203,11 +203,13 @@ context.warningSource = warningSource;
 context.renderedArtifact = null;
 const originalCompilationSources = vm.runInContext('compilationSources', context);
 const displayAsm = vm.runInContext('displayAsm', context);
-// A failed initialization is shown, and the next call retries it.
+// A failed initialization is shown, and the next call retries it, builtin docs included.
 context.version = async () => { throw new Error('Transient WASM failure'); };
 await vm.runInContext('initCompiler()', context);
 assert.match(elements['errors-output'].textContent, /Transient WASM failure/);
 context.version = version;
+context.window = { arkadeUseDocs: docs => { context.usedDocs = docs; } };
+context.monaco = { languages: { setMonarchTokensProvider() {} } };
 await vm.runInContext(`
     editor = { getValue: () => warningSource };
     compilationSources = () => ({ entry: 'main.ark', files: { 'main.ark': warningSource } });
@@ -218,6 +220,7 @@ await vm.runInContext(`
     doCompile();
 `, context);
 assert.equal(context.renderedArtifact.fingerprint, warningArtifact.fingerprint);
+assert.deepEqual(context.usedDocs, await builtinDocs());
 assert.equal(elements['compiler-version'].textContent, `v${await version()}`);
 for (const warning of warningDiagnostics) {
     assert.ok(elements['errors-output'].innerHTML.includes('class="diagnostic warning"'));

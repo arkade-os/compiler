@@ -51,6 +51,8 @@ for (const d of diagnostics) console.log(d.severity, `${d.file}:${d.start?.line}
 
 `completionsAt(input: CompileInput, position: Position): Promise<Completions>` returns the names usable at a position: `symbols`, `members` (a library's or contract's names under its own), and `structs` with their fields. Files that fail validation still get symbols, but a file that does not parse gives none.
 
+`builtinDocs(): Promise<BuiltinDocs>` returns every builtin function under `functions`, keyed by name, and every `tx`/`this` member under `members`, keyed by its path with indexes as `[]`, such as `tx.outputs[].value`. Each entry has its `doc`, `params` as `type name` strings with a trailing `?` on optional ones, and its `result` or `type`; an array member also has the `index` name it suggests, and a tapscript-only function `tapscript: true`. `arkadec --builtins` prints the same JSON.
+
 `version(): Promise<string>` reports the installed WASM compiler version. All functions initialize WASM lazily and share initialization across concurrent calls. A failed initialization can be retried by calling any function again. A WASM trap, such as a stack overflow on deeply nested source, rejects with the trap; in Node the next call loads a new instance, while a browser realm keeps the broken one, so reload the page, or run the compiler in a worker and replace the worker. Non-positive, non-integer or above-32-bit positions reject with a `TypeError`; initialization failures reject with their original error.
 
 ## Runtime selection
@@ -61,7 +63,7 @@ Node.js 22.12 or newer is supported. The unbundled browser entrypoint is tested 
 
 Compilation currently runs synchronously inside WASM after initialization; the Promise API does not move compilation off the JavaScript thread. Applications needing background compilation can import this package in a worker. Other runtimes, including Expo, require separate verification.
 
-The static playground imports the browser entrypoint of a locally packed package. Its build script generates examples, builds and packs the compiler, and extracts `dist/browser/` and `dist/wasm/` into `playground/pkg/`. All compiler calls use the public package API; npm publication is not required to build or deploy it. The playground marks diagnostics at their positions, lints as you type with `check`, and drives hover, go to definition and completion with `symbolAt` and `completionsAt`. Failed initialization can be retried by compiling again.
+The static playground imports the browser entrypoint of a locally packed package. Its build script generates examples, builds and packs the compiler, and extracts `dist/browser/` and `dist/wasm/` into `playground/pkg/`. All compiler calls use the public package API; npm publication is not required to build or deploy it. The playground marks diagnostics at their positions, lints as you type with `check`, and drives hover, go to definition and completion with `symbolAt`, `completionsAt` and `builtinDocs`. Failed initialization can be retried by compiling again.
 
 ## Development and packing
 
