@@ -835,4 +835,11 @@ fn two_compared_literals_need_a_declared_type() {
             "{left} == {right}: {error}"
         );
     }
+    let source = "struct Point { int x; int y; }\ncontract C(Point point) { function f() { require(point == [{x: 1, y: 2}]); } }";
+    let error = arkade_compiler::compile(source).unwrap_err().to_string();
+    assert!(
+        error.contains("is not defined between 'Point'")
+            && !error.contains("cannot determine the type"),
+        "{error}"
+    );
 }
