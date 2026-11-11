@@ -10,6 +10,8 @@ mod asm_structural;
 mod bond_mint;
 #[path = "examples/compilation_roundtrip.rs"]
 mod compilation_roundtrip;
+#[path = "examples/constant_product.rs"]
+mod constant_product;
 #[path = "examples/controlled_mint.rs"]
 mod controlled_mint;
 #[path = "examples/escrow.rs"]

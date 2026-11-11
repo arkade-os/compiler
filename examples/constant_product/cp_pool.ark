@@ -1,0 +1,178 @@
+pragma arkade ^0.1.0;
+
+import "./cp_math.ark";
+
+// One constant-product pool output. Base reserve is the output value minus the
+// 330-sat carrier. Quote, the LP-supply ledger, and one control unit are assets.
+//
+// Every transition has exactly one counterparty (input 1). The operator chains
+// the resulting pool output into the next virtual transaction. The script does
+// not grow with the queue: each spend checks one curve step, one deposit, or
+// one exit. The LP fee stays in the reserves. Output 1's script is pinned by
+// the standing order, not by this contract.
+@expect(output-script-unchecked, "output 1 is the standing order's payout, and that order pins its script")
+contract ConstantProductPool(
+  bytes32 quoteTxid, int quoteGidx,
+  bytes32 lpTxid, int lpGidx,
+  bytes32 lpLedgTxid, int lpLedgGidx,
+  bytes32 ctrlTxid, int ctrlGidx,
+  int feeBps,
+  pubkey noExitKey
+) {
+  const int DUST = 330;
+
+  private function samePool() {
+    require(tx.outputs[0].script == tx.input.current.script, "pool");
+  }
+
+  private function oneCounterparty() {
+    require(this.activeInputIndex == 0, "pool input");
+    require(tx.numInputs == 2, "one counterparty");
+    // Counterparty output, pool output, anchor, extension.
+    require(tx.numOutputs == 4, "outputs");
+    samePool();
+  }
+
+  private function keepCtrl() {
+    require(tx.outputs[0].assets.lookup(ctrlTxid, ctrlGidx) == 1, "ctrl");
+    require(tx.assetGroups.find(ctrlTxid, ctrlGidx).delta == 0, "ctrl supply");
+  }
+
+  // Trader at input 1 sells either BTC (value above the carrier, no assets) or
+  // quote (carrier only, one asset). The other side is paid on output 1.
+  @allow(unsigned-spend-path, "the standing order at input 1 is the trader, and this step keeps the pool on output 0")
+  function swap() {
+    oneCounterparty();
+    CpMath.fee(feeBps);
+    int base = tx.inputs[0].value - DUST;
+    int quote = tx.inputs[0].assets.lookup(quoteTxid, quoteGidx);
+    int supply = tx.inputs[0].assets.lookup(lpLedgTxid, lpLedgGidx);
+    require(base > 0, "base");
+    require(quote > 0, "quote");
+    require(supply > 0, "supply");
+    require(tx.inputs[1].value >= DUST, "carrier");
+    int sellBase = tx.inputs[1].value - DUST;
+    int sellQuote = CpMath.held(1, quoteTxid, quoteGidx);
+    require(sellBase + sellQuote > 0, "amount");
+    if (sellBase > 0) {
+      require(sellQuote == 0, "one side");
+      require(tx.inputs[1].assets.length == 0, "btc only");
+      int paid = CpMath.bought(base, quote, sellBase, feeBps);
+      require(tx.outputs[1].value == DUST, "carrier");
+      require(tx.outputs[1].assets.lookup(quoteTxid, quoteGidx) == paid, "quote out");
+      require(tx.outputs[1].assets.length == 1, "quote only");
+      base = base + sellBase;
+      quote = quote - paid;
+    }
+    if (sellQuote > 0) {
+      require(sellBase == 0, "one side");
+      require(tx.inputs[1].assets.length == 1, "quote only");
+      int got = CpMath.bought(quote, base, sellQuote, feeBps);
+      require(tx.outputs[1].value == DUST + got, "btc out");
+      require(tx.outputs[1].assets.length == 0, "btc only");
+      quote = quote + sellQuote;
+      base = base - got;
+    }
+    require(tx.outputs[0].value == DUST + base, "btc reserve");
+    require(tx.outputs[0].assets.length == 3, "pool assets");
+    keepCtrl();
+    require(tx.outputs[0].assets.lookup(quoteTxid, quoteGidx) == quote, "quote");
+    require(tx.outputs[0].assets.lookup(lpLedgTxid, lpLedgGidx) == supply, "ledger");
+    require(tx.assetGroups.find(quoteTxid, quoteGidx).delta == 0, "quote supply");
+    require(tx.assetGroups.find(lpLedgTxid, lpLedgGidx).delta == 0, "ledger supply");
+    require(!tx.assetGroups.has(lpTxid, lpGidx), "lp moved");
+  }
+
+  // LP at input 1 adds BTC and quote. An empty pool (full exit) is re-opened
+  // at the depositor's ratio, minting one share per sat of BTC. A live pool
+  // mints at the current ratio.
+  @allow(unsigned-spend-path, "the standing deposit at input 1 is the LP, and this step keeps the pool on output 0")
+  function deposit() {
+    oneCounterparty();
+    CpMath.fee(feeBps);
+    int base0 = tx.inputs[0].value - DUST;
+    int quote0 = CpMath.held(0, quoteTxid, quoteGidx);
+    int supply = CpMath.held(0, lpLedgTxid, lpLedgGidx);
+    require(tx.inputs[1].value > DUST, "btc in");
+    int dx = tx.inputs[1].value - DUST;
+    int dy = tx.inputs[1].assets.lookup(quoteTxid, quoteGidx);
+    require(tx.inputs[1].assets.length == 1, "quote only");
+    int share = 0;
+    if (supply == 0) {
+      require(base0 == 0, "empty base");
+      require(quote0 == 0, "empty quote");
+      require(dy > 0, "quote in");
+      share = dx;
+    } else {
+      share = CpMath.sharesFor(base0, quote0, supply, dx, dy);
+    }
+    require(tx.outputs[1].value == DUST, "token carrier");
+    require(tx.outputs[1].assets.lookup(lpTxid, lpGidx) == share, "token");
+    require(tx.outputs[1].assets.length == 1, "token only");
+    require(tx.outputs[0].value == DUST + base0 + dx, "btc reserve");
+    keepCtrl();
+    require(tx.outputs[0].assets.lookup(quoteTxid, quoteGidx) == quote0 + dy, "quote");
+    require(tx.outputs[0].assets.lookup(lpLedgTxid, lpLedgGidx) == supply + share, "ledger");
+    require(tx.outputs[0].assets.length == 3, "pool assets");
+    let lpGroup = tx.assetGroups.find(lpTxid, lpGidx);
+    require(lpGroup.controlIs(ctrlTxid, ctrlGidx), "lp control");
+    require(lpGroup.delta == share, "issued");
+    require(lpGroup.sumInputs == 0, "lp in");
+    let ledgGroup = tx.assetGroups.find(lpLedgTxid, lpLedgGidx);
+    require(ledgGroup.controlIs(ctrlTxid, ctrlGidx), "ledger control");
+    require(ledgGroup.delta == share, "ledger");
+    require(tx.assetGroups.find(quoteTxid, quoteGidx).delta == 0, "quote supply");
+  }
+
+  // LP at input 1 burns LP tokens for a pro-rata slice of both reserves.
+  // Burning the whole supply leaves the carrier and the control unit, which a
+  // later deposit can re-open.
+  @allow(unsigned-spend-path, "the standing exit at input 1 is the LP, and this step keeps the pool on output 0")
+  function withdraw() {
+    oneCounterparty();
+    CpMath.fee(feeBps);
+    int base0 = tx.inputs[0].value - DUST;
+    int quote0 = tx.inputs[0].assets.lookup(quoteTxid, quoteGidx);
+    int supply = tx.inputs[0].assets.lookup(lpLedgTxid, lpLedgGidx);
+    require(base0 > 0, "base");
+    require(quote0 > 0, "quote");
+    require(supply > 0, "supply");
+    require(tx.inputs[1].value == DUST, "carrier");
+    require(tx.inputs[1].assets.length == 1, "token only");
+    int part = tx.inputs[1].assets.lookup(lpTxid, lpGidx);
+    require(part > 0, "token");
+    require(part <= supply, "supply");
+    int partBase = (base0 * part) / supply;
+    int partQuote = (quote0 * part) / supply;
+    require(partBase > 0, "base out");
+    require(partQuote > 0, "quote out");
+    require(tx.outputs[1].value == DUST + partBase, "btc out");
+    require(tx.outputs[1].assets.lookup(quoteTxid, quoteGidx) == partQuote, "quote out");
+    require(tx.outputs[1].assets.length == 1, "quote only");
+    require(tx.outputs[0].value == DUST + base0 - partBase, "btc reserve");
+    keepCtrl();
+    if (part == supply) {
+      require(!tx.outputs[0].assets.has(quoteTxid, quoteGidx), "quote cleared");
+      require(!tx.outputs[0].assets.has(lpLedgTxid, lpLedgGidx), "ledger cleared");
+      require(tx.outputs[0].assets.length == 1, "ctrl only");
+    } else {
+      require(tx.outputs[0].assets.lookup(quoteTxid, quoteGidx) == quote0 - partQuote, "quote");
+      require(tx.outputs[0].assets.lookup(lpLedgTxid, lpLedgGidx) == supply - part, "ledger");
+      require(tx.outputs[0].assets.length == 3, "pool assets");
+    }
+    let lpGroup = tx.assetGroups.find(lpTxid, lpGidx);
+    require(lpGroup.controlIs(ctrlTxid, ctrlGidx), "lp control");
+    require(lpGroup.sumInputs == part, "token in");
+    require(lpGroup.sumOutputs == 0, "burned");
+    let ledgGroup = tx.assetGroups.find(lpLedgTxid, lpLedgGidx);
+    require(ledgGroup.controlIs(ctrlTxid, ctrlGidx), "ledger control");
+    require(ledgGroup.delta + part == 0, "ledger");
+    require(tx.assetGroups.find(quoteTxid, quoteGidx).delta == 0, "quote supply");
+  }
+
+  // Dead path. Deploy noExitKey as a point with no known discrete log.
+  function unilateral(signature noExitSig) tapscript {
+    require(older(serverExitDelay));
+    require(checkSig(noExitSig, noExitKey));
+  }
+}

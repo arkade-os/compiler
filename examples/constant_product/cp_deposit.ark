@@ -1,0 +1,71 @@
+pragma arkade ^0.1.0;
+
+import "./cp_math.ark";
+import "./cp_pool.ark";
+
+// Standing deposit. An LP funds BTC plus the matching quote and goes offline.
+// The operator spends it as input 1. Output 1 is the minted LP position,
+// paid to payScript. Refund returns the unminted funds.
+contract ConstantProductDeposit(
+  ScriptPubKey payScript,
+  bytes32 quoteTxid, int quoteGidx,
+  bytes32 lpTxid, int lpGidx,
+  bytes32 lpLedgTxid, int lpLedgGidx,
+  bytes32 ctrlTxid, int ctrlGidx,
+  int feeBps,
+  pubkey noExitKey,
+  pubkey ownerPk
+) {
+  const int DUST = 330;
+
+  private function isPool(ScriptPubKey script) {
+    require(script == new ConstantProductPool(quoteTxid, quoteGidx, lpTxid, lpGidx, lpLedgTxid, lpLedgGidx, ctrlTxid, ctrlGidx, feeBps, noExitKey), "pool");
+  }
+
+  @allow(unsigned-spend-path, "the pool at input 0 is the counterparty, and output 1 pays the minted LP tokens to the depositor")
+  function fill() {
+    require(tx.numInputs == 2, "one step");
+    require(tx.numOutputs == 4, "outputs");
+    require(this.activeInputIndex == 1, "order input");
+    isPool(tx.inputs[0].script);
+    int base0 = tx.inputs[0].value - DUST;
+    int quote0 = CpMath.held(0, quoteTxid, quoteGidx);
+    int supply = CpMath.held(0, lpLedgTxid, lpLedgGidx);
+    require(tx.inputs[1].value > DUST, "btc in");
+    int dx = tx.inputs[1].value - DUST;
+    int dy = tx.inputs[1].assets.lookup(quoteTxid, quoteGidx);
+    require(tx.inputs[1].assets.length == 1, "quote only");
+    int share = 0;
+    if (supply == 0) {
+      require(base0 == 0, "empty base");
+      require(quote0 == 0, "empty quote");
+      require(dy > 0, "quote in");
+      share = dx;
+    } else {
+      share = CpMath.sharesFor(base0, quote0, supply, dx, dy);
+    }
+    require(tx.outputs[1].script == payScript, "receiver");
+    require(tx.outputs[1].value == DUST, "token carrier");
+    require(tx.outputs[1].assets.lookup(lpTxid, lpGidx) == share, "token");
+    require(tx.outputs[1].assets.length == 1, "token only");
+  }
+
+  @allow(unsigned-spend-path, "anyone may return the undeposited funds, and output 0 pays the depositor")
+  function refund() {
+    require(tx.numInputs == 1, "one input");
+    require(this.activeInputIndex == 0, "order input");
+    require(tx.numOutputs == 3, "outputs");
+    require(tx.inputs[0].value > DUST, "btc in");
+    int quote = tx.inputs[0].assets.lookup(quoteTxid, quoteGidx);
+    require(tx.inputs[0].assets.length == 1, "quote only");
+    require(tx.outputs[0].script == payScript, "receiver");
+    require(tx.outputs[0].value == tx.inputs[0].value, "value");
+    require(tx.outputs[0].assets.lookup(quoteTxid, quoteGidx) == quote, "quote");
+    require(tx.outputs[0].assets.length == 1, "quote only");
+  }
+
+  function unilateral(signature ownerSig) tapscript {
+    require(older(serverExitDelay));
+    require(checkSig(ownerSig, ownerPk));
+  }
+}

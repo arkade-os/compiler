@@ -38,6 +38,17 @@ const projects = {
             'repayment_pool.ark': contracts.repayment_pool,
             'bond_mint.ark': contracts.bond_mint,
         }
+    },
+    constant_product: {
+        name: 'Constant product',
+        description: 'Shared BTC/quote pool. One standing swap, deposit, or exit per virtual transaction; the LP fee stays in the reserves',
+        files: {
+            'cp_math.ark': contracts.cp_math,
+            'cp_pool.ark': contracts.cp_pool,
+            'cp_swap.ark': contracts.cp_swap,
+            'cp_deposit.ark': contracts.cp_deposit,
+            'cp_exit.ark': contracts.cp_exit,
+        }
     }
 };
 

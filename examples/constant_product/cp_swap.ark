@@ -1,0 +1,84 @@
+pragma arkade ^0.1.0;
+
+import "./cp_math.ark";
+import "./cp_pool.ark";
+
+// Standing swap. The trader funds it and goes offline. The operator spends it
+// as input 1 of a one-step pool transaction. This script checks that one step
+// and the trader's payout. It does not replay any other trade.
+contract ConstantProductSwap(
+  ScriptPubKey payScript,
+  bytes32 quoteTxid, int quoteGidx,
+  bytes32 lpTxid, int lpGidx,
+  bytes32 lpLedgTxid, int lpLedgGidx,
+  bytes32 ctrlTxid, int ctrlGidx,
+  int feeBps,
+  int minOut,
+  pubkey noExitKey,
+  pubkey ownerPk
+) {
+  const int DUST = 330;
+
+  private function isPool(ScriptPubKey script) {
+    require(script == new ConstantProductPool(quoteTxid, quoteGidx, lpTxid, lpGidx, lpLedgTxid, lpLedgGidx, ctrlTxid, ctrlGidx, feeBps, noExitKey), "pool");
+  }
+
+  @allow(unsigned-spend-path, "the pool at input 0 is the counterparty, and output 1 pays the trader at least minOut")
+  function fill() {
+    require(minOut > 0, "min out");
+    require(tx.numInputs == 2, "one step");
+    require(tx.numOutputs == 4, "outputs");
+    require(this.activeInputIndex == 1, "order input");
+    isPool(tx.inputs[0].script);
+    require(tx.inputs[0].value > DUST, "base");
+    int base = tx.inputs[0].value - DUST;
+    int quote = tx.inputs[0].assets.lookup(quoteTxid, quoteGidx);
+    require(tx.inputs[1].value >= DUST, "carrier");
+    int sellBase = tx.inputs[1].value - DUST;
+    int sellQuote = CpMath.held(1, quoteTxid, quoteGidx);
+    require(sellBase + sellQuote > 0, "amount");
+    require(tx.outputs[1].script == payScript, "receiver");
+    if (sellBase > 0) {
+      require(sellQuote == 0, "one side");
+      require(tx.inputs[1].assets.length == 0, "btc only");
+      int paid = CpMath.bought(base, quote, sellBase, feeBps);
+      require(paid >= minOut, "slippage");
+      require(tx.outputs[1].value == DUST, "carrier");
+      require(tx.outputs[1].assets.lookup(quoteTxid, quoteGidx) == paid, "quote out");
+      require(tx.outputs[1].assets.length == 1, "quote only");
+    }
+    if (sellQuote > 0) {
+      require(sellBase == 0, "one side");
+      require(tx.inputs[1].assets.length == 1, "quote only");
+      int got = CpMath.bought(quote, base, sellQuote, feeBps);
+      require(got >= minOut, "slippage");
+      require(tx.outputs[1].value == DUST + got, "btc out");
+      require(tx.outputs[1].assets.length == 0, "btc only");
+    }
+  }
+
+  @allow(unsigned-spend-path, "anyone may return the unsold funds, and output 0 pays the trader")
+  function refund() {
+    require(tx.numInputs == 1, "one input");
+    require(this.activeInputIndex == 0, "order input");
+    require(tx.numOutputs == 3, "outputs");
+    require(tx.inputs[0].value >= DUST, "carrier");
+    int sellQuote = CpMath.held(0, quoteTxid, quoteGidx);
+    require(tx.outputs[0].script == payScript, "receiver");
+    require(tx.outputs[0].value == tx.inputs[0].value, "value");
+    if (sellQuote == 0) {
+      require(tx.inputs[0].assets.length == 0, "btc only");
+      require(tx.outputs[0].assets.length == 0, "btc only");
+    }
+    if (sellQuote > 0) {
+      require(tx.inputs[0].assets.length == 1, "quote only");
+      require(tx.outputs[0].assets.lookup(quoteTxid, quoteGidx) == sellQuote, "quote");
+      require(tx.outputs[0].assets.length == 1, "quote only");
+    }
+  }
+
+  function unilateral(signature ownerSig) tapscript {
+    require(older(serverExitDelay));
+    require(checkSig(ownerSig, ownerPk));
+  }
+}

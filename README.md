@@ -179,6 +179,7 @@ Arrays are fixed-size and part of the type. Loops unroll at compile time, one co
 | `single_sig`, `htlc` | Minimum viable VTXO and hash/time locks |
 | `escrow` | Oracle release to a committed script, timeout refund, CSV exit for both parties; `escrow.md` |
 | `non_interactive_swap` | Atomic asset swap with `new SingleSig(...)` payout and locktime-gated cancel |
+| `constant_product` | Shared constant-product pool: one standing swap, deposit, or exit per virtual transaction; `constant_product.md` |
 | `payment_auth` | Introspection-driven payout splits with `if`/`else` and `tx.input.current.value` |
 | `token_vault`, `controlled_mint`, `nft_mint` | Asset lookups, asset groups, control assets |
 | `struct_vault`, `threshold_oracle` | Structs, arrays, loops, oracle quorum |
