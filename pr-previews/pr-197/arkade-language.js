@@ -38,7 +38,9 @@ const arkadeTheme = {
         { token: 'string', foreground: 'CE9178' },
         { token: 'operator', foreground: 'D4D4D4' },
         { token: 'delimiter', foreground: 'D4D4D4' },
-        { token: 'identifier', foreground: '9CDCFE' }
+        { token: 'identifier', foreground: '9CDCFE' },
+        { token: 'annotation', foreground: 'DCDCAA' },
+        { token: 'annotation.lint', foreground: '4EC9B0' }
     ],
     colors: {
         'editor.background': '#1e1e1e',
@@ -50,7 +52,7 @@ const arkadeTheme = {
     }
 };
 
-// Completions; builtin functions and members come from builtins.json through arkadeUseDocs.
+// Completions; builtin functions and members come from the compiler's builtin docs through arkadeUseDocs.
 const S = (label, kind, insertText, detail, documentation) => ({ label, kind, insertText, detail, documentation, snippet: insertText.includes('$') });
 const prop = (label, detail) => S(label, 'Property', label, detail);
 const scriptFields = [{ name: 'program', type: 'bytes' }, { name: 'version', type: 'int' }];
@@ -102,6 +104,7 @@ const arkadeMonarch = {
         root: [
             [/\/\/.*$/, 'comment'],
             [/\s+/, 'white'],
+            [/@(allow|warn|deny|expect)(?=\s*\()/, { token: 'annotation', next: '@lints' }],
             [/(pragma)(\s+)(arkade)\b/, ['keyword', 'white', 'keyword']],
             [/\d+\.\d+\.\d+/, 'number'],
             [/0x[0-9a-fA-F]*/, 'number.hex'],
@@ -119,19 +122,27 @@ const arkadeMonarch = {
             [/[{}()\[\]]/, '@brackets'],
             [/[;,.:]/, 'delimiter'],
             [/[=<>!&|^~+\-*\/]+/, 'operator'],
+        ],
+        // The parenthesized lint ids and reason of a lint attribute, ids spelled as grammar.pest's
+        // `attribute_name`; anything else ends the attribute.
+        lints: [
+            [/\s+/, 'white'],
+            [/[a-zA-Z][\w-]*/, 'annotation.lint'],
+            [/"(?:[^"\\]|\\.)*"/, 'string'],
+            [/[(,]/, 'delimiter'],
+            [/\)/, { token: 'delimiter', next: '@pop' }],
+            [/./, { token: '@rematch', next: '@pop' }],
         ]
     }
 };
 
 let docs = { functions: {}, members: {} };
-let docLanguage = 'en';
 let functionItems = [];
 // Members offered after `<path>.`, keyed by the path with indexes collapsed to `[]`.
 let arkadeMembers = {};
 // Paths documented under another path, and the members the alias lacks.
 const memberAliases = [['tx.input.current', 'tx.inputs[]', ['assets', 'packet']], ['tx.outputs[].assets', 'tx.inputs[].assets', []]];
 
-const docText = doc => doc?.[docLanguage] ?? doc?.en ?? '';
 // Snippet arguments: `bytes[] keys` becomes `[${1:keys}]`, and optional parameters are left out.
 const call = (name, params) => `${name}(${params.filter(p => !p.endsWith('?')).map((p, i) => {
     const [type, arg] = p.split(' ');
@@ -142,13 +153,12 @@ const declaration = (name, entry) => entry.params
     : `${entry.type ? `${entry.type} ` : ''}${name}`;
 const docItem = (kind, name, entry) => {
     const insert = entry.params ? call(name, entry.params) : entry.index ? `${name}[\${1:${entry.index}}]` : name;
-    return S(name, kind, insert, declaration(name, entry).replace(/^function /, ''), docText(entry.doc));
+    return S(name, kind, insert, declaration(name, entry).replace(/^function /, ''), entry.doc);
 };
 
-// Use `json` (builtins.json) for completions, hover and declarations, in `language` where it has one.
-function arkadeUseDocs(json, language = 'en') {
+// Use `json`, the compiler's builtin docs, for completions, hover and declarations.
+function arkadeUseDocs(json) {
     docs = json;
-    docLanguage = language;
     arkadeMonarch.builtinFunctions = Object.keys(docs.functions);
     // Tapscript-only timelocks are highlighted but not offered as completions.
     functionItems = Object.entries(docs.functions).filter(([, entry]) => !entry.tapscript)
@@ -181,7 +191,8 @@ function memberPath(before) {
 function documentedPath(path, visible) {
     const group = path.match(/^(\w+)(\.(?:inputs|outputs)\[\])?$/);
     if (visible.get(group?.[1])?.type === 'AssetGroup') return `tx.assetGroups[]${group[2] || ''}`;
-    const alias = memberAliases.find(([from]) => path === from || path.startsWith(from + '.') || path.startsWith(from + '['));
+    const alias = memberAliases.find(([from, , missing]) => (path === from || path.startsWith(from + '.') || path.startsWith(from + '['))
+        && !missing.includes(path.slice(from.length + 1).split(/[.[]/)[0]));
     return alias ? alias[1] + path.slice(alias[0].length) : path;
 }
 
@@ -217,18 +228,22 @@ function arkadeComplete(before, table) {
 function arkadeDescribe(before, word, table) {
     const visible = new Map((table?.symbols || []).map(symbol => [symbol.name, symbol]));
     const path = memberPath(before);
+    // A member of an expression such as `(x).` is no builtin.
+    if (!path && /\.\s*$/.test(before)) return null;
     const [entries, key] = path ? [docs.members, `${documentedPath(path, visible)}.${word}`] : [docs.functions, word];
     if (!Object.hasOwn(entries, key)) return null;
-    return { key, declaration: declaration(key, entries[key]), doc: docText(entries[key].doc) };
+    // A member that completion does not offer, such as `tx.input.current.assets`, does not compile.
+    if (path && !arkadeComplete(before, table).some(item => item.label === word)) return null;
+    return { key, declaration: declaration(key, entries[key]), doc: entries[key].doc };
 }
 
 // The builtins as a read-only declaration file: its `text`, and the 1-based line of each key.
 function arkadeDeclarations() {
-    const lines = ['// Arkade builtin functions and members, generated from builtins.json.'];
+    const lines = ['// Arkade builtin functions and members, generated by the compiler.'];
     const at = {};
     for (const entries of [docs.functions, docs.members]) {
         for (const [key, entry] of Object.entries(entries)) {
-            lines.push('', `// ${docText(entry.doc)}`);
+            lines.push('', `// ${entry.doc}`);
             at[key] = lines.length + 1;
             lines.push(`${declaration(key, entry)};`);
         }

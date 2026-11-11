@@ -24,7 +24,7 @@ const warningSource = 'contract HasWarnings(int value) { function spend() { requ
 const detailed = await compile({ entry: 'main.ark', files: { 'main.ark': warningSource } }, { optimize: false });
 const warningArtifact = detailed.artifact;
 const warningDiagnostics = detailed.diagnostics.filter(d => d.severity === 'warning');
-assert(warningDiagnostics.length > 0 && warningDiagnostics.every(d => d.code === 'validation'));
+assert.deepEqual(warningDiagnostics.map(d => d.code), ['unused-parameter', 'unsigned-spend-path']);
 assert(!Object.hasOwn(detailed, 'warnings'));
 assert(!Object.hasOwn(warningArtifact, 'warnings'));
 assert.equal(warningArtifact.compiler.options.optimize, false);
@@ -203,11 +203,13 @@ context.warningSource = warningSource;
 context.renderedArtifact = null;
 const originalCompilationSources = vm.runInContext('compilationSources', context);
 const displayAsm = vm.runInContext('displayAsm', context);
-// A failed initialization is shown, and the next call retries it.
+// A failed initialization is shown, and the next call retries it, builtin docs included.
 context.version = async () => { throw new Error('Transient WASM failure'); };
 await vm.runInContext('initCompiler()', context);
 assert.match(elements['errors-output'].textContent, /Transient WASM failure/);
 context.version = version;
+context.window = { arkadeUseDocs: docs => { context.usedDocs = docs; } };
+context.monaco = { languages: { setMonarchTokensProvider() {} } };
 await vm.runInContext(`
     editor = { getValue: () => warningSource };
     compilationSources = () => ({ entry: 'main.ark', files: { 'main.ark': warningSource } });
@@ -218,6 +220,7 @@ await vm.runInContext(`
     doCompile();
 `, context);
 assert.equal(context.renderedArtifact.fingerprint, warningArtifact.fingerprint);
+assert.deepEqual(context.usedDocs, await builtinDocs());
 assert.equal(elements['compiler-version'].textContent, `v${await version()}`);
 for (const warning of warningDiagnostics) {
     assert.ok(elements['errors-output'].innerHTML.includes('class="diagnostic warning"'));
@@ -226,7 +229,7 @@ for (const warning of warningDiagnostics) {
 assert(elements['error-count'].classList.contains('warning'));
 assert.equal(elements['error-count'].textContent, String(warningDiagnostics.length));
 assert.equal(elements['compile-status'].className, 'compile-status warning');
-context.warningSource = 'contract Clean() { function spend() { require(true); } }';
+context.warningSource = 'contract Clean(pubkey k) { function spend(signature s) { require(checkSig(s, k)); } }';
 await vm.runInContext('doCompile()', context);
 assert.equal(elements['errors-output'].innerHTML, '');
 assert(!elements['error-count'].classList.contains('visible'));
