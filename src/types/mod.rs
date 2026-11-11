@@ -390,12 +390,6 @@ fn type_compared_literal(left: &mut Expression, op: BinaryOperator, right: &mut 
     if op.class() != OperatorClass::Equality {
         return;
     }
-    fn resolved(ty: &ArkType) -> bool {
-        match ty {
-            ArkType::Array(element, _) => resolved(element),
-            ty => *ty != ArkType::Unknown,
-        }
-    }
     let literal = |e: &Expression| {
         matches!(
             e.kind,
@@ -655,6 +649,14 @@ fn bytes_of_width(width: Option<usize>) -> ArkType {
         Some(20) => ArkType::Bytes20,
         Some(32) => ArkType::Bytes32,
         _ => ArkType::Bytes,
+    }
+}
+
+/// Whether the type is known down to its array elements.
+pub(crate) fn resolved(ty: &ArkType) -> bool {
+    match ty {
+        ArkType::Array(element, _) => resolved(element),
+        ty => *ty != ArkType::Unknown,
     }
 }
 
