@@ -131,8 +131,7 @@ contract OptionVault(
       if (twap > strike) {
         ph = collateral * (twap - strike) / twap;
       }
-    }
-    if (kind == 1) {
+    } else if (kind == 1) {
       if (twap < strike) {
         ph = collateral * (strike - twap) / twap;
         if (ph > collateral) {
@@ -146,19 +145,17 @@ contract OptionVault(
     require(locked >= collateral, "underfunded");
     int writerAmt = locked - ph;
 
-    if (ph > DUST && writerAmt > DUST) {
+    if (ph <= DUST) {
+      require(tx.outputs[0].value >= locked, "writer short");
+      require(tx.outputs[0].script == writerScript, "writer script");
+    } else if (writerAmt <= DUST) {
+      require(tx.outputs[0].value >= locked, "holder short");
+      require(tx.outputs[0].script == holderScript, "holder script");
+    } else {
       require(tx.outputs[0].value >= ph, "holder short");
       require(tx.outputs[0].script == holderScript, "holder script");
       require(tx.outputs[1].value >= writerAmt, "writer short");
       require(tx.outputs[1].script == writerScript, "writer script");
-    }
-    if (ph <= DUST) {
-      require(tx.outputs[0].value >= locked, "writer short");
-      require(tx.outputs[0].script == writerScript, "writer script");
-    }
-    if (writerAmt <= DUST && ph > DUST) {
-      require(tx.outputs[0].value >= locked, "holder short");
-      require(tx.outputs[0].script == holderScript, "holder script");
     }
   }
 

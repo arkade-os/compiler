@@ -139,6 +139,18 @@ fn covenant_lints_report_unauthorized_and_half_constrained_spends() {
             &[],
         ),
         (
+            "function f(signature s, int b) { require(b > 0); if (b == 1) { require(checkSig(s, owner)); } }",
+            &["unsigned-spend-path"],
+        ),
+        (
+            "function f(signature s, int b) { if (b == 1) { require(checkSig(s, owner)); } else if (b == 2) { require(checkSig(s, oracle)); } else { require(1 == 2); } }",
+            &[],
+        ),
+        (
+            "function f(signature s, int b) { if (b == 1) { require(checkSig(s, owner)); } else if (b == 2) { require(b == 2); } else { require(checkSig(s, oracle)); } }",
+            &["unsigned-spend-path"],
+        ),
+        (
             "function f(signature s, bytes p, int b) { if (b == 1) { require(sha256(p) == hash); } else { require(checkSig(s, owner)); } }",
             &["unsigned-spend-path"],
         ),

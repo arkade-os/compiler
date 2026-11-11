@@ -56,28 +56,14 @@ struct Path {
     /// A transaction signature: `checkSig` or `checkMultisig`.
     signed: bool,
     never_passes: bool,
-    /// An arm without statements, as an absent `else` is.
-    empty: bool,
 }
 
 impl Path {
     /// What holds on every path through an `if`: what both arms hold, or what the other arm
-    /// holds when one never passes. Sibling `if`s with complementary conditions may cover an
-    /// empty arm's case, so beside a live arm it is taken to be signed if the live arm is.
-    ///
-    /// ponytail: the grammar has no `else if`, so a case split is written as sibling `if`s
-    /// (`examples/option/option_vault.ark` `settle`), and a lone
-    /// `if (c) { require(checkSig(s, owner)); }` reads as signed. Once `else if` exists,
-    /// rewrite such splits as `else if` chains ending in `else`, then drop `empty` and its arm
-    /// here so an absent `else` holds nothing, and add that lone `if` as an
-    /// `unsigned-spend-path` row in `tests/features/lints.rs`.
+    /// holds when one never passes. An absent `else` is an arm that holds nothing.
     fn either(then: Path, other: Path) -> Path {
         match (then, other) {
             (dead, live) | (live, dead) if dead.never_passes => live,
-            (empty, live) | (live, empty) if empty.empty => Path {
-                signed: live.signed,
-                ..Path::default()
-            },
             _ => Path {
                 signed: then.signed && other.signed,
                 ..Path::default()
@@ -89,7 +75,6 @@ impl Path {
         Path {
             signed: self.signed || next.signed,
             never_passes: self.never_passes || next.never_passes,
-            empty: false,
         }
     }
 }
@@ -310,12 +295,11 @@ impl<'a> Visitor<'a> for Facts {
         }
     }
 
-    fn enter_arm(&mut self, _id: usize, then: bool, body: &'a [LocatedStatement]) {
+    fn enter_arm(&mut self, _id: usize, then: bool, _body: &'a [LocatedStatement]) {
         let before = std::mem::take(&mut self.path);
         if then {
             self.arms.push((before, None));
         }
-        self.path.empty = body.is_empty();
     }
 
     fn exit_arm(&mut self) {
