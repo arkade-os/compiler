@@ -1,0 +1,45 @@
+pragma arkade ^0.1.0;
+
+// Integer constant-product helpers. Division rounds down.
+// A swap pays reserveOut * dxFee / (reserveIn + dxFee), where
+// dxFee = sold * (BPS - feeBps) / BPS. The unpaid fraction stays in the pool,
+// so the product rises by the LP fee. A deposit mints supply * dx / base
+// only when the quote matches that same ratio.
+library CpMath {
+  const int BPS = 10000;
+
+  function fee(int feeBps) {
+    require(feeBps >= 0, "fee");
+    require(feeBps < BPS, "fee");
+  }
+
+  function held(int index, bytes32 txid, int gidx) int {
+    let row = tx.inputs[index].assets.tryLookup(txid, gidx);
+    if (row.found) {
+      return row.amount;
+    }
+    return 0;
+  }
+
+  function bought(int reserveIn, int reserveOut, int sold, int feeBps) int {
+    fee(feeBps);
+    require(sold > 0, "sold");
+    int dxFee = (sold * (BPS - feeBps)) / BPS;
+    require(dxFee > 0, "fee");
+    int dy = (reserveOut * dxFee) / (reserveIn + dxFee);
+    require(dy > 0, "out");
+    require(dy < reserveOut, "reserve");
+    return dy;
+  }
+
+  function sharesFor(int base0, int quote0, int supply, int dx, int dy) int {
+    require(base0 > 0, "base");
+    require(quote0 > 0, "quote");
+    require(supply > 0, "supply");
+    require(dx > 0, "base in");
+    require(dy == (dx * quote0) / base0, "price");
+    int share = (supply * dx) / base0;
+    require(share > 0, "share");
+    return share;
+  }
+}

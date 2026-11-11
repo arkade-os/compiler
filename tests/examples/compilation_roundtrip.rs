@@ -323,12 +323,24 @@ fn collect_ark_files(dir: &PathBuf) -> Vec<PathBuf> {
     paths
 }
 
-/// Compile every .ark file in examples/ (recursively) and assert invariants.
+/// A `library` file is imported by contracts. It is not a compile entry.
+fn is_library(path: &std::path::Path) -> bool {
+    fs::read_to_string(path).is_ok_and(|source| {
+        source
+            .lines()
+            .any(|line| line.trim_start().starts_with("library "))
+    })
+}
+
+/// Compile every contract in examples/ (recursively) and assert invariants.
 /// This catches any new example added without a dedicated test.
 #[test]
 fn all_examples_compile_and_satisfy_invariants() {
     let dir = examples_dir();
-    let paths = collect_ark_files(&dir);
+    let paths: Vec<_> = collect_ark_files(&dir)
+        .into_iter()
+        .filter(|path| !is_library(path))
+        .collect();
     let count = paths.len();
 
     for path in &paths {

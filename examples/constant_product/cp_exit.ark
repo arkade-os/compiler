@@ -1,0 +1,68 @@
+pragma arkade ^0.1.0;
+
+import "./cp_math.ark";
+import "./cp_pool.ark";
+
+// Standing exit. An LP locks LP tokens and goes offline. The operator spends
+// them as input 1 and pays the pro-rata BTC and quote to payScript.
+contract ConstantProductExit(
+  ScriptPubKey payScript,
+  bytes32 quoteTxid, int quoteGidx,
+  bytes32 lpTxid, int lpGidx,
+  bytes32 lpLedgTxid, int lpLedgGidx,
+  bytes32 ctrlTxid, int ctrlGidx,
+  int feeBps,
+  pubkey ownerPk
+) {
+  const int DUST = 330;
+
+  private function isPool(ScriptPubKey script) {
+    require(script == new ConstantProductPool(quoteTxid, quoteGidx, lpTxid, lpGidx, lpLedgTxid, lpLedgGidx, ctrlTxid, ctrlGidx, feeBps), "pool");
+  }
+
+  @allow(unsigned-spend-path, "the pool at input 0 is the counterparty, and output 1 pays the exiting LP")
+  function fill() {
+    require(tx.numInputs == 2, "one step");
+    require(tx.numOutputs == 4, "outputs");
+    require(this.activeInputIndex == 1, "order input");
+    isPool(tx.inputs[0].script);
+    int base0 = tx.inputs[0].value - DUST;
+    int quote0 = tx.inputs[0].assets.lookup(quoteTxid, quoteGidx);
+    int supply = tx.inputs[0].assets.lookup(lpLedgTxid, lpLedgGidx);
+    require(base0 > 0, "base");
+    require(quote0 > 0, "quote");
+    require(supply > 0, "supply");
+    require(tx.inputs[1].value == DUST, "carrier");
+    require(tx.inputs[1].assets.length == 1, "token only");
+    int part = tx.inputs[1].assets.lookup(lpTxid, lpGidx);
+    require(part > 0, "token");
+    require(part <= supply, "supply");
+    int partBase = (base0 * part) / supply;
+    int partQuote = (quote0 * part) / supply;
+    require(partBase > 0, "base out");
+    require(partQuote > 0, "quote out");
+    require(tx.outputs[1].script == payScript, "receiver");
+    require(tx.outputs[1].value == DUST + partBase, "btc out");
+    require(tx.outputs[1].assets.lookup(quoteTxid, quoteGidx) == partQuote, "quote out");
+    require(tx.outputs[1].assets.length == 1, "quote only");
+  }
+
+  @allow(unsigned-spend-path, "anyone may return the unburned LP tokens, and output 0 pays the LP")
+  function refund() {
+    require(tx.numInputs == 1, "one input");
+    require(this.activeInputIndex == 0, "order input");
+    require(tx.numOutputs == 3, "outputs");
+    require(tx.inputs[0].value == DUST, "carrier");
+    int part = tx.inputs[0].assets.lookup(lpTxid, lpGidx);
+    require(tx.inputs[0].assets.length == 1, "token only");
+    require(tx.outputs[0].script == payScript, "receiver");
+    require(tx.outputs[0].value == DUST, "carrier");
+    require(tx.outputs[0].assets.lookup(lpTxid, lpGidx) == part, "token");
+    require(tx.outputs[0].assets.length == 1, "token only");
+  }
+
+  function unilateral(signature ownerSig) tapscript {
+    require(older(serverExitDelay));
+    require(checkSig(ownerSig, ownerPk));
+  }
+}
