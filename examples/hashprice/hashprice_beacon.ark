@@ -1,0 +1,159 @@
+pragma arkade ^0.1.0;
+
+// HashpriceBeacon carries a Bitcoin tip and the hashprice that tip implies.
+// The issuer fixes one header as the checkpoint. Packet 16 holds the state:
+//
+//   hash256(tip header) || num2bin(height, 8) || num2bin(hashprice, 16)
+//
+// The tip hash is the raw hash256, the bytes the next header stores at offset
+// 4. Explorers print that hash reversed.
+//
+// update consumes the next six headers. Each must link to the previous hash,
+// carry this contract's nBits, and land at or under that compact target. The
+// six heights stay inside one 2016-block epoch and one halving era. nBits
+// stays at the checkpoint value. A retarget check needs the epoch's first
+// timestamp, which is outside this window, so a crossing window fails closed.
+//
+// The published number is a subsidy-only forward quote, in sats per PH/s per
+// day. Five inter-block gaps project the next difficulty the way a retarget
+// would, clamped to Bitcoin's 4× band (750..12000 seconds around the
+// expected 3000). The miner of the window picks the pace inside that band.
+// A fee-inclusive quote would need the coinbase.
+//
+//   hashprice = subsidy * 86400 * 10^15 * clamped * target
+//             / ((65535 << 208) * 3000 * 2^32)
+//
+// subsidy is 5_000_000_000 >> (height / 210_000). At a ten-minute pace the
+// clamp ratio is 1, which is subsidy * 86400 * 10^15 / (difficulty * 2^32).
+// Six headers show work extending this tip. Heavier-chain selection needs a
+// longer header chain.
+//
+// This coin and the minter share one asset id, and so does every attestation
+// the minter later clones. update spends both coins and copies each one onto
+// itself with the new packet: two inputs, two outputs, delta 0. The minter's
+// script has to come back unchanged, so the supply cannot be paid to another
+// program. passthrough copies this coin alone. A fresh issuance or a positive
+// delta of this id fails.
+
+contract HashpriceBeacon(
+  bytes32 checkpoint,
+  int checkpointHeight,
+  int bits,
+  AssetId shared
+) {
+  const int STATE = 16;
+  const int EPOCH = 2016;
+  const int HALVING = 210000;
+  const int SUBSIDY = 5000000000;
+  const int EXPECTED = 3000;
+  const int SLOW = 12000;
+  const int FAST = 750;
+  const int DAY = 86400;
+  const int PHASH = 1000000000000000;
+  const int COMPACT_BASE = 16777216;
+  const int COMPACT_SIGN = 8388608;
+
+  // Compact nBits, as a positive integer target. The sign bit and an exponent
+  // outside 3..32 are rejected: the shift would no longer be a 256-bit target.
+  private function compactTarget(int encoded) int {
+    require(encoded > 0, "bits");
+    int exponent = encoded >> 24;
+    int mantissa = encoded % COMPACT_BASE;
+    require(exponent >= 3, "exponent");
+    require(exponent <= 32, "exponent");
+    require(mantissa > 0, "mantissa");
+    require(mantissa < COMPACT_SIGN, "negative target");
+    return mantissa << (8 * (exponent - 3));
+  }
+
+  // header is 80 bytes. previous is the hash it must extend. A trailing 0x00
+  // keeps the hash positive: BigNum uses the high bit as a sign.
+  private function extend(bytes header, bytes previous, int encoded, int target) bytes32 {
+    require(size(header) == 80, "header");
+    require(substr(header, 4, 32) == previous, "chain");
+    require(bin2num(substr(header, 72, 4) + 0x00) == encoded, "bits");
+    bytes32 block = hash256(header);
+    int work = bin2num(block + 0x00);
+    require(work > 0, "work");
+    require(work <= target, "pow");
+    return block;
+  }
+
+  private function quote(int height, int span, int target) int {
+    require(height / HALVING < 64, "subsidy");
+    int subsidy = SUBSIDY >> (height / HALVING);
+    int clamped = min(max(span, FAST), SLOW);
+    int maxTarget = 65535 << 208;
+    int numerator = subsidy * DAY * PHASH * clamped * target;
+    int denominator = maxTarget * EXPECTED * 4294967296;
+    int price = numerator / denominator;
+    require(price > 0, "hashprice");
+    return price;
+  }
+
+  // This coin is the only input and the only output of the shared asset.
+  private function sole() {
+    let group = tx.assetGroups.find(shared.txid, shared.gidx);
+    require(group.isFresh == false, "fresh");
+    require(group.delta == 0, "copied");
+    require(group.numInputs == 1, "copied");
+    require(group.numOutputs == 1, "copied");
+    require(group.sumInputs > 0, "copied");
+  }
+
+  // Input 1 is the minter. Its script and its balance come back on output 1.
+  private function pair() {
+    require(this.tunnel(0));
+    int carried = tx.inputs[0].assets.lookup(shared.txid, shared.gidx);
+    require(carried > 0, "asset");
+    int pool = tx.inputs[1].assets.lookup(shared.txid, shared.gidx);
+    require(pool > 0, "pool");
+    require(tx.outputs[1].script == tx.inputs[1].script, "minter script");
+    require(tx.outputs[1].assets.lookup(shared.txid, shared.gidx) == pool, "minter asset");
+    let group = tx.assetGroups.find(shared.txid, shared.gidx);
+    require(group.isFresh == false, "fresh");
+    require(group.delta == 0, "copied");
+    require(group.numInputs == 2, "pair");
+    require(group.numOutputs == 2, "pair");
+  }
+
+  @allow(unsigned-spend-path, "six linked headers publish the next hashprice, and the beacon and the minter are both copied")
+  function update(bytes[6] headers) {
+    require(this.activeInputIndex == 0, "beacon is input 0");
+
+    let state = tx.inputs[0].packet(STATE);
+    require(size(state) == 56, "state");
+    bytes previous = substr(state, 0, 32);
+    int height = bin2num(substr(state, 32, 8));
+    require(height >= checkpointHeight, "height");
+    require((height - checkpointHeight) % 6 == 0, "step");
+    if (height == checkpointHeight) {
+      require(previous == checkpoint, "checkpoint");
+    }
+    require((height + 1) / EPOCH == (height + 6) / EPOCH, "retarget");
+    require((height + 1) / HALVING == (height + 6) / HALVING, "halving");
+
+    int opened = bin2num(substr(headers[0], 68, 4) + 0x00);
+    int closed = bin2num(substr(headers[5], 68, 4) + 0x00);
+    require(closed > opened, "time");
+    require(checkTime(closed), "future");
+
+    int target = compactTarget(bits);
+    for (i, header) in headers {
+      previous = extend(header, previous, bits, target);
+    }
+
+    int tipHeight = height + 6;
+    int price = quote(tipHeight, closed - opened, target);
+    require(tx.packet(STATE) == previous + num2bin(tipHeight, 8) + num2bin(price, 16), "published");
+    pair();
+  }
+
+  @allow(unsigned-spend-path, "anyone may forward the beacon unchanged, and its asset is copied onto this script")
+  function passthrough() {
+    require(this.activeInputIndex == 0, "beacon is input 0");
+    require(tx.packet(STATE) == tx.inputs[0].packet(STATE), "state");
+    sole();
+    require(this.tunnel(0));
+  }
+}

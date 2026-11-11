@@ -1,0 +1,100 @@
+pragma arkade ^0.1.0;
+
+// Holds the unissued supply of the asset HashpriceBeacon also carries.
+//
+// advance runs as input 1 of the beacon's update. The beacon publishes the
+// new packet; this function copies the supply onto the same script. mint then
+// clones that packet onto four attestations and leaves the rest here, so the
+// next header update still has a minter to spend. copy forwards the pool
+// without cloning. Every path refuses a fresh issuance or a positive delta.
+
+import "hashprice_attestation.ark";
+import "hashprice_beacon.ark";
+
+contract HashpriceMinter(
+  bytes32 checkpoint,
+  int checkpointHeight,
+  int bits,
+  AssetId shared
+) {
+  const int STATE = 16;
+  const int FANOUT = 4;
+
+  private function sole() {
+    let group = tx.assetGroups.find(shared.txid, shared.gidx);
+    require(group.isFresh == false, "fresh");
+    require(group.delta == 0, "copied");
+    require(group.numInputs == 1, "copied");
+    require(group.numOutputs == 1, "copied");
+    require(group.sumInputs > 0, "copied");
+  }
+
+  private function clone(int vout, ScriptPubKey attestation) {
+    require(tx.outputs[vout].script == attestation, "attestation");
+    require(tx.outputs[vout].assets.lookup(shared.txid, shared.gidx) == 1, "attestation");
+  }
+
+  @allow(unsigned-spend-path, "the beacon publishes the next packet and this supply is copied onto the minter")
+  function advance() {
+    require(this.activeInputIndex == 1, "minter is input 1");
+
+    let beacon = new HashpriceBeacon(checkpoint, checkpointHeight, bits, shared);
+    require(tx.inputs[0].script == beacon, "beacon");
+    require(tx.outputs[0].script == beacon, "beacon output");
+    require(tx.outputs[0].value >= tx.inputs[0].value, "beacon value");
+    int carried = tx.inputs[0].assets.lookup(shared.txid, shared.gidx);
+    require(carried > 0, "beacon asset");
+    require(tx.outputs[0].assets.lookup(shared.txid, shared.gidx) == carried, "beacon asset");
+
+    require(this.tunnel(1));
+    require(size(tx.packet(STATE)) == 56, "state");
+
+    let group = tx.assetGroups.find(shared.txid, shared.gidx);
+    require(group.isFresh == false, "fresh");
+    require(group.delta == 0, "copied");
+    require(group.numInputs == 2, "pair");
+    require(group.numOutputs == 2, "pair");
+  }
+
+  @allow(unsigned-spend-path, "four attestations clone this packet, and the rest of the supply stays on the minter")
+  function mint() {
+    require(this.activeInputIndex == 0, "minter is input 0");
+
+    let state = tx.inputs[0].packet(STATE);
+    require(size(state) == 56, "state");
+    require(tx.packet(STATE) == state, "state");
+    int height = bin2num(substr(state, 32, 8));
+    int hashprice = bin2num(substr(state, 40, 16));
+    require(height > checkpointHeight, "checkpoint");
+    require(hashprice > 0, "hashprice");
+
+    int pool = tx.inputs[0].assets.lookup(shared.txid, shared.gidx);
+    require(pool > FANOUT, "pool");
+    // The shared asset is the exception: it drops by FANOUT. Any other asset
+    // on this coin has to be copied with the script and the value.
+    require(this.tunnel(0, {
+      script: true, value: true, assets: true
+    }, [shared]));
+    require(tx.outputs[0].assets.lookup(shared.txid, shared.gidx) == pool - FANOUT, "pool");
+
+    let attestation = new HashpriceAttestation(checkpoint, checkpointHeight, bits, shared);
+    clone(1, attestation);
+    clone(2, attestation);
+    clone(3, attestation);
+    clone(4, attestation);
+
+    let group = tx.assetGroups.find(shared.txid, shared.gidx);
+    require(group.isFresh == false, "fresh");
+    require(group.delta == 0, "copied");
+    require(group.numInputs == 1, "minter");
+    require(group.numOutputs == FANOUT + 1, "clones");
+  }
+
+  @allow(unsigned-spend-path, "the supply and its packet are copied onto this minter")
+  function copy() {
+    require(this.activeInputIndex == 0, "minter is input 0");
+    require(tx.packet(STATE) == tx.inputs[0].packet(STATE), "state");
+    sole();
+    require(this.tunnel(0));
+  }
+}

@@ -25,7 +25,7 @@ The playground runs the real compiler as WebAssembly. Nothing is installed and n
 | Bindings | Generated TypeScript or Go client code for the artifact, switchable per target |
 | Diagnostics | Every compiler error and warning with its location, updated as you type; they are underlined in the editor, and clicking one moves the cursor to it |
 
-The Explorer ships the single-file examples (SingleSig, HTLC, FujiSafe, StructVault, NonInteractiveSwap) and the multi-file projects (Stability, LayerZero / USDT0, Options, Bonds). You can add files and folders, rename, drag between folders, and everything persists in `localStorage`. The compiler resolves imports from the Explorer's files. The link button copies a URL containing the selected contract and its dependencies. Shared bundles support up to 1 MiB of encoded URL content and 4 MiB of decompressed source data.
+The Explorer ships the single-file examples (SingleSig, HTLC, FujiSafe, StructVault, NonInteractiveSwap) and the multi-file projects (Stability, LayerZero / USDT0, Options, Bonds, Hashprice). You can add files and folders, rename, drag between folders, and everything persists in `localStorage`. The compiler resolves imports from the Explorer's files. The link button copies a URL containing the selected contract and its dependencies. Shared bundles support up to 1 MiB of encoded URL content and 4 MiB of decompressed source data.
 
 Every pull request gets its own build at `https://arkade-os.github.io/compiler/pr-previews/pr-<number>/`, posted as a comment on the PR.
 
@@ -185,6 +185,7 @@ Arrays are fixed-size and part of the type. Loops unroll at compile time, one co
 | `struct_vault`, `threshold_oracle` | Structs, arrays, loops, oracle quorum |
 | `fuji_safe`, `stability`, `bonds` | Stateful contracts that recreate themselves with `new` |
 | `option` | Cash-settled covered call and limited put with an on-stack oracle TWAP |
+| `hashprice` | Beacon and minter that share one asset id. Six headers move both coins; the minter clones four attestations of that asset, and a note settles by consuming one. `examples/hashprice/test.sh` runs it on the Arkade VM |
 | `layerzero` | Packet introspection, `substr`/`cat`/`bin2num`, cross-input binding via `arkadeScriptHash` |
 | `arkade_kitties` | NFT breeding with asset-group introspection |
 

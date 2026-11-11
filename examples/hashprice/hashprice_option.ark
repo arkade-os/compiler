@@ -1,0 +1,93 @@
+pragma arkade ^0.1.0;
+
+// Cash-settled note on a hashprice attestation.
+//
+// Input 0 is one cloned attestation, spent through consume. Input 1 is this
+// note. settle checks that input 0 carries this asset id, then reads its
+// packet. consume leaves the asset on no output, so the same unit cannot
+// settle again or be paid to another script.
+//
+//   hashprice > strike → holder gets collateral * (hashprice - strike) / hashprice
+//   otherwise           → holder gets 0
+// A leg of 330 sats or less is folded into the other output. Hashprice and
+// strike use the beacon's scale: sats per PH/s per day, subsidy only.
+// Settlement reads an attestation whose packet is past the checkpoint, so the
+// number was produced by update rather than by the issuer's genesis packet.
+
+import "hashprice_attestation.ark";
+
+contract HashpriceOption(
+  pubkey holderPk,
+  pubkey writerPk,
+  ScriptPubKey holderScript,
+  ScriptPubKey writerScript,
+  int strike,
+  int collateral,
+  bytes32 checkpoint,
+  int checkpointHeight,
+  int bits,
+  AssetId shared
+) {
+  const int STATE = 16;
+  const int DUST = 330;
+
+  @allow(unsigned-spend-path, "the attestation's header-derived hashprice settles the note, and the outputs pay the holder and the writer")
+  function settle() {
+    require(this.activeInputIndex == 1, "note is input 1");
+    require(strike > 0, "strike");
+    require(collateral > 0, "collateral");
+
+    let attestation = new HashpriceAttestation(checkpoint, checkpointHeight, bits, shared);
+    require(tx.inputs[0].script == attestation, "attestation");
+    require(tx.inputs[0].assets.lookup(shared.txid, shared.gidx) == 1, "attestation");
+
+    let state = tx.inputs[0].packet(STATE);
+    require(size(state) == 56, "state");
+    int height = bin2num(substr(state, 32, 8));
+    require(height > checkpointHeight, "checkpoint");
+    int hashprice = bin2num(substr(state, 40, 16));
+    require(hashprice > 0, "hashprice");
+
+    let group = tx.assetGroups.find(shared.txid, shared.gidx);
+    require(group.isFresh == false, "fresh");
+    require(group.numInputs == 1, "consumed");
+    require(group.numOutputs == 0, "consumed");
+
+    int locked = tx.input.current.value;
+    require(locked >= collateral, "underfunded");
+
+    int holderAmt = 0;
+    if (hashprice > strike) {
+      holderAmt = collateral * (hashprice - strike) / hashprice;
+    }
+    require(holderAmt <= collateral, "holder overpaid");
+    int writerAmt = locked - holderAmt;
+
+    // Bound once. The three arms below are alternatives, and each one reads this output.
+    let payout = tx.outputs[0].script;
+    if (holderAmt > DUST && writerAmt > DUST) {
+      require(tx.outputs[0].value >= holderAmt, "holder short");
+      require(payout == holderScript, "holder script");
+      require(tx.outputs[1].value >= writerAmt, "writer short");
+      require(tx.outputs[1].script == writerScript, "writer script");
+    }
+    if (holderAmt <= DUST) {
+      require(tx.outputs[0].value >= locked, "writer short");
+      require(payout == writerScript, "writer script");
+    }
+    if (writerAmt <= DUST && holderAmt > DUST) {
+      require(tx.outputs[0].value >= locked, "holder short");
+      require(payout == holderScript, "holder script");
+    }
+  }
+
+  function close(signature holderSig, signature writerSig) {
+    require(checkSig(holderSig, holderPk), "holder");
+    require(checkSig(writerSig, writerPk), "writer");
+  }
+
+  function unilateral(signature writerSig) tapscript {
+    require(older(serverExitDelay));
+    require(checkSig(writerSig, writerPk));
+  }
+}
