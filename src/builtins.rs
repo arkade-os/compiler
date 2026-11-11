@@ -65,28 +65,29 @@ pub(crate) const BUILTINS: &[Builtin] = &[
         &[("data", "bytes"), ("offset", "int"), ("size", "int")],
         "bytes",
         &[Substr],
-        "size bytes of data starting at offset.",
+        "size bytes of data starting at offset. An offset or size below 0, or offset + size above \
+         data's length, fails the spend.",
     ),
     builtin(
         "left",
         &[("data", "bytes"), ("count", "int")],
         "bytes",
         &[Left],
-        "The first count bytes of data. A negative count or one past the end fails the spend.",
+        "The first count bytes of data. A count below 0 or above data's length fails the spend.",
     ),
     builtin(
         "right",
         &[("data", "bytes"), ("count", "int")],
         "bytes",
         &[Right],
-        "The last count bytes of data. A negative count or one past the end fails the spend.",
+        "The last count bytes of data. A count below 0 or above data's length fails the spend.",
     ),
     builtin(
         "cat",
         &[("a", "bytes"), ("b", "bytes")],
         "bytes",
         &[Cat],
-        "a followed by b.",
+        "a followed by b. A result over 520 bytes fails the spend.",
     ),
     builtin(
         "bin2num",
@@ -100,7 +101,8 @@ pub(crate) const BUILTINS: &[Builtin] = &[
         &[("value", "int"), ("size", "int")],
         "bytes",
         &[Num2Bin],
-        "value as Script-number bytes padded to size bytes.",
+        "value as little-endian Script-number bytes padded to size bytes. Fails the spend when \
+         value does not fit or size is negative or above 520.",
     ),
     builtin(
         "reverseBytes",
@@ -121,7 +123,8 @@ pub(crate) const BUILTINS: &[Builtin] = &[
         &[("data", "bytes"), ("hashType", "int")],
         "bytes",
         &[Digest],
-        "Hash of data with the hash function selected at runtime by hashType; 20 or 32 bytes.",
+        "Hash of data by hashType: 1 SHA-256, 2 SHA-1, 3 RIPEMD-160, 4 Keccak-256, 5 SHA3-256. \
+         Any other hashType fails the spend.",
     ),
     builtin(
         "sha1",
@@ -164,7 +167,8 @@ pub(crate) const BUILTINS: &[Builtin] = &[
         &[("signature", "signature"), ("pubkey", "bytes")],
         "bool",
         &[CheckSig],
-        "Whether signature is a valid Schnorr signature by pubkey over the spending transaction.",
+        "Whether signature by pubkey is valid for the spending transaction. An empty signature is \
+         false; an invalid non-empty one fails the spend.",
     ),
     builtin(
         "checkSigFromStack",
@@ -175,7 +179,8 @@ pub(crate) const BUILTINS: &[Builtin] = &[
         ],
         "bool",
         &[Swap, CheckSigFromStack],
-        "Whether signature is a valid Schnorr signature by pubkey over message.",
+        "Whether signature is valid by pubkey over message. An empty signature is false; a \
+         non-empty one fails the spend unless it is valid and message is 32 bytes.",
     ),
     verify(
         "checkSigFromStackVerify",
@@ -185,8 +190,8 @@ pub(crate) const BUILTINS: &[Builtin] = &[
             ("message", "bytes"),
         ],
         &[Swap, CheckSigFromStack, Verify],
-        "Fails the spend unless signature is valid by pubkey over message. Produces no value; use \
-         it directly inside require.",
+        "Fails the spend unless signature is valid by pubkey over message, which must be 32 bytes. \
+         Produces no value; use it directly inside require.",
     ),
     Builtin {
         name: "checkMultisig",
@@ -197,8 +202,9 @@ pub(crate) const BUILTINS: &[Builtin] = &[
         ],
         result: Some("bool"),
         lowering: Lowering::Multisig,
-        doc: "Whether at least threshold of the aligned signatures are valid for their keys. \
-              Without a threshold, all must be valid.",
+        doc: "Whether exactly threshold signatures are non-empty, each valid for the key at its \
+              index; an invalid non-empty one fails the spend. Without a threshold, all must be \
+              valid; a runtime threshold outside 1 to the key count fails the spend.",
     },
     // A streaming context is opaque VM state with no language-defined width.
     builtin(
@@ -227,7 +233,8 @@ pub(crate) const BUILTINS: &[Builtin] = &[
         &[("hashType", "int")],
         "bytes32",
         &[SigHash],
-        "The spending transaction's signature hash for hashType.",
+        "The Arkade signature hash of the input being spent for hashType, the message checkSig \
+         verifies; not the BIP-342 digest. An invalid hashType fails the spend.",
     ),
     builtin(
         "merkleRoot",
@@ -240,7 +247,8 @@ pub(crate) const BUILTINS: &[Builtin] = &[
         "bytes32",
         &[MerkleBranchVerify],
         "Root of a BIP-341 tagged-hash Merkle proof. Siblings in proof are 32 bytes each and \
-         combined in sorted order. An empty leafTag takes a 32-byte leaf as already hashed.",
+         combined in sorted order. An empty leafTag takes a 32-byte leaf as already hashed; an \
+         empty branchTag fails the spend.",
     ),
     builtin(
         "checkTime",
@@ -248,14 +256,15 @@ pub(crate) const BUILTINS: &[Builtin] = &[
         "bool",
         &[CheckTime],
         "Whether the emulator's clock has reached timestamp, a Unix time in seconds. Independent \
-         of the transaction locktime and sequence.",
+         of the transaction locktime and sequence. A negative timestamp fails the spend.",
     ),
     builtin(
         "modExp",
         &[("base", "int"), ("exponent", "int"), ("modulus", "int")],
         "int",
         &[ModExp],
-        "base raised to exponent, modulo modulus.",
+        "base raised to exponent, modulo modulus, in 0 to modulus - 1. Fails the spend when \
+         modulus <= 0, exponent < 0 or an operand exceeds 64 bytes.",
     ),
     builtin("abs", &[("value", "int")], "int", &[Abs], "Absolute value."),
     builtin(
@@ -284,14 +293,16 @@ pub(crate) const BUILTINS: &[Builtin] = &[
         &[("P", "ECPoint"), ("Q", "ECPoint"), ("curveId", "int")],
         "ECPoint",
         &[EcAdd],
-        "Elliptic curve point addition P + Q.",
+        "P + Q on curveId: 0 secp256k1, 1 secp256r1, 2 alt_bn128; (0, 0) is the point at \
+         infinity. An unknown curve or an off-curve point fails the spend.",
     ),
     builtin(
         "ecMul",
         &[("P", "ECPoint"), ("scalar", "int"), ("curveId", "int")],
         "ECPoint",
         &[EcMul],
-        "Elliptic curve scalar multiplication scalar·P.",
+        "scalar·P on curveId, numbered as for ecAdd. A scalar below 0 or not below the group \
+         order, or an off-curve P, fails the spend.",
     ),
     Builtin {
         name: "ecPairing",
@@ -302,7 +313,9 @@ pub(crate) const BUILTINS: &[Builtin] = &[
         ],
         result: Some("bool"),
         lowering: Lowering::Pairing,
-        doc: "Pairing check over aligned G1 and G2 point arrays of 1 to 16 pairs.",
+        doc: "Whether the product of the pairings of aligned G1 and G2 points is the identity, \
+              for 1 to 16 pairs. Only alt_bn128 (curveId 2) pairs; another curve, or an off-curve \
+              or out-of-subgroup point, fails the spend.",
     },
     verify(
         "ecMulScalarVerify",
@@ -314,7 +327,8 @@ pub(crate) const BUILTINS: &[Builtin] = &[
         "tweakVerify",
         &[("P", "bytes32"), ("k", "bytes32"), ("Q", "bytes")],
         &[TweakVerify],
-        "Fails the spend unless Q = P + k·G, with P x-only and k 32-byte big-endian.",
+        "Fails the spend unless Q = P + k·G, with P a 32-byte x-only key, k 32-byte big-endian \
+         and Q a 33-byte compressed point.",
     ),
 ];
 
@@ -394,7 +408,7 @@ const SPELLED: &[Spelled] = &[
         index: None,
         tapscript: true,
         doc: "Relative timelock (CSV). Wrap a literal in blocks(n) or seconds(n) to state its \
-              unit. Tapscript only.",
+              unit; a bare value is a raw BIP-68 sequence. Tapscript only.",
     },
     Spelled {
         name: "after",
@@ -450,7 +464,8 @@ const SPELLED: &[Spelled] = &[
     property(
         "tx.assetGroups",
         "AssetGroup[]",
-        "Asset groups of the transaction's asset packet.",
+        "Asset groups of the transaction's asset packet. Asset group and asset members fail the \
+         spend when the transaction has no asset packet.",
     ),
     Spelled {
         name: "tx.intent",
@@ -458,33 +473,36 @@ const SPELLED: &[Spelled] = &[
         ty: None,
         index: None,
         tapscript: false,
-        doc: "Fields of the intent message.",
+        doc: "Fields of the intent message, set only while the emulator checks an intent proof.",
     },
     method(
         "tx.packet",
         &["int packetType"],
         "bytes",
         "Bytes of this transaction's extension packet of packetType. Fails the spend when it is \
-         absent.",
+         absent or over 520 bytes.",
     ),
     method(
         "tx.packet.has",
         &["int packetType"],
         "bool",
-        "Whether this transaction carries an extension packet of packetType.",
+        "Whether this transaction carries an extension packet of packetType. A packet over 520 \
+         bytes fails the spend.",
     ),
     method(
         "tx.intent.field",
         &["bytes path"],
         "bytes",
-        "Encoded bytes of the intent field at a dot-separated path such as \"cosigners.0\". Fails \
-         the spend when it is missing.",
+        "The intent field at a dot-separated path of lowercase keys and indexes such as \
+         \"cosigners.0\": a string's bytes, an integer as a Script number, true as 0x01, false as \
+         empty, an object or array as JSON. Fails the spend when it is missing, null or \
+         fractional, or outside an intent proof.",
     ),
     method(
         "tx.intent.has",
         &["bytes path"],
         "bool",
-        "Whether the intent has a field at path.",
+        "Whether tx.intent.field(path) has a value; false outside an intent proof.",
     ),
     property(
         "tx.inputs[].assets",
@@ -496,52 +514,61 @@ const SPELLED: &[Spelled] = &[
         &["int packetType"],
         "bytes",
         "Extension packet of packetType of the Arkade transaction that created this input. Fails \
-         the spend when it is absent.",
+         the spend when it is absent or over 520 bytes.",
     ),
     method(
         "tx.inputs[].packet.has",
         &["int packetType"],
         "bool",
         "Whether the Arkade transaction that created this input carries an extension packet of \
-         packetType.",
+         packetType. A packet over 520 bytes fails the spend.",
     ),
     property(
         "tx.outputs[].assets",
         "AssetEntry[]",
         "Assets held by the output.",
     ),
-    property("tx.inputs[].assets.length", "int", "Number of assets."),
+    property(
+        "tx.inputs[].assets.length",
+        "int",
+        "Number of assets. Fails the spend without an asset packet.",
+    ),
     method(
         "tx.inputs[].assets.lookup",
         &["bytes32 assetTxid", "int assetGidx"],
         "int",
-        "Amount of the asset. Fails the spend when it is absent.",
+        "Amount of the asset. Fails the spend when it or the asset packet is absent.",
     ),
     method(
         "tx.inputs[].assets.tryLookup",
         &["bytes32 assetTxid", "int assetGidx"],
         "AssetLookup",
-        "The asset's {amount, found} from one inspection, without failing when it is absent.",
+        "The asset's {amount, found} from one inspection; amount is 0 when it is absent. Fails \
+         the spend only without an asset packet.",
     ),
     method(
         "tx.inputs[].assets.has",
         &["bytes32 assetTxid", "int assetGidx"],
         "bool",
-        "Whether the asset is present.",
+        "Whether the asset is present. Fails the spend without an asset packet.",
     ),
     method(
         "tx.assetGroups.find",
         &["bytes32 assetTxid", "int assetGidx"],
         "AssetGroup",
-        "The asset group of the asset. Fails the spend when it is absent.",
+        "The asset group of the asset. Fails the spend when it or the asset packet is absent.",
     ),
     method(
         "tx.assetGroups.has",
         &["bytes32 assetTxid", "int assetGidx"],
         "bool",
-        "Whether the packet has a group for the asset.",
+        "Whether the packet has a group for the asset. Fails the spend without an asset packet.",
     ),
-    property("tx.assetGroups.length", "int", "Number of asset groups."),
+    property(
+        "tx.assetGroups.length",
+        "int",
+        "Number of asset groups. Fails the spend without an asset packet.",
+    ),
     Spelled {
         name: "tx.assetGroups[].inputs",
         params: None,
@@ -577,8 +604,9 @@ const SPELLED: &[Spelled] = &[
             "AssetId[] except?",
         ],
         "bool",
-        "Requires the output to keep this input's scriptPubKey, value and assets, or those the \
-         policy selects, apart from the excepted assets. Covenant only.",
+        "True when the output keeps this input's scriptPubKey, value and exact assets, or those \
+         the policy selects, apart from the excepted assets; otherwise fails the spend. Covenant \
+         only.",
     ),
 ];
 

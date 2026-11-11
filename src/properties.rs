@@ -41,8 +41,8 @@ properties!(
         Locktime => ("locktime", "int", "Transaction nLockTime. Not a clock; use checkTime for time."),
         NumInputs => ("numInputs", "int", "Number of transaction inputs."),
         NumOutputs => ("numOutputs", "int", "Number of transaction outputs."),
-        Weight => ("weight", "int", "Transaction weight."),
-        Id => ("id", "bytes32", "Transaction id."),
+        Weight => ("weight", "int", "Transaction weight without witness data: 4 × the stripped size."),
+        Id => ("id", "bytes32", "Transaction id, in internal byte order (the reverse of its hex display)."),
     }
 );
 
@@ -50,12 +50,12 @@ properties!(
     /// `tx.inputs[i].<property>`
     InputProperty {
         Value => ("value", "int", "Input value in satoshis."),
-        WitnessVersion => ("witnessVersion", "int", "Witness version (0-16) of the input's script."),
+        WitnessVersion => ("witnessVersion", "int", "Witness version (0-16) of the input's script, past any checkpoint, or -1 for a non-witness script."),
         Sequence => ("sequence", "int", "Input nSequence."),
-        Outpoint => ("outpoint", "Outpoint", "Outpoint the input spends: {txid, vout}."),
-        ArkadeScriptHash => ("arkadeScriptHash", "bytes32", "Hash of the input's Arkade script."),
-        ArkadeWitnessHash => ("arkadeWitnessHash", "bytes32", "Hash of the input's Arkade witness."),
-        Script => ("script", "ScriptPubKey", "The input's witness program and version, {program, version}, from one inspection."),
+        Outpoint => ("outpoint", "Outpoint", "Outpoint the input spends: {txid, vout}, txid in internal byte order. In an Ark transaction it is the checkpoint output, not the VTXO."),
+        ArkadeScriptHash => ("arkadeScriptHash", "bytes32", "ArkScriptHash tagged hash of the input's Arkade script. Fails the spend when the input has none."),
+        ArkadeWitnessHash => ("arkadeWitnessHash", "bytes32", "ArkWitnessHash tagged hash of the input's Arkade witness; 32 zero bytes when it is empty. Fails the spend when the input has no Arkade script."),
+        Script => ("script", "ScriptPubKey", "The input's witness program and version, {program, version}, from one inspection, past any checkpoint. A non-witness script gives its SHA-256 and -1."),
     }
 );
 
@@ -63,8 +63,8 @@ properties!(
     /// `tx.outputs[o].<property>`
     OutputProperty {
         Value => ("value", "int", "Output value in satoshis."),
-        WitnessVersion => ("witnessVersion", "int", "Witness version (0-16) of the output's script."),
-        Script => ("script", "ScriptPubKey", "The output's witness program and version, {program, version}, from one inspection."),
+        WitnessVersion => ("witnessVersion", "int", "Witness version (0-16) of the output's script, or -1 for a non-witness script such as OP_RETURN."),
+        Script => ("script", "ScriptPubKey", "The output's witness program and version, {program, version}, from one inspection. A non-witness script gives its SHA-256 and -1."),
     }
 );
 
@@ -86,8 +86,8 @@ properties!(
         Delta => ("delta", "int", "sumOutputs minus sumInputs: positive when minting, negative when burning."),
         HasControl => ("hasControl", "bool", "Whether the group has a control asset."),
         ControlAssetId => ("controlAssetId", "AssetId", "Id of the group's control asset. Fails the spend when there is none."),
-        MetadataHash => ("metadataHash", "bytes32", "Hash of the group's metadata."),
-        AssetId => ("assetId", "AssetId", "Id of the group's asset."),
+        MetadataHash => ("metadataHash", "bytes32", "Merkle root of the group's metadata; 32 zero bytes when it has none."),
+        AssetId => ("assetId", "AssetId", "Id of the group's asset; a fresh issuance's is {tx.id, the group's index}."),
         IsFresh => ("isFresh", "bool", "Whether the group issues a new asset."),
     }
 );
