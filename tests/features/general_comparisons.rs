@@ -819,3 +819,20 @@ fn a_literal_takes_the_type_of_what_it_is_compared_with() {
         assert!(error.contains(expected), "{literal}: {error}");
     }
 }
+
+#[test]
+fn two_compared_literals_need_a_declared_type() {
+    for (left, right) in [
+        ("[{x: 1, y: 2}]", "[{x: 1, y: 2}]"),
+        ("[[{x: 1, y: 2}]]", "[[{x: 1, y: 2}]]"),
+        ("[{x: 1, y: 2}]", "[point]"),
+    ] {
+        let source = format!("struct Point {{ int x; int y; }}\ncontract C(Point point) {{ function f() {{ require({left} == {right}); }} }}");
+        let error = arkade_compiler::compile(&source).unwrap_err().to_string();
+        assert!(
+            error.contains("cannot determine the type of compared literals")
+                && !error.contains("'unknown'"),
+            "{left} == {right}: {error}"
+        );
+    }
+}

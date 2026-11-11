@@ -157,6 +157,7 @@ fn validate_comparison_literals(
             &value.kind,
             ExprKind::ArrayLiteral(_) | ExprKind::StructLiteral(_)
         ) && matches!(other.ty, ArkType::Array(..) | ArkType::Struct(_))
+            && crate::types::resolved(&other.ty)
         {
             validate_value(
                 &TypeName::from(&other.ty),

@@ -62,6 +62,16 @@ fn validate_comparison(
         _ if issues.len() != before || *left == ArkType::Unknown || *right == ArkType::Unknown => {
             return
         }
+        // Literals take their type only from a typed peer, and emission needs every element's type.
+        _ if composite && !(crate::types::resolved(left) && crate::types::resolved(right)) => {
+            issues.push(
+                ValidationIssue::error(
+                    "cannot determine the type of compared literals; declare one with a type first",
+                )
+                .at(span),
+            );
+            return;
+        }
         OperatorClass::Equality if composite => left == right,
         OperatorClass::Equality => {
             left == right
