@@ -41,15 +41,23 @@ fn constant_product_pool_is_one_counterparty() {
             "{function} is {bytes} bytes; a batched unroll no longer fits the one-step pool"
         );
     }
-    let unilateral = crate::common::leaf_asm(&pool, "unilateral", "unilateral");
     assert!(
-        unilateral.contains("OP_CHECKSEQUENCEVERIFY"),
-        "pool exit leaf should be a CSV: {unilateral}"
+        pool.parameters
+            .iter()
+            .all(|parameter| parameter.name != "noExitKey"),
+        "the pool has no key-spend parameter"
     );
-    assert!(
-        unilateral.contains("<noExitKey>"),
-        "pool exit leaf should require noExitKey: {unilateral}"
-    );
+    for function in ["swap", "deposit", "withdraw"] {
+        let leaf = crate::common::leaf_asm(&pool, function, function);
+        assert!(
+            leaf.contains("<SERVER_KEY>") && leaf.contains(&format!("<EMULATOR_KEY:{function}>")),
+            "{function} should spend with the server and the emulator: {leaf}"
+        );
+        assert!(
+            !leaf.contains("OP_CHECKSEQUENCEVERIFY"),
+            "{function} should have no timelocked key leaf: {leaf}"
+        );
+    }
 }
 
 #[test]

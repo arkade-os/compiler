@@ -14,13 +14,12 @@ contract ConstantProductSwap(
   bytes32 ctrlTxid, int ctrlGidx,
   int feeBps,
   int minOut,
-  pubkey noExitKey,
   pubkey ownerPk
 ) {
   const int DUST = 330;
 
   private function isPool(ScriptPubKey script) {
-    require(script == new ConstantProductPool(quoteTxid, quoteGidx, lpTxid, lpGidx, lpLedgTxid, lpLedgGidx, ctrlTxid, ctrlGidx, feeBps, noExitKey), "pool");
+    require(script == new ConstantProductPool(quoteTxid, quoteGidx, lpTxid, lpGidx, lpLedgTxid, lpLedgGidx, ctrlTxid, ctrlGidx, feeBps), "pool");
   }
 
   @allow(unsigned-spend-path, "the pool at input 0 is the counterparty, and output 1 pays the trader at least minOut")

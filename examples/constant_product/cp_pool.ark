@@ -16,8 +16,7 @@ contract ConstantProductPool(
   bytes32 lpTxid, int lpGidx,
   bytes32 lpLedgTxid, int lpLedgGidx,
   bytes32 ctrlTxid, int ctrlGidx,
-  int feeBps,
-  pubkey noExitKey
+  int feeBps
 ) {
   const int DUST = 330;
 
@@ -168,11 +167,5 @@ contract ConstantProductPool(
     require(ledgGroup.controlIs(ctrlTxid, ctrlGidx), "ledger control");
     require(ledgGroup.delta + part == 0, "ledger");
     require(tx.assetGroups.find(quoteTxid, quoteGidx).delta == 0, "quote supply");
-  }
-
-  // Dead path. Deploy noExitKey as a point with no known discrete log.
-  function unilateral(signature noExitSig) tapscript {
-    require(older(serverExitDelay));
-    require(checkSig(noExitSig, noExitKey));
   }
 }

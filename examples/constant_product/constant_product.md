@@ -24,7 +24,7 @@ Every settlement has the pool at input 0 and one standing order at input 1. Outp
 | `ConstantProductDeposit.fill` | BTC above 330 plus the matching quote | 330 sats and the minted LP tokens, paid to `payScript` |
 | `ConstantProductExit.fill` | 330 sats and LP tokens | pro-rata BTC and quote, paid to `payScript` |
 
-`refund` on an unfilled order is one input and pays `payScript` (`numOutputs == 3`). Each order also has a CSV unilateral leaf for `ownerPk`. The pool's unilateral leaf uses `noExitKey`; deploy that as a point with no known discrete log so the server cannot take the reserves.
+`refund` on an unfilled order is one input and pays `payScript` (`numOutputs == 3`). Each order has a CSV leaf for `ownerPk`, so the trader or LP can take that order back on L1. The pool itself is spent only through `swap`, `deposit`, and `withdraw`.
 
 The pool prices the step and keeps its own output. The order checks the same numbers and pins `payScript`. A swap spends no LP tokens. A deposit mints LP and ledger by the same amount, and both groups must be controlled by the pool's control unit. A withdrawal burns the LP tokens and the same amount of ledger.
 
