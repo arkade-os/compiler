@@ -35,8 +35,8 @@ pest_derive = "2.7.8"
 serde = { version = "1.0.197", features = ["derive"] }
 serde_json = "1.0.114"
 clap = { version = "4.5.3", features = ["derive"] }
-chrono = "0.4.34"
-sha2 = "0.10.9"
+chrono = { version = "0.4.34", default-features = false, features = ["now", "wasmbind"] }
+sha2 = "0.11.1"
 
 # WASM support (optional, for web playground)
 wasm-bindgen = { version = "0.2", optional = true }
@@ -57,8 +57,6 @@ crate-type = ["cdylib", "rlib"]
 
 [dev-dependencies]
 tempfile = "3.10.1"
-assert_fs = "1.1.1"
-predicates = "3.1.0"
 
 [[bin]]
 name = "arkadec"

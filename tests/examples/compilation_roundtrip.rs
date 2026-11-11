@@ -127,9 +127,13 @@ fn fingerprint_identifies_artifact_content() {
     pinned.updated_at = None;
     let digest = |artifact: &arkade_compiler::ContractJson| {
         use sha2::Digest;
+        let digest = sha2::Sha256::digest(serde_json::to_vec(artifact).unwrap());
         format!(
-            "sha256:{:x}",
-            sha2::Sha256::digest(serde_json::to_vec(artifact).unwrap())
+            "sha256:{}",
+            digest
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect::<String>()
         )
     };
     assert_eq!(digest(&pinned), fingerprint);

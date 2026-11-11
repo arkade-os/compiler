@@ -566,7 +566,14 @@ pub(crate) fn emit(
     }
     // Serialized field order is part of the fingerprint; reordering artifact fields changes it.
     let bytes = serde_json::to_vec(&json).map_err(|error| error.to_string())?;
-    json.fingerprint = Some(format!("sha256:{:x}", Sha256::digest(bytes)));
+    let digest = Sha256::digest(bytes);
+    json.fingerprint = Some(format!(
+        "sha256:{}",
+        digest
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>()
+    ));
     json.updated_at = Some(Utc::now().to_rfc3339());
 
     Ok(json)
