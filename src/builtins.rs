@@ -394,13 +394,16 @@ const fn method(
 }
 
 const SPELLED: &[Spelled] = &[
-    method(
-        "tweak",
-        &["pubkey base", "function name"],
-        "pubkey",
-        "base (emulator or a constructor pubkey) tweaked by the named covenant's hash. A \
-         tapscript-only key expression inside checkSig or checkMultisig.",
-    ),
+    Spelled {
+        tapscript: true,
+        ..method(
+            "tweak",
+            &["pubkey base", "function name"],
+            "pubkey",
+            "base (emulator or a constructor pubkey) tweaked by the named covenant's hash. A \
+             tapscript-only key expression inside checkSig or checkMultisig.",
+        )
+    },
     Spelled {
         name: "older",
         params: Some(&["int sequence"]),

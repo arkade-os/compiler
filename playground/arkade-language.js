@@ -160,9 +160,7 @@ const docItem = (kind, name, entry) => {
 function arkadeUseDocs(json) {
     docs = json;
     arkadeMonarch.builtinFunctions = Object.keys(docs.functions);
-    // Tapscript-only timelocks are highlighted but not offered as completions.
-    functionItems = Object.entries(docs.functions).filter(([, entry]) => !entry.tapscript)
-        .map(([name, entry]) => docItem('Function', name, entry));
+    functionItems = Object.entries(docs.functions).map(([name, entry]) => docItem('Function', name, entry));
     arkadeMembers = {};
     for (const [key, entry] of Object.entries(docs.members)) {
         const dot = key.lastIndexOf('.');
