@@ -40,7 +40,7 @@ const table = {
 };
 
 const top = labels('    require(', table);
-for (const label of ['checkSig', 'substr', 'tx', 'owner', 'sig', 'group', 'spend', 'Point', 'Demo', 'Fees']) assert(top.includes(label), label);
+for (const label of ['checkSig', 'substr', 'tweak', 'older', 'tx', 'owner', 'sig', 'group', 'spend', 'Point', 'Demo', 'Fees']) assert(top.includes(label), label);
 assert.deepEqual(labels('constructor.', table), []);
 assert.deepEqual(labels('toString.', { members: {} }), []);
 assert(!top.some(label => label.includes('.')));
@@ -52,7 +52,6 @@ assert(labels('require(tx . ').includes('assetGroups'));
 assert.deepEqual(labels('tx.outputs[0].'), ['assets', 'script', 'value', 'witnessVersion']);
 assert(labels('tx.inputs[this.activeInputIndex].').includes('arkadeScriptHash'));
 assert.deepEqual(labels('tx.outputs[idx[0]].'), ['assets', 'script', 'value', 'witnessVersion']);
-assert(!top.includes('older'));
 assert(labels('tx.inputs[i].assets.').includes('lookup'));
 assert.deepEqual(labels('tx.outputs[o].assets[0].'), ['amount', 'assetId']);
 assert(labels('tx.assetGroups[k].').includes('sumOutputs'));
