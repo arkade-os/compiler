@@ -1409,6 +1409,10 @@ function builtinDeclarations() {
 }
 
 function registerSymbolProviders() {
+    // An editor showing builtins.ark, such as its peek, is read-only.
+    monaco.editor.onDidCreateEditor(view => view.onDidChangeModel(() => {
+        if (view.getModel()?.uri.scheme === 'arkade-builtins') view.updateOptions({ readOnly: true });
+    }));
     const range = location => new monaco.Range(
         location.start.line, location.start.column, location.end.line, location.end.column);
     monaco.languages.registerHoverProvider('arkade', {

@@ -191,7 +191,8 @@ function memberPath(before) {
 function documentedPath(path, visible) {
     const group = path.match(/^(\w+)(\.(?:inputs|outputs)\[\])?$/);
     if (visible.get(group?.[1])?.type === 'AssetGroup') return `tx.assetGroups[]${group[2] || ''}`;
-    const alias = memberAliases.find(([from]) => path === from || path.startsWith(from + '.') || path.startsWith(from + '['));
+    const alias = memberAliases.find(([from, , missing]) => (path === from || path.startsWith(from + '.') || path.startsWith(from + '['))
+        && !missing.includes(path.slice(from.length + 1).split(/[.[]/)[0]));
     return alias ? alias[1] + path.slice(alias[0].length) : path;
 }
 
@@ -227,8 +228,12 @@ function arkadeComplete(before, table) {
 function arkadeDescribe(before, word, table) {
     const visible = new Map((table?.symbols || []).map(symbol => [symbol.name, symbol]));
     const path = memberPath(before);
+    // A member of an expression such as `(x).` is no builtin.
+    if (!path && /\.\s*$/.test(before)) return null;
     const [entries, key] = path ? [docs.members, `${documentedPath(path, visible)}.${word}`] : [docs.functions, word];
     if (!Object.hasOwn(entries, key)) return null;
+    // A member that completion does not offer, such as `tx.input.current.assets`, does not compile.
+    if (path && !arkadeComplete(before, table).some(item => item.label === word)) return null;
     return { key, declaration: declaration(key, entries[key]), doc: entries[key].doc };
 }
 
