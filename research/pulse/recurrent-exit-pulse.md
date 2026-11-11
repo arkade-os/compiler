@@ -32,6 +32,7 @@ covenants and today's exit asymmetry).
   - [7.3 Unilateral exit walk (D3)](#73-unilateral-exit-walk-d3)
   - [7.4 Expiry (D4) and the timelock ordering invariant](#74-expiry-d4-and-the-timelock-ordering-invariant)
   - [7.5 Exit notice and eviction-with-payout (D5)](#75-exit-notice-and-eviction-with-payout-d5)
+  - [7.6 Own-balance enforcement without a signing share](#76-own-balance-enforcement-without-a-signing-share)
 - [8. Invalidation model](#8-invalidation-model)
 - [8a. Recourse: when the count doesn't check out](#8a-recourse-when-the-count-doesnt-check-out)
   - [Failure modes and where each lands](#failure-modes-and-where-each-lands)
@@ -190,6 +191,17 @@ assumed, never derived; and the §13.2 trilemma remains unformalized — what wa
 there is a restricted game whose theft-authorization is an explicit premise, not an
 impossibility result.
 
+**Revision 2.3** — own-balance enforcement stated so it cannot be read as a signing
+share:
+
+23. **§7.6 — a member enforces their own balance by exiting with it.** They do not
+    join `P_k` and the pulse does not wait on them. Their node checks one number,
+    their slot, and broadcasts the last good branch if it is short. The Operator
+    displaces that broadcast only by paying them in full (§7.5). Silence is not a
+    veto, and a false complaint withdraws only their own money, so the check is not
+    a pool-wide DoS (§13.4). Missing the contest window accepts the new amount for
+    that member alone.
+
 ---
 
 ## 1. Plain-language explainers
@@ -260,6 +272,15 @@ without any math.
   moment, the only lawful "eviction" is one that **pays you your full balance
   immediately**. The clerk can't keep tearing up your ticket and dealing you a new one
   forever; either your ticket cashes, or you're paid out on the spot. Both are exits.
+
+- **Checking your own number is not a vote.** You do not sign other people's moves, and
+  staying offline does not freeze the jar. Your node, or a watchdog, looks at one figure
+  on each new set of tickets: your share. If it is right, you keep the new ticket and
+  say nothing. If it is short, or the new ticket never arrives, you cash the last ticket
+  that was right. The clerk can stop that cash-out only by paying you your full balance
+  and taking you off the books. A made-up complaint just withdraws your own money. You
+  cannot hold the jar shut. You do have to look before the contest window ends; missing
+  it means you accept the new number, and nobody else's ticket waits on you.
 
 - **If the clerk lies, they lose a cash deposit** (optional backstop). Before running the
   jar, the Operator can put up a **security deposit** held by an independent referee
@@ -391,6 +412,9 @@ PULSE closes this gap.
 | **Watchtower** | Nothing (lattice is fully pre-signed) | Monitoring only | Can broadcast *anyone's* exit and file the owner's exit notice if delegated; non-custodial |
 | **Heartbeat participants** | Operator + that pulse's transacting parties only | — | Passive members are **not** needed at heartbeats |
 | **Genesis** | Operator only, if the pool starts empty and members join via deposit pulses | — | **No all-hands N-of-N ceremony ever exists** |
+
+A member who wants their own balance enforced does not join this table as a signer to
+get it. The check, and the rule that their silence is not a veto, are §7.6.
 
 ## 6. The exit leaf
 
@@ -706,6 +730,41 @@ without payout as a §8 dispute (halt + auto-exit on the last good epoch), and w
 gap; it does not change the **amount** model of §13.1, and it cannot help sub-dust
 slots (§12.1 item 6). Under GSR (§12.2 item 3) the displacement path disappears
 structurally and this rule becomes moot.
+
+### 7.6 Own-balance enforcement without a signing share
+
+A member who wants only their own balance enforced does not join `P_k` and is not a
+required signer of the pulse. A required share would make every other member's
+transition wait on that one node. An offline node, or a refusal, would halt the pool.
+That is a DoS, and it is the coinpool corner of the trilemma (§13.2): forcing the
+victim to co-sign every pulse buys amount safety by dropping non-interactive
+membership. This section is the other corner, stated as an operation.
+
+The signing set (the Operator, or the enclave threshold in the primary model, plus
+the parties whose balances are changing) signs the new lattice without them. The
+member's node keeps the last branch whose slot matched the balance they accepted,
+and checks one number in each new lattice: their own slot.
+
+- **The number matches.** They store the new branch and send nothing.
+- **The number is short, or the branch never arrives.** They broadcast the last good
+  branch during the contest window Δ (§7.3). A live Operator displaces that broadcast
+  only by an eviction pulse that pays their full balance on-chain and removes them
+  (§7.5). The next pulse continues for everyone else, with that payout included.
+
+Silence is not a veto. An offline node does not freeze the pool, and the ceremony
+has no signature of theirs to wait for. A false complaint only withdraws their own
+money: once the payout lands they have no balance left to dispute until they deposit
+again, so one member cannot hold the pool open. Re-entry is an ordinary deposit
+pulse (§7.5), which is what keeps a withdraw-and-rejoin loop from being a free
+repeated halt.
+
+The remaining requirement is local. The member, or a watchtower holding that one
+branch, must notice a short slot before Δ ends. Missing the window means they accept
+the new amount. It does not stop anyone else's pulse. This is amount enforcement by
+exit-or-payout of a single slot (§13.1). It does not prevent the signing set from
+producing the short tree; a fully compromised set can still win the race of §8a,
+because the displacing transition carries no CSV. What it does prevent is a member
+having to sit in the ceremony, and a pool having to stop when they don't.
 
 ## 8. Invalidation model
 
@@ -1457,7 +1516,7 @@ not a defect to be patched.
 
 ### 13.4 Can anyone halt epoch creation?
 
-Four vectors — three bounded, one intentional:
+Five vectors — four bounded, one intentional:
 
 1. **The Operator can halt *all* epoch creation unilaterally** (it is a mandatory signer
    of every pulse). This is a real censorship/liveness power, but it is **bounded to
@@ -1486,6 +1545,13 @@ Four vectors — three bounded, one intentional:
    fixed in the ABI (§11) — two
    implementations that disagree on the format would split the social layer, so the
    format must be fixed there, not left to convention.
+
+5. **A member enforcing only their own balance cannot halt epoch creation.** Their
+   tool is the §7.6 broadcast of their last good branch, which is an exit of their
+   slot, not a missing signature. The conforming response is to pay that slot and
+   continue (§7.5). Putting their key into `P_k` so that they "can enforce" would
+   create the halt §7.6 rejects: the pool would stop whenever that node was down or
+   refused. A false complaint withdraws only the complaining member.
 
 ### 13.5 Is the Operator always the exit-creator? (and the federation fix)
 
