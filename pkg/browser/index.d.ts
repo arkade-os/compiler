@@ -120,6 +120,18 @@ export interface DebugInfo {
         sourceMap: SourceRange[];
     }>;
 }
+export interface BuiltinDoc {
+    params?: string[];
+    result?: string;
+    type?: string;
+    index?: string;
+    tapscript?: boolean;
+    doc: string;
+}
+export interface BuiltinDocs {
+    functions: Record<string, BuiltinDoc>;
+    members: Record<string, BuiltinDoc>;
+}
 /**
  * Source errors are diagnostics with a `null` artifact, not a rejection. `diagnostics` lists every
  * error and warning, warnings included on success. `debug` is `null` with `{ debug: false }`.
@@ -141,5 +153,7 @@ export declare function check(input: CompileInput, options?: CompileOptions): Pr
 export declare function symbolAt(input: CompileInput, position: Position): Promise<SymbolInfo | null>;
 /** The names usable at a position of the entry file, for completion. */
 export declare function completionsAt(input: CompileInput, position: Position): Promise<Completions>;
+/** Every builtin function and `tx`/`this` member, with its signature and docs. */
+export declare function builtinDocs(): Promise<BuiltinDocs>;
 /** Read the version from the installed WASM compiler. */
 export declare function version(): Promise<string>;

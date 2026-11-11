@@ -2,6 +2,11 @@
 /* eslint-disable */
 
 /**
+ * [`crate::builtin_docs`]: every builtin and transaction member with its signature and docs.
+ */
+export function builtin_docs(): string;
+
+/**
  * The diagnostics of a virtual project, in the form `compile_sources_with_diagnostics` gives
  * them, without an artifact; a library entry gets its own diagnostics, not the error compiling
  * it as an entry would give. For diagnosing sources while they are edited.
@@ -76,6 +81,7 @@ export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembl
 
 export interface InitOutput {
     readonly memory: WebAssembly.Memory;
+    readonly builtin_docs: () => [number, number];
     readonly check_sources: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
     readonly compile: (a: number, b: number) => [number, number, number, number];
     readonly compile_sources: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];

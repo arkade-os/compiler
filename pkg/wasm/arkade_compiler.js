@@ -1,6 +1,23 @@
 /* @ts-self-types="./arkade_compiler.d.ts" */
 
 /**
+ * [`crate::builtin_docs`]: every builtin and transaction member with its signature and docs.
+ * @returns {string}
+ */
+export function builtin_docs() {
+    let deferred1_0;
+    let deferred1_1;
+    try {
+        const ret = wasm.builtin_docs();
+        deferred1_0 = ret[0];
+        deferred1_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+    }
+}
+
+/**
  * The diagnostics of a virtual project, in the form `compile_sources_with_diagnostics` gives
  * them, without an artifact; a library entry gets its own diagnostics, not the error compiling
  * it as an entry would give. For diagnosing sources while they are edited.

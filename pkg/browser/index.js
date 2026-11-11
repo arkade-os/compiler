@@ -64,6 +64,10 @@ export async function completionsAt(input, position) {
     const [line, column] = serializePosition(position);
     return call(wasm => wasm.completions_at(entry, files, line, column));
 }
+/** Every builtin function and `tx`/`this` member, with its signature and docs. */
+export async function builtinDocs() {
+    return call(wasm => wasm.builtin_docs());
+}
 /** Read the version from the installed WASM compiler. */
 export async function version() {
     return (await initialize()).version();
