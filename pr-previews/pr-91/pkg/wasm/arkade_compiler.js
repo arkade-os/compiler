@@ -1,6 +1,62 @@
 /* @ts-self-types="./arkade_compiler.d.ts" */
 
 /**
+ * [`crate::builtin_docs`]: every builtin and transaction member with its signature and docs.
+ * @returns {string}
+ */
+export function builtin_docs() {
+    let deferred1_0;
+    let deferred1_1;
+    try {
+        const ret = wasm.builtin_docs();
+        deferred1_0 = ret[0];
+        deferred1_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+    }
+}
+
+/**
+ * The diagnostics of a virtual project, in the form `compile_sources_with_diagnostics` gives
+ * them, without an artifact; a library entry gets its own diagnostics, not the error compiling
+ * it as an entry would give. For diagnosing sources while they are edited.
+ * @param {string} entry
+ * @param {string} files
+ * @param {boolean | null} [optimize]
+ * @returns {string}
+ */
+export function check_sources(entry, files, optimize) {
+    let deferred4_0;
+    let deferred4_1;
+    try {
+        let ptr0, len0, ptr1, len1;
+        try {
+            ptr0 = passStringToWasm0(entry, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            len0 = WASM_VECTOR_LEN;
+            ptr1 = passStringToWasm0(files, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            len1 = WASM_VECTOR_LEN;
+        } catch (e) {
+            if (ptr1) { wasm.__wbindgen_free(ptr1, len1 * 1, 1); }
+            if (ptr0) { wasm.__wbindgen_free(ptr0, len0 * 1, 1); }
+            throw e;
+        }
+        const ret = wasm.check_sources(ptr0, len0, ptr1, len1, isLikeNone(optimize) ? 0xFFFFFF : optimize ? 1 : 0);
+        var ptr3 = ret[0];
+        var len3 = ret[1];
+        if (ret[3]) {
+            ptr3 = 0; len3 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred4_0 = ptr3;
+        deferred4_1 = len3;
+        return getStringFromWasm0(ptr3, len3);
+    } finally {
+        wasm.__wbindgen_free(deferred4_0, deferred4_1, 1);
+    }
+}
+
+/**
  * Compile Arkade Script source code to JSON
  *
  * # Arguments
@@ -34,19 +90,28 @@ export function compile(source) {
 
 /**
  * Compile a virtual project. `files` is a JSON object mapping relative .ark paths to source text.
+ * `optimize` defaults to true when omitted.
  * @param {string} entry
  * @param {string} files
+ * @param {boolean | null} [optimize]
  * @returns {string}
  */
-export function compile_sources(entry, files) {
+export function compile_sources(entry, files, optimize) {
     let deferred4_0;
     let deferred4_1;
     try {
-        const ptr0 = passStringToWasm0(entry, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        const len0 = WASM_VECTOR_LEN;
-        const ptr1 = passStringToWasm0(files, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        const len1 = WASM_VECTOR_LEN;
-        const ret = wasm.compile_sources(ptr0, len0, ptr1, len1);
+        let ptr0, len0, ptr1, len1;
+        try {
+            ptr0 = passStringToWasm0(entry, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            len0 = WASM_VECTOR_LEN;
+            ptr1 = passStringToWasm0(files, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            len1 = WASM_VECTOR_LEN;
+        } catch (e) {
+            if (ptr1) { wasm.__wbindgen_free(ptr1, len1 * 1, 1); }
+            if (ptr0) { wasm.__wbindgen_free(ptr0, len0 * 1, 1); }
+            throw e;
+        }
+        const ret = wasm.compile_sources(ptr0, len0, ptr1, len1, isLikeNone(optimize) ? 0xFFFFFF : optimize ? 1 : 0);
         var ptr3 = ret[0];
         var len3 = ret[1];
         if (ret[3]) {
@@ -62,10 +127,139 @@ export function compile_sources(entry, files) {
 }
 
 /**
+ * Compile a virtual project and report every diagnostic with its position. Compilation
+ * errors are diagnostics, not a thrown error: the result is
+ * `{ artifact: string | null, debug: string | null, diagnostics: Diagnostic[] }`,
+ * where `debug` is the debug file JSON (`ContractJson::debug_info`), built unless `debug` is
+ * `false`, and each diagnostic has `severity`, `code`, `message`, `file` and, when located,
+ * 1-based `start` and `end` `{ line, column }` with columns counted in UTF-16 units, as editors
+ * count them.
+ * @param {string} entry
+ * @param {string} files
+ * @param {boolean | null} [optimize]
+ * @param {boolean | null} [debug]
+ * @returns {string}
+ */
+export function compile_sources_with_diagnostics(entry, files, optimize, debug) {
+    let deferred4_0;
+    let deferred4_1;
+    try {
+        let ptr0, len0, ptr1, len1;
+        try {
+            ptr0 = passStringToWasm0(entry, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            len0 = WASM_VECTOR_LEN;
+            ptr1 = passStringToWasm0(files, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            len1 = WASM_VECTOR_LEN;
+        } catch (e) {
+            if (ptr1) { wasm.__wbindgen_free(ptr1, len1 * 1, 1); }
+            if (ptr0) { wasm.__wbindgen_free(ptr0, len0 * 1, 1); }
+            throw e;
+        }
+        const ret = wasm.compile_sources_with_diagnostics(ptr0, len0, ptr1, len1, isLikeNone(optimize) ? 0xFFFFFF : optimize ? 1 : 0, isLikeNone(debug) ? 0xFFFFFF : debug ? 1 : 0);
+        var ptr3 = ret[0];
+        var len3 = ret[1];
+        if (ret[3]) {
+            ptr3 = 0; len3 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred4_0 = ptr3;
+        deferred4_1 = len3;
+        return getStringFromWasm0(ptr3, len3);
+    } finally {
+        wasm.__wbindgen_free(deferred4_0, deferred4_1, 1);
+    }
+}
+
+/**
+ * The names usable at 1-based `line` and UTF-16 `column` of `entry`, for completion:
+ * `{ symbols, structs, members }`, where `members` lists a library's or contract's names
+ * under its own, and `structs` gives the fields of every struct analyzed, since a field's type
+ * can name a struct the entry does not see.
+ * @param {string} entry
+ * @param {string} files
+ * @param {number} line
+ * @param {number} column
+ * @returns {string}
+ */
+export function completions_at(entry, files, line, column) {
+    let deferred6_0;
+    let deferred6_1;
+    try {
+        const val3 = +line;
+        const val4 = +column;
+        let ptr0, len0, ptr1, len1;
+        try {
+            ptr0 = passStringToWasm0(entry, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            len0 = WASM_VECTOR_LEN;
+            ptr1 = passStringToWasm0(files, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            len1 = WASM_VECTOR_LEN;
+        } catch (e) {
+            if (ptr1) { wasm.__wbindgen_free(ptr1, len1 * 1, 1); }
+            if (ptr0) { wasm.__wbindgen_free(ptr0, len0 * 1, 1); }
+            throw e;
+        }
+        const ret = wasm.completions_at(ptr0, len0, ptr1, len1, val3, val4);
+        var ptr5 = ret[0];
+        var len5 = ret[1];
+        if (ret[3]) {
+            ptr5 = 0; len5 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred6_0 = ptr5;
+        deferred6_1 = len5;
+        return getStringFromWasm0(ptr5, len5);
+    } finally {
+        wasm.__wbindgen_free(deferred6_0, deferred6_1, 1);
+    }
+}
+
+/**
  * Initialize panic hook for better error messages in the browser console
  */
 export function init() {
     wasm.init();
+}
+
+/**
+ * The symbol at 1-based `line` and UTF-16 `column` of `entry`, for hover, go to definition
+ * and highlighting: `{ name, kind, type, at, definition, references }`, each location
+ * `{ file, start, end }`, or `null` when no name is there.
+ * @param {string} entry
+ * @param {string} files
+ * @param {number} line
+ * @param {number} column
+ * @returns {string}
+ */
+export function symbol_at(entry, files, line, column) {
+    let deferred6_0;
+    let deferred6_1;
+    try {
+        const val3 = +line;
+        const val4 = +column;
+        let ptr0, len0, ptr1, len1;
+        try {
+            ptr0 = passStringToWasm0(entry, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            len0 = WASM_VECTOR_LEN;
+            ptr1 = passStringToWasm0(files, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            len1 = WASM_VECTOR_LEN;
+        } catch (e) {
+            if (ptr1) { wasm.__wbindgen_free(ptr1, len1 * 1, 1); }
+            if (ptr0) { wasm.__wbindgen_free(ptr0, len0 * 1, 1); }
+            throw e;
+        }
+        const ret = wasm.symbol_at(ptr0, len0, ptr1, len1, val3, val4);
+        var ptr5 = ret[0];
+        var len5 = ret[1];
+        if (ret[3]) {
+            ptr5 = 0; len5 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred6_0 = ptr5;
+        deferred6_1 = len5;
+        return getStringFromWasm0(ptr5, len5);
+    } finally {
+        wasm.__wbindgen_free(deferred6_0, deferred6_1, 1);
+    }
 }
 
 /**
@@ -108,7 +302,7 @@ export function version() {
 function __wbg_get_imports() {
     const import0 = {
         __proto__: null,
-        __wbg___wbindgen_throw_5d9e815e6fdf150f: function(arg0, arg1) {
+        __wbg___wbindgen_throw_4c88d8bf264fd984: function(arg0, arg1) {
             throw new Error(getStringFromWasm0(arg0, arg1));
         },
         __wbg_error_757e9472f8410341: function(arg0, arg1) {
@@ -122,24 +316,24 @@ function __wbg_get_imports() {
                 wasm.__wbindgen_free(deferred0_0, deferred0_1, 1);
             }
         },
-        __wbg_getTime_65922ba0b59d55a7: function(arg0) {
+        __wbg_getTime_edc91481cbc4cd78: function(arg0) {
             const ret = arg0.getTime();
             return ret;
         },
-        __wbg_new_0_35540e542ba689d2: function() {
+        __wbg_new_0_36d738a0c8cfac43: function() {
             const ret = new Date();
             return ret;
         },
-        __wbg_new_227d7c05414eb861: function() {
+        __wbg_new_bb74001155cb8ca8: function() {
             const ret = new Error();
             return ret;
         },
-        __wbg_stack_3b0d974bbf31e44f: function(arg0, arg1) {
+        __wbg_stack_575c4e0918581b9c: function(arg0, arg1) {
             const ret = arg1.stack;
             const ptr1 = passStringToWasm0(ret, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
             const len1 = WASM_VECTOR_LEN;
-            getDataViewMemory0().setInt32(arg0 + 4 * 1, len1, true);
-            getDataViewMemory0().setInt32(arg0 + 4 * 0, ptr1, true);
+            getDataViewMemory0().setInt32((arg0 >>> 0) + 4 * 1, len1, true);
+            getDataViewMemory0().setInt32((arg0 >>> 0) + 4 * 0, ptr1, true);
         },
         __wbindgen_generic_0000000000000001: function(arg0, arg1) {
             // Cast intrinsic for `Ref(String) -> Externref`.
@@ -148,12 +342,11 @@ function __wbg_get_imports() {
         },
         __wbindgen_init_externref_table: function() {
             const table = wasm.__wbindgen_externrefs;
-            const offset = table.grow(4);
             table.set(0, undefined);
-            table.set(offset + 0, undefined);
-            table.set(offset + 1, null);
-            table.set(offset + 2, true);
-            table.set(offset + 3, false);
+            table.set(1024, undefined);
+            table.set(1025, null);
+            table.set(1026, true);
+            table.set(1027, false);
         },
     };
     return {
@@ -171,7 +364,8 @@ function getDataViewMemory0() {
 }
 
 function getStringFromWasm0(ptr, len) {
-    return decodeText(ptr >>> 0, len);
+    ptr = ptr >>> 0;
+    return decodeText(getUint8ArrayMemory0().subarray(ptr, ptr + len));
 }
 
 let cachedUint8ArrayMemory0 = null;
@@ -180,6 +374,10 @@ function getUint8ArrayMemory0() {
         cachedUint8ArrayMemory0 = new Uint8Array(wasm.memory.buffer);
     }
     return cachedUint8ArrayMemory0;
+}
+
+function isLikeNone(x) {
+    return x === undefined || x === null;
 }
 
 function passStringToWasm0(arg, malloc, realloc) {
@@ -225,18 +423,18 @@ function takeFromExternrefTable0(idx) {
     return value;
 }
 
-let cachedTextDecoder = new TextDecoder('utf-8', { ignoreBOM: true, fatal: true });
+let cachedTextDecoder = new TextDecoder('utf-8', { ignoreBOM: true });
 cachedTextDecoder.decode();
 const MAX_SAFARI_DECODE_BYTES = 2146435072;
 let numBytesDecoded = 0;
-function decodeText(ptr, len) {
-    numBytesDecoded += len;
+function decodeText(bytes) {
+    numBytesDecoded += bytes.length;
     if (numBytesDecoded >= MAX_SAFARI_DECODE_BYTES) {
-        cachedTextDecoder = new TextDecoder('utf-8', { ignoreBOM: true, fatal: true });
+        cachedTextDecoder = new TextDecoder('utf-8', { ignoreBOM: true });
         cachedTextDecoder.decode();
-        numBytesDecoded = len;
+        numBytesDecoded = bytes.length;
     }
-    return cachedTextDecoder.decode(getUint8ArrayMemory0().subarray(ptr, ptr + len));
+    return cachedTextDecoder.decode(bytes);
 }
 
 const cachedTextEncoder = new TextEncoder();
@@ -324,9 +522,17 @@ function initSync(module) {
     return __wbg_finalize_init(instance, module);
 }
 
+let __wbg_init_promise;
 async function __wbg_init(module_or_path) {
     if (wasm !== undefined) return wasm;
+    if (__wbg_init_promise === undefined) {
+        __wbg_init_promise = __wbg_init_once(module_or_path);
+        __wbg_init_promise.catch(() => { __wbg_init_promise = undefined; });
+    }
+    return __wbg_init_promise;
+}
 
+async function __wbg_init_once(module_or_path) {
 
     if (module_or_path !== undefined) {
         if (Object.getPrototypeOf(module_or_path) === Object.prototype) {

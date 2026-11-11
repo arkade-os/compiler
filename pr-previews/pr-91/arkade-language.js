@@ -1,82 +1,9 @@
 // Arkade Language Definition for Monaco Editor
 
-// Monarch tokenizer definition (for setMonarchTokensProvider)
-const arkadeMonarch = {
-    defaultToken: 'invalid',
-
-    keywords: [
-        'contract', 'library', 'struct', 'function', 'tapscript', 'require', 'if', 'else',
-        'for', 'in', 'let', 'private', 'public', 'static', 'const', 'return', 'new', 'import'
-    ],
-
-    typeKeywords: [
-        'pubkey', 'signature', 'bytes32', 'bytes20', 'bytes',
-        'asset', 'int', 'bool'
-    ],
-
-    builtinFunctions: [
-        'checkSig', 'checkMultisig', 'checkSigFromStack', 'checkSigFromStackVerify',
-        'sha256', 'sha256Initialize', 'sha256Update', 'sha256Finalize',
-        'digest', 'sighash', 'modExp', 'reverseBytes',
-        'ecAdd', 'ecMul', 'ecPairing', 'ecMulScalarVerify', 'tweakVerify',
-        'older', 'after', 'tweak'
-    ],
-
-    operators: [
-        '>=', '<=', '==', '!=', '>', '<', '+', '-', '*', '/', '='
-    ],
-
-    tokenizer: {
-        root: [
-            // Comments
-            [/\/\/.*$/, 'comment'],
-            [/\/\*/, 'comment', '@comment'],
-
-            // Whitespace
-            [/\s+/, 'white'],
-
-            // Keywords
-            [/\b(contract|library|struct|function|tapscript|require|if|else|for|in|let|private|public|static|const|return|new|import)\b/, 'keyword'],
-
-            // Types
-            [/\b(pubkey|signature|bytes32|bytes20|bytes|asset|int|bool)\b/, 'type'],
-
-            // Built-in functions
-            [/\b(checkSig|checkMultisig|checkSigFromStack|checkSigFromStackVerify|sha256|sha256Initialize|sha256Update|sha256Finalize|digest|sighash|modExp|reverseBytes|ecAdd|ecMul|ecPairing|ecMulScalarVerify|tweakVerify|older|after|tweak)\b/, 'predefined'],
-
-            // Transaction/this keywords
-            [/\b(tx|this)\b/, 'variable.predefined'],
-
-            // Numbers
-            [/\b\d+\b/, 'number'],
-
-            // Strings
-            [/"[^"]*"/, 'string'],
-
-            // Operators
-            [/[>=<!=]+/, 'operator'],
-            [/[+\-*/]/, 'operator'],
-
-            // Delimiters
-            [/[{}()\[\];,.]/, 'delimiter'],
-
-            // Identifiers
-            [/[a-zA-Z_]\w*/, 'identifier'],
-        ],
-
-        comment: [
-            [/[^/*]+/, 'comment'],
-            [/\*\//, 'comment', '@pop'],
-            [/[/*]/, 'comment']
-        ]
-    }
-};
-
 // Language configuration (for setLanguageConfiguration)
 const arkadeLanguageConfig = {
     comments: {
-        lineComment: '//',
-        blockComment: ['/*', '*/']
+        lineComment: '//'
     },
     brackets: [
         ['{', '}'],
@@ -111,7 +38,9 @@ const arkadeTheme = {
         { token: 'string', foreground: 'CE9178' },
         { token: 'operator', foreground: 'D4D4D4' },
         { token: 'delimiter', foreground: 'D4D4D4' },
-        { token: 'identifier', foreground: '9CDCFE' }
+        { token: 'identifier', foreground: '9CDCFE' },
+        { token: 'annotation', foreground: 'DCDCAA' },
+        { token: 'annotation.lint', foreground: '4EC9B0' }
     ],
     colors: {
         'editor.background': '#1e1e1e',
@@ -123,54 +52,208 @@ const arkadeTheme = {
     }
 };
 
-// Completions
+// Completions; builtin functions and members come from the compiler's builtin docs through arkadeUseDocs.
+const S = (label, kind, insertText, detail, documentation) => ({ label, kind, insertText, detail, documentation, snippet: insertText.includes('$') });
+const prop = (label, detail) => S(label, 'Property', label, detail);
+const scriptFields = [{ name: 'program', type: 'bytes' }, { name: 'version', type: 'int' }];
+
 const arkadeCompletions = [
     // Keywords
-    { label: 'contract', kind: 'Keyword', insertText: 'contract ${1:Name}(${2:params}) {\n\t$0\n}', insertTextRules: 4 },
-    { label: 'library', kind: 'Keyword', insertText: 'library ${1:Name} {\n\t$0\n}', insertTextRules: 4 },
-    { label: 'struct', kind: 'Keyword', insertText: 'struct ${1:Name} {\n\t${2:int} ${3:field};\n}', insertTextRules: 4 },
-    { label: 'function', kind: 'Keyword', insertText: 'function ${1:name}(${2:params}) {\n\t$0\n}', insertTextRules: 4 },
-    { label: 'require', kind: 'Keyword', insertText: 'require(${1:condition});', insertTextRules: 4 },
-    { label: 'tapscript', kind: 'Keyword', insertText: 'tapscript {\n\t$0\n}', insertTextRules: 4 },
-    { label: 'if', kind: 'Keyword', insertText: 'if (${1:condition}) {\n\t$0\n}', insertTextRules: 4 },
-    { label: 'for', kind: 'Keyword', insertText: 'for (${1:i}, ${2:item}) in ${3:array} {\n\t$0\n}', insertTextRules: 4 },
-    { label: 'let', kind: 'Keyword', insertText: 'let ${1:name} = ${2:value};', insertTextRules: 4 },
-    { label: 'private', kind: 'Keyword', insertText: 'private function ${1:name}(${2:params}) ${3:bool} {\n\treturn ${4:value};\n}', insertTextRules: 4 },
-    { label: 'static', kind: 'Keyword', insertText: 'static function ${1:name}(${2:params}) ${3:int} {\n\treturn ${4:value};\n}', insertTextRules: 4 },
-    { label: 'const', kind: 'Keyword', insertText: 'const ${1:int} ${2:NAME} = ${3:0};', insertTextRules: 4 },
-    { label: 'public', kind: 'Keyword', insertText: 'public' },
-    { label: 'return', kind: 'Keyword', insertText: 'return ${1:value};', insertTextRules: 4 },
+    S('contract', 'Keyword', 'contract ${1:Name}(${2:params}) {\n\t$0\n}'),
+    S('library', 'Keyword', 'library ${1:Name} {\n\t$0\n}'),
+    S('struct', 'Keyword', 'struct ${1:Name} {\n\t${2:int} ${3:field};\n}'),
+    S('function', 'Keyword', 'function ${1:name}(${2:params}) {\n\t$0\n}'),
+    S('require', 'Keyword', 'require(${1:condition}, "${2:message}");'),
+    S('tapscript', 'Keyword', 'tapscript {\n\t$0\n}', 'Tapscript function body'),
+    S('if', 'Keyword', 'if (${1:condition}) {\n\t$0\n}'),
+    S('else', 'Keyword', 'else {\n\t$0\n}'),
+    S('for', 'Keyword', 'for (${1:i}, ${2:item}) in ${3:array} {\n\t$0\n}'),
+    S('let', 'Keyword', 'let ${1:name} = ${2:value};'),
+    S('private', 'Keyword', 'private function ${1:name}(${2:params}) ${3:bool} {\n\treturn ${4:value};\n}'),
+    S('static', 'Keyword', 'static function ${1:name}(${2:params}) ${3:int} {\n\treturn ${4:value};\n}'),
+    S('const', 'Keyword', 'const ${1:int} ${2:NAME} = ${3:0};'),
+    S('public', 'Keyword', 'public'),
+    S('return', 'Keyword', 'return ${1:value};'),
+    S('new', 'Keyword', 'new ${1:Contract}(${2:args})'),
+    S('import', 'Keyword', 'import "${1:./contract.ark}";', 'Import structs, a contract, or a library from a relative file'),
+    S('pragma', 'Keyword', 'pragma arkade ^${1:0.1.0};', 'Compiler version constraint'),
+    S('true', 'Keyword', 'true'),
+    S('false', 'Keyword', 'false'),
 
     // Types
-    { label: 'pubkey', kind: 'TypeParameter', insertText: 'pubkey' },
-    { label: 'signature', kind: 'TypeParameter', insertText: 'signature' },
-    { label: 'bytes', kind: 'TypeParameter', insertText: 'bytes' },
-    { label: 'bytes20', kind: 'TypeParameter', insertText: 'bytes20' },
-    { label: 'bytes32', kind: 'TypeParameter', insertText: 'bytes32' },
-    { label: 'int', kind: 'TypeParameter', insertText: 'int' },
-    { label: 'bool', kind: 'TypeParameter', insertText: 'bool' },
-    { label: 'asset', kind: 'TypeParameter', insertText: 'asset' },
+    ...['pubkey', 'signature', 'bytes', 'bytes20', 'bytes32', 'int', 'bool', 'asset', 'AssetGroup', 'ScriptPubKey'].map(t => S(t, 'TypeParameter', t)),
 
-    // Functions
-    { label: 'checkSig', kind: 'Function', insertText: 'checkSig(${1:sig}, ${2:pubkey})', insertTextRules: 4, detail: 'Verify signature against pubkey' },
-    { label: 'checkMultisig', kind: 'Function', insertText: 'checkMultisig([${1:keys}], [${2:sigs}], ${3:threshold})', insertTextRules: 4, detail: 'Verify multiple signatures' },
-    { label: 'checkSigFromStack', kind: 'Function', insertText: 'checkSigFromStack(${1:sig}, ${2:pubkey}, ${3:msg})', insertTextRules: 4, detail: 'Verify signature from stack' },
-    { label: 'sha256', kind: 'Function', insertText: 'sha256(${1:data})', insertTextRules: 4, detail: 'SHA256 hash' },
-    { label: 'older', kind: 'Function', insertText: 'older(${1:delay})', insertTextRules: 4, detail: 'Relative CSV timelock' },
-    { label: 'after', kind: 'Function', insertText: 'after(${1:locktime})', insertTextRules: 4, detail: 'Absolute CLTV timelock' },
-    { label: 'tweak', kind: 'Function', insertText: 'tweak(emulator, ${1:functionName})', insertTextRules: 4, detail: 'Tweaked emulator key' },
-
-    // Transaction introspection
-    { label: 'tx.time', kind: 'Property', insertText: 'tx.time', detail: 'Transaction locktime' },
-    { label: 'tx.inputs', kind: 'Property', insertText: 'tx.inputs[${1:i}]', insertTextRules: 4, detail: 'Transaction inputs' },
-    { label: 'tx.outputs', kind: 'Property', insertText: 'tx.outputs[${1:o}]', insertTextRules: 4, detail: 'Transaction outputs' },
-    { label: 'tx.input.current', kind: 'Property', insertText: 'tx.input.current', detail: 'Current input' },
-
-    { label: 'import', kind: 'Keyword', insertText: 'import "${1:./contract.ark}";', insertTextRules: 4, detail: 'Import structs, a contract, or a library from a relative file' },
+    // Implicit bindings
+    S('tx', 'Variable', 'tx', 'Spending transaction'),
+    S('this', 'Variable', 'this', 'Current contract'),
+    S('server', 'Variable', 'server', 'Arkade server key'),
+    S('emulator', 'Variable', 'emulator', 'Arkade emulator key'),
+    S('serverExitDelay', 'Variable', 'serverExitDelay', 'Arkade server unilateral exit delay'),
 ];
+
+// Monarch tokenizer definition (for setMonarchTokensProvider); word lists come from the completions.
+const completionLabels = kind => arkadeCompletions.filter(item => item.kind === kind).map(item => item.label);
+const arkadeMonarch = {
+    defaultToken: 'invalid',
+    keywords: [...completionLabels('Keyword'), 'in'],
+    typeKeywords: completionLabels('TypeParameter'),
+    builtinFunctions: [],
+    implicitBindings: completionLabels('Variable'),
+
+    tokenizer: {
+        root: [
+            [/\/\/.*$/, 'comment'],
+            [/\s+/, 'white'],
+            [/@(allow|warn|deny|expect)(?=\s*\()/, { token: 'annotation', next: '@lints' }],
+            [/(pragma)(\s+)(arkade)\b/, ['keyword', 'white', 'keyword']],
+            [/\d+\.\d+\.\d+/, 'number'],
+            [/0x[0-9a-fA-F]*/, 'number.hex'],
+            [/\d+/, 'number'],
+            [/"(?:[^"\\]|\\.)*"/, 'string'],
+            [/[a-zA-Z]\w*/, {
+                cases: {
+                    '@keywords': 'keyword',
+                    '@typeKeywords': 'type',
+                    '@builtinFunctions': 'predefined',
+                    '@implicitBindings': 'variable.predefined',
+                    '@default': 'identifier'
+                }
+            }],
+            [/[{}()\[\]]/, '@brackets'],
+            [/[;,.:]/, 'delimiter'],
+            [/[=<>!&|^~+\-*\/]+/, 'operator'],
+        ],
+        // The parenthesized lint ids and reason of a lint attribute, ids spelled as grammar.pest's
+        // `attribute_name`; anything else ends the attribute.
+        lints: [
+            [/\s+/, 'white'],
+            [/[a-zA-Z][\w-]*/, 'annotation.lint'],
+            [/"(?:[^"\\]|\\.)*"/, 'string'],
+            [/[(,]/, 'delimiter'],
+            [/\)/, { token: 'delimiter', next: '@pop' }],
+            [/./, { token: '@rematch', next: '@pop' }],
+        ]
+    }
+};
+
+let docs = { functions: {}, members: {} };
+let functionItems = [];
+// Members offered after `<path>.`, keyed by the path with indexes collapsed to `[]`.
+let arkadeMembers = {};
+// Paths documented under another path, and the members the alias lacks.
+const memberAliases = [['tx.input.current', 'tx.inputs[]', ['assets', 'packet']], ['tx.outputs[].assets', 'tx.inputs[].assets', []]];
+
+// Snippet arguments: `bytes[] keys` becomes `[${1:keys}]`, and optional parameters are left out.
+const call = (name, params) => `${name}(${params.filter(p => !p.endsWith('?')).map((p, i) => {
+    const [type, arg] = p.split(' ');
+    return type.endsWith(']') ? `[\${${i + 1}:${arg}}]` : `\${${i + 1}:${arg}}`;
+}).join(', ')})`;
+const declaration = (name, entry) => entry.params
+    ? `function ${name}(${entry.params.join(', ')})${entry.result ? ` ${entry.result}` : ''}`
+    : `${entry.type ? `${entry.type} ` : ''}${name}`;
+const docItem = (kind, name, entry) => {
+    const insert = entry.params ? call(name, entry.params) : entry.index ? `${name}[\${1:${entry.index}}]` : name;
+    return S(name, kind, insert, declaration(name, entry).replace(/^function /, ''), entry.doc);
+};
+
+// Use `json`, the compiler's builtin docs, for completions, hover and declarations.
+function arkadeUseDocs(json) {
+    docs = json;
+    arkadeMonarch.builtinFunctions = Object.keys(docs.functions);
+    functionItems = Object.entries(docs.functions).map(([name, entry]) => docItem('Function', name, entry));
+    arkadeMembers = {};
+    for (const [key, entry] of Object.entries(docs.members)) {
+        const dot = key.lastIndexOf('.');
+        (arkadeMembers[key.slice(0, dot)] ??= []).push(docItem(entry.params ? 'Method' : 'Property', key.slice(dot + 1), entry));
+    }
+    for (const [alias, path, missing] of memberAliases) {
+        arkadeMembers[alias] = arkadeMembers[path].filter(item => !missing.includes(item.label));
+    }
+    for (const path of ['tx.inputs[].script', 'tx.input.current.script', 'tx.outputs[].script', 'this.activeBytecode']) {
+        arkadeMembers[path] = scriptFields.map(field => prop(field.name, field.type));
+    }
+}
+
+const symbolKinds = { struct: 'Struct', contract: 'Class', library: 'Module', function: 'Function', constant: 'Constant', parameter: 'Variable', variable: 'Variable' };
+const symbolItem = s => S(s.name, symbolKinds[s.kind], s.kind === 'function' ? `${s.name}($1)` : s.name, s.type ? `${s.kind}: ${s.type}` : s.kind);
+
+// The path before a trailing `.` in `before`, with indexes collapsed to `[]`, or null.
+function memberPath(before) {
+    let flat = before;
+    while (flat !== (flat = flat.replace(/\[[^\][]*\]/g, '<>')));
+    const chain = flat.replaceAll('<>', '[]').match(/([A-Za-z]\w*(?:\[\])*(?:\s*\.\s*[A-Za-z]\w*(?:\[\])*)*)\s*\.\s*$/);
+    return chain && chain[1].replace(/\s+/g, '');
+}
+
+// The documented path `path` stands for: an `AssetGroup` name stands for `tx.assetGroups[]`.
+function documentedPath(path, visible) {
+    const group = path.match(/^(\w+)(\.(?:inputs|outputs)\[\])?$/);
+    if (visible.get(group?.[1])?.type === 'AssetGroup') return `tx.assetGroups[]${group[2] || ''}`;
+    const alias = memberAliases.find(([from, , missing]) => (path === from || path.startsWith(from + '.') || path.startsWith(from + '['))
+        && !missing.includes(path.slice(from.length + 1).split(/[.[]/)[0]));
+    return alias ? alias[1] + path.slice(alias[0].length) : path;
+}
+
+// Completions for the cursor: `before` is the line up to the word being typed, and `table` the
+// names the compiler sees at the cursor (or null before it is available).
+function arkadeComplete(before, table) {
+    const { symbols = [], structs = [], members = {} } = table || {};
+    const visible = new Map(symbols.map(symbol => [symbol.name, symbol]));
+    const path = memberPath(before);
+    if (!path) {
+        const builtins = [...arkadeCompletions, ...functionItems];
+        const labels = new Set(builtins.map(item => item.label));
+        return [...builtins, ...[...visible.values()].filter(s => !labels.has(s.name)).map(symbolItem)];
+    }
+    if (Object.hasOwn(arkadeMembers, path)) return arkadeMembers[path];
+    // A binding of the same name hides a library's or contract's members.
+    if (Object.hasOwn(members, path) && ['library', 'contract'].includes(visible.get(path)?.kind)) return members[path].map(symbolItem);
+    const documented = documentedPath(path, visible);
+    if (Object.hasOwn(arkadeMembers, documented)) return arkadeMembers[documented];
+    // The type the path names, such as `Signer` for `next.primary`, through struct fields.
+    const struct = type => type === 'ScriptPubKey' ? { fields: scriptFields } : structs.find(s => s.name === type);
+    let type = '';
+    path.split('.').forEach((segment, index) => {
+        const name = segment.replace(/\[\]$/, '');
+        type = index === 0 ? visible.get(name)?.type || '' : struct(type)?.fields.find(f => f.name === name)?.type || '';
+        if (segment.endsWith('[]')) type = type.endsWith(']') ? type.replace(/\[[^\]]*\]$/, '') : '';
+    });
+    if (type.endsWith(']')) return [prop('length', 'Array length')];
+    return struct(type)?.fields.map(field => prop(field.name, field.type)) || [];
+}
+
+// The builtin `word` names after `before`: `{ key, declaration, doc }`, or null.
+function arkadeDescribe(before, word, table) {
+    const visible = new Map((table?.symbols || []).map(symbol => [symbol.name, symbol]));
+    const path = memberPath(before);
+    // A member of an expression such as `(x).` is no builtin.
+    if (!path && /\.\s*$/.test(before)) return null;
+    const [entries, key] = path ? [docs.members, `${documentedPath(path, visible)}.${word}`] : [docs.functions, word];
+    if (!Object.hasOwn(entries, key)) return null;
+    // A member that completion does not offer, such as `tx.input.current.assets`, does not compile.
+    if (path && !arkadeComplete(before, table).some(item => item.label === word)) return null;
+    return { key, declaration: declaration(key, entries[key]), doc: entries[key].doc };
+}
+
+// The builtins as a read-only declaration file: its `text`, and the 1-based line of each key.
+function arkadeDeclarations() {
+    const lines = ['// Arkade builtin functions and members, generated by the compiler.'];
+    const at = {};
+    for (const entries of [docs.functions, docs.members]) {
+        for (const [key, entry] of Object.entries(entries)) {
+            lines.push('', `// ${entry.doc}`);
+            at[key] = lines.length + 1;
+            lines.push(`${declaration(key, entry)};`);
+        }
+    }
+    return { text: lines.join('\n'), lines: at };
+}
 
 // Export all parts
 window.arkadeMonarch = arkadeMonarch;
 window.arkadeLanguageConfig = arkadeLanguageConfig;
 window.arkadeTheme = arkadeTheme;
-window.arkadeCompletions = arkadeCompletions;
+window.arkadeComplete = arkadeComplete;
+window.arkadeUseDocs = arkadeUseDocs;
+window.arkadeDescribe = arkadeDescribe;
+window.arkadeDeclarations = arkadeDeclarations;

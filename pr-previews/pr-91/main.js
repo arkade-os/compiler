@@ -1,6 +1,5 @@
 // Arkade Playground - Main Application
-// Import default export for WASM initialization, plus the exported functions
-import initWasm, { compile_sources, version, init as initPanicHook } from './pkg/arkade_compiler.js';
+import { builtinDocs as compilerBuiltinDocs, compile, check, symbolAt as compilerSymbolAt, completionsAt, version } from './pkg/browser/index.js';
 import * as contracts from './contracts.js';
 import { generateBindings, AVAILABLE_TARGETS } from './codegen.js';
 
@@ -24,12 +23,12 @@ const projects = {
             'send_marker.ark': contracts.send_marker,
         }
     },
-    options: {
-        name: 'Options',
-        description: 'European covered call + cash-secured put, physically settled, oracle-triggered',
+    option: {
+        name: 'Option',
+        description: 'Cash-settled covered call and limited put. Settlement price is a three-median oracle TWAP',
         files: {
-            'covered_call.ark': contracts.covered_call,
-            'cash_secured_put.ark': contracts.cash_secured_put,
+            'option_vault.ark': contracts.option_vault,
+            'option_intent.ark': contracts.option_intent,
         }
     },
     bonds: {
@@ -46,6 +45,7 @@ const projects = {
 const examples = {
     single_sig: { name: 'SingleSig', code: contracts.single_sig },
     htlc: { name: 'HTLC', code: contracts.htlc },
+    escrow: { name: 'Escrow', code: contracts.escrow },
     fuji_safe: { name: 'FujiSafe', code: contracts.fuji_safe },
     struct_vault: { name: 'StructVault', code: contracts.struct_vault },
     swap: { name: 'NonInteractiveSwap', code: contracts.non_interactive_swap },
@@ -54,6 +54,7 @@ const examples = {
 const examplePaths = {
     single_sig: 'single_sig/single_sig.ark',
     htlc: 'htlc/htlc.ark',
+    escrow: 'escrow/escrow.ark',
     fuji_safe: 'fuji_safe/fuji_safe.ark',
     struct_vault: 'struct_vault/struct_vault.ark',
     swap: 'non_interactive_swap/non_interactive_swap.ark',
@@ -66,8 +67,12 @@ const bundledExamples = Object.fromEntries(
     })
 );
 
+// Saved with each snapshot so a later load can tell edited entries from stale bundled copies.
+const bundledSnapshot = JSON.parse(JSON.stringify({ projects, examples }));
+
 // Global state
 let editor = null;
+// Once set, compiler calls resolve before any edit can arrive, so their results are current.
 let wasmReady = false;
 let currentProject = null;
 let currentFile = null;
@@ -82,9 +87,9 @@ const STORAGE_KEY = 'arkade-playground';
 function saveToStorage() {
     const data = {
         projects: {},
-        examples: {}
+        examples: {},
+        defaults: bundledSnapshot
     };
-    // Only save user-created / modified entries
     for (const [id, proj] of Object.entries(projects)) {
         data.projects[id] = { name: proj.name, description: proj.description || '', files: proj.files };
     }
@@ -99,16 +104,37 @@ function loadFromStorage() {
         const raw = localStorage.getItem(STORAGE_KEY);
         if (!raw) return;
         const data = JSON.parse(raw);
+        // Snapshots without defaults cannot tell edits from stale copies, so their bundled
+        // entries take the current sources and the original snapshot is kept aside.
+        if (!data.defaults) localStorage.setItem(`${STORAGE_KEY}-legacy`, raw);
+        const base = data.defaults || data;
+        // Entries still equal to the bundled source they were saved with take the current one,
+        // or are dropped when the bundle no longer has them. Legacy snapshots only refresh.
         if (data.projects) {
             for (const [id, proj] of Object.entries(data.projects)) {
+                const was = base.projects?.[id]?.files || {};
+                const now = bundledSnapshot.projects[id]?.files || {};
+                for (const name of Object.keys(data.defaults ? { ...was, ...now } : now)) {
+                    if (proj.files[name] !== was[name]) continue;
+                    if (Object.hasOwn(now, name)) proj.files[name] = now[name];
+                    else delete proj.files[name];
+                }
                 projects[id] = proj;
             }
         }
         if (data.examples) {
             for (const [id, ex] of Object.entries(data.examples)) {
+                const now = bundledSnapshot.examples[id]?.code;
+                if (ex.code === base.examples?.[id]?.code) {
+                    if (now !== undefined) ex.code = now;
+                    else if (data.defaults) continue;
+                }
                 examples[id] = ex;
             }
         }
+        // Bundled entries the snapshot knew about but no longer holds were deleted by the user.
+        for (const id of Object.keys(data.defaults?.projects || {})) if (!Object.hasOwn(data.projects || {}, id)) delete projects[id];
+        for (const id of Object.keys(data.defaults?.examples || {})) if (!Object.hasOwn(data.examples || {}, id)) delete examples[id];
     } catch (e) {
         console.warn('Failed to load from localStorage:', e);
     }
@@ -167,15 +193,121 @@ async function decompressCode(b64url) {
     return new TextDecoder().decode(out);
 }
 
+// A Shared folder is compiled under its id (`shared`, `shared_1`, …). Sharing
+// that folder again prefixes every path with that id. Peel those prefixes so
+// the same link keeps resolving to the original files.
+function unwrapSharedPrefix(bundle) {
+    const paths = Object.keys(bundle.files);
+    if (paths.length === 0) return null;
+    const prefix = paths[0].split('/')[0];
+    if (!/^shared(?:_\d+)?$/.test(prefix)) return null;
+    const root = `${prefix}/`;
+    if (!bundle.entry.startsWith(root) || paths.some(path => !path.startsWith(root))) return null;
+    const files = {};
+    for (const [path, text] of Object.entries(bundle.files)) files[path.slice(root.length)] = text;
+    const entry = bundle.entry.slice(root.length);
+    if (!Object.hasOwn(files, entry) || !entry.endsWith('.ark')
+        || entry.split('/').some(part => !part || part === '.' || part === '..')) return null;
+    return { entry, files };
+}
+
+function sharedBundleCandidates(bundle) {
+    const candidates = [];
+    const seen = new Set();
+    let current = bundle;
+    while (current) {
+        const mark = `${current.entry}\0${Object.keys(current.files).sort().join('\0')}`;
+        if (seen.has(mark)) break;
+        seen.add(mark);
+        candidates.push(current);
+        current = unwrapSharedPrefix(current);
+    }
+    return candidates;
+}
+
+function canonicalShareBundle(bundle) {
+    const candidates = sharedBundleCandidates(bundle);
+    return candidates[candidates.length - 1];
+}
+
+function workspaceIndex() {
+    const files = {};
+    const locations = {};
+    for (const [id, project] of Object.entries(projects)) {
+        for (const [name, source] of Object.entries(project.files)) {
+            const path = `${id}/${name}`;
+            files[path] = source;
+            locations[path] = { project: id, file: name };
+        }
+    }
+    for (const [id, example] of Object.entries(examples)) {
+        const path = examplePaths[id] || `_examples/${id}.ark`;
+        if (Object.hasOwn(files, path)) continue;
+        files[path] = example.code;
+        locations[path] = { example: id };
+    }
+    return { files, locations };
+}
+
+function workspaceLocation(bundle, index) {
+    if (!index.locations[bundle.entry]) return null;
+    for (const [path, text] of Object.entries(bundle.files)) {
+        if (index.files[path] !== text) return null;
+    }
+    const loc = index.locations[bundle.entry];
+    if (loc.example) return { example: loc.example };
+    return { project: loc.project, file: loc.file };
+}
+
+function projectMatchingBundle(bundle) {
+    const paths = Object.keys(bundle.files);
+    for (const [id, project] of Object.entries(projects)) {
+        const names = Object.keys(project.files);
+        if (names.length !== paths.length || !Object.hasOwn(project.files, bundle.entry)) continue;
+        if (paths.every(path => project.files[path] === bundle.files[path])) {
+            return { project: id, file: bundle.entry };
+        }
+    }
+    return null;
+}
+
+function resolveSharedBundle(bundle) {
+    const candidates = sharedBundleCandidates(bundle);
+    const index = workspaceIndex();
+    for (let i = candidates.length - 1; i >= 0; i--) {
+        const loc = workspaceLocation(candidates[i], index);
+        if (loc) return loc;
+    }
+    for (let i = candidates.length - 1; i >= 0; i--) {
+        const existing = projectMatchingBundle(candidates[i]);
+        if (existing) return existing;
+    }
+    const installed = candidates[candidates.length - 1];
+    const id = uniqueId('shared', projects);
+    projects[id] = { name: 'Shared', description: '', files: { ...installed.files } };
+    return { project: id, file: installed.entry, created: true };
+}
+
+function openSharedBundle(bundle) {
+    const target = resolveSharedBundle(bundle);
+    if (target.created) saveToStorage();
+    if (target.example) selectExample(target.example);
+    else selectProjectFile(target.project, target.file);
+}
+
 async function shareContract() {
     if (!editor) return;
     let encoded;
     try {
         const { entry, files } = compilationSources();
-        const bundle = JSON.parse(compile_sources(entry, JSON.stringify(files))).source;
-        encoded = await compressCode(JSON.stringify(bundle));
+        const { artifact, diagnostics } = await compile({ entry, files });
+        if (artifact === null) {
+            showErrors(diagnostics, entry);
+            return;
+        }
+        encoded = await compressCode(JSON.stringify(canonicalShareBundle(artifact.source)));
     } catch (error) {
-        showError(error.toString());
+        showError(error.message);
         return;
     }
     const url = `${location.origin}${location.pathname}#project=${encoded}`;
@@ -666,23 +798,22 @@ function promptNewStandaloneFile() {
     if (name && name.trim()) createStandaloneFile(name.trim());
 }
 
-// Initialize WASM module
+// Load the compiler and show its version; true once it is ready.
 async function initCompiler() {
     try {
-        await initWasm();
-        initPanicHook();
+        const ver = await version();
+        // The builtins come from the compiler, so the tokenizer is set again to highlight them.
+        window.arkadeUseDocs(await compilerBuiltinDocs());
+        monaco.languages.setMonarchTokensProvider('arkade', window.arkadeMonarch);
         wasmReady = true;
-
-        const ver = version();
         document.getElementById('compiler-version').textContent = `v${ver}`;
         document.getElementById('footer-version').textContent = `v${ver}`;
-
-        // Show button as ready to compile
-        markDirty();
+        lint();
     } catch (err) {
-        console.error('Failed to initialize WASM:', err);
-        showError('Failed to load compiler. Make sure the WASM module is built.');
+        console.error('Failed to initialize compiler:', err);
+        showError(`Failed to load compiler: ${err.message}`);
     }
+    return wasmReady;
 }
 
 // Render file tree
@@ -921,6 +1052,29 @@ function selectProjectFile(projectId, fileName) {
     markDirty();
 }
 
+// Open the playground file `sourceFiles()` names `path`; false when there is none.
+function openSourcePath(path) {
+    const location = workspaceIndex().locations[path];
+    if (location?.example) selectExample(location.example);
+    else if (location) selectProjectFile(location.project, location.file);
+    return Boolean(location);
+}
+
+// Keep `source` as the text of the playground file `sourceFiles()` names `path`, one the editor
+// does not show.
+function storeSourcePath(path, source) {
+    const { files, locations } = workspaceIndex();
+    const location = locations[path];
+    if (!location || files[path] === source) return;
+    if (location.example) examples[location.example].code = source;
+    else projects[location.project].files[location.file] = source;
+    const tabId = location.example || `${location.project}:${location.file}`;
+    if (Object.hasOwn(fileContents, tabId)) fileContents[tabId] = source;
+    saveToStorage();
+    lastCompiledSource = null;
+    markDirty();
+}
+
 // Select a single-file example
 function selectExample(exampleId) {
     // Save current file content
@@ -1088,23 +1242,34 @@ function initMonaco() {
 
         // Register completions
         monaco.languages.registerCompletionItemProvider('arkade', {
-            provideCompletionItems: (model, position) => {
-                const suggestions = window.arkadeCompletions.map(item => ({
+            triggerCharacters: ['.'],
+            provideCompletionItems: async (model, position) => {
+                const word = model.getWordUntilPosition(position);
+                const insert = {
+                    startLineNumber: position.lineNumber,
+                    startColumn: word.startColumn,
+                    endLineNumber: position.lineNumber,
+                    endColumn: position.column
+                };
+                // Replace (the editor default) overwrites the rest of the word; Shift+Enter inserts instead.
+                const range = { insert, replace: { ...insert, endColumn: model.getWordAtPosition(position)?.endColumn ?? position.column } };
+                const before = model.getLineContent(position.lineNumber).slice(0, word.startColumn - 1);
+                // A peek at another file shows its own text, so only the editor's file has names.
+                const table = model === editor.getModel() ? await symbolTable(position.lineNumber) : null;
+                const suggestions = window.arkadeComplete(before, table).map(item => ({
                     label: item.label,
                     kind: monaco.languages.CompletionItemKind[item.kind] || monaco.languages.CompletionItemKind.Text,
                     insertText: item.insertText,
-                    insertTextRules: item.insertTextRules ? monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet : undefined,
+                    insertTextRules: item.snippet ? monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet : undefined,
                     detail: item.detail || '',
-                    range: {
-                        startLineNumber: position.lineNumber,
-                        startColumn: position.column,
-                        endLineNumber: position.lineNumber,
-                        endColumn: position.column
-                    }
+                    documentation: item.documentation,
+                    range
                 }));
                 return { suggestions };
             }
         });
+
+        registerSymbolProviders();
 
         // Define theme
         monaco.editor.defineTheme('arkade-dark', window.arkadeTheme);
@@ -1124,7 +1289,8 @@ function initMonaco() {
             tabSize: 2,
             insertSpaces: true,
             folding: true,
-            bracketPairColorization: { enabled: true }
+            bracketPairColorization: { enabled: true },
+            suggest: { insertMode: 'replace' }
         });
 
         // Keyboard shortcut: Ctrl+Enter to compile
@@ -1132,25 +1298,27 @@ function initMonaco() {
             doCompile();
         });
 
+        editor.onDidChangeCursorPosition(({ position }) => {
+            markRuns(innermostRuns(sourceRuns(), position.lineNumber, position.column), 'cursor');
+        });
+
         // Mark dirty on change — no auto-compile
         editor.onDidChangeModelContent(() => {
             if (editor.getValue() !== lastCompiledSource) {
                 markDirty();
             }
+            lint();
         });
 
         // Load shared contract from URL hash if present
         window._urlCodePromise.then(bundle => {
             if (bundle) {
-                const id = uniqueId('shared', projects);
-                projects[id] = { name: 'Shared', description: '', files: bundle.files };
-                saveToStorage();
-                selectProjectFile(id, bundle.entry);
+                openSharedBundle(bundle);
                 history.replaceState(null, '', location.pathname + location.search);
             }
         });
 
-        // Initialize WASM after editor is ready
+        markDirty();
         initCompiler();
     });
 }
@@ -1177,6 +1345,11 @@ function markCompiled() {
 
 function compilationSources() {
     saveCurrentFile();
+    return sourceFiles();
+}
+
+// Every playground source, with the editor's text as the current entry.
+function sourceFiles() {
     const files = {};
     for (const [id, project] of Object.entries(projects)) {
         for (const [name, source] of Object.entries(project.files)) {
@@ -1197,40 +1370,195 @@ function compilationSources() {
     return { entry, files };
 }
 
-// Compile the source code
-function doCompile() {
-    if (!wasmReady || !editor) return;
+// The compiler's symbol at `position` in the editor's file, or null.
+async function symbolAt(model, position) {
+    if (!wasmReady || model !== editor?.getModel()) return null;
+    try {
+        return await compilerSymbolAt(sourceFiles(), { line: position.lineNumber, column: position.column });
+    } catch {
+        return null;
+    }
+}
+
+// The hover text for `symbol`: what it is, and where it is defined and used.
+function describeSymbol(symbol) {
+    const signature = `${symbol.kind} ${symbol.name}${symbol.type ? `: ${symbol.type}` : ''}`;
+    const { file, start } = symbol.definition;
+    const where = file === symbol.at.file ? `line ${start.line}` : `${file}:${start.line}`;
+    const uses = symbol.references.length;
+    return [signature, `Defined at ${where} · ${uses} reference${uses === 1 ? '' : 's'}`];
+}
+
+// The builtin function or member at `position`, for when no program name is there.
+async function builtinAt(model, position) {
+    const word = model.getWordAtPosition(position);
+    if (!word) return null;
+    const before = model.getLineContent(position.lineNumber).slice(0, word.startColumn - 1);
+    const table = /\.\s*$/.test(before) && model === editor?.getModel() ? await symbolTable(position.lineNumber) : null;
+    const builtin = window.arkadeDescribe(before, word.word, table);
+    return builtin && { ...builtin, range: new monaco.Range(position.lineNumber, word.startColumn, position.lineNumber, word.endColumn) };
+}
+
+// The read-only builtins.ark that go to definition shows for a builtin, and its line per key.
+function builtinDeclarations() {
+    const uri = monaco.Uri.parse('arkade-builtins:///builtins.ark');
+    const { text, lines } = window.arkadeDeclarations();
+    const model = monaco.editor.getModel(uri) || monaco.editor.createModel(text, 'arkade', uri);
+    if (model.getValue() !== text) model.setValue(text);
+    return { model, lines };
+}
+
+function registerSymbolProviders() {
+    // An editor showing builtins.ark, such as its peek, is read-only.
+    monaco.editor.onDidCreateEditor(view => view.onDidChangeModel(() => {
+        if (view.getModel()?.uri.scheme === 'arkade-builtins') view.updateOptions({ readOnly: true });
+    }));
+    const range = location => new monaco.Range(
+        location.start.line, location.start.column, location.end.line, location.end.column);
+    monaco.languages.registerHoverProvider('arkade', {
+        provideHover: async (model, position) => {
+            const symbol = await symbolAt(model, position);
+            const builtin = !symbol && await builtinAt(model, position);
+            if (builtin) {
+                const contents = [{ value: '```arkade\n' + builtin.declaration + '\n```' }];
+                return { range: builtin.range, contents: builtin.doc ? [...contents, { value: builtin.doc }] : contents };
+            }
+            if (!symbol?.at.start) return null;
+            const [signature, where] = describeSymbol(symbol);
+            return {
+                range: range(symbol.at),
+                contents: [{ value: '```arkade\n' + signature + '\n```' }, { value: where }],
+            };
+        },
+    });
+    // Going to a definition passes the opener only the definition's start, so its name's range is
+    // kept to select it.
+    const definitionRanges = new Map();
+    // Ctrl+click leaves the cursor elsewhere, and peek looks up the definition at the cursor.
+    let builtinPosition = null;
+    monaco.languages.registerDefinitionProvider('arkade', {
+        provideDefinition: async (model, position) => {
+            const symbol = await symbolAt(model, position);
+            const builtin = !symbol && await builtinAt(model, position);
+            if (builtin) {
+                const { model: declarations, lines } = builtinDeclarations();
+                const line = lines[builtin.key];
+                const column = declarations.getLineContent(line).indexOf(builtin.key) + 1;
+                if (model === editor.getModel()) builtinPosition = position;
+                return { uri: declarations.uri, range: new monaco.Range(line, column, line, column + builtin.key.length) };
+            }
+            if (!symbol?.definition.start) return null;
+            const { file } = symbol.definition;
+            if (file === symbol.at.file) return { uri: model.uri, range: range(symbol.definition) };
+            // Another file opens through the editor opener below; Monaco needs its model.
+            const source = sourceFiles().files[file];
+            if (source === undefined) return null;
+            const uri = monaco.Uri.from({ scheme: 'arkade', path: `/${file}` });
+            let other = monaco.editor.getModel(uri);
+            if (!other) {
+                other = monaco.editor.createModel(source, 'arkade', uri);
+                // A peek at the definition can edit its file.
+                other.onDidChangeContent(() => {
+                    storeSourcePath(file, other.getValue());
+                    lint();
+                });
+            } else if (other.getValue() !== source) other.setValue(source);
+            definitionRanges.set(uri.toString(), range(symbol.definition));
+            return { uri, range: range(symbol.definition) };
+        },
+    });
+    monaco.editor.registerEditorOpener?.({
+        openCodeEditor: (source, resource, selectionOrPosition) => {
+            // builtins.ark is not a playground file, so it opens in place as a peek.
+            if (resource.scheme === 'arkade-builtins') {
+                if (builtinPosition) editor.setPosition(builtinPosition);
+                editor.trigger('builtins', 'editor.action.peekDefinition');
+                return true;
+            }
+            if (resource.scheme !== 'arkade' || !openSourcePath(resource.path.slice(1))) return false;
+            const at = !selectionOrPosition ? null : monaco.Range.isIRange(selectionOrPosition)
+                ? monaco.Range.lift(selectionOrPosition) : monaco.Range.fromPositions(selectionOrPosition);
+            const name = definitionRanges.get(resource.toString());
+            const target = !at || (at.isEmpty() && name?.getStartPosition().equals(at.getStartPosition())) ? name : at;
+            if (target) {
+                editor.setSelection(target);
+                editor.revealRangeInCenter(target);
+            }
+            return true;
+        },
+    });
+    monaco.languages.registerDocumentHighlightProvider('arkade', {
+        provideDocumentHighlights: async (model, position) => {
+            const symbol = await symbolAt(model, position);
+            if (!symbol) return [];
+            return [symbol.definition, ...symbol.references]
+                .filter(location => location.file === symbol.at.file && location.start)
+                .map(location => ({ range: range(location) }));
+        },
+    });
+}
+
+// The last sources that gave the editor's file names, per entry path.
+const lastSources = {};
+
+// The line being typed rarely parses, so it is blanked; if the file still does not parse, which
+// leaves it no names, the names are those at the cursor's line in the last sources that gave some.
+// ponytail: lines added or removed above the cursor since shift those names a line or more; the
+// parser recovering from errors would give names in the current text.
+async function symbolTable(lineNumber) {
+    if (!wasmReady) return null;
+    try {
+        const { entry, files } = sourceFiles();
+        const lines = files[entry].split('\n');
+        lines[lineNumber - 1] = '';
+        files[entry] = lines.join('\n');
+        const at = files => completionsAt({ entry, files }, { line: lineNumber, column: 1 });
+        const table = await at(files);
+        if (table.symbols.length) lastSources[entry] = files;
+        else if (lastSources[entry]) return await at(lastSources[entry]);
+        return table;
+    } catch {
+        return null;
+    }
+}
+
+// Compile the source code, first retrying a failed compiler load
+async function doCompile() {
+    if (!editor || (!wasmReady && !await initCompiler())) return;
 
     const source = editor.getValue();
     clearErrors();
 
     try {
         const { entry, files } = compilationSources();
-        const result = compile_sources(entry, JSON.stringify(files));
+        const optimize = document.getElementById('optimize-toggle').checked;
+        const { artifact, debug, diagnostics } = await compile({ entry, files }, { optimize });
+        markDiagnostics(diagnostics, entry);
+        if (artifact === null) {
+            showErrors(diagnostics, entry);
+            return;
+        }
         lastCompiledSource = source;
-        displayJson(result);
-        displayAsm(result);
-        displayBindings(result);
-        showSuccess(result);
+        displayJson(artifact);
+        displayAsm(artifact, debug);
+        displayBindings(artifact);
+        showSuccess(artifact, diagnostics.filter(d => d.severity === 'warning').length);
+        renderDiagnostics(diagnostics, entry);
         markCompiled();
     } catch (err) {
-        showError(err.toString());
+        showError(err.message);
     }
 }
 
 // Display JSON output
-function displayJson(jsonStr) {
+function displayJson(artifact) {
     const container = document.getElementById('json-output');
-    container.innerHTML = syntaxHighlightJson(jsonStr);
+    container.innerHTML = syntaxHighlightJson(artifact);
 }
 
 // Syntax highlight JSON
-function syntaxHighlightJson(json) {
-    if (typeof json !== 'string') {
-        json = JSON.stringify(json, null, 2);
-    }
-
-    return json
+function syntaxHighlightJson(artifact) {
+    return JSON.stringify(artifact, null, 2)
         .replace(/&/g, '&amp;')
         .replace(/</g, '&lt;')
         .replace(/>/g, '&gt;')
@@ -1254,39 +1582,27 @@ function syntaxHighlightJson(json) {
 }
 
 // Display Assembly output
-function displayAsm(jsonStr) {
+function displayAsm(artifact, debug) {
     const container = document.getElementById('asm-output');
-
-    try {
-        const data = JSON.parse(jsonStr);
-        let html = '';
-
-        if (data.functions && data.functions.length > 0) {
-            for (const group of data.functions) {
-                if (group.arkade && group.arkade.asm && group.arkade.asm.length > 0) {
-                    html += `<span class="asm-function">${group.name} <span class="asm-variant">(arkade covenant)</span></span>\n`;
-                    html += highlightAsm(group.arkade.asm) + '\n\n';
-                }
-                for (const leaf of (group.leaves || [])) {
-                    const label = leaf.name === group.name ? group.name : `${group.name}/${leaf.name}`;
-                    html += `<span class="asm-function">${label} <span class="asm-variant">(tapscript leaf)</span></span>\n`;
-                    if (leaf.asm && leaf.asm.length > 0) {
-                        html += highlightAsm(leaf.asm) + '\n\n';
-                    }
-                }
-            }
-        } else {
-            html = '<span class="comment">No functions compiled</span>';
+    linkAsmToSource(container);
+    let html = '';
+    asmRuns = [];
+    for (const group of artifact.functions) {
+        if (group.arkade?.asm.length) {
+            html += `<span class="asm-function">${group.name} <span class="asm-variant">(arkade covenant)</span></span>\n`;
+            html += covenantListing(group.arkade.asm, debug.functions[group.name]?.sourceMap) + '\n';
         }
-
-        container.innerHTML = html;
-    } catch (e) {
-        container.textContent = 'Failed to parse assembly output';
+        for (const leaf of group.leaves) {
+            const label = leaf.name === group.name ? group.name : `${group.name}/${leaf.name}`;
+            html += `<span class="asm-function">${label} <span class="asm-variant">(tapscript leaf)</span></span>\n`;
+            html += highlightAsm(leaf.asm) + '\n\n';
+        }
     }
+    container.innerHTML = html || '<span class="comment">No functions compiled</span>';
 }
 
 // Display generated SDK bindings
-function displayBindings(jsonStr) {
+function displayBindings(artifact) {
     const container = document.getElementById('bindings-output');
 
     // Build target selector + content area if first time
@@ -1311,8 +1627,7 @@ function displayBindings(jsonStr) {
         });
     }
 
-    // Store the JSON for re-rendering on target switch
-    container.dataset.lastJson = jsonStr;
+    container.artifact = artifact;
 
     const activeLang = container.querySelector('.bindings-lang-btn.active')?.dataset.lang || 'typescript';
     renderBindings(container.querySelector('.bindings-code'), activeLang);
@@ -1320,11 +1635,11 @@ function displayBindings(jsonStr) {
 
 function renderBindings(contentEl, target) {
     const container = document.getElementById('bindings-output');
-    const jsonStr = container.dataset.lastJson;
-    if (!jsonStr) { contentEl.textContent = 'Compile a contract first'; return; }
+    const artifact = container.artifact;
+    if (!artifact) { contentEl.textContent = 'Compile a contract first'; return; }
 
     try {
-        const code = generateBindings(jsonStr, target);
+        const code = generateBindings(artifact, target);
         contentEl.innerHTML = escapeHtml(code);
     } catch (err) {
         contentEl.textContent = 'Codegen error: ' + err.message;
@@ -1335,36 +1650,166 @@ function escapeHtml(text) {
     return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
+// The covenant source map ranges shown in the assembly tab, indexed by their `data-run`.
+let asmRuns = [];
+// They locate source only while the editor shows the source they were compiled from.
+const sourceRuns = () => (editor?.getValue() === lastCompiledSource ? asmRuns : []);
+let sourceDecorations = [];
+
 // Highlight assembly code
+function highlightToken(token) {
+    const text = escapeHtml(token);
+    if (token.startsWith('OP_')) return `<span class="asm-opcode">${text}</span>`;
+    if (token.startsWith('<') && token.endsWith('>')) return `<span class="asm-placeholder">${text}</span>`;
+    return text;
+}
+
 function highlightAsm(asm) {
     const tokens = Array.isArray(asm) ? asm : asm.split(' ');
-    return tokens
-        .map(token => {
-            if (token.startsWith('OP_')) {
-                return `<span class="asm-opcode">${token}</span>`;
-            } else if (token.startsWith('<') && token.endsWith('>')) {
-                return `<span class="asm-placeholder">${token}</span>`;
-            }
-            return token;
-        })
-        .join(' ');
+    return tokens.map(highlightToken).join(' ');
+}
+
+// The covenant one source statement per line: its line number, its tokens and its
+// `require` message. Tokens the compiler adds itself get a line without a number.
+function covenantListing(asm, sourceMap = []) {
+    const lines = [];
+    let next = 0;
+    const unmapped = end => {
+        if (next < end) lines.push({ tokens: [next, end] });
+    };
+    for (const range of sourceMap) {
+        unmapped(range.asm[0]);
+        lines.push({ tokens: range.asm, range, run: asmRuns.push(range) - 1 });
+        next = range.asm[1];
+    }
+    unmapped(asm.length);
+    return lines.map(({ tokens, range, run }) => {
+        const code = asm.slice(tokens[0], tokens[1]).map(highlightToken).join(' ');
+        const message = range?.message
+            ? ` <span class="asm-comment">; ${escapeHtml(range.message)}</span>`
+            : '';
+        const attributes = range ? ` class="asm-line asm-run" data-run="${run}"` : ' class="asm-line"';
+        return `<div${attributes}><span class="asm-line-number">${range ? range.start[0] : ''}</span>`
+            + `<span class="asm-code">${code}${message}</span></div>`;
+    }).join('');
+}
+
+const before = (a, b) => a[0] < b[0] || (a[0] === b[0] && a[1] <= b[1]);
+
+// The runs of the narrowest statement containing `line`:`column`.
+function innermostRuns(runs, line, column) {
+    const at = [line, column];
+    const containing = runs
+        .map((range, run) => ({ range, run }))
+        .filter(({ range }) => before(range.start, at) && before(at, range.end));
+    if (!containing.length) return [];
+    const size = ({ range }) => (range.end[0] - range.start[0]) * 1e6 + range.end[1] - range.start[1];
+    const smallest = Math.min(...containing.map(size));
+    const innermost = containing.filter(entry => size(entry) === smallest);
+    return innermost.filter(({ range }) => range.start.join() === innermost[0].range.start.join())
+        .map(({ run }) => run);
+}
+
+function markRuns(runs, className) {
+    const container = document.getElementById('asm-output');
+    container.querySelectorAll(`.asm-run.${className}`).forEach(el => el.classList.remove(className));
+    for (const run of runs) {
+        container.querySelectorAll(`.asm-run[data-run="${run}"]`).forEach(el => el.classList.add(className));
+    }
+    if (className === 'cursor') container.querySelector('.asm-run.cursor')?.scrollIntoView?.({ block: 'nearest' });
+}
+
+function editorRange(range) {
+    return new monaco.Range(range.start[0], range.start[1], range.end[0], range.end[1]);
+}
+
+function linkAsmToSource(container) {
+    if (container.dataset.linked) return;
+    container.dataset.linked = 'true';
+    const hover = run => {
+        const range = sourceRuns()[run];
+        markRuns(range ? [run] : [], 'hover');
+        if (typeof monaco === 'undefined' || !editor?.deltaDecorations) return;
+        const decorations = range ? [{
+            range: editorRange(range),
+            options: { className: 'source-map-highlight' },
+        }] : [];
+        sourceDecorations = editor.deltaDecorations(sourceDecorations, decorations);
+        if (range) editor.revealRangeInCenterIfOutsideViewport(editorRange(range));
+    };
+    container.addEventListener('mouseover', event => {
+        const run = event.target.closest('.asm-run')?.dataset.run;
+        hover(run === undefined ? undefined : Number(run));
+    });
+    container.addEventListener('click', event => {
+        const range = sourceRuns()[event.target.closest('.asm-run')?.dataset.run];
+        if (!range || typeof monaco === 'undefined' || !editor) return;
+        const selection = editorRange(range);
+        editor.setSelection(selection);
+        editor.revealRangeInCenter(selection);
+        editor.focus();
+    });
+    container.addEventListener('mouseleave', () => hover(undefined));
 }
 
 // Show compilation success
-function showSuccess(jsonStr) {
+function showSuccess(artifact, warningCount = 0) {
     const statusEl = document.getElementById('compile-status');
-    let funcCount = '';
-    try {
-        const data = JSON.parse(jsonStr);
-        const count = data.functions?.length || 0;
-        funcCount = ` &mdash; ${count} function${count !== 1 ? 's' : ''}`;
-    } catch (e) {}
-    statusEl.innerHTML = `<i class="fas fa-check-circle"></i> Compiled${funcCount}`;
-    statusEl.className = 'compile-status success';
+    const count = artifact.functions.length;
+    const funcCount = ` &mdash; ${count} function${count !== 1 ? 's' : ''}`;
+    const warningLabel = warningCount ? ` &mdash; ${warningCount} warning${warningCount !== 1 ? 's' : ''}` : '';
+    statusEl.innerHTML = `<i class="fas fa-check-circle"></i> Compiled${funcCount}${warningLabel}`;
+    statusEl.className = `compile-status ${warningCount ? 'warning' : 'success'}`;
+}
+
+// List `diagnostics` in the Diagnostics tab, one per line; those in the open file link to
+// their location. The badge counts errors, or warnings when there are none.
+function renderDiagnostics(diagnostics, entry) {
+    const output = document.getElementById('errors-output');
+    const count = document.getElementById('error-count');
+    const errors = diagnostics.filter(d => d.severity === 'error').length;
+    output.innerHTML = diagnostics.map(d => {
+        const location = d.file === entry && d.start
+            ? ` data-line="${d.start.line}" data-column="${d.start.column}"`
+            : '';
+        return `<div class="diagnostic ${d.severity}"${location}>${escapeHtml(formatDiagnostic(d))}</div>`;
+    }).join('');
+    output.classList.toggle('warning', errors === 0);
+    count.textContent = diagnostics.length ? String(errors || diagnostics.length) : '';
+    count.classList.toggle('visible', diagnostics.length > 0);
+    count.classList.toggle('warning', errors === 0);
+    if (!output.dataset.linked && output.addEventListener) {
+        output.dataset.linked = 'true';
+        output.addEventListener('click', event => {
+            const target = event.target.closest('.diagnostic[data-line]');
+            if (!target || !editor) return;
+            const position = { lineNumber: Number(target.dataset.line), column: Number(target.dataset.column) };
+            editor.setPosition(position);
+            editor.revealPositionInCenter(position);
+            editor.focus();
+        });
+    }
+}
+
+let lintTimer = null;
+
+// Diagnose the sources while typing, without touching the outputs of the last compile.
+function lint() {
+    clearTimeout(lintTimer);
+    lintTimer = setTimeout(async () => {
+        if (!wasmReady || !editor) return;
+        try {
+            const { entry, files } = sourceFiles();
+            const optimize = document.getElementById('optimize-toggle').checked;
+            const diagnostics = await check({ entry, files }, { optimize });
+            markDiagnostics(diagnostics, entry);
+            renderDiagnostics(diagnostics, entry);
+        } catch {}
+    }, 300);
 }
 
 // Show error
-function showError(message) {
+function showError(message, count = 1) {
     const statusEl = document.getElementById('compile-status');
     statusEl.innerHTML = `<i class="fas fa-times-circle"></i> Error`;
     statusEl.className = 'compile-status error';
@@ -1373,34 +1818,64 @@ function showError(message) {
     const errorCount = document.getElementById('error-count');
 
     errorsTab.textContent = message;
-    errorCount.textContent = '1';
+    errorsTab.classList.remove('warning');
+    errorCount.textContent = String(count);
+    errorCount.classList.remove('warning');
     errorCount.classList.add('visible');
 
     // Switch to errors tab
     switchTab('errors');
+}
 
-    // Highlight line if possible
-    const lineMatch = message.match(/line (\d+)/i);
-    if (lineMatch && editor) {
-        const lineNumber = parseInt(lineMatch[1], 10);
-        editor.revealLineInCenter(lineNumber);
-        editor.setSelection({
-            startLineNumber: lineNumber,
-            startColumn: 1,
-            endLineNumber: lineNumber,
-            endColumn: 1000
-        });
+function showErrors(diagnostics, entry) {
+    const errors = diagnostics.filter(d => d.severity === 'error');
+    showError('', errors.length);
+    renderDiagnostics(diagnostics, entry);
+
+    // Select the first error in the entry, the file in the editor.
+    const first = errors.find(d => d.file === entry && d.start);
+    if (first && editor) {
+        editor.revealLineInCenter(first.start.line);
+        editor.setSelection(markerRange(first));
     }
+}
+
+function formatDiagnostic(d) {
+    const location = d.start ? `${d.file}:${d.start.line}:${d.start.column}` : d.file;
+    return `${d.severity}${d.code ? `[${d.code}]` : ''}: ${d.message} (${location})`;
+}
+
+function markerRange(d) {
+    return {
+        startLineNumber: d.start.line,
+        startColumn: d.start.column,
+        endLineNumber: d.end.line,
+        endColumn: d.end.column,
+    };
+}
+
+function markDiagnostics(diagnostics, entry) {
+    if (typeof monaco === 'undefined' || !editor?.getModel) return;
+    const markers = diagnostics.filter(d => d.file === entry && d.start).map(d => ({
+        ...markerRange(d),
+        severity: d.severity === 'error' ? monaco.MarkerSeverity.Error : monaco.MarkerSeverity.Warning,
+        message: d.code ? `[${d.code}] ${d.message}` : d.message,
+    }));
+    monaco.editor.setModelMarkers(editor.getModel(), 'arkade', markers);
 }
 
 // Clear errors
 function clearErrors() {
-    document.getElementById('errors-output').textContent = '';
-    document.getElementById('error-count').textContent = '';
-    document.getElementById('error-count').classList.remove('visible');
+    const output = document.getElementById('errors-output');
+    const count = document.getElementById('error-count');
+    output.textContent = '';
+    output.classList.remove('warning');
+    count.textContent = '';
+    count.classList.remove('visible', 'warning');
     const statusEl = document.getElementById('compile-status');
     statusEl.textContent = '';
     statusEl.className = 'compile-status';
+    markDiagnostics([]);
 }
 
 // Switch output tab
@@ -1535,6 +2010,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Compile button
     document.getElementById('compile-btn').addEventListener('click', doCompile);
+    document.getElementById('optimize-toggle').addEventListener('change', doCompile);
 
     // Cmd/Ctrl+S → compile (prevent browser save dialog)
     document.addEventListener('keydown', (e) => {
