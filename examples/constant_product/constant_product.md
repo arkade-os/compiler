@@ -32,4 +32,6 @@ An empty pool (330 sats and the control unit) accepts the first deposit at the d
 
 The covenant runs on spend. The funding transaction creates the first pool output; it is not checked by these scripts. Later deposits, swaps, and exits are.
 
-One virtual transaction is one counterparty, so each script stays a single curve step. The operator spends the new pool output again for the next order. Several pools settle in parallel.
+This example puts one order in the transaction so the script is a single step. Several orders can share one transaction and one set of reserves. The pool walks those seats in order. Each standing order checks its own payout and `minOut`, and does not replay the other seats. Loops unroll, so the seat count is fixed in the source. The pool script grows by a few hundred bytes per seat and reaches the 10 KB script limit at about 30 swaps. The order scripts stay the same size.
+
+That batch is still one spend of the one pool output, so those swaps happen in order and share one emulator execution. Separate pool outputs settle at the same time. Splitting one trading pair across those outputs also splits its reserves. An order whose `minOut` is already past the price has to be left out of the batch, because one failing input fails the whole transaction.
