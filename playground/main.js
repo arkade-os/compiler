@@ -1219,26 +1219,6 @@ function updateCurrentFileName(name) {
         ? `${currentProject}/${name}` : examplePaths[currentFile] || `_examples/${currentFile}.ark`;
 }
 
-const DOCS_LANGUAGE_KEY = 'arkade-docs-language';
-
-// Pick the builtin docs language: the saved choice, else the browser's, else English.
-function initDocsLanguage(docs) {
-    const languages = Object.keys(docs.languages);
-    let saved = null;
-    try { saved = localStorage.getItem(DOCS_LANGUAGE_KEY); } catch {}
-    const wanted = [saved, ...navigator.languages.flatMap(tag => [tag, tag.split('-')[0]])];
-    const language = wanted.find(tag => languages.includes(tag)) || 'en';
-    window.arkadeUseDocs(docs, language);
-    const select = document.getElementById('docs-language');
-    select.innerHTML = languages.map(tag => `<option value="${tag}">${escapeHtml(docs.languages[tag])}</option>`).join('');
-    select.value = language;
-    select.hidden = languages.length < 2;
-    select.addEventListener('change', () => {
-        try { localStorage.setItem(DOCS_LANGUAGE_KEY, select.value); } catch {}
-        window.arkadeUseDocs(docs, select.value);
-    });
-}
-
 // Initialize Monaco Editor
 function initMonaco() {
     require.config({
@@ -1249,11 +1229,11 @@ function initMonaco() {
 
     const builtinDocs = compilerBuiltinDocs().catch(err => {
         console.warn('Failed to load the builtin docs:', err);
-        return { languages: {}, functions: {}, members: {} };
+        return { functions: {}, members: {} };
     });
 
     require(['vs/editor/editor.main'], async function() {
-        initDocsLanguage(await builtinDocs);
+        window.arkadeUseDocs(await builtinDocs);
 
         // Register Arkade language
         monaco.languages.register({ id: 'arkade' });

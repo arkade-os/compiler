@@ -37,7 +37,7 @@ pub fn version() -> String {
 /// [`crate::builtin_docs`]: every builtin and transaction member with its signature and docs.
 #[wasm_bindgen]
 pub fn builtin_docs() -> String {
-    crate::builtin_docs().to_string()
+    crate::builtin_docs()
 }
 
 /// Validate Arkade Script source code without generating output

@@ -1,11 +1,12 @@
-// Run with node playground/completions.test.mjs.
+// Run after ./playground/build.sh, which builds ../npm/dist, with node playground/completions.test.mjs.
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
+import { builtinDocs } from '../npm/dist/node/index.js';
 
 const context = vm.createContext({ window: {} });
 vm.runInContext(fs.readFileSync(new URL('./arkade-language.js', import.meta.url), 'utf8'), context);
-context.window.arkadeUseDocs(JSON.parse(fs.readFileSync(new URL('../src/builtins.json', import.meta.url), 'utf8')));
+context.window.arkadeUseDocs(await builtinDocs());
 const complete = context.window.arkadeComplete;
 const labels = (before, table = null) => [...complete(before, table)].map(item => item.label);
 
@@ -48,18 +49,18 @@ assert(labels('').includes('checkSig'));
 
 assert(labels('tx.').includes('inputs'));
 assert(labels('require(tx . ').includes('assetGroups'));
-assert.deepEqual(labels('tx.outputs[0].'), ['value', 'script', 'witnessVersion', 'assets']);
+assert.deepEqual(labels('tx.outputs[0].'), ['assets', 'script', 'value', 'witnessVersion']);
 assert(labels('tx.inputs[this.activeInputIndex].').includes('arkadeScriptHash'));
-assert.deepEqual(labels('tx.outputs[idx[0]].'), ['value', 'script', 'witnessVersion', 'assets']);
+assert.deepEqual(labels('tx.outputs[idx[0]].'), ['assets', 'script', 'value', 'witnessVersion']);
 assert(!top.includes('older'));
 assert(labels('tx.inputs[i].assets.').includes('lookup'));
-assert.deepEqual(labels('tx.outputs[o].assets[0].'), ['assetId', 'amount']);
+assert.deepEqual(labels('tx.outputs[o].assets[0].'), ['amount', 'assetId']);
 assert(labels('tx.assetGroups[k].').includes('sumOutputs'));
 assert(labels('tx.input.current.').includes('value'));
 assert(labels('this.').includes('activeInputIndex'));
 assert(labels('group.', table).includes('controlIs'));
-assert.deepEqual(labels('group.inputs[j].', table), ['amount', 'type', 'index', 'txid']);
-assert.deepEqual(labels('tx.assetGroups[k].outputs[0].'), ['amount', 'type', 'index']);
+assert.deepEqual(labels('group.inputs[j].', table), ['amount', 'index', 'txid', 'type']);
+assert.deepEqual(labels('tx.assetGroups[k].outputs[0].'), ['amount', 'index', 'type']);
 assert.deepEqual(labels('group[0].', table), []);
 assert.deepEqual(labels('points[1].', table), ['x', 'y']);
 assert.deepEqual(labels('point.', table), ['x', 'y']);
@@ -92,7 +93,7 @@ const opensLints = text => new RegExp(`^(?:${tokenizer.root.find(rule => rule[1]
 assert(opensLints('@allow (unused-variable)') && !opensLints('@allow let'));
 assert.equal('Unused_lint-2)'.match(tokenizer.lints[1][0])[0], 'Unused_lint-2');
 assert.equal(complete('', null).find(item => item.label === 'checkMultisig').insertText, 'checkMultisig([${1:pubkeys}], [${2:sigs}])');
-assert.deepEqual(labels('tx.input.current.'), ['value', 'script', 'witnessVersion', 'sequence', 'outpoint', 'arkadeScriptHash', 'arkadeWitnessHash']);
+assert.deepEqual(labels('tx.input.current.'), ['arkadeScriptHash', 'arkadeWitnessHash', 'outpoint', 'script', 'sequence', 'value', 'witnessVersion']);
 
 const describe = context.window.arkadeDescribe;
 assert.equal(describe('require(', 'sha256', null).declaration, 'function sha256(bytes data) bytes32');

@@ -154,7 +154,7 @@ pub fn check(entry: &str, files: &std::collections::BTreeMap<String, String>) ->
 }
 
 /// Every builtin function and `tx`/`this` member as JSON: its parameters, its result or type,
-/// and its docs per language. Tests keep it in step with the compiler.
-pub fn builtin_docs() -> &'static str {
-    include_str!("builtins.json")
+/// and its docs. Builtins and properties come from the tables the compiler itself reads.
+pub fn builtin_docs() -> String {
+    builtins::docs()
 }

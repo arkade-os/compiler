@@ -1,6 +1,6 @@
 //! Builtin functions: the language functions the compiler provides. Each entry
-//! is the single description of a builtin, read by the parser, the type checks
-//! and code generation.
+//! is the single description of a builtin, read by the parser, the type checks,
+//! code generation and the builtin docs.
 
 use crate::opcodes::Opcode::{self, *};
 
@@ -13,6 +13,7 @@ pub struct Builtin {
     /// call is only valid directly inside `require`.
     pub result: Option<&'static str>,
     pub lowering: Lowering,
+    pub doc: &'static str,
 }
 
 #[derive(Debug)]
@@ -32,12 +33,14 @@ const fn builtin(
     params: &'static [(&'static str, &'static str)],
     result: &'static str,
     opcodes: &'static [Opcode],
+    doc: &'static str,
 ) -> Builtin {
     Builtin {
         name,
         params,
         result: Some(result),
         lowering: Lowering::Opcodes(opcodes),
+        doc,
     }
 }
 
@@ -45,12 +48,14 @@ const fn verify(
     name: &'static str,
     params: &'static [(&'static str, &'static str)],
     opcode: &'static [Opcode],
+    doc: &'static str,
 ) -> Builtin {
     Builtin {
         name,
         params,
         result: None,
         lowering: Lowering::Opcodes(opcode),
+        doc,
     }
 }
 
@@ -60,50 +65,106 @@ pub(crate) const BUILTINS: &[Builtin] = &[
         &[("data", "bytes"), ("offset", "int"), ("size", "int")],
         "bytes",
         &[Substr],
+        "size bytes of data starting at offset.",
     ),
     builtin(
         "left",
         &[("data", "bytes"), ("count", "int")],
         "bytes",
         &[Left],
+        "The first count bytes of data. A negative count or one past the end fails the spend.",
     ),
     builtin(
         "right",
         &[("data", "bytes"), ("count", "int")],
         "bytes",
         &[Right],
+        "The last count bytes of data. A negative count or one past the end fails the spend.",
     ),
-    builtin("cat", &[("a", "bytes"), ("b", "bytes")], "bytes", &[Cat]),
-    builtin("bin2num", &[("data", "bytes")], "int", &[Bin2Num]),
+    builtin(
+        "cat",
+        &[("a", "bytes"), ("b", "bytes")],
+        "bytes",
+        &[Cat],
+        "a followed by b.",
+    ),
+    builtin(
+        "bin2num",
+        &[("data", "bytes")],
+        "int",
+        &[Bin2Num],
+        "Script-number bytes as an int.",
+    ),
     builtin(
         "num2bin",
         &[("value", "int"), ("size", "int")],
         "bytes",
         &[Num2Bin],
+        "value as Script-number bytes padded to size bytes.",
     ),
     builtin(
         "reverseBytes",
         &[("data", "bytes")],
         "bytes",
         &[ReverseBytes],
+        "data in reverse byte order.",
     ),
-    builtin("size", &[("data", "bytes")], "int", &[Size, Nip]),
+    builtin(
+        "size",
+        &[("data", "bytes")],
+        "int",
+        &[Size, Nip],
+        "Length of data in bytes.",
+    ),
     builtin(
         "digest",
         &[("data", "bytes"), ("hashType", "int")],
         "bytes",
         &[Digest],
+        "Hash of data with the hash function selected at runtime by hashType; 20 or 32 bytes.",
     ),
-    builtin("sha1", &[("data", "bytes")], "bytes20", &[Sha1]),
-    builtin("sha256", &[("data", "bytes")], "bytes32", &[Sha256]),
-    builtin("hash256", &[("data", "bytes")], "bytes32", &[Hash256]),
-    builtin("hash160", &[("data", "bytes")], "bytes20", &[Hash160]),
-    builtin("ripemd160", &[("data", "bytes")], "bytes20", &[Ripemd160]),
+    builtin(
+        "sha1",
+        &[("data", "bytes")],
+        "bytes20",
+        &[Sha1],
+        "SHA-1 of data. Its collision resistance is broken; use it only for legacy \
+         interoperability.",
+    ),
+    builtin(
+        "sha256",
+        &[("data", "bytes")],
+        "bytes32",
+        &[Sha256],
+        "SHA-256 of data.",
+    ),
+    builtin(
+        "hash256",
+        &[("data", "bytes")],
+        "bytes32",
+        &[Hash256],
+        "Double SHA-256 of data.",
+    ),
+    builtin(
+        "hash160",
+        &[("data", "bytes")],
+        "bytes20",
+        &[Hash160],
+        "RIPEMD-160 of the SHA-256 of data.",
+    ),
+    builtin(
+        "ripemd160",
+        &[("data", "bytes")],
+        "bytes20",
+        &[Ripemd160],
+        "RIPEMD-160 of data.",
+    ),
     builtin(
         "checkSig",
         &[("signature", "signature"), ("pubkey", "bytes")],
         "bool",
         &[CheckSig],
+        "Whether signature is a valid Schnorr signature by pubkey over the spending transaction.",
     ),
     builtin(
         "checkSigFromStack",
@@ -114,6 +175,7 @@ pub(crate) const BUILTINS: &[Builtin] = &[
         ],
         "bool",
         &[Swap, CheckSigFromStack],
+        "Whether signature is a valid Schnorr signature by pubkey over message.",
     ),
     verify(
         "checkSigFromStackVerify",
@@ -123,6 +185,8 @@ pub(crate) const BUILTINS: &[Builtin] = &[
             ("message", "bytes"),
         ],
         &[Swap, CheckSigFromStack, Verify],
+        "Fails the spend unless signature is valid by pubkey over message. Produces no value; use \
+         it directly inside require.",
     ),
     Builtin {
         name: "checkMultisig",
@@ -133,6 +197,8 @@ pub(crate) const BUILTINS: &[Builtin] = &[
         ],
         result: Some("bool"),
         lowering: Lowering::Multisig,
+        doc: "Whether at least threshold of the aligned signatures are valid for their keys. \
+              Without a threshold, all must be valid.",
     },
     // A streaming context is opaque VM state with no language-defined width.
     builtin(
@@ -140,21 +206,29 @@ pub(crate) const BUILTINS: &[Builtin] = &[
         &[("data", "bytes")],
         "bytes",
         &[Sha256Initialize],
+        "Starts a streaming SHA-256 with data and returns its context.",
     ),
     builtin(
         "sha256Update",
         &[("ctx", "bytes"), ("chunk", "bytes")],
         "bytes",
         &[Sha256Update],
+        "Adds chunk to a streaming SHA-256 context.",
     ),
     builtin(
         "sha256Finalize",
         &[("ctx", "bytes"), ("lastChunk", "bytes")],
         "bytes32",
         &[Sha256Finalize],
+        "Adds lastChunk and returns the streaming SHA-256 digest.",
     ),
-    builtin("sighash", &[("hashType", "int")], "bytes32", &[SigHash]),
-    // An empty leafTag takes a 32-byte leaf as already hashed.
+    builtin(
+        "sighash",
+        &[("hashType", "int")],
+        "bytes32",
+        &[SigHash],
+        "The spending transaction's signature hash for hashType.",
+    ),
     builtin(
         "merkleRoot",
         &[
@@ -165,34 +239,59 @@ pub(crate) const BUILTINS: &[Builtin] = &[
         ],
         "bytes32",
         &[MerkleBranchVerify],
+        "Root of a BIP-341 tagged-hash Merkle proof. Siblings in proof are 32 bytes each and \
+         combined in sorted order. An empty leafTag takes a 32-byte leaf as already hashed.",
     ),
-    builtin("checkTime", &[("timestamp", "int")], "bool", &[CheckTime]),
+    builtin(
+        "checkTime",
+        &[("timestamp", "int")],
+        "bool",
+        &[CheckTime],
+        "Whether the emulator's clock has reached timestamp, a Unix time in seconds. Independent \
+         of the transaction locktime and sequence.",
+    ),
     builtin(
         "modExp",
         &[("base", "int"), ("exponent", "int"), ("modulus", "int")],
         "int",
         &[ModExp],
+        "base raised to exponent, modulo modulus.",
     ),
-    builtin("abs", &[("value", "int")], "int", &[Abs]),
-    builtin("min", &[("a", "int"), ("b", "int")], "int", &[Min]),
-    builtin("max", &[("a", "int"), ("b", "int")], "int", &[Max]),
+    builtin("abs", &[("value", "int")], "int", &[Abs], "Absolute value."),
+    builtin(
+        "min",
+        &[("a", "int"), ("b", "int")],
+        "int",
+        &[Min],
+        "The smaller of a and b.",
+    ),
+    builtin(
+        "max",
+        &[("a", "int"), ("b", "int")],
+        "int",
+        &[Max],
+        "The larger of a and b.",
+    ),
     builtin(
         "within",
         &[("value", "int"), ("lower", "int"), ("upper", "int")],
         "bool",
         &[Within],
+        "Whether lower <= value < upper. Empty or reversed ranges are false.",
     ),
     builtin(
         "ecAdd",
         &[("P", "ECPoint"), ("Q", "ECPoint"), ("curveId", "int")],
         "ECPoint",
         &[EcAdd],
+        "Elliptic curve point addition P + Q.",
     ),
     builtin(
         "ecMul",
         &[("P", "ECPoint"), ("scalar", "int"), ("curveId", "int")],
         "ECPoint",
         &[EcMul],
+        "Elliptic curve scalar multiplication scalar·P.",
     ),
     Builtin {
         name: "ecPairing",
@@ -203,17 +302,19 @@ pub(crate) const BUILTINS: &[Builtin] = &[
         ],
         result: Some("bool"),
         lowering: Lowering::Pairing,
+        doc: "Pairing check over aligned G1 and G2 point arrays of 1 to 16 pairs.",
     },
-    // Scalars are 32-byte big-endian; P is x-only for tweakVerify and compressed otherwise.
     verify(
         "ecMulScalarVerify",
         &[("k", "bytes32"), ("P", "bytes"), ("Q", "bytes")],
         &[EcMulScalarVerify],
+        "Fails the spend unless Q = k·P. k is 32-byte big-endian; P and Q are compressed points.",
     ),
     verify(
         "tweakVerify",
         &[("P", "bytes32"), ("k", "bytes32"), ("Q", "bytes")],
         &[TweakVerify],
+        "Fails the spend unless Q = P + k·G, with P x-only and k 32-byte big-endian.",
     ),
 ];
 
@@ -235,6 +336,327 @@ impl Builtin {
 
 pub(crate) fn find(name: &str) -> Option<&'static Builtin> {
     BUILTINS.iter().find(|builtin| builtin.name == name)
+}
+
+/// A call or member the grammar spells rule by rule, so neither BUILTINS nor
+/// the properties describe it.
+struct Spelled {
+    name: &'static str,
+    /// `type name`, with a trailing `?` when optional; None for a property.
+    params: Option<&'static [&'static str]>,
+    /// A call's result or a property's type.
+    ty: Option<&'static str>,
+    /// The index name an array property suggests.
+    index: Option<&'static str>,
+    tapscript: bool,
+    doc: &'static str,
+}
+
+const fn property(name: &'static str, ty: &'static str, doc: &'static str) -> Spelled {
+    Spelled {
+        name,
+        params: None,
+        ty: Some(ty),
+        index: None,
+        tapscript: false,
+        doc,
+    }
+}
+
+const fn method(
+    name: &'static str,
+    params: &'static [&'static str],
+    result: &'static str,
+    doc: &'static str,
+) -> Spelled {
+    Spelled {
+        name,
+        params: Some(params),
+        ty: Some(result),
+        index: None,
+        tapscript: false,
+        doc,
+    }
+}
+
+const SPELLED: &[Spelled] = &[
+    method(
+        "tweak",
+        &["pubkey base", "function name"],
+        "pubkey",
+        "base (emulator or a constructor pubkey) tweaked by the named covenant's hash. A \
+         tapscript-only key expression inside checkSig or checkMultisig.",
+    ),
+    Spelled {
+        name: "older",
+        params: Some(&["int sequence"]),
+        ty: None,
+        index: None,
+        tapscript: true,
+        doc: "Relative timelock (CSV). Wrap a literal in blocks(n) or seconds(n) to state its \
+              unit. Tapscript only.",
+    },
+    Spelled {
+        name: "after",
+        params: Some(&["int locktime"]),
+        ty: None,
+        index: None,
+        tapscript: true,
+        doc: "Absolute timelock (CLTV): a block height with blocks(n), or a Unix timestamp with \
+              seconds(n). Tapscript only.",
+    },
+    Spelled {
+        name: "blocks",
+        params: Some(&["int count"]),
+        ty: Some("int"),
+        index: None,
+        tapscript: true,
+        doc: "A timelock in blocks, for older or after.",
+    },
+    Spelled {
+        name: "seconds",
+        params: Some(&["int count"]),
+        ty: Some("int"),
+        index: None,
+        tapscript: true,
+        doc: "A timelock in seconds, for older or after. Relative delays are multiples of 512 \
+              seconds.",
+    },
+    Spelled {
+        name: "tx.inputs",
+        params: None,
+        ty: Some("Input[]"),
+        index: Some("i"),
+        tapscript: false,
+        doc: "Transaction inputs.",
+    },
+    Spelled {
+        name: "tx.outputs",
+        params: None,
+        ty: Some("Output[]"),
+        index: Some("o"),
+        tapscript: false,
+        doc: "Transaction outputs.",
+    },
+    Spelled {
+        name: "tx.input",
+        params: None,
+        ty: None,
+        index: None,
+        tapscript: false,
+        doc: "The input being spent, as tx.input.current.",
+    },
+    property("tx.input.current", "Input", "The input being spent."),
+    property(
+        "tx.assetGroups",
+        "AssetGroup[]",
+        "Asset groups of the transaction's asset packet.",
+    ),
+    Spelled {
+        name: "tx.intent",
+        params: None,
+        ty: None,
+        index: None,
+        tapscript: false,
+        doc: "Fields of the intent message.",
+    },
+    method(
+        "tx.packet",
+        &["int packetType"],
+        "bytes",
+        "Bytes of this transaction's extension packet of packetType. Fails the spend when it is \
+         absent.",
+    ),
+    method(
+        "tx.packet.has",
+        &["int packetType"],
+        "bool",
+        "Whether this transaction carries an extension packet of packetType.",
+    ),
+    method(
+        "tx.intent.field",
+        &["bytes path"],
+        "bytes",
+        "Encoded bytes of the intent field at a dot-separated path such as \"cosigners.0\". Fails \
+         the spend when it is missing.",
+    ),
+    method(
+        "tx.intent.has",
+        &["bytes path"],
+        "bool",
+        "Whether the intent has a field at path.",
+    ),
+    property(
+        "tx.inputs[].assets",
+        "AssetEntry[]",
+        "Assets held by the input.",
+    ),
+    method(
+        "tx.inputs[].packet",
+        &["int packetType"],
+        "bytes",
+        "Extension packet of packetType of the Arkade transaction that created this input. Fails \
+         the spend when it is absent.",
+    ),
+    method(
+        "tx.inputs[].packet.has",
+        &["int packetType"],
+        "bool",
+        "Whether the Arkade transaction that created this input carries an extension packet of \
+         packetType.",
+    ),
+    property(
+        "tx.outputs[].assets",
+        "AssetEntry[]",
+        "Assets held by the output.",
+    ),
+    property("tx.inputs[].assets.length", "int", "Number of assets."),
+    method(
+        "tx.inputs[].assets.lookup",
+        &["bytes32 assetTxid", "int assetGidx"],
+        "int",
+        "Amount of the asset. Fails the spend when it is absent.",
+    ),
+    method(
+        "tx.inputs[].assets.tryLookup",
+        &["bytes32 assetTxid", "int assetGidx"],
+        "AssetLookup",
+        "The asset's {amount, found} from one inspection, without failing when it is absent.",
+    ),
+    method(
+        "tx.inputs[].assets.has",
+        &["bytes32 assetTxid", "int assetGidx"],
+        "bool",
+        "Whether the asset is present.",
+    ),
+    method(
+        "tx.assetGroups.find",
+        &["bytes32 assetTxid", "int assetGidx"],
+        "AssetGroup",
+        "The asset group of the asset. Fails the spend when it is absent.",
+    ),
+    method(
+        "tx.assetGroups.has",
+        &["bytes32 assetTxid", "int assetGidx"],
+        "bool",
+        "Whether the packet has a group for the asset.",
+    ),
+    property("tx.assetGroups.length", "int", "Number of asset groups."),
+    Spelled {
+        name: "tx.assetGroups[].inputs",
+        params: None,
+        ty: Some("GroupInput[]"),
+        index: Some("j"),
+        tapscript: false,
+        doc: "The group's input records.",
+    },
+    Spelled {
+        name: "tx.assetGroups[].outputs",
+        params: None,
+        ty: Some("GroupOutput[]"),
+        index: Some("j"),
+        tapscript: false,
+        doc: "The group's output records.",
+    },
+    method(
+        "tx.assetGroups[].controlIs",
+        &["bytes32 assetTxid", "int assetGidx"],
+        "bool",
+        "Whether the group's control asset is the given asset.",
+    ),
+    property(
+        "this.activeBytecode",
+        "ScriptPubKey",
+        "Witness program and version of the input being spent, {program, version}.",
+    ),
+    method(
+        "this.tunnel",
+        &[
+            "int outputIndex",
+            "TunnelPolicy policy?",
+            "AssetId[] except?",
+        ],
+        "bool",
+        "Requires the output to keep this input's scriptPubKey, value and assets, or those the \
+         policy selects, apart from the excepted assets. Covenant only.",
+    ),
+];
+
+/// Every builtin function and `tx`/`this` member as pretty JSON: calls under
+/// `functions`, dotted names under `members`.
+pub(crate) fn docs() -> String {
+    use crate::properties::*;
+    use serde_json::{json, Map};
+
+    let mut functions = Map::new();
+    for builtin in BUILTINS {
+        let mut params: Vec<String> = builtin
+            .params
+            .iter()
+            .map(|(name, ty)| format!("{ty} {name}"))
+            .collect();
+        if matches!(builtin.lowering, Lowering::Multisig) {
+            params.last_mut().unwrap().push('?');
+        }
+        let entry = json!({ "params": params, "result": builtin.result, "doc": builtin.doc });
+        functions.insert(builtin.name.into(), entry);
+    }
+    let mut members = Map::new();
+    let mut property = |path: &str, (name, ty, doc): (&str, &str, &str)| {
+        members.insert(format!("{path}.{name}"), json!({ "type": ty, "doc": doc }));
+    };
+    for &p in TxProperty::ALL {
+        property("tx", p.describe());
+    }
+    for &p in InputProperty::ALL {
+        property("tx.inputs[]", p.describe());
+    }
+    for &p in OutputProperty::ALL {
+        property("tx.outputs[]", p.describe());
+    }
+    for &p in ThisProperty::ALL {
+        property("this", p.describe());
+    }
+    for &p in GroupProperty::ALL {
+        property("tx.assetGroups[]", p.describe());
+    }
+    for &p in GroupIoProperty::ALL {
+        property("tx.assetGroups[].inputs[]", p.describe());
+        // Output records have no txid.
+        if p != GroupIoProperty::Txid {
+            property("tx.assetGroups[].outputs[]", p.describe());
+        }
+    }
+    for &p in AssetProperty::ALL {
+        property("tx.inputs[].assets[]", p.describe());
+    }
+    for spelled in SPELLED {
+        let (result, ty) = match spelled.params {
+            Some(_) => (spelled.ty, None),
+            None => (None, spelled.ty),
+        };
+        let entry = json!({
+            "params": spelled.params,
+            "result": result,
+            "type": ty,
+            "index": spelled.index,
+            "tapscript": spelled.tapscript.then_some(true),
+            "doc": spelled.doc,
+        });
+        let table = if spelled.name.contains('.') {
+            &mut members
+        } else {
+            &mut functions
+        };
+        table.insert(spelled.name.into(), entry);
+    }
+    for entry in functions.values_mut().chain(members.values_mut()) {
+        entry
+            .as_object_mut()
+            .unwrap()
+            .retain(|_, value| !value.is_null());
+    }
+    serde_json::to_string_pretty(&json!({ "functions": functions, "members": members })).unwrap()
 }
 
 #[cfg(test)]
@@ -268,84 +690,11 @@ mod tests {
         }
     }
 
-    #[test]
-    fn the_playground_documents_every_builtin_and_property() {
-        use crate::properties::*;
-        let docs: serde_json::Value = serde_json::from_str(include_str!("builtins.json")).unwrap();
-        let functions = docs["functions"].as_object().unwrap();
-        for builtin in BUILTINS {
-            let entry = &functions[builtin.name];
-            let params: Vec<(&str, &str)> = entry["params"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .map(|param| {
-                    let (ty, name) = param.as_str().unwrap().split_once(' ').unwrap();
-                    (name.trim_end_matches('?'), ty)
-                })
-                .collect();
-            assert_eq!(params, builtin.params, "{}", builtin.name);
-            assert_eq!(entry["result"].as_str(), builtin.result, "{}", builtin.name);
-            assert!(entry["doc"]["en"].is_string(), "{}", builtin.name);
-        }
-        // Calls the grammar spells itself rather than through BUILTINS.
-        let syntax = ["tweak", "older", "after", "blocks", "seconds"];
-        for name in functions.keys() {
-            assert!(
-                find(name).is_some() || syntax.contains(&name.as_str()),
-                "'{name}' is not a builtin"
-            );
-        }
-
-        fn check<P: Copy>(
-            docs: &serde_json::Value,
-            path: &str,
-            all: &[P],
-            describe: fn(P) -> (&'static str, &'static str),
-        ) {
-            for &property in all {
-                let (name, ty) = describe(property);
-                let key = format!("{path}.{name}");
-                assert_eq!(docs["members"][&key]["type"].as_str(), Some(ty), "{key}");
-            }
-        }
-        check(&docs, "tx", TxProperty::ALL, |p| (p.name(), p.value_type()));
-        check(&docs, "tx.inputs[]", InputProperty::ALL, |p| {
-            (p.name(), p.value_type())
-        });
-        check(&docs, "tx.outputs[]", OutputProperty::ALL, |p| {
-            (p.name(), p.value_type())
-        });
-        check(&docs, "this", ThisProperty::ALL, |p| {
-            (p.name(), p.value_type())
-        });
-        check(&docs, "tx.assetGroups[]", GroupProperty::ALL, |p| {
-            (p.name(), p.value_type())
-        });
-        check(
-            &docs,
-            "tx.assetGroups[].inputs[]",
-            GroupIoProperty::ALL,
-            |p| (p.name(), p.value_type()),
-        );
-        let outputs: Vec<_> = GroupIoProperty::ALL
-            .iter()
-            .copied()
-            .filter(|p| *p != GroupIoProperty::Txid)
-            .collect();
-        check(&docs, "tx.assetGroups[].outputs[]", &outputs, |p| {
-            (p.name(), p.value_type())
-        });
-        check(&docs, "tx.inputs[].assets[]", AssetProperty::ALL, |p| {
-            (p.name(), p.value_type())
-        });
-    }
-
-    /// Members the grammar spells rule by rule have no table to compare with, so each
+    /// Members the grammar spells rule by rule are described only in SPELLED, so each
     /// documented one is compiled as declared: called with its parameters, returning its type.
     #[test]
     fn every_documented_member_compiles_as_declared() {
-        let docs: serde_json::Value = serde_json::from_str(include_str!("builtins.json")).unwrap();
+        let docs: serde_json::Value = serde_json::from_str(&crate::builtin_docs()).unwrap();
         let mut failures = Vec::new();
         for (key, entry) in docs["members"].as_object().unwrap() {
             let Some(result) = entry["result"].as_str().or(entry["type"].as_str()) else {

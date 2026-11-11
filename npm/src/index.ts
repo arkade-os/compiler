@@ -132,25 +132,24 @@ export interface DebugInfo {
     functions: Record<string, { sourceMap: SourceRange[] }>;
 }
 
-/**
- * Source errors are diagnostics with a `null` artifact, not a rejection. `diagnostics` lists every
- * error and warning, warnings included on success. `debug` is `null` with `{ debug: false }`.
- */
 export interface BuiltinDoc {
     params?: string[];
     result?: string;
     type?: string;
     index?: string;
     tapscript?: boolean;
-    doc: Record<string, string>;
+    doc: string;
 }
 
 export interface BuiltinDocs {
-    languages: Record<string, string>;
     functions: Record<string, BuiltinDoc>;
     members: Record<string, BuiltinDoc>;
 }
 
+/**
+ * Source errors are diagnostics with a `null` artifact, not a rejection. `diagnostics` lists every
+ * error and warning, warnings included on success. `debug` is `null` with `{ debug: false }`.
+ */
 export type CompileResult =
     | { artifact: CompilerArtifact; debug: DebugInfo | null; diagnostics: Diagnostic[] }
     | { artifact: null; debug: null; diagnostics: Diagnostic[] };

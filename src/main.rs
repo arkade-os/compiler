@@ -102,7 +102,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     if args.builtins {
-        print!("{}", arkade_compiler::builtin_docs());
+        println!("{}", arkade_compiler::builtin_docs());
         return Ok(());
     }
 
