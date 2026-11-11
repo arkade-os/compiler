@@ -17,6 +17,15 @@ const context = vm.createContext({
     console: { warn() {}, error() {} },
 });
 const artifactOf = async input => (await compile(input)).artifact;
+// A library is a playground file, and check accepts it. It is not a compile entry.
+const artifactOrLibrary = async input => {
+    const compiled = await compile(input);
+    if (compiled.artifact !== null) return compiled.artifact;
+    assert.equal(compiled.diagnostics.length, 1);
+    assert.match(compiled.diagnostics[0].message, /not a library/);
+    assert.deepEqual(await check(input), []);
+    return null;
+};
 const source = fs.readFileSync(new URL('./main.js', import.meta.url), 'utf8');
 vm.runInContext(source.replace(/^import .*;$/gm, ''), context);
 
@@ -47,7 +56,8 @@ for (const [project, file] of selections) {
         editor = { getValue: () => currentProject ? projects[currentProject].files[currentFile] : examples[currentFile].code };
         compilationSources();
     `, context);
-    const output = await artifactOf(input);
+    const output = await artifactOrLibrary(input);
+    if (output === null) continue;
     const bundle = output.source;
     const rebuilt = await artifactOf(bundle);
     rebuilt.updatedAt = output.updatedAt;
@@ -62,7 +72,8 @@ for (const [project, file] of selections.filter(([, file]) => file !== 'single_s
         editor = { getValue: () => currentProject ? projects[currentProject].files[currentFile] : examples[currentFile].code };
         compilationSources();
     `, context);
-    assert.notEqual(await artifactOf(input), null);
+    const artifact = await artifactOrLibrary(input);
+    if (artifact !== null) assert.equal(typeof artifact.contractName, 'string');
 }
 
 context.bundle = {
