@@ -77,23 +77,7 @@ fn validate_body(
         }
         match statement {
             Statement::Require(Requirement::Comparison { left, right, .. }) => {
-                for (value, other) in [(left, right), (right, left)] {
-                    if matches!(
-                        &value.kind,
-                        ExprKind::ArrayLiteral(_) | ExprKind::StructLiteral(_)
-                    ) {
-                        let expected = &other.ty;
-                        if matches!(expected, ArkType::Array(..) | ArkType::Struct(_)) {
-                            validate_value(
-                                &TypeName::from(expected),
-                                value,
-                                &contract.structs,
-                                &format!("comparison in '{}'", function.name),
-                                issues,
-                            );
-                        }
-                    }
-                }
+                validate_comparison_literals(left, right, function, contract, issues);
             }
             Statement::Return(value) => {
                 if !function.is_private {
@@ -161,6 +145,30 @@ fn validate_body(
     }
 }
 
+fn validate_comparison_literals(
+    left: &Expression,
+    right: &Expression,
+    function: &Function,
+    contract: &Contract,
+    issues: &mut Vec<ValidationIssue>,
+) {
+    for (value, other) in [(left, right), (right, left)] {
+        if matches!(
+            &value.kind,
+            ExprKind::ArrayLiteral(_) | ExprKind::StructLiteral(_)
+        ) && matches!(other.ty, ArkType::Array(..) | ArkType::Struct(_))
+        {
+            validate_value(
+                &TypeName::from(&other.ty),
+                value,
+                &contract.structs,
+                &format!("comparison in '{}'", function.name),
+                issues,
+            );
+        }
+    }
+}
+
 fn validate_calls(
     expression: &Expression,
     value_position: bool,
@@ -169,10 +177,19 @@ fn validate_calls(
     issues: &mut Vec<ValidationIssue>,
 ) {
     let first = issues.len();
+    if let ExprKind::BinaryOp { left, op, right } = &expression.kind {
+        if op.compares() {
+            validate_comparison_literals(left, right, caller, contract, issues);
+        }
+    }
     if let ExprKind::Call { name, args, .. } = &expression.kind {
         match contract.functions.iter().find(|f| f.name == *name) {
+            // `require(ok, 5);` parses as a call only because its message is not a string.
+            None if name == "require" && !value_position && args.len() == 2 => issues.push(
+                ValidationIssue::error("the message of require must be a string"),
+            ),
             None => {
-                let issue = ValidationIssue::error(format!("unknown private function '{name}'"))
+                let issue = ValidationIssue::error(format!("unknown function '{name}'"))
                     .coded(crate::errors::ErrorCode::UnknownFunction);
                 let own = contract.functions.iter().map(|f| f.name.as_str());
                 let builtins = crate::builtins::BUILTINS.iter().map(|b| b.name);

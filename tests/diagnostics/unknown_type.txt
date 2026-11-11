@@ -1,0 +1,5 @@
+error[validation]: unknown type 'pubkye'; import its defining file
+  --> 1:23
+1 | contract Vault(pubkye owner, int exit) {
+  |                       ^^^^^
+

@@ -61,7 +61,10 @@ fn test_tx_time_is_not_a_locktime_alias() {
     let err = compile("contract C(int t) { function f() { require(tx.time >= t); } }")
         .unwrap_err()
         .to_string();
-    assert!(err.contains("undefined binding 'tx.time'"), "{err}");
+    assert!(
+        err.contains("unknown transaction property 'time'; expected one of version, locktime"),
+        "{err}"
+    );
 }
 
 #[test]
@@ -150,7 +153,7 @@ fn unknown_tx_properties_reach_name_resolution() {
         );
         let err = compile(&code).unwrap_err().to_string();
         assert!(
-            err.contains(&format!("undefined binding 'tx.{property}'")),
+            err.contains(&format!("unknown transaction property '{property}'")),
             "{err}"
         );
     }

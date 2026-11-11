@@ -1,0 +1,5 @@
+error[validation]: wrong number of arguments to `checkSig`: expected checkSig(signature, pubkey), got 1
+  --> 3:5
+3 |     require(checkSig(sig));
+  |     ^^^^^^^^^^^^^^^^^^^^^^^
+

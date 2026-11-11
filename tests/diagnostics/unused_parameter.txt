@@ -1,0 +1,5 @@
+error[validation]: parameter 'extra' of function 'spend' is never used
+  --> 2:37
+2 |   function spend(signature sig, int extra) {
+  |                                     ^^^^^
+

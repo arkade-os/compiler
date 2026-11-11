@@ -18,6 +18,9 @@ pub(super) fn extract_values(expression: &mut Expression, values: &mut Vec<Expre
                 expression.ty,
                 types::ArkType::Array(..) | types::ArkType::Struct(_)
             ))
+        || matches!(&expression.kind, ExprKind::BinaryOp { left, op, right }
+            if op.compares() && [left, right].iter().any(|operand|
+                matches!(operand.ty, types::ArkType::Array(..) | types::ArkType::Struct(_))))
     {
         let mut replacement = expression.with_kind(ExprKind::Extracted(values.len()));
         // The placeholder stands for the extracted value, so it keeps its type.
@@ -195,7 +198,7 @@ impl Generator {
             .iter()
             .find(|f| f.name == *name && f.is_private)
             .cloned()
-            .ok_or_else(|| format!("unknown private function '{name}'"))?;
+            .ok_or_else(|| format!("unknown function '{name}'"))?;
         if args.len() != function.parameters.len() {
             return Err(format!("wrong argument count for '{name}'").into());
         }

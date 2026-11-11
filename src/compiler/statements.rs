@@ -147,6 +147,22 @@ fn emit_lowered(item: &Lowered, generator: &mut Generator) -> Result<bool> {
             }
             Ok(continues)
         }
+        Lowered::Bound {
+            span,
+            name,
+            value,
+            body,
+        } => {
+            let ty = TypeName::from(&value.ty);
+            generator.enter_scope();
+            // The value's opcodes map to the value, not the whole statement.
+            generator.asm.set_span(Some(value.span));
+            generator.emit_let(name, value, &ty)?;
+            generator.asm.set_span(Some(*span));
+            let continues = emit_body(body, generator)?;
+            generator.exit_scope()?;
+            Ok(continues)
+        }
     }
 }
 
@@ -186,9 +202,7 @@ fn emit_statement(stmt: &LocatedStatement, generator: &mut Generator) -> Result<
                 })
                 .or_else(|| generator.composite_type(value));
             if let Some(ty) = &result_type {
-                generator.emit_typed_value(value, ty)?;
-                generator.bind_value(name, ty)?;
-                generator.bind_type(name, ty);
+                generator.emit_let(name, value, ty)?;
             } else {
                 generator.emit_expression(value)?;
                 generator.bind_local(Path::new(name))?;
@@ -273,7 +287,7 @@ fn generate_requirement_asm(req: &Requirement, generator: &mut Generator) -> Res
                 .composite_type(left)
                 .or_else(|| generator.composite_type(right))
             {
-                return generator.emit_composite_requirement(left, *op, right, &ty);
+                return generator.emit_composite_comparison(left, *op, right, &ty, true);
             }
             generator.emit_expression(left)?;
             generator.emit_expression(right)?;

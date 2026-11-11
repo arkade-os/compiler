@@ -1,0 +1,5 @@
+error[validation]: unknown output property 'valu'; expected one of value, witnessVersion, script
+  --> 4:13
+4 |     require(tx.outputs[0].valu >= 1000);
+  |             ^^^^^^^^^^^^^^^^^^
+

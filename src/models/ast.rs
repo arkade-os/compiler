@@ -81,6 +81,19 @@ impl std::fmt::Display for Path {
     }
 }
 
+impl From<&str> for Path {
+    fn from(name: &str) -> Self {
+        Self::new(name)
+    }
+}
+
+/// A path equals a name when it is that bare binding.
+impl PartialEq<str> for Path {
+    fn eq(&self, name: &str) -> bool {
+        self.segments.is_empty() && self.root == name
+    }
+}
+
 /// Contract AST
 #[derive(Debug, Clone)]
 pub struct Contract {
@@ -368,9 +381,9 @@ impl HashFn {
 /// A key operand in a tapscript `checkSig`/`checkMultisig`.
 #[derive(Debug, Clone, PartialEq)]
 pub enum KeyExpr {
-    /// A bare pubkey identifier: a reserved role (`server`, `emulator`) or any
-    /// pubkey in scope (constructor pubkey, etc.).
-    Ident(String),
+    /// A pubkey binding: a reserved role (`server`, `emulator`) or any pubkey in
+    /// scope (constructor pubkey, struct field, array element, etc.).
+    Ident(Path),
     /// `tweak(base, func)`: `base` tweaked by `func`'s covenant hash.
     /// `base` is `emulator` or a constructor pubkey (a second enclave).
     Tweak { base: String, func: String },
@@ -412,28 +425,54 @@ pub enum TapItem {
     /// `hashFn(preimage) == hash` → condition prefix.
     Hash {
         hash_fn: HashFn,
-        preimage: String,
-        hash: String,
+        preimage: Path,
+        hash: TapOperand,
     },
     /// `older(n)` → CSV (relative timelock, exit class). `value` is a literal,
     /// constant, parameter, or `serverExitDelay`; without a unit it is the raw
     /// BIP68 sequence.
     Older {
-        value: String,
+        value: TapOperand,
         unit: Option<TimeUnit>,
     },
     /// `after(n)` → CLTV (absolute timelock, forfeit class). Without a unit
     /// `value` is the raw nLockTime.
     After {
-        value: String,
+        value: TapOperand,
         unit: Option<TimeUnit>,
     },
     /// `checkSig`/`checkMultisig` → multisig suffix. `threshold == None` means N-of-N.
     Sig {
         keys: Vec<KeyExpr>,
-        sigs: Vec<String>,
+        sigs: Vec<Path>,
         threshold: Option<u16>,
     },
+}
+
+/// A hash value or timelock operand: a literal, with constants already folded in, or the
+/// binding it reads.
+#[derive(Debug, Clone, PartialEq)]
+pub enum TapOperand {
+    Literal(String),
+    Name(Path),
+}
+
+impl TapOperand {
+    pub fn path(&self) -> Option<&Path> {
+        match self {
+            TapOperand::Name(path) => Some(path),
+            TapOperand::Literal(_) => None,
+        }
+    }
+}
+
+impl std::fmt::Display for TapOperand {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TapOperand::Literal(text) => f.write_str(text),
+            TapOperand::Name(path) => path.fmt(f),
+        }
+    }
 }
 
 /// The unit of a `blocks(n)` or `seconds(n)` timelock operand.
@@ -554,7 +593,7 @@ pub enum ExprKind {
         value: Box<Expression>,
         field: String,
     },
-    /// An array nested inside an indexed value.
+    /// An element of a nested or computed array.
     IndexAccess {
         value: Box<Expression>,
         index: Box<Expression>,

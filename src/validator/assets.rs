@@ -9,11 +9,11 @@ use super::*;
 ///
 pub(super) fn check_asset_id_operands(contract: &Contract, issues: &mut Vec<ValidationIssue>) {
     for func in contract.functions.iter().filter(|f| !f.is_imported()) {
-        walk_asset_id_stmts(&func.statements, &func.name, issues);
+        walk_asset_id_stmts(&func.statements, issues);
     }
 }
 
-fn walk_asset_id_stmts(stmts: &[LocatedStatement], fname: &str, issues: &mut Vec<ValidationIssue>) {
+fn walk_asset_id_stmts(stmts: &[LocatedStatement], issues: &mut Vec<ValidationIssue>) {
     for stmt in stmts {
         let first = issues.len();
         match &stmt.statement {
@@ -23,39 +23,39 @@ fn walk_asset_id_stmts(stmts: &[LocatedStatement], fname: &str, issues: &mut Vec
                 value: expression, ..
             }
             | Statement::Require(Requirement::Expression(expression)) => {
-                check_asset_id_expr(expression, fname, issues)
+                check_asset_id_expr(expression, issues)
             }
             Statement::Require(Requirement::Comparison { left, right, .. }) => {
-                check_asset_id_expr(left, fname, issues);
-                check_asset_id_expr(right, fname, issues);
+                check_asset_id_expr(left, issues);
+                check_asset_id_expr(right, issues);
             }
             Statement::Return(None) | Statement::Declaration { .. } => {}
             Statement::VarAssign { target, value } => {
                 if let AssignmentTarget::ArrayIndex { index, .. }
                 | AssignmentTarget::Access(index) = target
                 {
-                    check_asset_id_expr(index, fname, issues);
+                    check_asset_id_expr(index, issues);
                 }
-                check_asset_id_expr(value, fname, issues);
+                check_asset_id_expr(value, issues);
             }
             Statement::IfElse {
                 condition,
                 then_body,
                 else_body,
             } => {
-                check_asset_id_expr(condition, fname, issues);
-                walk_asset_id_stmts(then_body, fname, issues);
+                check_asset_id_expr(condition, issues);
+                walk_asset_id_stmts(then_body, issues);
                 if let Some(eb) = else_body {
-                    walk_asset_id_stmts(eb, fname, issues);
+                    walk_asset_id_stmts(eb, issues);
                 }
             }
             Statement::ForIn { iterable, body, .. } => {
-                check_asset_id_expr(iterable, fname, issues);
-                walk_asset_id_stmts(body, fname, issues);
+                check_asset_id_expr(iterable, issues);
+                walk_asset_id_stmts(body, issues);
             }
             Statement::ForCount { count, body } => {
-                check_asset_id_expr(count, fname, issues);
-                walk_asset_id_stmts(body, fname, issues);
+                check_asset_id_expr(count, issues);
+                walk_asset_id_stmts(body, issues);
             }
         }
         locate(&mut issues[first..], stmt.span);
@@ -71,7 +71,7 @@ fn walk_asset_id_stmts(stmts: &[LocatedStatement], fname: &str, issues: &mut Vec
 /// exhaustive match with no wildcard, any future `Expression` variant forces a
 /// decision there and can never silently bypass this validation by falling
 /// through a catch-all.
-fn check_asset_id_expr(expr: &Expression, fname: &str, issues: &mut Vec<ValidationIssue>) {
+fn check_asset_id_expr(expr: &Expression, issues: &mut Vec<ValidationIssue>) {
     // Variant-specific Asset ID operand validation.
     match &expr.kind {
         ExprKind::AssetLookup {
@@ -102,14 +102,14 @@ fn check_asset_id_expr(expr: &Expression, fname: &str, issues: &mut Vec<Validati
             asset_gidx,
             ..
         } => {
-            validate_asset_id(asset_txid, asset_gidx, fname, issues);
+            validate_asset_id(asset_txid, asset_gidx, issues);
         }
         _ => {}
     }
 
     // Generic recursion through every sub-expression.
     for child in child_exprs(expr) {
-        check_asset_id_expr(child, fname, issues);
+        check_asset_id_expr(child, issues);
     }
 }
 
@@ -117,14 +117,12 @@ fn check_asset_id_expr(expr: &Expression, fname: &str, issues: &mut Vec<Validati
 fn validate_asset_id(
     asset_txid: &Expression,
     asset_gidx: &Expression,
-    fname: &str,
     issues: &mut Vec<ValidationIssue>,
 ) {
     let txid_type = &asset_txid.ty;
     if *txid_type != ArkType::Bytes32 {
         issues.push(ValidationIssue::error(format!(
-            "function '{}': asset id txid operand '{}' must be bytes32, got {}",
-            fname,
+            "asset id txid operand '{}' must be bytes32, got {}",
             asset_txid.source_text(),
             txid_type.as_str()
         )));
@@ -134,8 +132,7 @@ fn validate_asset_id(
     let gidx_type = &asset_gidx.ty;
     if *gidx_type != ArkType::Int {
         issues.push(ValidationIssue::error(format!(
-            "function '{}': asset id gidx operand '{}' must be int (0..65535), got {}",
-            fname,
+            "asset id gidx operand '{}' must be int (0..65535), got {}",
             asset_gidx.source_text(),
             gidx_type.as_str()
         )));
@@ -143,11 +140,10 @@ fn validate_asset_id(
         match crate::compiler::constants::evaluate(asset_gidx, &mut |path| Err(path.key())) {
             Ok(v) if v.parse::<u16>().is_ok() => {}
             Ok(v) => issues.push(ValidationIssue::error(format!(
-                "function '{fname}': asset id gidx {v} is out of range 0..65535"
+                "asset id gidx {v} is out of range 0..65535"
             ))),
             Err(error) => issues.push(ValidationIssue::error(format!(
-                "function '{}': asset id gidx '{}': {}",
-                fname,
+                "asset id gidx '{}': {}",
                 asset_gidx.source_text(),
                 error
             ))),

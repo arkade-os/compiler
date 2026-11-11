@@ -1,0 +1,5 @@
+error[unknown-name]: binding 'ownr' is undefined; did you mean 'owner'?
+  --> 3:27
+3 |     require(checkSig(sig, ownr));
+  |                           ^^^^
+

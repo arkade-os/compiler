@@ -1,0 +1,5 @@
+error[type]: comparison '>=' is not defined between 'int' and 'bytes'
+  --> 4:13
+4 |     require(tx.outputs[0].value >= owner);
+  |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+

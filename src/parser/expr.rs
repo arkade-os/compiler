@@ -77,9 +77,7 @@ pub(crate) fn reject_reserved_function_call(pair: &Pair<Rule>) -> Result<(), Str
     }
 
     if let Some(signature) = reserved_function_signature(&name) {
-        return Err(format!(
-            "malformed reserved function call `{name}(...)`; expected {signature}"
-        ));
+        return Err(format!("wrong arguments to `{name}`: expected {signature}"));
     }
 
     Ok(())
@@ -120,8 +118,9 @@ pub(crate) fn parse_primary_expr(pair: Pair<Rule>) -> Result<Expression, String>
     let span: crate::diagnostics::Span = pair.as_span().into();
     match pair.as_rule() {
         Rule::primary_expr => {
-            let inner = pair.into_inner().next().ok_or("Empty primary expression")?;
-            parse_primary_expr(inner)
+            let mut inner = pair.into_inner();
+            let value = parse_primary_expr(inner.next().ok_or("Empty primary expression")?)?;
+            parse_suffixes(value, inner)
         }
         Rule::parenthesized_expr => {
             let inner = pair.into_inner().next().ok_or("Empty grouped expression")?;
@@ -328,12 +327,20 @@ pub(crate) fn parse_complex_expression(pair: Pair<Rule>) -> Result<Requirement, 
 pub(crate) fn parse_property_access(pair: Pair<Rule>) -> Result<Expression, String> {
     let mut inner = pair.into_inner();
     let name = inner.next().ok_or("Missing binding name")?;
-    let start = name.as_span().start();
-    let mut value = Expression::new(
+    let value = Expression::new(
         ExprKind::Name(Path::new(name.as_str())),
         name.as_span().into(),
     );
-    for suffix in inner {
+    parse_suffixes(value, inner)
+}
+
+/// Apply `binding_suffix` pairs to `value`, extending a binding path while it is one.
+fn parse_suffixes<'a>(
+    mut value: Expression,
+    suffixes: impl Iterator<Item = Pair<'a, Rule>>,
+) -> Result<Expression, String> {
+    let start = value.span.start;
+    for suffix in suffixes {
         let span = crate::diagnostics::Span {
             start,
             end: suffix.as_span().end(),
@@ -386,9 +393,10 @@ fn parse_builtin_call(
         .collect::<Result<_, _>>()?;
     if !builtin.accepts_arity(args.len()) {
         return Err(format!(
-            "malformed reserved function call `{}(...)`; expected {}",
+            "wrong number of arguments to `{}`: expected {}, got {}",
             builtin.name,
-            builtin.signature()
+            builtin.signature(),
+            args.len()
         ));
     }
     Ok(Expression::new(ExprKind::Builtin { builtin, args }, span))

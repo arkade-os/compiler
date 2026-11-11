@@ -306,7 +306,7 @@ fn cashscript_parity_rejections() {
         "contract Strict(pubkey owner) { function spend(signature sig, int amount) { require(checkSig(sig, owner)); } }",
     );
     assert!(
-        unused_param.contains("variable 'amount' in function 'spend' is never used"),
+        unused_param.contains("parameter 'amount' of function 'spend' is never used"),
         "{unused_param}"
     );
 }
@@ -414,8 +414,8 @@ contract HexCasts(pubkey owner) {
     }
     assert_eq!(
         asm.matches("OP_0NOTEQUAL").count(),
-        2,
-        "int(bool) and bool(int) normalize: {asm}"
+        3,
+        "the bool witness check, and int(bool) and bool(int) normalize: {asm}"
     );
     assert!(!asm.contains("0x"), "hex casts fold away: {asm}");
 
@@ -469,7 +469,7 @@ contract BytesCasts(pubkey owner) {
     let asm = crate::common::arkade_asm(&output, "spend");
     assert_eq!(asm.matches("OP_BIN2NUM").count(), 4, "{asm}");
     // `bytes(n > 0)` needs no normalization: the comparison already leaves 0 or 1.
-    assert_eq!(asm.matches("OP_0NOTEQUAL").count(), 4, "{asm}");
+    assert_eq!(asm.matches("OP_0NOTEQUAL").count(), 5, "{asm}");
     assert!(!asm.contains("OP_NUM2BIN"), "{asm}");
     // Only the h20 and h32 witness inputs are width-checked; widening casts add none.
     assert_eq!(asm.matches("OP_SIZE").count(), 2, "{asm}");
@@ -519,8 +519,8 @@ contract SameType(pubkey owner) {
     let asm = crate::common::arkade_asm(&output, "spend");
     assert_eq!(
         asm.matches("OP_0NOTEQUAL").count(),
-        1,
-        "only bool(2) converts: {asm}"
+        2,
+        "only the flag witness check and bool(2) convert: {asm}"
     );
     assert_eq!(
         asm.matches("OP_SIZE").count(),
@@ -544,6 +544,24 @@ fn sized_witness_inputs_check_width_at_entry() {
     assert_eq!(asm.matches("OP_SIZE").count(), 3, "{asm}");
     let optimized = crate::common::arkade_asm(&compile_ok(source), "spend");
     assert_eq!(optimized.matches("OP_SIZE").count(), 3, "{optimized}");
+}
+
+#[test]
+fn bool_witness_inputs_must_be_canonical_at_entry() {
+    let source = "struct Flag { bool value; } contract C() { function spend(bool flag, Flag f, bool[2] fs) { require(flag); require(f.value != true); require(fs[0] != fs[1]); } }";
+    let check = "OP_DUP OP_0NOTEQUAL OP_EQUALVERIFY";
+    let asm = crate::common::arkade_asm(
+        &crate::common::compile_unoptimized(source).unwrap(),
+        "spend",
+    );
+    assert!(
+        asm.starts_with(&format!(
+            "OP_DUP {check} OP_1 OP_PICK {check} OP_2 OP_PICK {check} OP_3 OP_PICK {check} "
+        )),
+        "{asm}"
+    );
+    let optimized = crate::common::arkade_asm(&compile_ok(source), "spend");
+    assert_eq!(optimized.matches(check).count(), 4, "{optimized}");
 }
 
 #[test]
@@ -726,7 +744,7 @@ fn a_parameter_read_only_by_dead_locals_is_never_used() {
     ] {
         let error = compile_error(&source(&body));
         assert!(
-            error.contains("variable 'amount' in function 'f' is never used"),
+            error.contains("parameter 'amount' of function 'f' is never used"),
             "{body}: {error}"
         );
     }
@@ -742,7 +760,7 @@ fn a_parameter_read_only_by_dead_locals_is_never_used() {
         .to_string();
     assert!(
         error.starts_with("fees.ark: validation error")
-            && error.contains("variable 'n' in function 'fee' is never used"),
+            && error.contains("parameter 'n' of function 'fee' is never used"),
         "{error}"
     );
 }

@@ -393,7 +393,7 @@ fn single_read_constructor_leaves_are_pushed_at_their_read() {
     for (source, expected) in [
         (
             "contract C(int k, int j) { function spend(bool c) { if (c) { require(k > 1); } else { require(k > 2); } require(j > 0); } }",
-            "<k> OP_1 OP_ROLL OP_IF OP_0 OP_PICK 1 OP_GREATERTHAN OP_VERIFY OP_ELSE OP_0 OP_PICK 2 OP_GREATERTHAN OP_VERIFY OP_ENDIF <j> 0 OP_GREATERTHAN OP_VERIFY OP_1 OP_NIP",
+            "<k> OP_1 OP_PICK OP_DUP OP_0NOTEQUAL OP_EQUALVERIFY OP_1 OP_ROLL OP_IF OP_0 OP_PICK 1 OP_GREATERTHAN OP_VERIFY OP_ELSE OP_0 OP_PICK 2 OP_GREATERTHAN OP_VERIFY OP_ENDIF <j> 0 OP_GREATERTHAN OP_VERIFY OP_1 OP_NIP",
         ),
         (
             "contract C(int k) { function spend(int a, int b) { require(over(a)); require(over(b)); } private function over(int v) bool { return v > k; } }",

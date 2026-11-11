@@ -114,7 +114,7 @@ contract BadCheckMultisig(pubkey owner) {
         assert!(result.is_err(), "{label} must be rejected");
         let msg = result.unwrap_err().to_string();
         assert!(
-            msg.contains("malformed reserved function call") && msg.contains(expected),
+            msg.contains("arguments to `") && msg.contains(expected),
             "unexpected error for {label}: {msg}"
         );
     }
@@ -134,7 +134,7 @@ contract BadShaInit(pubkey owner) {
     assert!(result.is_err(), "sha256Initialize extra argument must fail");
     let msg = result.unwrap_err().to_string();
     assert!(
-        msg.contains("malformed reserved function call") && msg.contains("sha256Initialize(data)"),
+        msg.contains("wrong number of arguments to") && msg.contains("sha256Initialize(data)"),
         "unexpected error: {msg}"
     );
 }
@@ -153,7 +153,7 @@ contract GenericCall(pubkey owner) {
         .expect_err("unsupported calls cannot be represented as symbolic stack reads")
         .to_string();
     assert!(
-        error.contains("unknown private function 'foo'"),
+        error.contains("unknown function 'foo'"),
         "unexpected generic-call error: {error}"
     );
 }
@@ -394,7 +394,7 @@ contract Demo(bytes32 expected) {
     .expect_err("an undefined byte operand must be rejected")
     .to_string();
     assert!(
-        error.contains("function 'spend': binding 'missing' is undefined"),
+        error.contains("binding 'missing' is undefined"),
         "expected a validation diagnostic, got: {error}"
     );
 }
@@ -435,8 +435,8 @@ fn semantic_diagnostics_carry_source_positions() {
     .expect_err("non-boolean require must fail")
     .to_string();
     assert!(
-        error.contains("type error: line 3, column 9: "),
-        "type error must point at its statement: {error}"
+        error.contains("type error: line 3, column 17: "),
+        "type error must point at its condition: {error}"
     );
 }
 
@@ -445,11 +445,11 @@ fn builtin_calls_take_arity_and_reserved_names_from_the_registry() {
     for (body, expected) in [
         (
             "function spend(bytes a) { require(cat(a) == a); }",
-            "malformed reserved function call `cat(...)`; expected cat(a, b)",
+            "wrong number of arguments to `cat`: expected cat(a, b), got 1",
         ),
         (
             "function spend(bytes a) { require(size(a, a) == 1); }",
-            "malformed reserved function call `size(...)`; expected size(data)",
+            "wrong number of arguments to `size`: expected size(data), got 2",
         ),
         (
             "private function size(bytes a) int { return 1; } function spend() { require(true); }",
@@ -461,7 +461,7 @@ fn builtin_calls_take_arity_and_reserved_names_from_the_registry() {
         ),
         (
             "function spend(bytes a) { require(hash160(a, a) == substr(a, 0, 20)); }",
-            "malformed reserved function call `hash160(...)`; expected hash160(data)",
+            "wrong number of arguments to `hash160`: expected hash160(data), got 2",
         ),
     ] {
         let source = format!("contract C() {{ {body} }}");
@@ -479,6 +479,43 @@ fn builtin_calls_take_arity_and_reserved_names_from_the_registry() {
             && !error.contains("composite values"),
         "{error}"
     );
+}
+
+#[test]
+fn skipped_builtin_literal_operands_are_validated_in_both_modes() {
+    for (call, expected) in [
+        (
+            "checkMultisig([{notAKey: false}], [sig])",
+            "checkMultisig operand, element 0: expected 'bytes', got 'unknown'",
+        ),
+        (
+            "checkMultisig([key], [{notASig: false}])",
+            "checkMultisig operand, element 0: expected 'signature', got 'unknown'",
+        ),
+        (
+            "ecPairing([{x: true, y: 2}], [g2], 2)",
+            "ecPairing operand, element 0, field 'x': expected 'int', got 'bool'",
+        ),
+        (
+            "ecPairing([{x: 1}], [g2], 2)",
+            "ecPairing operand, element 0: missing field 'y'",
+        ),
+        (
+            "sha256({a: 1}) == 0x00",
+            "sha256 operand: expected 'bytes', got 'unknown'",
+        ),
+    ] {
+        let source = format!(
+            "contract C(pubkey key, G2Point g2) {{ function spend(signature sig) {{ require(true || {call}); }} }}"
+        );
+        for result in [
+            compile(&source),
+            crate::common::compile_unoptimized(&source),
+        ] {
+            let error = result.expect_err(call).to_string();
+            assert!(error.contains(expected), "{call}: {error}");
+        }
+    }
 }
 
 #[test]

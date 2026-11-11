@@ -1,0 +1,5 @@
+error[validation]: a tapscript require can check only signatures, hashes and timelocks, not a string
+  --> 8:13
+8 |     require("dupa");
+  |             ^^^^^^
+

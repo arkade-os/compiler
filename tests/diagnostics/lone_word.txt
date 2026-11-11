@@ -1,0 +1,5 @@
+error: `dasd` on its own is not a statement
+  --> 5:5
+5 |     dasd
+  |     ^^^^
+
