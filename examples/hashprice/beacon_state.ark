@@ -1,0 +1,79 @@
+pragma arkade ^0.1.0;
+
+// One versioned state packet per output: type 32 + vout. Always select an
+// input's record by its PREVOUT vout, never by its current vin.
+// ponytail: arkd enforces Taproot VTXOs; revisit for other spend contexts.
+library BeaconState {
+  function input(int vin) bytes {
+    let previous = tx.inputs[vin].outpoint;
+    require(previous.vout <= 223, "state output index");
+    int packetType = 32 + previous.vout;
+    return tx.inputs[vin].packet(packetType);
+  }
+
+  function output(int vout) bytes {
+    require(vout >= 0 && vout <= 223, "state output index");
+    int packetType = 32 + vout;
+    return tx.packet(packetType);
+  }
+
+  function identity(int vin) AssetId {
+    require(tx.inputs[vin].assets.length == 1, "one identity asset");
+    require(tx.inputs[vin].assets[0].amount == 1, "one identity unit");
+    return tx.inputs[vin].assets[0].assetId;
+  }
+
+  function checkState(bytes state, bytes tag, int length) {
+    require(size(state) == length, "state size");
+    require(substr(state, 0, 2) == tag, "state tag");
+    require(bin2num(substr(state, 2, 8)) >= 0, "state height");
+  }
+
+  function outputCoin(int vout, bytes32 program, AssetId id, bytes state) {
+    require(tx.outputs[vout].scriptPubKey == program, "observation script");
+    require(tx.outputs[vout].value >= 330, "observation value");
+    require(tx.outputs[vout].assets.length == 1, "one output asset");
+    require(tx.outputs[vout].assets.lookup(id.txid, id.gidx) == 1, "output identity");
+    require(BeaconState.output(vout) == state, "output state");
+  }
+
+  function issuer(int coinGidx, int inputs, int outputs) AssetId {
+    require(this.activeInputIndex == 0, "issuer input 0");
+    let control = BeaconState.identity(0);
+    require(coinGidx >= 0 && coinGidx <= 65535 && coinGidx != control.gidx, "coin group");
+    require(this.tunnel(0), "issuer preserved");
+    let group = tx.assetGroups.find(control.txid, coinGidx);
+    // Initialization binds this series to the beacon's fixed-supply control
+    // token. Arkd requires that token to be spent for every supply increase.
+    require(group.sumInputs == inputs, "coin inputs");
+    require(group.sumOutputs == outputs, "coin outputs");
+    return group.assetId;
+  }
+
+  function clone(int coinGidx, bytes32 coinScript, bytes tag, int length, bytes issuerTag, int issuerLength) {
+    // Exclude issuer, source, extension, and arkd's final anchor.
+    int copies = tx.numOutputs - 4;
+    require(copies >= 1 && copies <= 8, "clone count");
+    let id = BeaconState.issuer(coinGidx, 1, copies + 1);
+    bytes issuerState = BeaconState.input(0);
+    BeaconState.checkState(issuerState, issuerTag, issuerLength);
+    require(BeaconState.output(0) == issuerState, "issuer state preserved");
+    require(BeaconState.identity(1) == id, "source identity");
+    require(tx.inputs[1].scriptPubKey == coinScript, "source script");
+    bytes state = BeaconState.input(1);
+    BeaconState.checkState(state, tag, length);
+    BeaconState.outputCoin(1, coinScript, id, state);
+    require(tx.outputs[1].value == tx.inputs[1].value, "source value");
+    int out = 2;
+    for (8) {
+      if (out < copies + 2) {
+        BeaconState.outputCoin(out, coinScript, id, state);
+        require(tx.outputs[out].value == tx.inputs[1].value, "clone value");
+      }
+      out = out + 1;
+    }
+    int extension = copies + 2;
+    require(tx.outputs[extension].value == 0, "extension value");
+    require(tx.outputs[extension].assets.length == 0, "extension assets");
+  }
+}

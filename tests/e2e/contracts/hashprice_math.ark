@@ -1,0 +1,21 @@
+pragma arkade ^0.1.0;
+import "../../../examples/hashprice/bitcoin.ark";
+
+contract HashpriceMath() {
+  function confirmations(int oldTarget, int newTarget, int expected) {
+    require(Bitcoin.confirmations(oldTarget, newTarget) == expected);
+  }
+  function target(bytes bits, int expected) {
+    require(Bitcoin.target(bits) == expected);
+  }
+  function compact(int target, bytes bits) {
+    Bitcoin.compactMatches(target, bits);
+  }
+  function retarget(int oldTarget, int firstTime, int lastTime, bytes bits) {
+    Bitcoin.retarget(oldTarget, firstTime, lastTime, bits);
+  }
+  function reward(bytes transaction, int expected, bytes32 expectedTxid) {
+    require(Bitcoin.reward(transaction) == expected);
+    require(Bitcoin.doubleSha(transaction) == expectedTxid);
+  }
+}

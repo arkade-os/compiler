@@ -1,0 +1,88 @@
+pragma arkade ^0.1.0;
+import "beacon_state.ark";
+import "bitcoin.ark";
+
+// State 0x0101 || height:8 || hash:32 || nextNBits:4 || epochStartTimestamp:4.
+// Unused header slots are empty; unused Merkle siblings are all-zero bytes32.
+contract BlockHeaderBeacon(int coinGidx, bytes32 blockCoinScript) {
+  function mint(bytes[30] headers, bytes coinbase, int merkleDepth, bytes32[20] siblings) {
+    let id = BeaconState.issuer(coinGidx, 0, 1);
+    bytes state = BeaconState.input(0);
+    BeaconState.checkState(state, 0x0101, 50);
+    int height = bin2num(substr(state, 2, 8)) + 1;
+    require(height > 2016, "checkpoint height");
+    bytes previousHash = substr(state, 10, 32);
+    bytes oldBits = substr(state, 42, 4);
+    int oldTarget = Bitcoin.target(oldBits);
+    int epochStart = Bitcoin.uint(substr(state, 46, 4));
+    int epochPosition = height - (height / 2016) * 2016;
+    int boundary = 2016 - epochPosition;
+    int count = 6;
+    bytes nextEpochBits = oldBits;
+    int nextEpochTarget = oldTarget;
+
+    // Retarget at most once per proof, outside the unrolled header checks.
+    if (boundary < 6) {
+      int endIndex = boundary - 1;
+      bytes epochEnd = headers[endIndex];
+      bytes epochFirst = headers[boundary];
+      require(size(epochEnd) == 80 && size(epochFirst) == 80, "boundary headers");
+      nextEpochBits = substr(epochFirst, 72, 4);
+      nextEpochTarget = Bitcoin.target(nextEpochBits);
+      Bitcoin.retarget(oldTarget, epochStart, Bitcoin.uint(substr(epochEnd, 68, 4)), nextEpochBits);
+      if (boundary == 1) {
+        count = Bitcoin.confirmations(oldTarget, nextEpochTarget);
+      }
+    }
+
+    for (i, header) in headers {
+      if (i < count) {
+        require(size(header) == 80, "header size");
+        require(substr(header, 4, 32) == previousHash, "header link");
+        bytes bits = oldBits;
+        int target = oldTarget;
+        if (i >= boundary) {
+          bits = nextEpochBits;
+          target = nextEpochTarget;
+        }
+        require(substr(header, 72, 4) == bits, "header difficulty");
+        bytes digest = Bitcoin.doubleSha(header);
+        require(Bitcoin.uint(digest) <= target, "proof of work");
+        int blockHeight = height + i;
+        int version = Bitcoin.uint(substr(header, 0, 4));
+        if (version >= 2147483648) { version = version - 4294967296; }
+        if (blockHeight >= 227931) { require(version >= 2, "BIP34 version"); }
+        if (blockHeight >= 363725) { require(version >= 3, "BIP66 version"); }
+        if (blockHeight >= 388381) { require(version >= 4, "BIP65 version"); }
+        previousHash = digest;
+      } else {
+        require(header == "", "unused header");
+      }
+    }
+
+    int reward = Bitcoin.reward(coinbase);
+    bytes32 merkle = Bitcoin.doubleSha(coinbase);
+    require(merkleDepth >= 0 && merkleDepth <= 20, "merkle depth");
+    for (i, sibling) in siblings {
+      require(size(sibling) == 32, "sibling size");
+      if (i < merkleDepth) {
+        // Position zero is the left child at every level.
+        merkle = Bitcoin.doubleSha(merkle + sibling);
+      } else {
+        require(sibling == num2bin(0, 32), "unused sibling");
+      }
+    }
+    bytes first = headers[0];
+    require(merkle == substr(first, 36, 32), "coinbase inclusion");
+    bytes nextTimestamp = substr(state, 46, 4);
+    if (epochPosition == 0) { nextTimestamp = substr(first, 68, 4); }
+    bytes nextState = 0x0101 + num2bin(height, 8) + Bitcoin.doubleSha(first) + substr(headers[1], 72, 4) + nextTimestamp;
+    require(BeaconState.output(0) == nextState, "issuer state");
+    bytes observation = 0x0102 + num2bin(height, 8) + first + num2bin(reward, 9);
+    BeaconState.outputCoin(1, blockCoinScript, id, observation);
+  }
+
+  function clone() {
+    BeaconState.clone(coinGidx, blockCoinScript, 0x0102, 99, 0x0101, 50);
+  }
+}

@@ -1,0 +1,43 @@
+pragma arkade ^0.1.0;
+import "beacon_state.ark";
+import "bitcoin.ark";
+
+// State 0x0103 || lastMintedHeight:8 || accumulatorNumerator:64.
+// Control and observation assets originate in the same initialization tx;
+// group indices select the series without embedding that txid in scripts.
+contract HashPriceBeacon(int coinGidx, int sourceGidx, bytes32 blockCoinScript, bytes32 hashPriceCoinScript) {
+  function mint() {
+    let id = BeaconState.issuer(coinGidx, 0, 1);
+    require(sourceGidx != id.gidx, "distinct series");
+    bytes state = BeaconState.input(0);
+    BeaconState.checkState(state, 0x0103, 74);
+    int height = bin2num(substr(state, 2, 8)) + 1;
+    int accumulator = bin2num(substr(state, 10, 64));
+    require(accumulator >= 0, "nonnegative accumulator");
+
+    let source = BeaconState.identity(1);
+    require(source.txid == id.txid && source.gidx == sourceGidx, "source beacon");
+    require(tx.inputs[1].scriptPubKey == blockCoinScript, "source script");
+    bytes block = BeaconState.input(1);
+    BeaconState.checkState(block, 0x0102, 99);
+    require(bin2num(substr(block, 2, 8)) == height, "next height");
+    int reward = bin2num(substr(block, 90, 9));
+    require(reward >= 0, "nonnegative reward");
+    int target = Bitcoin.target(substr(block, 82, 4));
+    int numerator = reward * target;
+    int nextAccumulator = accumulator + numerator;
+
+    bytes next = 0x0103 + num2bin(height, 8) + num2bin(nextAccumulator, 64);
+    require(BeaconState.output(0) == next, "issuer state");
+    BeaconState.outputCoin(1, blockCoinScript, source, block);
+    require(tx.outputs[1].value == tx.inputs[1].value, "source value");
+    let sourceGroup = tx.assetGroups.find(source.txid, source.gidx);
+    require(sourceGroup.sumInputs == 1 && sourceGroup.sumOutputs == 1, "source supply");
+    bytes observation = 0x0104 + num2bin(height, 8) + num2bin(numerator, 64) + num2bin(nextAccumulator, 64);
+    BeaconState.outputCoin(2, hashPriceCoinScript, id, observation);
+  }
+
+  function clone() {
+    BeaconState.clone(coinGidx, hashPriceCoinScript, 0x0104, 138, 0x0103, 74);
+  }
+}
