@@ -26,13 +26,13 @@ Every settlement has the pool at input 0 and one standing order at input 1. Outp
 
 `refund` on an unfilled order is one input and pays `payScript` (`numOutputs == 3`). Each order has a CSV leaf for `ownerPk`, so the trader or LP can take that order back on L1 after `serverExitDelay`.
 
-The pool has no tapscript leaf. `swap`, `deposit`, and `withdraw` are covenants, and each one asks for the operator's signature. If the operator is unavailable, a funded order can still be recovered by its owner, and the pool reserves cannot move.
+The pool has no tapscript leaf. `swap`, `deposit`, and `withdraw` are emulated spending paths, and each one asks for the operator's signature. If the operator is unavailable, a funded order can still be recovered by its owner, and the pool reserves cannot move.
 
 The pool prices the step and keeps its own output. The order checks the same numbers and pins `payScript`. A swap spends no LP tokens. A deposit mints LP and ledger by the same amount, and both groups must be controlled by the pool's control unit. A withdrawal burns the LP tokens and the same amount of ledger.
 
 An empty pool (330 sats and the control unit) accepts the first deposit at the depositor's ratio, one share per sat of BTC. Burning the whole supply returns every sat and every quote unit and leaves that empty pool, which a later deposit can re-open. A partial exit leaves both reserves and the ledger in place, and pays only the side that rounds to at least one. A position that rounds to 0 on both sides stays until a burn that pays at least one unit.
 
-The covenant runs on spend. The funding transaction creates the first pool output; it is not checked by these scripts. Later deposits, swaps, and exits are.
+The emulated spending path runs on spend. The funding transaction creates the first pool output; it is not checked by these scripts. Later deposits, swaps, and exits are.
 
 This example puts one order in the transaction so the script is a single step. Several orders can share one transaction and one set of reserves. The pool walks those seats in order. Each standing order checks its own payout and `minOut`, and does not replay the other seats. Loops unroll, so the seat count is fixed in the source. The pool script grows by a few hundred bytes per seat and reaches the 10 KB script limit at about 30 swaps. The order scripts stay the same size.
 
