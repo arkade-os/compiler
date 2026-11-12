@@ -18,8 +18,6 @@ contract ConstantProductPool(
   bytes32 ctrlTxid, int ctrlGidx,
   int feeBps
 ) {
-  const int DUST = 330;
-
   private function samePool() {
     require(tx.outputs[0].script == tx.input.current.script, "pool");
   }
@@ -43,21 +41,21 @@ contract ConstantProductPool(
   function swap() {
     oneCounterparty();
     CpMath.fee(feeBps);
-    int base = tx.inputs[0].value - DUST;
+    int base = tx.inputs[0].value - CpMath.DUST;
     int quote = tx.inputs[0].assets.lookup(quoteTxid, quoteGidx);
     int supply = tx.inputs[0].assets.lookup(lpLedgTxid, lpLedgGidx);
     require(base > 0, "base");
     require(quote > 0, "quote");
     require(supply > 0, "supply");
-    require(tx.inputs[1].value >= DUST, "carrier");
-    int sellBase = tx.inputs[1].value - DUST;
+    require(tx.inputs[1].value >= CpMath.DUST, "carrier");
+    int sellBase = tx.inputs[1].value - CpMath.DUST;
     int sellQuote = CpMath.held(1, quoteTxid, quoteGidx);
     require(sellBase + sellQuote > 0, "amount");
     if (sellBase > 0) {
       require(sellQuote == 0, "one side");
       require(tx.inputs[1].assets.length == 0, "btc only");
       int paid = CpMath.bought(base, quote, sellBase, feeBps);
-      require(tx.outputs[1].value == DUST, "carrier");
+      require(tx.outputs[1].value == CpMath.DUST, "carrier");
       require(tx.outputs[1].assets.lookup(quoteTxid, quoteGidx) == paid, "quote out");
       require(tx.outputs[1].assets.length == 1, "quote only");
       base = base + sellBase;
@@ -67,12 +65,12 @@ contract ConstantProductPool(
       require(sellBase == 0, "one side");
       require(tx.inputs[1].assets.length == 1, "quote only");
       int got = CpMath.bought(quote, base, sellQuote, feeBps);
-      require(tx.outputs[1].value == DUST + got, "btc out");
+      require(tx.outputs[1].value == CpMath.DUST + got, "btc out");
       require(tx.outputs[1].assets.length == 0, "btc only");
       quote = quote + sellQuote;
       base = base - got;
     }
-    require(tx.outputs[0].value == DUST + base, "btc reserve");
+    require(tx.outputs[0].value == CpMath.DUST + base, "btc reserve");
     require(tx.outputs[0].assets.length == 3, "pool assets");
     keepCtrl();
     require(tx.outputs[0].assets.lookup(quoteTxid, quoteGidx) == quote, "quote");
@@ -89,11 +87,11 @@ contract ConstantProductPool(
   function deposit() {
     oneCounterparty();
     CpMath.fee(feeBps);
-    int base0 = tx.inputs[0].value - DUST;
+    int base0 = tx.inputs[0].value - CpMath.DUST;
     int quote0 = CpMath.held(0, quoteTxid, quoteGidx);
     int supply = CpMath.held(0, lpLedgTxid, lpLedgGidx);
-    require(tx.inputs[1].value > DUST, "btc in");
-    int dx = tx.inputs[1].value - DUST;
+    require(tx.inputs[1].value > CpMath.DUST, "btc in");
+    int dx = tx.inputs[1].value - CpMath.DUST;
     int dy = tx.inputs[1].assets.lookup(quoteTxid, quoteGidx);
     require(tx.inputs[1].assets.length == 1, "quote only");
     int share = 0;
@@ -105,10 +103,10 @@ contract ConstantProductPool(
     } else {
       share = CpMath.sharesFor(base0, quote0, supply, dx, dy);
     }
-    require(tx.outputs[1].value == DUST, "token carrier");
+    require(tx.outputs[1].value == CpMath.DUST, "token carrier");
     require(tx.outputs[1].assets.lookup(lpTxid, lpGidx) == share, "token");
     require(tx.outputs[1].assets.length == 1, "token only");
-    require(tx.outputs[0].value == DUST + base0 + dx, "btc reserve");
+    require(tx.outputs[0].value == CpMath.DUST + base0 + dx, "btc reserve");
     keepCtrl();
     require(tx.outputs[0].assets.lookup(quoteTxid, quoteGidx) == quote0 + dy, "quote");
     require(tx.outputs[0].assets.lookup(lpLedgTxid, lpLedgGidx) == supply + share, "ledger");
@@ -123,32 +121,28 @@ contract ConstantProductPool(
     require(tx.assetGroups.find(quoteTxid, quoteGidx).delta == 0, "quote supply");
   }
 
-  // LP at input 1 burns LP tokens for a pro-rata slice of both reserves.
-  // Burning the whole supply leaves the carrier and the control unit, which a
-  // later deposit can re-open.
+  // LP at input 1 burns LP tokens for a pro-rata slice. A side that rounds to 0
+  // is omitted. Burning the whole supply leaves the carrier and the control unit,
+  // which a later deposit can re-open.
   @allow(unsigned-spend-path, "the standing exit at input 1 is the LP, and this step keeps the pool on output 0")
   function withdraw() {
     oneCounterparty();
     CpMath.fee(feeBps);
-    int base0 = tx.inputs[0].value - DUST;
+    int base0 = tx.inputs[0].value - CpMath.DUST;
     int quote0 = tx.inputs[0].assets.lookup(quoteTxid, quoteGidx);
     int supply = tx.inputs[0].assets.lookup(lpLedgTxid, lpLedgGidx);
     require(base0 > 0, "base");
     require(quote0 > 0, "quote");
     require(supply > 0, "supply");
-    require(tx.inputs[1].value == DUST, "carrier");
+    require(tx.inputs[1].value == CpMath.DUST, "carrier");
     require(tx.inputs[1].assets.length == 1, "token only");
     int part = tx.inputs[1].assets.lookup(lpTxid, lpGidx);
     require(part > 0, "token");
     require(part <= supply, "supply");
     int partBase = (base0 * part) / supply;
     int partQuote = (quote0 * part) / supply;
-    require(partBase > 0, "base out");
-    require(partQuote > 0, "quote out");
-    require(tx.outputs[1].value == DUST + partBase, "btc out");
-    require(tx.outputs[1].assets.lookup(quoteTxid, quoteGidx) == partQuote, "quote out");
-    require(tx.outputs[1].assets.length == 1, "quote only");
-    require(tx.outputs[0].value == DUST + base0 - partBase, "btc reserve");
+    CpMath.payout(quoteTxid, quoteGidx, partBase, partQuote);
+    require(tx.outputs[0].value == CpMath.DUST + base0 - partBase, "btc reserve");
     keepCtrl();
     if (part == supply) {
       require(!tx.outputs[0].assets.has(quoteTxid, quoteGidx), "quote cleared");

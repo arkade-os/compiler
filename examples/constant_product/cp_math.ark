@@ -7,6 +7,8 @@ pragma arkade ^0.1.0;
 // only when the quote matches that same ratio.
 library CpMath {
   const int BPS = 10000;
+  // The carrier every output keeps. A pool's BTC reserve is its value minus this.
+  const int DUST = 330;
 
   function fee(int feeBps) {
     require(feeBps >= 0, "fee");
@@ -37,9 +39,33 @@ library CpMath {
     require(quote0 > 0, "quote");
     require(supply > 0, "supply");
     require(dx > 0, "base in");
+    require(dy > 0, "quote in");
     require(dy == (dx * quote0) / base0, "price");
     int share = (supply * dx) / base0;
     require(share > 0, "share");
+    // Reject a mint that could not withdraw one unit of each reserve afterwards.
+    require(((base0 + dx) * share) / (supply + share) > 0, "base out");
+    require(((quote0 + dy) * share) / (supply + share) > 0, "quote out");
     return share;
+  }
+
+  // Pay floor(reserve * burned / supply) on output 1. A side that rounds to 0
+  // is omitted. At least one side must pay. Burning the whole supply is exact,
+  // so both sides pay.
+  function payout(bytes32 quoteTxid, int quoteGidx, int baseOut, int quoteOut) {
+    require(baseOut > 0 || quoteOut > 0, "dust");
+    if (quoteOut > 0) {
+      require(tx.outputs[1].assets.lookup(quoteTxid, quoteGidx) == quoteOut, "quote out");
+      require(tx.outputs[1].assets.length == 1, "quote only");
+    } else {
+      require(quoteOut == 0, "quote");
+      require(tx.outputs[1].assets.length == 0, "btc only");
+    }
+    if (baseOut > 0) {
+      require(tx.outputs[1].value == DUST + baseOut, "btc out");
+    } else {
+      require(baseOut == 0, "base");
+      require(tx.outputs[1].value == DUST, "carrier");
+    }
   }
 }

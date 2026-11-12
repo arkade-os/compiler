@@ -13,7 +13,7 @@
 //! These tests catch regressions where the compiler silently emits structurally
 //! broken output without failing.
 
-use arkade_compiler::compile_file;
+use arkade_compiler::{analyze_file, compile_file};
 use std::fs;
 use std::path::PathBuf;
 
@@ -323,13 +323,13 @@ fn collect_ark_files(dir: &PathBuf) -> Vec<PathBuf> {
     paths
 }
 
-/// A `library` file is imported by contracts. It is not a compile entry.
+/// A library is imported by contracts. It is not a compile entry.
+/// The parser's flag covers a library with a leading attribute, and it ignores
+/// the word `library` inside a comment.
 fn is_library(path: &std::path::Path) -> bool {
-    fs::read_to_string(path).is_ok_and(|source| {
-        source
-            .lines()
-            .any(|line| line.trim_start().starts_with("library "))
-    })
+    analyze_file(path)
+        .contract()
+        .is_some_and(|contract| contract.is_library)
 }
 
 /// Compile every contract in examples/ (recursively) and assert invariants.
