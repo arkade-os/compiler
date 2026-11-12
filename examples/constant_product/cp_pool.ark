@@ -10,13 +10,20 @@ import "./cp_math.ark";
 // not grow with the queue: each spend checks one curve step, one deposit, or
 // one exit. The LP fee stays in the reserves. Output 1's script is pinned by
 // the standing order, not by this contract.
+// The operator refuses a mint unless the transaction spends the control unit,
+// and this output keeps it.
+// The operator refuses a batch registration for a coin with no CSV path, so
+// the pool keeps unilateral. noExitKey is a public key nobody can sign
+// for, such as the BIP341 NUMS point 50929b74c1a04954b78b4b6035e97a5e078a5a0f28ec96d547bfee9ace803ac0,
+// so nobody can spend that path.
 @expect(output-script-unchecked, "output 1 is the standing order's payout, and that order pins its script")
 contract ConstantProductPool(
   bytes32 quoteTxid, int quoteGidx,
   bytes32 lpTxid, int lpGidx,
   bytes32 lpLedgTxid, int lpLedgGidx,
   bytes32 ctrlTxid, int ctrlGidx,
-  int feeBps
+  int feeBps,
+  pubkey noExitKey
 ) {
   private function samePool() {
     require(tx.outputs[0].script == tx.input.current.script, "pool");
@@ -112,11 +119,9 @@ contract ConstantProductPool(
     require(tx.outputs[0].assets.lookup(lpLedgTxid, lpLedgGidx) == supply + share, "ledger");
     require(tx.outputs[0].assets.length == 3, "pool assets");
     let lpGroup = tx.assetGroups.find(lpTxid, lpGidx);
-    require(lpGroup.controlIs(ctrlTxid, ctrlGidx), "lp control");
     require(lpGroup.delta == share, "issued");
     require(lpGroup.sumInputs == 0, "lp in");
     let ledgGroup = tx.assetGroups.find(lpLedgTxid, lpLedgGidx);
-    require(ledgGroup.controlIs(ctrlTxid, ctrlGidx), "ledger control");
     require(ledgGroup.delta == share, "ledger");
     require(tx.assetGroups.find(quoteTxid, quoteGidx).delta == 0, "quote supply");
   }
@@ -154,12 +159,15 @@ contract ConstantProductPool(
       require(tx.outputs[0].assets.length == 3, "pool assets");
     }
     let lpGroup = tx.assetGroups.find(lpTxid, lpGidx);
-    require(lpGroup.controlIs(ctrlTxid, ctrlGidx), "lp control");
     require(lpGroup.sumInputs == part, "token in");
     require(lpGroup.sumOutputs == 0, "burned");
     let ledgGroup = tx.assetGroups.find(lpLedgTxid, lpLedgGidx);
-    require(ledgGroup.controlIs(ctrlTxid, ctrlGidx), "ledger control");
     require(ledgGroup.delta + part == 0, "ledger");
     require(tx.assetGroups.find(quoteTxid, quoteGidx).delta == 0, "quote supply");
+  }
+
+  function unilateral(signature noExitSig) tapscript {
+    require(older(serverExitDelay));
+    require(checkSig(noExitSig, noExitKey));
   }
 }
