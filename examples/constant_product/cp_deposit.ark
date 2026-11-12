@@ -15,8 +15,6 @@ contract ConstantProductDeposit(
   int feeBps,
   pubkey ownerPk
 ) {
-  const int DUST = 330;
-
   private function isPool(ScriptPubKey script) {
     require(script == new ConstantProductPool(quoteTxid, quoteGidx, lpTxid, lpGidx, lpLedgTxid, lpLedgGidx, ctrlTxid, ctrlGidx, feeBps), "pool");
   }
@@ -27,11 +25,11 @@ contract ConstantProductDeposit(
     require(tx.numOutputs == 4, "outputs");
     require(this.activeInputIndex == 1, "order input");
     isPool(tx.inputs[0].script);
-    int base0 = tx.inputs[0].value - DUST;
+    int base0 = tx.inputs[0].value - CpMath.DUST;
     int quote0 = CpMath.held(0, quoteTxid, quoteGidx);
     int supply = CpMath.held(0, lpLedgTxid, lpLedgGidx);
-    require(tx.inputs[1].value > DUST, "btc in");
-    int dx = tx.inputs[1].value - DUST;
+    require(tx.inputs[1].value > CpMath.DUST, "btc in");
+    int dx = tx.inputs[1].value - CpMath.DUST;
     int dy = tx.inputs[1].assets.lookup(quoteTxid, quoteGidx);
     require(tx.inputs[1].assets.length == 1, "quote only");
     int share = 0;
@@ -44,7 +42,7 @@ contract ConstantProductDeposit(
       share = CpMath.sharesFor(base0, quote0, supply, dx, dy);
     }
     require(tx.outputs[1].script == payScript, "receiver");
-    require(tx.outputs[1].value == DUST, "token carrier");
+    require(tx.outputs[1].value == CpMath.DUST, "token carrier");
     require(tx.outputs[1].assets.lookup(lpTxid, lpGidx) == share, "token");
     require(tx.outputs[1].assets.length == 1, "token only");
   }
@@ -54,7 +52,7 @@ contract ConstantProductDeposit(
     require(tx.numInputs == 1, "one input");
     require(this.activeInputIndex == 0, "order input");
     require(tx.numOutputs == 3, "outputs");
-    require(tx.inputs[0].value > DUST, "btc in");
+    require(tx.inputs[0].value > CpMath.DUST, "btc in");
     int quote = tx.inputs[0].assets.lookup(quoteTxid, quoteGidx);
     require(tx.inputs[0].assets.length == 1, "quote only");
     require(tx.outputs[0].script == payScript, "receiver");
