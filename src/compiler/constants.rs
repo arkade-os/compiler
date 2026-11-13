@@ -283,10 +283,7 @@ pub(crate) fn evaluate(
                         "operator '{op}' requires constants of the same type"
                     ));
                 }
-                // Hex literals carry whole byte pairs in either case.
-                return Ok(
-                    (left.eq_ignore_ascii_case(&right) == (*op == BinaryOperator::Eq)).to_string(),
-                );
+                return Ok(((left == right) == (*op == BinaryOperator::Eq)).to_string());
             }
             let (left, right) = (integer(&left)?, integer(&right)?);
             let value = match op {

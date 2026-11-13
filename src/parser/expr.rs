@@ -110,7 +110,7 @@ pub(crate) fn parse_named_operand(pair: Pair<Rule>) -> Result<String, String> {
         }
         Ok(hex)
     } else {
-        Ok(text.to_string())
+        Ok(text.to_ascii_lowercase())
     }
 }
 
