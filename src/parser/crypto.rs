@@ -17,7 +17,9 @@ pub(crate) fn parse_cast(pair: Pair<Rule>) -> Result<Expression, String> {
     let data_pair = inner.next().ok_or("Missing data in cast")?;
     let text = data_pair.as_str().trim();
     let data = parse_general_expression(data_pair)?;
-    if target == "int" && matches!(&data.kind, ExprKind::Literal(lit) if lit == text) {
+    if target == "int"
+        && matches!(&data.kind, ExprKind::Literal(lit) if lit.eq_ignore_ascii_case(text))
+    {
         if let Some(hex) = text.strip_prefix("0x") {
             return Ok(Expression::new(
                 ExprKind::Literal(hex_to_decimal(hex)),

@@ -1147,7 +1147,7 @@ contract C(pubkey k, int unused) {
         .unwrap();
         let statements = &contract.functions[0].statements;
         assert!(
-            matches!(&statements[0].statement, Statement::LetBinding { value: Expression { kind: ExprKind::Literal(value), .. }, .. } if value == "0xDEADbeef")
+            matches!(&statements[0].statement, Statement::LetBinding { value: Expression { kind: ExprKind::Literal(value), .. }, .. } if value == "0xdeadbeef")
         );
         assert!(
             matches!(&statements[1].statement, Statement::LetBinding { value: Expression { kind: ExprKind::Literal(value), .. }, .. } if value == "0xc5be0a")
