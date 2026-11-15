@@ -396,7 +396,7 @@ contract HexCasts(pubkey owner) {
     const int MAX = int(0x7fffffffffffffff);
     function spend(signature sig, int n, bool flag) {
         require(n <= MAX && n >= int(0x0100) && n != int(0x00));
-        require(n * 2 < int(0xffffffffffffffffff));
+        require(n * 2 < int(0xFFffffffffffffffff));
         require(int(flag) == 1);
         require(bool(n) == flag);
         require(checkSig(sig, owner));

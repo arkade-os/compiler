@@ -88,7 +88,7 @@ fn bytes_literals_encode_exact_bytes() {
             "0x2f2f203c696e6a65637465643e204f505f44524f50",
         ),
         ("0xdeadbeef", "0xdeadbeef"),
-        ("0xDEADBEEF", "0xDEADBEEF"),
+        ("0xDEADbeef", "0xdeadbeef"),
         ("0x000180", "0x000180"),
     ] {
         let out = compile(&format!(
