@@ -32,8 +32,8 @@ fn constant_operands_outside_the_vm_domain_do_not_compile() {
             "modExp exponent must be at least 0, got -1",
         ),
         (
-            "require(size(num2bin(n, 521)) == 521);",
-            "num2bin size must be 0 to 520, got 521",
+            "require(size(int2bin(n, 521)) == 521);",
+            "int2bin size must be 0 to 520, got 521",
         ),
         (
             "require(checkSigFromStack(s, h, sha160x));",
@@ -111,8 +111,8 @@ fn constant_expression_operands_are_checked_in_both_modes() {
                 "tx.packet packet type must be 0 to 255, got 256",
             ),
             (
-                "require(size(num2bin(n, 520 + 1)) > 0);",
-                "num2bin size must be 0 to 520, got 521",
+                "require(size(int2bin(n, 520 + 1)) > 0);",
+                "int2bin size must be 0 to 520, got 521",
             ),
             (
                 "require(checkTime(0 - 1));",
@@ -134,7 +134,7 @@ fn constant_expression_operands_are_checked_in_both_modes() {
         for body in [
             "require(size(digest(d, 2 + 3)) > 0);",
             "require(size(digest(d, n)) > 0);",
-            "require(size(num2bin(n, 500 + 20)) > 0);",
+            "require(size(int2bin(n, 500 + 20)) > 0);",
         ] {
             let source = format!("contract C() {{ function f(bytes d, int n) {{ {body} require(size(d) + n > 0); }} }}");
             compile(&source).unwrap_or_else(|error| panic!("{body}: {error}"));

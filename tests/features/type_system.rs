@@ -494,7 +494,7 @@ contract BytesCasts(pubkey owner) {
         );
     }
     let error = compile_error(
-        "contract C() { function spend() { require(true); } private function bytes(int n) bytes { return num2bin(n, 1); } }",
+        "contract C() { function spend() { require(true); } private function bytes(int n) bytes { return int2bin(n, 1); } }",
     );
     assert!(
         error.contains("function name 'bytes' is reserved"),
@@ -656,12 +656,12 @@ fn builtin_operands_are_type_checked() {
             "cat operand has type 'int', expected 'bytes'",
         ),
         (
-            "bin2num(i) == 1",
-            "bin2num operand has type 'int', expected 'bytes'",
+            "bin2int(i) == 1",
+            "bin2int operand has type 'int', expected 'bytes'",
         ),
         (
-            "num2bin(d, 4) == d",
-            "num2bin operand has type 'bytes', expected 'int'",
+            "int2bin(d, 4) == d",
+            "int2bin operand has type 'bytes', expected 'int'",
         ),
         (
             "reverseBytes(i) == d",
@@ -702,7 +702,7 @@ fn builtin_operands_are_type_checked() {
         let error = compile_error(&source(expression));
         assert!(error.contains(expected), "{expression}: {error}");
     }
-    compile_ok("contract T(pubkey k) { function f(signature s, int i, bytes d, bytes32 m) { require(substr(tx.packet(16), i, 4) == d && cat(d, m) == d && bin2num(d) == i && num2bin(i, 4) == d && reverseBytes(k) == d && size(m) == 32 && sighash(0) == m && digest(d, 1) == d && tx.inputs[i].value > 0); require(checkSigFromStack(s, k, m)); require(checkSig(s, k)); } }");
+    compile_ok("contract T(pubkey k) { function f(signature s, int i, bytes d, bytes32 m) { require(substr(tx.packet(16), i, 4) == d && cat(d, m) == d && bin2int(d) == i && int2bin(i, 4) == d && reverseBytes(k) == d && size(m) == 32 && sighash(0) == m && digest(d, 1) == d && tx.inputs[i].value > 0); require(checkSigFromStack(s, k, m)); require(checkSig(s, k)); } }");
 }
 
 #[test]

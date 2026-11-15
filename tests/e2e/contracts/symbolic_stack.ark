@@ -17,8 +17,8 @@ contract SymbolicStackStress(
     bytes32 attestation
   ) {
     let seed = ((left + right) * multiplier) + (carry - bias);
-    let encoded = num2bin(seed, 8);
-    let decoded = bin2num(encoded);
+    let encoded = int2bin(seed, 8);
+    let decoded = bin2int(encoded);
     let total = (decoded + (left * right)) - carry;
     let checkpoint = total;
 

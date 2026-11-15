@@ -912,7 +912,7 @@ fn unary_negation_precedence_and_spend_shape() {
         ("!!false", "OP_0 OP_NOT OP_NOT"),
         ("!(1 < 2)", "1 2 OP_LESSTHAN OP_NOT"),
         ("!true != false", "OP_1 OP_NOT OP_0 OP_NUMNOTEQUAL"),
-        ("num2bin(-1, 4)", "1 OP_NEGATE 4 OP_NUM2BIN"),
+        ("int2bin(-1, 4)", "1 OP_NEGATE 4 OP_NUM2BIN"),
         ("modExp(-2, 3, 5)", "2 OP_NEGATE 3 5 OP_MODEXP"),
     ] {
         let source = format!(
@@ -951,7 +951,7 @@ fn unary_negation_in_loops_and_conditions() {
             function spend(bool[2] flags) {
                 for (i, flag) in flags {
                     if (!flag) { require(!!flag == false); }
-                    let encoded = num2bin(-(i + 1), 4);
+                    let encoded = int2bin(-(i + 1), 4);
                     require(size(encoded) == 4);
                 }
             }
@@ -985,8 +985,8 @@ fn unary_negation_rejects_invalid_operand_types() {
         ("bytes value", "-value", "expected 'int'"),
         ("int value", "!value", "expected 'bool'"),
         ("bytes value", "!value", "expected 'bool'"),
-        ("bool value", "num2bin(-value, 4)", "expected 'int'"),
-        ("int value", "num2bin(-(value == 1), 4)", "expected 'int'"),
+        ("bool value", "int2bin(-value, 4)", "expected 'int'"),
+        ("int value", "int2bin(-(value == 1), 4)", "expected 'int'"),
         ("bool value", "modExp(-value, 2, 3)", "expected 'int'"),
         ("bool value", "!-value", "expected 'int'"),
         ("int value", "-!value", "expected 'bool'"),
@@ -1043,11 +1043,11 @@ fn unary_negation_remains_unsupported_in_l1_tapscripts() {
 fn unary_negation_in_builtin_atom_arguments() {
     for (statement, expected) in [
         (
-            "let result = num2bin(-(-1), 4);",
+            "let result = int2bin(-(-1), 4);",
             "1 OP_NEGATE OP_NEGATE 4 OP_NUM2BIN",
         ),
         (
-            "let result = num2bin(-value, 4);",
+            "let result = int2bin(-value, 4);",
             "OP_0 OP_ROLL OP_NEGATE 4 OP_NUM2BIN",
         ),
         (
@@ -1079,7 +1079,7 @@ fn unary_negation_in_builtin_atom_arguments() {
             "1 OP_ADD OP_NEGATE 2 3 OP_MUL OP_SUBSTR",
         ),
         (
-            "let result = num2bin(-(value + 1), (2 + 2));",
+            "let result = int2bin(-(value + 1), (2 + 2));",
             "1 OP_ADD OP_NEGATE 2 2 OP_ADD OP_NUM2BIN",
         ),
         (
@@ -1201,7 +1201,7 @@ fn builtin_arguments_are_general_expressions() {
             &["OP_SHA256", "OP_CAT"][..],
         ),
         (
-            "require(bin2num(reverseBytes(substr(a, 0, 4))) == 7);",
+            "require(bin2int(reverseBytes(substr(a, 0, 4))) == 7);",
             &["OP_SUBSTR", "OP_REVERSEBYTES", "OP_BIN2NUM"],
         ),
         (

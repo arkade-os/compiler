@@ -1,7 +1,7 @@
 // Tests for new introspector primitives:
 //   - tx.packet(packetType)         → OP_INSPECTPACKET
 //   - tx.inputs[i].packet(...)      → OP_INSPECTINPUTPACKET
-//   - substr / cat / bin2num / num2bin / size
+//   - substr / cat / bin2int / int2bin / size
 //   - tx.inputs[i].arkadeScriptHash → OP_INSPECTINPUTARKADESCRIPTHASH
 //   - tx.id                         → OP_TXID
 //
@@ -13,7 +13,7 @@
 
 use arkade_compiler::compile;
 use arkade_compiler::opcodes::{
-    OP_BIN2NUM, OP_CAT, OP_EQUALVERIFY, OP_INSPECTINPUTARKADESCRIPTHASH,
+    OP_0, OP_1, OP_BIN2NUM, OP_CAT, OP_EQUALVERIFY, OP_INSPECTINPUTARKADESCRIPTHASH,
     OP_INSPECTINPUTARKADEWITNESSHASH, OP_INSPECTINPUTPACKET, OP_INSPECTINPUTSCRIPTPUBKEY,
     OP_INSPECTPACKET, OP_NIP, OP_NUM2BIN, OP_NUMEQUAL, OP_PUSHCURRENTINPUTINDEX, OP_REVERSEBYTES,
     OP_SHA256, OP_SIZE, OP_SUBSTR, OP_SWAP, OP_TXID,
@@ -167,12 +167,12 @@ contract CatDemo(int exit) {{
 }
 
 #[test]
-fn test_bin2num_emits_op_bin2num() {
+fn test_bin2int_emits_op_bin2num() {
     let src = format!(
         r#"{PROLOGUE}
 contract Bin2NumDemo(int exit) {{
   function probe(bytes data) {{
-    require(bin2num(data) > 0);
+    require(bin2int(data) > 0);
   }}
 }}"#
     );
@@ -185,12 +185,46 @@ contract Bin2NumDemo(int exit) {{
 }
 
 #[test]
-fn test_num2bin_emits_op_num2bin() {
+fn test_bin2uint_appends_a_zero_byte_before_op_bin2num() {
+    let src = r#"
+contract Bin2UintDemo(int exit) {
+  function probe(bytes data) {
+    require(bin2uint(data) > 0);
+  }
+}"#;
+
+    let asm = compile_first_function_asm(src);
+    let lowering = [OP_0, OP_1, OP_NUM2BIN, OP_CAT, OP_BIN2NUM];
+    assert!(
+        asm.windows(lowering.len()).any(|window| window == lowering),
+        "expected {lowering:?}; got {asm:?}"
+    );
+}
+
+#[test]
+fn test_old_conversion_names_point_to_the_new_ones() {
+    for (call, renamed) in [
+        ("bin2num(data) > 0", "bin2int"),
+        ("num2bin(1, 1) == data", "int2bin"),
+    ] {
+        let src = format!(
+            "contract Renamed(int exit) {{\n  function probe(bytes data) {{\n    require({call});\n  }}\n}}"
+        );
+        let error = compile(&src).unwrap_err().to_string();
+        assert!(
+            error.contains(&format!("was renamed to `{renamed}`")),
+            "{error}"
+        );
+    }
+}
+
+#[test]
+fn test_int2bin_emits_op_num2bin() {
     let src = format!(
         r#"{PROLOGUE}
 contract Num2BinDemo(int exit) {{
   function probe(int value, int size) {{
-    require(num2bin(value, size) == 0x00);
+    require(int2bin(value, size) == 0x00);
   }}
 }}"#
     );

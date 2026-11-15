@@ -20,5 +20,5 @@ library CounterRules {
     );
   }
 
-  private function read(bytes packet) int { return bin2num(packet); }
+  private function read(bytes packet) int { return bin2int(packet); }
 }

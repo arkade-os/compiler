@@ -22,7 +22,7 @@ func TestConstantFolding(t *testing.T) {
             for (i, unused) in rounds {
                 require(i + 1 < 4);
                 total = total + points[i + 1].x;
-                require(num2bin(i + 1, 1) == encoded[i]);
+                require(int2bin(i + 1, 1) == encoded[i]);
                 if (i == 0) { require(points[i + 1].y == 7); }
                 else { require(points[i + 1].y == 9); }
             }
@@ -39,24 +39,32 @@ func TestConstantFolding(t *testing.T) {
 		{"division failure after unrolling", "int[1] rounds, int expected", `
             for (i, unused) in rounds { require(1 / (i - i) == expected); }`, "",
 			map[string][]byte{"rounds.0": nil, "expected": nil}, "division by zero"},
-		{"encoding fit failure", "bytes expected", "require(num2bin(128, 1) == expected);", "",
+		{"encoding fit failure", "bytes expected", "require(int2bin(128, 1) == expected);", "",
 			map[string][]byte{"expected": {0x80}}, "number needs 2 bytes"},
-		{"narrowing cast failure", "bytes expected", "require(bytes32(num2bin(1, 1)) == expected);", "",
+		{"narrowing cast failure", "bytes expected", "require(bytes32(int2bin(1, 1)) == expected);", "",
 			map[string][]byte{"expected": {1}}, "OP_EQUALVERIFY failed"},
-		{"negative padding", "bytes expected", "require(num2bin(-(2 + 1), 2) == expected);", "",
+		{"negative padding", "bytes expected", "require(int2bin(-(2 + 1), 2) == expected);", "",
 			map[string][]byte{"expected": {3, 0x80}}, ""},
-		{"wrong negative padding", "bytes expected", "require(num2bin(-(2 + 1), 2) == expected);", "",
+		{"wrong negative padding", "bytes expected", "require(int2bin(-(2 + 1), 2) == expected);", "",
 			map[string][]byte{"expected": {0x83, 0}}, "false stack entry"},
-		{"one byte zero", "bytes expected", "require(num2bin(0, 1) == expected);", "",
+		{"one byte zero", "bytes expected", "require(int2bin(0, 1) == expected);", "",
 			map[string][]byte{"expected": {0}}, ""},
-		{"one byte zero is not empty", "bytes expected", "require(num2bin(0, 1) == expected);", "",
+		{"one byte zero is not empty", "bytes expected", "require(int2bin(0, 1) == expected);", "",
 			map[string][]byte{"expected": nil}, "false stack entry"},
-		{"empty encoding", "bytes expected", "require(num2bin(0, 0) == expected);", "",
+		{"empty encoding", "bytes expected", "require(int2bin(0, 0) == expected);", "",
 			map[string][]byte{"expected": nil}, ""},
-		{"i128 minimum", "bytes expected", "require(num2bin(-170141183460469231731687303715884105728, 17) == expected);", "",
+		{"i128 minimum", "bytes expected", "require(int2bin(-170141183460469231731687303715884105728, 17) == expected);", "",
 			map[string][]byte{"expected": append(make([]byte, 15), 0x80, 0x80)}, ""},
-		{"maximum encoding width", "bytes expected", "require(num2bin(-1, 520) == expected);", "",
+		{"maximum encoding width", "bytes expected", "require(int2bin(-1, 520) == expected);", "",
 			map[string][]byte{"expected": append(append([]byte{1}, bytes.Repeat([]byte{0}, 518)...), 0x80)}, ""},
+		{"signed decoding of negative zero", "bytes data, int expected", "require(bin2int(data) == expected);", "",
+			map[string][]byte{"data": {0x80}, "expected": nil}, ""},
+		{"unsigned decoding of the sign bit", "bytes data, int expected", "require(bin2uint(data) == expected);", "",
+			map[string][]byte{"data": {0x80}, "expected": scriptInt(t, 128)}, ""},
+		{"unsigned decoding of four bytes", "bytes data, int expected", "require(bin2uint(data) == expected);", "",
+			map[string][]byte{"data": {1, 0, 0, 0x80}, "expected": scriptInt(t, 0x80000001)}, ""},
+		{"unsigned decoding of empty bytes", "bytes data, int expected", "require(bin2uint(data) == expected);", "",
+			map[string][]byte{"data": nil, "expected": nil}, ""},
 		{"executed helper after true and", "int input", "require(true && verify(input));",
 			"private function verify(int n) bool { require(n > 0); return true; }",
 			map[string][]byte{"input": nil}, "OP_VERIFY failed"},

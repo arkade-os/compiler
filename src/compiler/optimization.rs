@@ -129,7 +129,7 @@ fn fold_expression(expression: &mut Expression, scope: &Scope) -> Result<(), Str
                 Some(ArkType::Array(_, length)) => Some(length.to_string()),
                 _ => None,
             }),
-        ExprKind::Builtin { builtin, args } if builtin.name == "num2bin" => match args.as_slice() {
+        ExprKind::Builtin { builtin, args } if builtin.name == "int2bin" => match args.as_slice() {
             [Expression {
                 kind: ExprKind::Literal(value),
                 ..

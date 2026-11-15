@@ -8,7 +8,7 @@ Settlement price is three median prints, combined on the stack:
 ST = (mOpen * 900 + mMid * 900 + mClose * 60) / 1860
 ```
 
-Each print is the median of three distinct oracle signatures over `sha256("BTCUSD" || num2bin(price, 8) || num2bin(time, 8))`. Slice windows, in unix seconds from expiry: open `[T-1800, T-1740]`, mid `[T-960, T-900]`, close `[T, T+60]`. The weights are those bucket lengths.
+Each print is the median of three distinct oracle signatures over `sha256("BTCUSD" || int2bin(price, 8) || int2bin(time, 8))`. Slice windows, in unix seconds from expiry: open `[T-1800, T-1740]`, mid `[T-960, T-900]`, close `[T, T+60]`. The weights are those bucket lengths.
 
 A covered call pays the holder `Q * (ST - K) / ST` when `ST > K`, and 0 otherwise. A limited put pays `min(Q, Q * (K - ST) / ST)` when `ST < K`. Prices are USD cents. `Q` and payoffs are sats. A leg of 330 sats or less is folded into the other output.
 

@@ -72,8 +72,16 @@ pub(crate) fn reject_reserved_function_call(pair: &Pair<Rule>) -> Result<(), Str
 
     if matches!(name.as_str(), "neg64" | "le64ToScriptNum" | "le32ToLe64") {
         return Err(format!(
-            "`{name}` was removed with fixed-width arithmetic; use BigNum arithmetic or bin2num/num2bin"
+            "`{name}` was removed with fixed-width arithmetic; use BigNum arithmetic or bin2int/int2bin"
         ));
+    }
+
+    if let Some(renamed) = match name.as_str() {
+        "bin2num" => Some("bin2int"),
+        "num2bin" => Some("int2bin"),
+        _ => None,
+    } {
+        return Err(format!("`{name}` was renamed to `{renamed}`"));
     }
 
     if let Some(signature) = reserved_function_signature(&name) {
