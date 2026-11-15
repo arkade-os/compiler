@@ -4,17 +4,6 @@ use arkade_compiler::opcodes::{
 };
 
 #[test]
-fn fuji_safe_rejects_the_old_constructor_layout() {
-    let source = include_str!("../../examples/fuji_safe/fuji_safe.ark")
-        .replace(",\n        treasuryBurnScript, borrowerBurnScript\n", "\n");
-    let error = compile(&source).unwrap_err().to_string();
-    assert!(
-        error.contains("constructor 'FujiSafe' expects 11 arguments, got 9"),
-        "{error}"
-    );
-}
-
-#[test]
 fn test_fuji_safe_contract() {
     let fuji_code = include_str!("../../examples/fuji_safe/fuji_safe.ark");
 
@@ -88,11 +77,7 @@ fn test_fuji_safe_contract() {
         ),
         (
             "renew",
-            concat!(
-                "<CONTRACT:FujiSafe(<assetCommitmentHash>,<borrowAmount>,<borrowerPk>,<treasuryPk>,",
-                "<expirationTimeout>,<priceLevel>,<setupTimestamp>,<oraclePk>,<assetPair>,",
-                "<treasuryBurnScript.program>,<treasuryBurnScript.version>,<borrowerBurnScript.program>,<borrowerBurnScript.version>)> OP_1 OP_SWAP"
-            ),
+            "OP_PUSHCURRENTINPUTINDEX OP_INSPECTINPUTSCRIPTPUBKEY OP_SWAP",
             "OP_SWAP",
             &[("treasurySig", "signature")][..],
         ),

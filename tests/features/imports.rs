@@ -466,7 +466,7 @@ fn constructors_require_visible_contracts_and_matching_signatures() {
         ("Other()", false),
         ("Other(1)", false),
         ("Missing(owner)", false),
-        ("Main(owner)", true),
+        ("Main(owner)", false),
     ] {
         let source = format!(
             r#"import "other.ark"; contract Main(pubkey owner) {{ function spend() {{ require(tx.outputs[0].script == new {call}); }} }}"#
@@ -483,6 +483,23 @@ fn constructors_require_visible_contracts_and_matching_signatures() {
         );
         assert_eq!(result.is_ok(), succeeds, "{call}: {result:?}");
     }
+}
+
+#[test]
+fn instantiated_contracts_must_compile_on_their_own() {
+    let error = project(
+        "main.ark",
+        &[
+            ("main.ark", r#"import "other.ark"; contract Main(pubkey owner) { function spend() { require(tx.outputs[0].script == new Other(owner)); } }"#),
+            ("other.ark", "contract Other(pubkey owner) {}"),
+        ],
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(
+        error.contains("contract 'Other' does not compile on its own"),
+        "{error}"
+    );
 }
 
 #[test]
@@ -616,7 +633,7 @@ fn qualified_constants_in_builtin_operands_and_transaction_indices_match_literal
             require(tx.outputs[Limits.INDEX].script == new Limits(Limits.VALUE));
         }
     }"#;
-    let helper = "contract Limits(int value) { const int INDEX = 0; const int VALUE = 7; const int WIDTH = 8; const int PACKET = 16; }";
+    let helper = "contract Limits(int value) { const int INDEX = 0; const int VALUE = 7; const int WIDTH = 8; const int PACKET = 16; function spend() { require(true); } }";
     let source = format!("import \"limits.ark\"; {body}");
     let output = project("main.ark", &[("main.ark", &source), ("limits.ark", helper)]).unwrap();
     let literal_source = source

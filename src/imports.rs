@@ -454,8 +454,52 @@ impl Loaded {
             })
             .collect();
         let source = bundle.files.get(&bundle.entry).cloned().unwrap_or_default();
-        compiler::emit(&root.contract, &root.leaves, bundle, warnings, options)
-            .map_err(|error| EmitError::Code(error, source))
+        compiler::emit(
+            &root.contract,
+            &root.leaves,
+            bundle,
+            warnings,
+            options,
+            &|name| self.code_hash(name, options),
+        )
+        .map_err(|error| EmitError::Code(error, source))
+    }
+
+    /// The `codeHash` of contract `name` compiled as the entry with `options`. Imports are
+    /// acyclic and a contract cannot instantiate itself, so the recursion ends.
+    // ponytail: a contract instantiated from several contracts is compiled once for each;
+    // memoize by name if deep instantiation graphs get slow.
+    fn code_hash(
+        &self,
+        name: &str,
+        options: crate::CompileOptions,
+    ) -> Result<String, CompileError> {
+        let (path, module) = self
+            .modules
+            .iter()
+            .find(|(_, module)| module.contract.name == name)
+            .ok_or_else(|| CompileError::internal(format!("contract '{name}' is not loaded")))?;
+        let bundle = SourceBundle {
+            entry: path.clone(),
+            files: BTreeMap::new(),
+        };
+        compiler::emit(
+            &module.contract,
+            &module.leaves,
+            bundle,
+            Vec::new(),
+            options,
+            &|child| self.code_hash(child, options),
+        )
+        .map(|json| json.code_hash.expect("emit sets codeHash"))
+        .map_err(|error| CompileError {
+            message: format!(
+                "contract '{name}' does not compile on its own: {}",
+                error.message
+            ),
+            span: None,
+            ..error
+        })
     }
 }
 
@@ -816,6 +860,11 @@ fn validate_scope(
                     })?;
                     if target.is_library {
                         return Err(format!("library '{contract_name}' cannot be instantiated"));
+                    }
+                    if contract_name == &contract.name {
+                        return Err(format!(
+                            "contract '{contract_name}' cannot instantiate itself, since its address would depend on itself; to keep funds in this contract, compare against the input's own script, e.g. `tx.outputs[0].script == tx.input.current.script`"
+                        ));
                     }
                     if args.len() != target.parameters.len() {
                         return Err(format!(

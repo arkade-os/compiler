@@ -99,7 +99,7 @@ contract Splitter(pubkey alicePk, pubkey bobPk) {
 }
 ```
 
-`new SingleSig(alicePk)` returns a `ScriptPubKey` with the child's 32-byte Taproot witness program and version `1`. The program uses the opaque placeholder `<CONTRACT:SingleSig(<alicePk>)>`, which the Arkade runtime resolves at instantiation. Whole-script equality checks both the program and version. Arguments are constructor parameters or literals, resolved when the contract is instantiated. A contract can instantiate itself without an import to enforce state continuation (see `examples/fuji_safe`).
+`new SingleSig(alicePk)` returns a `ScriptPubKey` with the child's 32-byte Taproot witness program and version `1`. The program uses the opaque placeholder `<CONTRACT:SingleSig(<alicePk>)>`, which the Arkade runtime resolves at instantiation. Whole-script equality checks both the program and version. Arguments are constructor parameters or literals, resolved when the contract is instantiated. The artifact pins the build of each instantiated contract in its `contracts` field. A contract cannot instantiate itself, directly or through other contracts, since its address would depend on itself; to keep funds in the same contract, compare against the input's own script with `tx.outputs[0].script == tx.input.current.script` (see `examples/fuji_safe`).
 
 ### Assets
 
@@ -183,7 +183,7 @@ Arrays are fixed-size and part of the type. Loops unroll at compile time, one co
 | `payment_auth` | Introspection-driven payout splits with `if`/`else` and `tx.input.current.value` |
 | `token_vault`, `controlled_mint`, `nft_mint` | Asset lookups, asset groups, control assets |
 | `struct_vault`, `threshold_oracle` | Structs, arrays, loops, oracle quorum |
-| `fuji_safe`, `stability`, `bonds` | Stateful contracts that recreate themselves with `new` |
+| `fuji_safe`, `stability`, `bonds` | Stateful contracts |
 | `option` | Cash-settled covered call and limited put with an on-stack oracle TWAP |
 | `layerzero` | Packet introspection, `substr`/`cat`/`bin2num`, cross-input binding via `arkadeScriptHash` |
 | `arkade_kitties` | NFT breeding with asset-group introspection |
@@ -319,7 +319,7 @@ Structs use their declared names; constants and exported helpers use `Name.membe
 
 Struct, contract, and library names must be unique across loaded files. The compiler loads each normalized path once and reports missing files, unknown members, namespace collisions, and circular imports as errors. Import chains have a maximum depth of 128 files, including the entry file.
 
-`new Contract(args...)` refers to the current contract or a directly imported contract. The compiler checks constructor argument counts and types and emits a contract placeholder for the runtime to resolve.
+`new Contract(args...)` refers to a directly imported contract, which must compile on its own. The compiler checks constructor argument counts and types and emits a contract placeholder for the runtime to resolve.
 
 ### Libraries
 
@@ -523,7 +523,7 @@ Lints report code that compiles but is likely unsafe or wrong. Each has an id, w
 |---|---|---|---|
 | `unsigned-spend-path` | security | warn | A covenant function with a spending path that checks no transaction signature (`checkSig`, `checkMultisig`). Such a path can still be sound, as a hash lock or a stateful covenant is, but its other conditions alone authorize the spend; introspection, a hash preimage and a `checkSigFromStack` message do not count as a signature. |
 | `output-script-unchecked` | security | warn | An unsigned function that checks the value of `tx.outputs[N]` but not its `scriptPubKey`, so the value can be paid to any script |
-| `output-value-unchecked` | security | warn | An unsigned function that checks the `scriptPubKey` of `tx.outputs[N]`, including `new Self(...)`, but not its value or assets |
+| `output-value-unchecked` | security | warn | An unsigned function that checks the `scriptPubKey` of `tx.outputs[N]`, including one kept as `tx.input.current.script`, but not its value or assets |
 | `oracle-message-unbound` | security | warn | A `checkSigFromStack` message that is a witness parameter used nowhere else, so one signed message authorizes any spend |
 | `signer-from-witness` | security | warn | A `checkSig`, `checkSigFromStack` or `checkMultisig` key, or a multisig threshold, that is a witness parameter used nowhere else, so the spender chooses who must sign |
 | `duplicate-multisig-key` | security | warn | A key listed twice in `checkMultisig`, so one signature counts for each |
@@ -585,6 +585,8 @@ The innermost attribute wins, and an attribute wins over the CLI, except that `-
     },
     { "name": "unilateral", "leaves": [ "..." ] }
   ],
+  "contracts": { "SingleSig": "sha256:..." },
+  "codeHash": "sha256:...",
   "source": { "entry": "htlc.ark", "files": { "htlc.ark": "..." } },
   "compiler": { "name": "arkadec", "version": "0.1.0", "options": { "optimize": true } },
   "fingerprint": "sha256:...",
@@ -600,11 +602,15 @@ The innermost attribute wins, and an attribute wins over the CLI, except that `-
 | `functions[]` | Spend groups: `{ name, arkade?, leaves[] }` |
 | `arkade` | `{ inputs, asm }`; absent for groups made only of standalone leaves |
 | `leaves[]` | `{ name, witness, asm }`; `witness` lists spend-time values in source order, `injected: true` marks infrastructure signatures |
+| `contracts` | The `codeHash` of each contract a `<CONTRACT:Name(...)>` placeholder names, keyed by name; absent when there is none |
+| `codeHash` | SHA-256 of compact artifact JSON with only the fields before it, `formatVersion` through `contracts`, which determine the scripts; `source`, `compiler`, `updatedAt` and `fingerprint` are left out |
 | `source` | `{ entry, files }`: original entry source and every recursively imported file, including comments |
 | `compiler.options` | Effective compilation settings; `optimize` enables constant folding, static branch removal, and assembly optimization for Arkade covenants |
 | `fingerprint` | SHA-256 of compact artifact JSON before `fingerprint` and `updatedAt` are added; includes source, ABI, compiler settings, and unresolved script templates |
 
 The fingerprint identifies artifact content, but does not authenticate its origin. Recompile the bundled source with a trusted compiler to verify an artifact received from elsewhere.
+
+A contract compiled on its own has the `codeHash` that an artifact instantiating it records in `contracts`, given the same compiler and options, so a client resolving `<CONTRACT:Name(...)>` from a separately supplied artifact can check that artifact's `codeHash` against `contracts.Name`. Edits that leave the scripts unchanged, such as to comments, keep the `codeHash`. An instantiated contract's own `contracts` are part of its `codeHash`, so the pin covers indirect instantiations too.
 
 Covenant spend groups come first in function declaration order, followed by standalone tapscript groups in tapscript declaration order, regardless of how the declarations are interleaved. Author-written leaves within a covenant group keep their declaration order; a synthesized emulator leaf, when needed, comes first. Clients use this order to build the Taproot tree. Reordering leaves can change the output key and address; retain the original artifact to spend existing outputs.
 

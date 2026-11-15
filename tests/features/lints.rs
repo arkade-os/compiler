@@ -37,19 +37,19 @@ fn covenant_lints_report_unauthorized_and_half_constrained_spends() {
             &[],
         ),
         (
-            "function f() { require(tx.numInputs == 1); require(tx.outputs[0].script == new C(owner, oracle, hash)); }",
+            "function f() { require(tx.numInputs == 1); require(tx.outputs[0].script == tx.input.current.script); }",
             &["output-value-unchecked", "unsigned-spend-path"],
         ),
         (
-            "function f() { require(this.activeInputIndex == 0); require(tx.outputs[0].script == new C(owner, oracle, hash)); require(tx.outputs[0].value >= tx.input.current.value); }",
+            "function f() { require(this.activeInputIndex == 0); require(tx.outputs[0].script == tx.input.current.script); require(tx.outputs[0].value >= tx.input.current.value); }",
             &["unsigned-spend-path"],
         ),
         (
-            "function f(signature s, bytes32 m) { require(checkSigFromStack(s, oracle, m)); require(tx.outputs[this.activeInputIndex].script == new C(owner, oracle, hash)); require(tx.outputs[this.activeInputIndex].value >= 1); }",
+            "function f(signature s, bytes32 m) { require(checkSigFromStack(s, oracle, m)); require(tx.outputs[this.activeInputIndex].script == tx.input.current.script); require(tx.outputs[this.activeInputIndex].value >= 1); }",
             &["oracle-message-unbound", "unsigned-spend-path"],
         ),
         (
-            "function f(signature s, bytes32 m) { require(sha256(m) == hash); require(checkSigFromStack(s, oracle, m)); require(tx.outputs[this.activeInputIndex].script == new C(owner, oracle, hash)); require(tx.outputs[this.activeInputIndex].value >= 1); }",
+            "function f(signature s, bytes32 m) { require(sha256(m) == hash); require(checkSigFromStack(s, oracle, m)); require(tx.outputs[this.activeInputIndex].script == tx.input.current.script); require(tx.outputs[this.activeInputIndex].value >= 1); }",
             &["unsigned-spend-path"],
         ),
         (
@@ -61,7 +61,7 @@ fn covenant_lints_report_unauthorized_and_half_constrained_spends() {
             "function f(bytes p) { require(sha256(p) == hash); } function g() { require(1 == 2); }",
             &["unsigned-spend-path"],
         ),
-        ("function f() { require(tx.inputs[0].script == new C(owner, oracle, hash)); }", &["unsigned-spend-path"]),
+        ("function f() { require(tx.inputs[0].script == tx.input.current.script); }", &["unsigned-spend-path"]),
         (
             "function f(pubkey k, signature s) { require(checkSig(s, k)); }",
             &["signer-from-witness"],
@@ -131,7 +131,7 @@ fn covenant_lints_report_unauthorized_and_half_constrained_spends() {
             &["unsigned-spend-path"],
         ),
         (
-            "function f(int b) { if (b == 1) { require(tx.outputs[0].script == new C(owner, oracle, hash)); require(tx.outputs[0].value >= tx.input.current.value); require(tx.numInputs == 1); } else { require(b == 2); } }",
+            "function f(int b) { if (b == 1) { require(tx.outputs[0].script == tx.input.current.script); require(tx.outputs[0].value >= tx.input.current.value); require(tx.numInputs == 1); } else { require(b == 2); } }",
             &["unsigned-spend-path"],
         ),
         (
@@ -167,11 +167,11 @@ fn covenant_lints_report_unauthorized_and_half_constrained_spends() {
             &[],
         ),
         (
-            "function claim() { require(tx.outputs[this.activeInputIndex].value >= tx.input.current.value); require(tx.outputs[this.activeInputIndex].script == new C(owner, oracle, hash)); } function claim(bytes p, signature a, signature b) tapscript { require(sha256(p) == hash); require(checkMultisig([server, emulator], [a, b], 2)); }",
+            "function claim() { require(tx.outputs[this.activeInputIndex].value >= tx.input.current.value); require(tx.outputs[this.activeInputIndex].script == tx.input.current.script); } function claim(bytes p, signature a, signature b) tapscript { require(sha256(p) == hash); require(checkMultisig([server, emulator], [a, b], 2)); }",
             &["unsigned-spend-path"],
         ),
         (
-            "function claim(bytes p) { require(sha256(p) == hash); require(tx.outputs[this.activeInputIndex].value >= tx.input.current.value); require(tx.outputs[this.activeInputIndex].script == new C(owner, oracle, hash)); } function claim(signature a, signature b) tapscript { require(checkMultisig([server, emulator], [a, b], 2)); }",
+            "function claim(bytes p) { require(sha256(p) == hash); require(tx.outputs[this.activeInputIndex].value >= tx.input.current.value); require(tx.outputs[this.activeInputIndex].script == tx.input.current.script); } function claim(signature a, signature b) tapscript { require(checkMultisig([server, emulator], [a, b], 2)); }",
             &["unsigned-spend-path"],
         ),
         (
@@ -179,7 +179,7 @@ fn covenant_lints_report_unauthorized_and_half_constrained_spends() {
             &["unsigned-spend-path"],
         ),
         (
-            "function f(signature s) { require(checkSig(s, owner)); require(tx.outputs[0].script == new C(owner, oracle, hash)); }",
+            "function f(signature s) { require(checkSig(s, owner)); require(tx.outputs[0].script == tx.input.current.script); }",
             &[],
         ),
         (

@@ -1,4 +1,6 @@
-use crate::common::{arkade_asm_tokens, compile_unoptimized as compile, opcode_count_in_arkade};
+use crate::common::{
+    arkade_asm_tokens, compile_unoptimized as compile, compile_with_imports, opcode_count_in_arkade,
+};
 use arkade_compiler::opcodes::*;
 
 #[test]
@@ -34,6 +36,11 @@ fn script_binds_program_and_version_from_one_inspection() {
         .any(|w| w == ["1", OP_INSPECTINPUTSCRIPTPUBKEY, OP_SWAP]));
 }
 
+const D: (&str, &str) = (
+    "d.ark",
+    "contract D() { function spend() { require(tx.numOutputs == 1); } }",
+);
+
 #[test]
 fn contract_instances_return_versioned_scripts() {
     for inspection in [
@@ -43,16 +50,19 @@ fn contract_instances_return_versioned_scripts() {
         "this.activeBytecode",
     ] {
         for comparison in [
-            format!("{inspection} == new C()"),
-            format!("new C() == {inspection}"),
-            format!("{inspection} != new C()"),
+            format!("{inspection} == new D()"),
+            format!("new D() == {inspection}"),
+            format!("{inspection} != new D()"),
         ] {
-            let output = compile(&format!(
-                "contract C() {{ function spend() {{ require({comparison}); }} }}"
-            ))
+            let output = compile_with_imports(
+                &format!(
+                    "import \"d.ark\"; contract C() {{ function spend() {{ require({comparison}); }} }}"
+                ),
+                &[D],
+            )
             .expect("script equality compares the program and version");
             let asm = arkade_asm_tokens(&output, "spend");
-            assert!(asm.windows(2).any(|w| w == ["<CONTRACT:C()>", OP_1]));
+            assert!(asm.windows(2).any(|w| w == ["<CONTRACT:D()>", OP_1]));
             if comparison.contains(" == ") {
                 assert_eq!(
                     [OP_EQUALVERIFY, OP_NUMEQUALVERIFY]
@@ -77,19 +87,30 @@ fn contract_instances_return_versioned_scripts() {
                 .is_empty());
         }
     }
-    compile(
-        r#"contract C() {
+    compile_with_imports(
+        r#"import "d.ark";
+        contract C() {
             function spend() {
-                let script = new C();
+                let script = new D();
                 require(script.version == 1);
-                ScriptPubKey copy = new C();
-                copy = new C();
+                ScriptPubKey copy = new D();
+                copy = new D();
                 require(tx.outputs[0].script == copy);
             }
         }"#,
+        &[D],
     )
     .expect("instances bind and assign as native structs");
-    assert!(compile("contract C() { function f(bytes p) { require(new C() == p); } }").is_err());
+    let error = compile_with_imports(
+        r#"import "d.ark"; contract C() { function f(bytes p) { require(new D() == p); } }"#,
+        &[D],
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(
+        error.contains("not defined between 'ScriptPubKey' and 'bytes'"),
+        "{error}"
+    );
 }
 
 #[test]

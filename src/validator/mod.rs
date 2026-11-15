@@ -890,6 +890,8 @@ contract Demo() {
                     asm: vec!["OP_CHECKSIG".to_string()],
                 }],
             }],
+            contracts: Default::default(),
+            code_hash: None,
             source: None,
             compiler: None,
             updated_at: None,
