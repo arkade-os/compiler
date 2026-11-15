@@ -65,6 +65,8 @@ func TestConstantFolding(t *testing.T) {
 			map[string][]byte{"data": {1, 0, 0, 0x80}, "expected": scriptInt(t, 0x80000001)}, ""},
 		{"unsigned decoding of empty bytes", "bytes data, int expected", "require(bin2uint(data) == expected);", "",
 			map[string][]byte{"data": nil, "expected": nil}, ""},
+		{"unsigned big-endian decoding", "bytes data, int expected", "require(bin2uint(reverseBytes(data)) == expected);", "",
+			map[string][]byte{"data": {0x80, 0, 0, 1}, "expected": scriptInt(t, 0x80000001)}, ""},
 		{"executed helper after true and", "int input", "require(true && verify(input));",
 			"private function verify(int n) bool { require(n > 0); return true; }",
 			map[string][]byte{"input": nil}, "OP_VERIFY failed"},

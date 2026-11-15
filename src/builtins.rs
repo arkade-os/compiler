@@ -104,7 +104,8 @@ pub(crate) const BUILTINS: &[Builtin] = &[
         &[("data", "bytes")],
         "int",
         &[Int0, Int1, Num2Bin, Cat, Bin2Num],
-        "Unsigned little-endian bytes as a non-negative int, the same as bin2int(data + 0x00).",
+        "Unsigned little-endian bytes as a non-negative int, the same as bin2int(data + 0x00). \
+         Data over 519 bytes fails the spend.",
     ),
     builtin(
         "int2bin",

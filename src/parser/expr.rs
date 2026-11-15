@@ -76,12 +76,10 @@ pub(crate) fn reject_reserved_function_call(pair: &Pair<Rule>) -> Result<(), Str
         ));
     }
 
-    if let Some(renamed) = match name.as_str() {
-        "bin2num" => Some("bin2int"),
-        "num2bin" => Some("int2bin"),
-        _ => None,
-    } {
-        return Err(format!("`{name}` was renamed to `{renamed}`"));
+    match name.as_str() {
+        "bin2num" => return Err("`bin2num` was renamed to `bin2int`".to_string()),
+        "num2bin" => return Err("`num2bin` was renamed to `int2bin`".to_string()),
+        _ => {}
     }
 
     if let Some(signature) = reserved_function_signature(&name) {
