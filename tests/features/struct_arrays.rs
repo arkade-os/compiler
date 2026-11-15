@@ -65,8 +65,9 @@ contract C() {
 
 #[test]
 fn loops_comparisons_native_structs_and_constructor_arrays_compile() {
-    let output = crate::common::compile_with_imports(
-        r#"
+    let output = crate::common::project(
+        "main.ark",
+        &[("main.ark", r#"
 import "child.ark";
 contract C(State state) {
     private function copy(Item[2] items) Item[2] { return items; }
@@ -80,8 +81,7 @@ contract C(State state) {
         require(tx.outputs[0].script == new Child(state));
     }
 }
-"#,
-        &[(
+"#), (
             "child.ark",
             "struct Item { int value; Outpoint position; } struct State { Item[2] items; } contract Child(State state) { function spend() { require(state.items[0].value == 0); } }",
         )],

@@ -159,7 +159,14 @@ impl Analysis {
             .as_ref()
             .map_err(|error| error.diagnostics(&self.entry))?;
         loaded
-            .emit(&self.entry, &self.sources, self.filesystem, options, levels)
+            .emit(
+                &self.entry,
+                &self.sources,
+                self.filesystem,
+                options,
+                levels,
+                &mut BTreeMap::new(),
+            )
             .map_err(|error| match error {
                 EmitError::Library => vec![Diagnostic::error(&self.entry, LIBRARY_ENTRY)],
                 EmitError::Lints(errors) => errors,
@@ -180,6 +187,7 @@ impl Analysis {
                 self.filesystem,
                 options,
                 &Default::default(),
+                &mut BTreeMap::new(),
             )
             .map_err(|error| match error {
                 EmitError::Library => format!("{}: {LIBRARY_ENTRY}", self.entry),
@@ -378,7 +386,8 @@ impl Loaded {
         })
     }
 
-    /// `files` are the sources of every module.
+    /// `files` are the sources of every module, and `hashes` the `codeHash` of each contract
+    /// compiled so far for this artifact.
     fn emit(
         &self,
         entry: &str,
@@ -386,6 +395,7 @@ impl Loaded {
         filesystem: bool,
         options: crate::CompileOptions,
         levels: &crate::lint::Levels,
+        hashes: &mut BTreeMap<String, String>,
     ) -> Result<ContractJson, EmitError> {
         let root = &self.modules[entry];
         if root.contract.is_library {
@@ -460,47 +470,82 @@ impl Loaded {
             bundle,
             warnings,
             options,
-            &|name| self.code_hash(name, options),
+            &mut |name| {
+                let hash = self.code_hash(name, files, filesystem, options, levels, hashes);
+                hash.map_err(|error| match instantiation(&root.contract, name) {
+                    Some(span) => error.at(span),
+                    None => error,
+                })
+            },
         )
         .map_err(|error| EmitError::Code(error, source))
     }
 
-    /// The `codeHash` of contract `name` compiled as the entry with `options`. Imports are
-    /// acyclic and a contract cannot instantiate itself, so the recursion ends.
-    // ponytail: a contract instantiated from several contracts is compiled once for each;
-    // memoize by name if deep instantiation graphs get slow.
+    /// The `codeHash` of contract `name` compiled as the entry, failing where that compilation
+    /// fails, and cached in `hashes`. Imports are acyclic and a contract cannot instantiate
+    /// itself, so the recursion ends.
     fn code_hash(
         &self,
         name: &str,
+        files: &BTreeMap<String, String>,
+        filesystem: bool,
         options: crate::CompileOptions,
+        levels: &crate::lint::Levels,
+        hashes: &mut BTreeMap<String, String>,
     ) -> Result<String, CompileError> {
+        if let Some(hash) = hashes.get(name) {
+            return Ok(hash.clone());
+        }
         let (path, module) = self
             .modules
             .iter()
             .find(|(_, module)| module.contract.name == name)
             .ok_or_else(|| CompileError::internal(format!("contract '{name}' is not loaded")))?;
-        let bundle = SourceBundle {
-            entry: path.clone(),
-            files: BTreeMap::new(),
+        let source = files.get(path).map_or("", String::as_str);
+        // Imported modules skip the checks only an entry gets.
+        let compiled = match crate::validator::validate_ast(&module.contract, true).first() {
+            Some(issue) => Err(crate::diagnostics::located(
+                &issue.message,
+                issue.span,
+                source,
+            )),
+            None => self
+                .emit(path, files, filesystem, options, levels, hashes)
+                .map_err(|error| match error {
+                    EmitError::Library => LIBRARY_ENTRY.to_string(),
+                    EmitError::Lints(errors) => crate::diagnostics::render_errors(&errors, source),
+                    EmitError::Code(error, _) => {
+                        crate::diagnostics::located(&error.to_string(), error.span, source)
+                    }
+                }),
         };
-        compiler::emit(
-            &module.contract,
-            &module.leaves,
-            bundle,
-            Vec::new(),
-            options,
-            &|child| self.code_hash(child, options),
-        )
-        .map(|json| json.code_hash.expect("emit sets codeHash"))
-        .map_err(|error| CompileError {
-            message: format!(
-                "contract '{name}' does not compile on its own: {}",
-                error.message
-            ),
-            span: None,
-            ..error
-        })
+        let hash = compiled
+            .map_err(|message| {
+                CompileError::from(format!(
+                    "contract '{name}' does not compile on its own: {path}: {message}"
+                ))
+            })?
+            .code_hash
+            .expect("emit sets codeHash");
+        hashes.insert(name.to_string(), hash.clone());
+        Ok(hash)
     }
+}
+
+/// The span of the first `new name(...)` in `contract`'s own functions.
+fn instantiation(contract: &Contract, name: &str) -> Option<crate::diagnostics::Span> {
+    let mut span = None;
+    for function in contract.functions.iter().filter(|f| !f.is_imported()) {
+        let mut statements = function.statements.clone();
+        let _ = visit_statements(&mut statements, &mut |expression| {
+            if matches!(&expression.kind, ExprKind::ContractInstance { contract_name, .. } if contract_name == name)
+            {
+                span.get_or_insert(expression.span);
+            }
+            Ok(())
+        });
+    }
+    span
 }
 
 fn load(

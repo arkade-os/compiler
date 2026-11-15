@@ -99,7 +99,7 @@ contract Splitter(pubkey alicePk, pubkey bobPk) {
 }
 ```
 
-`new SingleSig(alicePk)` returns a `ScriptPubKey` with the child's 32-byte Taproot witness program and version `1`. The program uses the opaque placeholder `<CONTRACT:SingleSig(<alicePk>)>`, which the Arkade runtime resolves at instantiation. Whole-script equality checks both the program and version. Arguments are constructor parameters or literals, resolved when the contract is instantiated. The artifact pins the build of each instantiated contract in its `contracts` field. A contract cannot instantiate itself, directly or through other contracts, since its address would depend on itself; to keep funds in the same contract, compare against the input's own script with `tx.outputs[0].script == tx.input.current.script` (see `examples/fuji_safe`).
+`new SingleSig(alicePk)` returns a `ScriptPubKey` with the child's 32-byte Taproot witness program and version `1`. The program uses the opaque placeholder `<CONTRACT:SingleSig(<alicePk>)>`, which the Arkade runtime resolves at instantiation. Whole-script equality checks both the program and version. Arguments are constructor parameters or literals, resolved when the contract is instantiated. The artifact pins the build of each instantiated contract in its `contracts` field. A contract cannot instantiate itself, directly or through other contracts, since its address would depend on itself; to keep funds in the same contract, compare against the input's own script with `tx.outputs[0].script == tx.input.current.script` (see `examples/fuji_safe`). The check goes by name, so it also rejects a `static` helper in `B` that returns `new B(...)`, which forms no loop.
 
 ### Assets
 
@@ -319,7 +319,7 @@ Structs use their declared names; constants and exported helpers use `Name.membe
 
 Struct, contract, and library names must be unique across loaded files. The compiler loads each normalized path once and reports missing files, unknown members, namespace collisions, and circular imports as errors. Import chains have a maximum depth of 128 files, including the entry file.
 
-`new Contract(args...)` refers to a directly imported contract, which must compile on its own. The compiler checks constructor argument counts and types and emits a contract placeholder for the runtime to resolve.
+`new Contract(args...)` refers to a directly imported contract, which must compile as an entry file would, its own lint attributes included. The compiler checks constructor argument counts and types and emits a contract placeholder for the runtime to resolve.
 
 ### Libraries
 
@@ -565,8 +565,8 @@ The innermost attribute wins, and an attribute wins over the CLI, except that `-
 {
   "formatVersion": 1,
   "contractName": "HTLC",
-  "constructorInputs": [{ "name": "sender", "type": "pubkey" }, "..."],
   "structs": [],
+  "constructorInputs": [{ "name": "sender", "type": "pubkey" }, "..."],
   "functions": [
     {
       "name": "claim",
@@ -589,16 +589,16 @@ The innermost attribute wins, and an attribute wins over the CLI, except that `-
   "codeHash": "sha256:...",
   "source": { "entry": "htlc.ark", "files": { "htlc.ark": "..." } },
   "compiler": { "name": "arkadec", "version": "0.1.0", "options": { "optimize": true } },
-  "fingerprint": "sha256:...",
-  "updatedAt": "2026-01-01T00:00:00Z"
+  "updatedAt": "2026-01-01T00:00:00Z",
+  "fingerprint": "sha256:..."
 }
 ```
 
 | Field | Meaning |
 |---|---|
 | `formatVersion` | Artifact schema version; absent on legacy artifacts |
-| `constructorInputs` | One entry per source parameter, declaration order; arrays keep their size in the type, structs keep their type name |
 | `structs` | User struct layouts, so clients can flatten parameters the way the compiler does |
+| `constructorInputs` | One entry per source parameter, declaration order; arrays keep their size in the type, structs keep their type name |
 | `functions[]` | Spend groups: `{ name, arkade?, leaves[] }` |
 | `arkade` | `{ inputs, asm }`; absent for groups made only of standalone leaves |
 | `leaves[]` | `{ name, witness, asm }`; `witness` lists spend-time values in source order, `injected: true` marks infrastructure signatures |
@@ -610,7 +610,7 @@ The innermost attribute wins, and an attribute wins over the CLI, except that `-
 
 The fingerprint identifies artifact content, but does not authenticate its origin. Recompile the bundled source with a trusted compiler to verify an artifact received from elsewhere.
 
-A contract compiled on its own has the `codeHash` that an artifact instantiating it records in `contracts`, given the same compiler and options, so a client resolving `<CONTRACT:Name(...)>` from a separately supplied artifact can check that artifact's `codeHash` against `contracts.Name`. Edits that leave the scripts unchanged, such as to comments, keep the `codeHash`. An instantiated contract's own `contracts` are part of its `codeHash`, so the pin covers indirect instantiations too.
+A contract compiled on its own has the `codeHash` that an artifact instantiating it records in `contracts`, given the same compiler and options, so a client resolving `<CONTRACT:Name(...)>` from a separately supplied artifact can check that artifact's `codeHash` against `contracts.Name`. Edits outside those fields, such as to comments or formatting, keep the `codeHash`; edits inside them change it even when the scripts stay the same, such as renaming a witness parameter or reordering struct declarations. An instantiated contract's own `contracts` are part of its `codeHash`, so the pin covers indirect instantiations too.
 
 Covenant spend groups come first in function declaration order, followed by standalone tapscript groups in tapscript declaration order, regardless of how the declarations are interleaved. Author-written leaves within a covenant group keep their declaration order; a synthesized emulator leaf, when needed, comes first. Clients use this order to build the Taproot tree. Reordering leaves can change the output key and address; retain the original artifact to spend existing outputs.
 

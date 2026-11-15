@@ -381,16 +381,16 @@ contract C() {
 
 #[test]
 fn constructor_struct_arguments_expand_recursively() {
-    let output = crate::common::compile_with_imports(
-        r#"
+    let output = crate::common::project(
+        "main.ark",
+        &[("main.ark", r#"
 import "child.ark";
 contract C(Point point) {
     function renew() {
         require(tx.outputs[0].script == new Child(point));
     }
 }
-"#,
-        &[(
+"#), (
             "child.ark",
             "struct Point { int x; int y; } contract Child(Point point) { function spend() { require(point.x == point.y); } }",
         )],

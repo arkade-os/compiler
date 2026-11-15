@@ -13,23 +13,24 @@
 use arkade_compiler::models::{AbiFunctionGroup, AbiLeaf, ContractJson};
 
 pub fn compile_unoptimized(source: &str) -> Result<ContractJson, Box<dyn std::error::Error>> {
-    compile_with_imports(source, &[])
-}
-
-/// [`compile_unoptimized`] of `source` as `main.ark`, beside the files it imports by path.
-pub fn compile_with_imports(
-    source: &str,
-    imports: &[(&str, &str)],
-) -> Result<ContractJson, Box<dyn std::error::Error>> {
-    let mut files: std::collections::BTreeMap<_, _> = imports
-        .iter()
-        .map(|(path, source)| (path.to_string(), source.to_string()))
-        .collect();
-    files.insert("main.ark".to_string(), source.to_string());
     arkade_compiler::compile_sources_with_options(
         "main.ark",
-        &files,
+        &[("main.ark".to_string(), source.to_string())].into(),
         arkade_compiler::CompileOptions { optimize: false },
+    )
+}
+
+/// Compile `entry` from in-memory `(path, source)` pairs.
+pub fn project(
+    entry: &str,
+    sources: &[(&str, &str)],
+) -> Result<ContractJson, Box<dyn std::error::Error>> {
+    arkade_compiler::compile_sources(
+        entry,
+        &sources
+            .iter()
+            .map(|(path, source)| (path.to_string(), source.to_string()))
+            .collect(),
     )
 }
 

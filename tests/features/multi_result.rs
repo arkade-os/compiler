@@ -1,5 +1,5 @@
 use crate::common::{
-    arkade_asm_tokens, compile_unoptimized as compile, compile_with_imports, opcode_count_in_arkade,
+    arkade_asm_tokens, compile_unoptimized as compile, opcode_count_in_arkade, project,
 };
 use arkade_compiler::opcodes::*;
 
@@ -54,13 +54,11 @@ fn contract_instances_return_versioned_scripts() {
             format!("new D() == {inspection}"),
             format!("{inspection} != new D()"),
         ] {
-            let output = compile_with_imports(
-                &format!(
-                    "import \"d.ark\"; contract C() {{ function spend() {{ require({comparison}); }} }}"
-                ),
-                &[D],
-            )
-            .expect("script equality compares the program and version");
+            let source = format!(
+                "import \"d.ark\"; contract C() {{ function spend() {{ require({comparison}); }} }}"
+            );
+            let output = project("main.ark", &[("main.ark", &source), D])
+                .expect("script equality compares the program and version");
             let asm = arkade_asm_tokens(&output, "spend");
             assert!(asm.windows(2).any(|w| w == ["<CONTRACT:D()>", OP_1]));
             if comparison.contains(" == ") {
@@ -87,8 +85,12 @@ fn contract_instances_return_versioned_scripts() {
                 .is_empty());
         }
     }
-    compile_with_imports(
-        r#"import "d.ark";
+    project(
+        "main.ark",
+        &[
+            (
+                "main.ark",
+                r#"import "d.ark";
         contract C() {
             function spend() {
                 let script = new D();
@@ -98,12 +100,14 @@ fn contract_instances_return_versioned_scripts() {
                 require(tx.outputs[0].script == copy);
             }
         }"#,
-        &[D],
+            ),
+            D,
+        ],
     )
     .expect("instances bind and assign as native structs");
-    let error = compile_with_imports(
-        r#"import "d.ark"; contract C() { function f(bytes p) { require(new D() == p); } }"#,
-        &[D],
+    let error = project(
+        "main.ark",
+        &[("main.ark", r#"import "d.ark"; contract C() { function f(bytes p) { require(new D() == p); } }"#), D],
     )
     .unwrap_err()
     .to_string();

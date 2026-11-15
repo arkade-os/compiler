@@ -503,7 +503,7 @@ pub(crate) fn emit(
     source: crate::models::SourceBundle,
     warnings: Vec<String>,
     options: crate::CompileOptions,
-    code_hash: &dyn Fn(&str) -> Result<String>,
+    code_hash: &mut dyn FnMut(&str) -> Result<String>,
 ) -> Result<ContractJson> {
     let parameters = contract.parameters.clone();
     let entry_source = source.files.get(&source.entry).cloned().unwrap_or_default();

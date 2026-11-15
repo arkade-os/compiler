@@ -47,7 +47,10 @@ contract StabilityVault(
   // State transitions need dynamic taproot reconstruction, and settlement
   // currently hits unsupported runtime bindings. Restore the disabled functions
   // once private functions plus EC return decomposition can implement them, or
-  // once a generic builtin provides the same verification.
+  // once a generic builtin provides the same verification. Their commented-out
+  // `new StabilityVault(...)` checks cannot return as written, since a contract
+  // cannot instantiate itself; an unchanged state compares against
+  // `tx.input.current.script` instead.
 
   // -------------------------------------------------------------------------
   // TRANSFER — pure key swap, no oracle.

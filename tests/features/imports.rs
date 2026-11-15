@@ -1,20 +1,7 @@
 use std::collections::BTreeMap;
 
-use crate::common::{arkade_asm_tokens, leaf_asm_tokens};
+use crate::common::{arkade_asm_tokens, leaf_asm_tokens, project};
 use arkade_compiler::{compile, compile_file, compile_sources, ContractJson};
-
-fn project(
-    entry: &str,
-    sources: &[(&str, &str)],
-) -> Result<ContractJson, Box<dyn std::error::Error>> {
-    compile_sources(
-        entry,
-        &sources
-            .iter()
-            .map(|(path, source)| (path.to_string(), source.to_string()))
-            .collect(),
-    )
-}
 
 #[test]
 fn pragmas_preserve_scripts_and_sources_across_compilation_entry_points() {
@@ -461,15 +448,24 @@ fn import_depth_limit_includes_the_entry_file() {
 
 #[test]
 fn constructors_require_visible_contracts_and_matching_signatures() {
-    for (call, succeeds) in [
-        ("Other(owner)", true),
-        ("Other()", false),
-        ("Other(1)", false),
-        ("Missing(owner)", false),
-        ("Main(owner)", false),
+    for (call, expected) in [
+        ("Other(owner, burn)", None),
+        (
+            "Other(owner)",
+            Some("constructor 'Other' expects 2 arguments, got 1"),
+        ),
+        (
+            "Other(1, burn)",
+            Some("constructor 'Other' argument 'owner' expects pubkey, got int"),
+        ),
+        ("Missing(owner)", Some("unknown contract 'Missing'")),
+        (
+            "Main(owner, burn)",
+            Some("contract 'Main' cannot instantiate itself"),
+        ),
     ] {
         let source = format!(
-            r#"import "other.ark"; contract Main(pubkey owner) {{ function spend() {{ require(tx.outputs[0].script == new {call}); }} }}"#
+            r#"import "other.ark"; contract Main(pubkey owner, ScriptPubKey burn) {{ function spend() {{ require(tx.outputs[0].script == new {call}); }} }}"#
         );
         let result = project(
             "main.ark",
@@ -477,28 +473,117 @@ fn constructors_require_visible_contracts_and_matching_signatures() {
                 ("main.ark", &source),
                 (
                     "other.ark",
-                    "contract Other(pubkey owner) { function spend() { require(true); } }",
+                    "contract Other(pubkey owner, ScriptPubKey burn) { function spend() { require(true); } }",
                 ),
             ],
         );
-        assert_eq!(result.is_ok(), succeeds, "{call}: {result:?}");
+        match expected {
+            // A script argument counts once and expands to its program and version.
+            None => assert!(arkade_asm_tokens(&result.unwrap(), "spend")
+                .contains(&"<CONTRACT:Other(<owner>,<burn.program>,<burn.version>)>".to_string())),
+            Some(expected) => {
+                let error = result.unwrap_err().to_string();
+                assert!(error.contains(expected), "{call}: {error}");
+            }
+        }
     }
 }
 
 #[test]
-fn instantiated_contracts_must_compile_on_their_own() {
-    let error = project(
-        "main.ark",
-        &[
-            ("main.ark", r#"import "other.ark"; contract Main(pubkey owner) { function spend() { require(tx.outputs[0].script == new Other(owner)); } }"#),
-            ("other.ark", "contract Other(pubkey owner) {}"),
-        ],
-    )
-    .unwrap_err()
-    .to_string();
+fn instantiated_contracts_must_compile_as_entries() {
+    let main = r#"import "other.ark"; contract Main(pubkey owner) { function spend(signature s) { require(checkSig(s, owner)); require(tx.outputs[0].script == new Other(owner)); } }"#;
+    let push = format!(
+        "contract Other(pubkey owner) {{ function spend(signature s) {{ require(checkSig(s, owner)); require(sha256(0x{}) == 0x00); }} }}",
+        "ab".repeat(521)
+    );
+    for (other, expected) in [
+        (
+            "contract Other(pubkey owner) {}",
+            "other.ark: contract must declare at least one public function",
+        ),
+        // The child's own attributes decide its lints, as when it is the entry.
+        (
+            "@deny(unsigned-spend-path)\ncontract Other(pubkey owner) { function spend() { require(tx.numOutputs == 1); } }",
+            "other.ark: error[unsigned-spend-path]: line 2, column 41:",
+        ),
+        (
+            &push,
+            "other.ark: line 1, column 41: function 'spend' pushes a value above the VM element limit",
+        ),
+    ] {
+        let files = [("main.ark", main), ("other.ark", other)]
+            .map(|(path, source)| (path.to_string(), source.to_string()))
+            .into();
+        let diagnostics = arkade_compiler::check("main.ark", &files);
+        let error = diagnostics
+            .iter()
+            .find(|d| d.severity == arkade_compiler::Severity::Error)
+            .unwrap_or_else(|| panic!("{other}: {diagnostics:?}"));
+        let span = error.span.expect("located at the instantiation");
+        assert_eq!(&main[span.start..span.end], "new Other(owner)");
+        assert!(
+            error.message.contains(&format!(
+                "contract 'Other' does not compile on its own: {expected}"
+            )),
+            "{}",
+            error.message
+        );
+    }
+}
+
+#[test]
+fn a_grandchild_change_reaches_the_parent_pin() {
+    let pin = |grand: &str| {
+        let output = project(
+            "main.ark",
+            &[
+                ("main.ark", r#"import "child.ark"; contract Main(pubkey k) { function spend(signature s) { require(checkSig(s, k)); require(tx.outputs[0].script == new Child(k)); } }"#),
+                ("child.ark", r#"import "grand.ark"; contract Child(pubkey k) { function spend(signature s) { require(checkSig(s, k)); require(tx.outputs[0].script == new Grand(k)); } }"#),
+                ("grand.ark", grand),
+            ],
+        )
+        .unwrap();
+        assert_eq!(output.contracts.keys().collect::<Vec<_>>(), ["Child"]);
+        output.contracts["Child"].clone()
+    };
+    assert_ne!(
+        pin("contract Grand(pubkey k) { function spend(signature s) { require(checkSig(s, k)); } }"),
+        pin("contract Grand(pubkey k) { function spend(signature s) { require(checkSig(s, k)); require(tx.numOutputs == 1); } }")
+    );
+}
+
+#[test]
+fn shared_instantiations_compile_once() {
+    // Every contract of a level instantiates both of the next, so compiling each path again
+    // would take 2^LEVELS compilations.
+    const LEVELS: usize = 16;
+    let contract = |name: String, next: Option<usize>| {
+        let (imports, outputs) = next.map_or_else(Default::default, |n| {
+            (
+                format!(r#"import "X{n}.ark"; import "Y{n}.ark";"#),
+                format!(" require(tx.outputs[0].script == new X{n}(k)); require(tx.outputs[1].script == new Y{n}(k));"),
+            )
+        });
+        format!("{imports} contract {name}(pubkey k) {{ function spend(signature s) {{ require(checkSig(s, k));{outputs} }} }}")
+    };
+    let mut files = vec![("r.ark".to_string(), contract("R".to_string(), Some(1)))];
+    for level in 1..=LEVELS {
+        let next = (level < LEVELS).then_some(level + 1);
+        for side in ["X", "Y"] {
+            let name = format!("{side}{level}");
+            files.push((format!("{name}.ark"), contract(name, next)));
+        }
+    }
+    let files: Vec<_> = files
+        .iter()
+        .map(|(p, s)| (p.as_str(), s.as_str()))
+        .collect();
+    let started = std::time::Instant::now();
+    assert_eq!(project("r.ark", &files).unwrap().contracts.len(), 2);
     assert!(
-        error.contains("contract 'Other' does not compile on its own"),
-        "{error}"
+        started.elapsed() < std::time::Duration::from_secs(5),
+        "{:?}",
+        started.elapsed()
     );
 }
 

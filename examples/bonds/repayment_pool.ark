@@ -72,7 +72,10 @@ contract RepaymentPool(
 
   // Pool transitions need dynamic taproot reconstruction. Restore the disabled
   // functions once private functions plus EC return decomposition can implement
-  // them, or once a generic builtin provides the same verification.
+  // them, or once a generic builtin provides the same verification. Their
+  // commented-out `new RepaymentPool(...)` checks cannot return as written, since
+  // a contract cannot instantiate itself; an unchanged state compares against
+  // `tx.input.current.script` instead.
 
   // ISSUE — pre-maturity, borrower mints `amount` credit + `amount` debit (1:1)
   // and posts collateral. Credit → borrower's wallet (to sell). Debit → a new

@@ -480,7 +480,7 @@ fn test_group_access_as_constructor_argument_is_parsed() {
     "#;
     let child = "contract U(int amount, pubkey owner) { function spend(signature sig) { require(checkSig(sig, owner)); } }";
 
-    let error = crate::common::compile_with_imports(code, &[("u.ark", child)])
+    let error = crate::common::project("main.ark", &[("main.ark", code), ("u.ark", child)])
         .expect_err("computed constructor arguments are rejected")
         .to_string();
     assert!(

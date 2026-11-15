@@ -77,6 +77,13 @@ try {
     assert.deepEqual(normalized(withoutDebug.artifact), normalized(artifact));
     const unoptimized = (await esm.compile(input, { optimize: false })).artifact;
     assert.deepEqual(normalized(unoptimized), normalized(JSON.parse(JSON.parse(wasm.compile_sources_with_diagnostics(input.entry, files, false)).artifact)));
+    // An instantiated contract is pinned by the codeHash it has as the entry.
+    const child = 'contract Child(pubkey k) { function spend(signature s) { require(checkSig(s, k)); } }';
+    const parent = (await esm.compile({ entry: 'main.ark', files: { 'main.ark': 'import "child.ark"; contract Main(pubkey k) { function spend(signature s) { require(checkSig(s, k)); require(tx.outputs[0].script == new Child(k)); } }', 'child.ark': child } })).artifact;
+    const standalone = (await esm.compile({ entry: 'child.ark', files: { 'child.ark': child } })).artifact;
+    assert.match(standalone.codeHash, /^sha256:[0-9a-f]{64}$/);
+    assert.deepEqual(parent.contracts, { Child: standalone.codeHash });
+    assert.equal(artifact.contracts, undefined);
     const symbol = await esm.symbolAt(input, position);
     assert.deepEqual(symbol, JSON.parse(wasm.symbol_at(input.entry, files, position.line, position.column)));
     assert.equal(symbol.name, 'sig');
@@ -117,7 +124,9 @@ void (await compile(input)).artifact.contractName;
 declare const narrowed: CompileResult;
 if (narrowed.artifact !== null) {
     const map: DebugInfo | null = narrowed.debug;
-    void map;
+    const pins: Record<string, string> | undefined = narrowed.artifact.contracts;
+    const codeHash: string | undefined = narrowed.artifact.codeHash;
+    void map; void pins; void codeHash;
 }
 `;
     writeFileSync(path.join(temporary, 'consumer.mts'), typecheck);
