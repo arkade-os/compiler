@@ -1,0 +1,67 @@
+pragma arkade ^0.1.0;
+
+// One unit of the asset the beacon and the minter share.
+//
+// The quote is not in this script. It is packet 16 of the transaction that
+// minted the coin, and copy carries that packet forward:
+//
+//   hash256(tip header) || num2bin(height, 8) || num2bin(hashprice, 16)
+//
+// copy pays the asset back to this same script. consume burns it. Nothing
+// here pays the asset to any other script, and nothing increases its supply.
+// Burning is open: destroying a receipt does not change the beacon, and the
+// minter can publish another until its pool is down to one unit.
+
+contract HashpriceAttestation(
+  bytes32 checkpoint,
+  int checkpointHeight,
+  int bits,
+  AssetId shared
+) {
+  const int STATE = 16;
+
+  // checkpoint, checkpointHeight, and bits are part of this program. A packet
+  // from before the checkpoint is refused, and a genesis packet must still
+  // carry the checkpoint hash.
+  private function bound(bytes state) {
+    require(size(state) == 56, "state");
+    require(bits > 0, "bits");
+    require(checkpointHeight >= 0, "checkpoint");
+    int height = bin2num(substr(state, 32, 8));
+    require(height >= checkpointHeight, "height");
+    if (height == checkpointHeight) {
+      require(substr(state, 0, 32) == checkpoint, "checkpoint");
+    }
+  }
+
+  private function sole() {
+    let group = tx.assetGroups.find(shared.txid, shared.gidx);
+    require(group.isFresh == false, "fresh");
+    require(group.delta == 0, "copied");
+    require(group.numInputs == 1, "copied");
+    require(group.numOutputs == 1, "copied");
+    require(group.sumInputs > 0, "copied");
+  }
+
+  @allow(unsigned-spend-path, "the attestation and its packet are copied onto this same script")
+  function copy() {
+    require(this.activeInputIndex == 0, "attestation is input 0");
+    let state = tx.inputs[0].packet(STATE);
+    require(tx.packet(STATE) == state, "state");
+    bound(state);
+    sole();
+    require(this.tunnel(0));
+  }
+
+  @allow(unsigned-spend-path, "the attestation is burned, so this asset cannot be paid to another script")
+  function consume() {
+    require(this.activeInputIndex == 0, "attestation is input 0");
+    bound(tx.inputs[0].packet(STATE));
+    let group = tx.assetGroups.find(shared.txid, shared.gidx);
+    require(group.isFresh == false, "fresh");
+    require(group.numInputs == 1, "consumed");
+    require(group.sumInputs > 0, "consumed");
+    require(group.numOutputs == 0, "consumed");
+    require(group.sumOutputs == 0, "consumed");
+  }
+}
