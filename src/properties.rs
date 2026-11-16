@@ -69,7 +69,7 @@ properties!(
 );
 
 properties!(
-    /// `this.<property>`; `this.activeBytecode` is the current input's script struct.
+    /// `this.<property>`
     ThisProperty {
         ActiveInputIndex => ("activeInputIndex", "int", "Index of the input being spent."),
         Expiry => ("expiry", "int", "Unix expiry of the executing VTXO, in seconds. Fails the spend when unavailable."),
@@ -152,8 +152,9 @@ mod tests {
             spelled("asset_at_property"),
             names(AssetProperty::ALL, AssetProperty::name)
         );
-        let mut this = names(ThisProperty::ALL, ThisProperty::name);
-        this.insert(1, "activeBytecode");
-        assert_eq!(spelled("this_property"), this);
+        assert_eq!(
+            spelled("this_property"),
+            names(ThisProperty::ALL, ThisProperty::name)
+        );
     }
 }
