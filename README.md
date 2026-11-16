@@ -606,7 +606,7 @@ The innermost attribute wins, and an attribute wins over the CLI, except that `-
 | `codeHash` | SHA-256 of compact artifact JSON with only the fields before it, `formatVersion` through `contracts`, which determine the scripts; `source`, `compiler`, `updatedAt` and `fingerprint` are left out |
 | `source` | `{ entry, files }`: original entry source and every recursively imported file, including comments |
 | `compiler.options` | Effective compilation settings; `optimize` enables constant folding, static branch removal, and assembly optimization for Arkade covenants |
-| `fingerprint` | SHA-256 of compact artifact JSON before `fingerprint` and `updatedAt` are added; includes source, ABI, compiler settings, and unresolved script templates |
+| `fingerprint` | SHA-256 of compact artifact JSON before `fingerprint` and `updatedAt` are added; includes source, ABI, compiler settings, unresolved script templates, `contracts`, and `codeHash` |
 
 The fingerprint identifies artifact content, but does not authenticate its origin. Recompile the bundled source with a trusted compiler to verify an artifact received from elsewhere.
 
