@@ -8,16 +8,16 @@ import "./cp_pool.ark";
 // and the trader's payout. It does not replay any other trade.
 contract ConstantProductSwap(
   ScriptPubKey payScript,
-  bytes32 quoteTxid, int quoteGidx,
-  bytes32 lpTxid, int lpGidx,
-  bytes32 lpLedgTxid, int lpLedgGidx,
-  bytes32 ctrlTxid, int ctrlGidx,
+  AssetId quoteId,
+  AssetId lpId,
+  AssetId lpLedgId,
+  AssetId ctrlId,
   int feeBps,
   int minOut,
   pubkey ownerPk
 ) {
   private function isPool(ScriptPubKey script) {
-    require(script == new ConstantProductPool(quoteTxid, quoteGidx, lpTxid, lpGidx, lpLedgTxid, lpLedgGidx, ctrlTxid, ctrlGidx, feeBps), "pool");
+    require(script == new ConstantProductPool(quoteId, lpId, lpLedgId, ctrlId, feeBps), "pool");
   }
 
   @allow(unsigned-spend-path, "the pool at input 0 is the counterparty, and output 1 pays the trader at least minOut")
@@ -29,10 +29,10 @@ contract ConstantProductSwap(
     isPool(tx.inputs[0].script);
     require(tx.inputs[0].value > CpMath.DUST, "base");
     int base = tx.inputs[0].value - CpMath.DUST;
-    int quote = tx.inputs[0].assets.lookup(quoteTxid, quoteGidx);
+    int quote = tx.inputs[0].assets.lookup(quoteId);
     require(tx.inputs[1].value >= CpMath.DUST, "carrier");
     int sellBase = tx.inputs[1].value - CpMath.DUST;
-    int sellQuote = CpMath.held(1, quoteTxid, quoteGidx);
+    int sellQuote = CpMath.held(1, quoteId);
     require(sellBase + sellQuote > 0, "amount");
     require(tx.outputs[1].script == payScript, "receiver");
     if (sellBase > 0) {
@@ -41,7 +41,7 @@ contract ConstantProductSwap(
       int paid = CpMath.bought(base, quote, sellBase, feeBps);
       require(paid >= minOut, "slippage");
       require(tx.outputs[1].value == CpMath.DUST, "carrier");
-      require(tx.outputs[1].assets.lookup(quoteTxid, quoteGidx) == paid, "quote out");
+      require(tx.outputs[1].assets.lookup(quoteId) == paid, "quote out");
       require(tx.outputs[1].assets.length == 1, "quote only");
     }
     if (sellQuote > 0) {
@@ -60,7 +60,7 @@ contract ConstantProductSwap(
     require(this.activeInputIndex == 0, "order input");
     require(tx.numOutputs == 3, "outputs");
     require(tx.inputs[0].value >= CpMath.DUST, "carrier");
-    int sellQuote = CpMath.held(0, quoteTxid, quoteGidx);
+    int sellQuote = CpMath.held(0, quoteId);
     require(tx.outputs[0].script == payScript, "receiver");
     require(tx.outputs[0].value == tx.inputs[0].value, "value");
     if (sellQuote == 0) {
@@ -69,7 +69,7 @@ contract ConstantProductSwap(
     }
     if (sellQuote > 0) {
       require(tx.inputs[0].assets.length == 1, "quote only");
-      require(tx.outputs[0].assets.lookup(quoteTxid, quoteGidx) == sellQuote, "quote");
+      require(tx.outputs[0].assets.lookup(quoteId) == sellQuote, "quote");
       require(tx.outputs[0].assets.length == 1, "quote only");
     }
   }

@@ -701,6 +701,10 @@ fn qualified_static_calls_are_distinct_from_group_methods() {
         ("main.ark", r#"import "helper.ark"; contract Main(bytes32 txid) { function spend(int index) { require(Helper.controlIs(txid, index)); require(Helper.controlIs(sha256(txid), index)); } }"#),
         ("helper.ark", "contract Helper() { static function controlIs(bytes32 txid, int index) bool { return index == size(txid) - 32; } }"),
     ]).unwrap();
+    project("main.ark", &[
+        ("main.ark", r#"import "helper.ark"; contract Main(bytes32 txid) { function spend(int index) { require(Helper.controlIs({ txid: txid, gidx: index })); } }"#),
+        ("helper.ark", "contract Helper() { static function controlIs(AssetId id) bool { return id.gidx == size(id.txid) - 32; } }"),
+    ]).unwrap();
 }
 
 #[test]
@@ -714,7 +718,7 @@ fn qualified_constants_in_builtin_operands_and_transaction_indices_match_literal
             require(tx.outputs[Limits.INDEX].value >= Limits.VALUE);
             require(tx.outputs[Limits.INDEX].assets.length >= Limits.INDEX);
             require(tx.outputs[Limits.INDEX].assets[Limits.INDEX].amount >= Limits.VALUE);
-            require(tx.inputs[Limits.INDEX].assets.lookup(txid, Limits.INDEX) >= Limits.VALUE);
+            require(tx.inputs[Limits.INDEX].assets.lookup({ txid: txid, gidx: Limits.INDEX }) >= Limits.VALUE);
             require(tx.outputs[Limits.INDEX].script == new Limits(Limits.VALUE));
         }
     }"#;

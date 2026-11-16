@@ -511,7 +511,7 @@ fn constructor_references_cover_nested_bodies_and_named_operands() {
          "require(sha256(preimage) == digest); require(tx.locktime >= deadline);",
          vec!["<digest>", "<deadline>"]),
         ("AssetGroup groupIndex, bytes32 txid, int gidx", "",
-         "require(groupIndex.sumInputs >= 0); require(groupIndex.controlIs(txid, gidx));",
+         "require(groupIndex.sumInputs >= 0); require(groupIndex.controlIs({ txid: txid, gidx: gidx }));",
          vec!["<groupIndex>", "<gidx>", "<txid>"]),
         ("Policy policy", "",
          "require(tx.outputs[0].script == new Child(policy));",

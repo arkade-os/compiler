@@ -15,10 +15,10 @@ func TestGroupControlAssetId(t *testing.T) {
 	source := filepath.Join(t.TempDir(), "group_control.ark")
 	err := os.WriteFile(source, []byte(`
 contract GroupControl() {
-    function spend(AssetGroup g, bytes32 ctrlTxid, int ctrlGidx) {
+    function spend(AssetGroup g, AssetId ctrl) {
         AssetId control = g.controlAssetId;
-        require(control.txid == ctrlTxid);
-        require(control.gidx == ctrlGidx);
+        require(control.txid == ctrl.txid);
+        require(control.gidx == ctrl.gidx);
         require(g.delta == 5);
     }
 }`), 0600)
@@ -65,9 +65,9 @@ contract GroupControl() {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			values := map[string][]byte{
-				"g":        scriptInt(t, 0),
-				"ctrlTxid": tc.want.Txid[:],
-				"ctrlGidx": scriptInt(t, int64(tc.want.Index)),
+				"g":         scriptInt(t, 0),
+				"ctrl.txid": tc.want.Txid[:],
+				"ctrl.gidx": scriptInt(t, int64(tc.want.Index)),
 			}
 			spend := spendingPSBTWithWitness(t, deployment, instance, 10_000, instance.pkScript,
 				covenantWitness(t, contract, group, values), extension.Packet(tc.packet))
@@ -80,11 +80,14 @@ func TestComputedAssetIdTxid(t *testing.T) {
 	source := filepath.Join(t.TempDir(), "computed_txid.ark")
 	err := os.WriteFile(source, []byte(`
 contract ComputedTxid() {
-    function spend(bytes d) {
-        require(tx.outputs[0].assets.has(sha256(d), 3));
-        require(tx.assetGroups[0].controlIs(id(d), 2));
+    function spend(bytes d, bytes e, int g) {
+        require(tx.outputs[0].assets.has({ txid: sha256(d), gidx: 3 }));
+        require(tx.outputs[0].assets.lookup(tx.inputs[0].assets[0].assetId) == 7);
+        require(tx.assetGroups[0].controlIs(AssetId { txid: id(d), gidx: 2 }));
+        require(tx.assetGroups[0].controlIs(make(e, g)));
     }
     private function id(bytes d) bytes32 { return sha256(d); }
+    private function make(bytes e, int g) AssetId { return AssetId { txid: sha256(e), gidx: g }; }
 }`), 0600)
 	if err != nil {
 		t.Fatal(err)
@@ -103,18 +106,26 @@ contract ComputedTxid() {
 		Inputs:  []asset.AssetInput{{Type: asset.AssetInputTypeLocal, Vin: 0, Amount: 7}},
 		Outputs: []asset.AssetOutput{{Type: asset.AssetOutputTypeLocal, Vout: 0, Amount: 7}},
 	}
+	control := asset.AssetId{Txid: txid, Index: 2}
+	other := []byte("other")
+	// The literal check reads the control id field by field; the helper's id is compared whole.
 	for _, tc := range []struct {
 		name     string
 		preimage []byte
-		control  chainhash.Hash
+		helper   []byte
+		gidx     int64
+		control  asset.AssetId
 		wantErr  string
 	}{
-		{"computed ids", preimage, txid, ""},
-		{"wrong preimage", []byte("other"), txid, "OP_VERIFY failed"},
-		{"wrong control", preimage, chainhash.Hash{9}, "false stack entry"},
+		{"computed ids", preimage, preimage, 2, control, ""},
+		{"wrong preimage", other, preimage, 2, control, "OP_VERIFY failed"},
+		{"wrong control txid", preimage, preimage, 2, asset.AssetId{Txid: chainhash.Hash{9}, Index: 2}, "OP_VERIFY failed"},
+		{"wrong control gidx", preimage, preimage, 2, asset.AssetId{Txid: txid, Index: 1}, "OP_VERIFY failed"},
+		{"wrong helper txid", preimage, other, 2, control, "false stack entry"},
+		{"wrong helper gidx", preimage, preimage, 1, control, "false stack entry"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			control, err := asset.NewAssetRefFromId(asset.AssetId{Txid: tc.control, Index: 2})
+			control, err := asset.NewAssetRefFromId(tc.control)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -123,7 +134,9 @@ contract ComputedTxid() {
 				Outputs:      []asset.AssetOutput{{Type: asset.AssetOutputTypeLocal, Vout: 0, Amount: 5}},
 			}
 			spend := spendingPSBTWithWitness(t, deployment, instance, 10_000, instance.pkScript,
-				covenantWitness(t, contract, group, map[string][]byte{"d": tc.preimage}),
+				covenantWitness(t, contract, group, map[string][]byte{
+					"d": tc.preimage, "e": tc.helper, "g": scriptInt(t, tc.gidx),
+				}),
 				extension.Packet(asset.Packet{issuance, transfer}))
 			requireVMResult(t, spend, emulatorKey.PubKey(), tc.wantErr)
 		})

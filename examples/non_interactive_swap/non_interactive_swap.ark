@@ -14,13 +14,11 @@ contract NonInteractiveSwap(
   // Maker's public key (creator of the swap offer)
   pubkey makerPk,
   // Asset ID the maker is offering (locked in this contract)
-  bytes32 offerAssetIdTxid,
-  int offerAssetIdGidx,
+  AssetId offerAssetId,
   // Amount of offer asset locked
   int offerAmount,
   // Asset ID the maker wants to receive
-  bytes32 wantAssetIdTxid,
-  int wantAssetIdGidx,
+  AssetId wantAssetId,
   // Amount of want asset required for the swap
   int wantAmount,
   // Expiration time in Unix seconds after which maker can cancel
@@ -34,7 +32,7 @@ contract NonInteractiveSwap(
     // Introspection verifies the atomic exchange:
     // Output 0: maker receives wantAsset
     require(
-      tx.outputs[0].assets.lookup(wantAssetIdTxid, wantAssetIdGidx) >= wantAmount,
+      tx.outputs[0].assets.lookup(wantAssetId) >= wantAmount,
       "insufficient want asset for maker"
     );
     require(
@@ -44,7 +42,7 @@ contract NonInteractiveSwap(
 
     // Output 1: taker receives offerAsset
     require(
-      tx.outputs[1].assets.lookup(offerAssetIdTxid, offerAssetIdGidx) >= offerAmount,
+      tx.outputs[1].assets.lookup(offerAssetId) >= offerAmount,
       "insufficient offer asset for taker"
     );
     require(

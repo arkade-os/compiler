@@ -10,89 +10,86 @@ use crate::properties::{AssetProperty, GroupProperty};
 pub(crate) fn emit_asset_lookup_operands(
     source: &AssetLookupSource,
     index: &Expression,
-    asset_txid: &Expression,
-    asset_gidx: &Expression,
+    asset_id: &Expression,
     asm: &mut Vec<Op>,
 ) {
     emit_expression_asm(index, asm);
-    emit_expression_asm(asset_txid, asm); // -> <fooTxid>
-    emit_expression_asm(asset_gidx, asm); // -> <fooGidx> or pushed literal
+    emit_asset_id_asm(asset_id, asm);
     match source {
         AssetLookupSource::Input => asm.push(InspectInAssetLookup.into()),
         AssetLookupSource::Output => asm.push(InspectOutAssetLookup.into()),
     }
 }
 
-/// Emit `tx.{inputs,outputs}[i].assets.lookup(txid, gidx)`: assert the asset is
+/// Emit `tx.{inputs,outputs}[i].assets.lookup(id)`: assert the asset is
 /// present (consume the success flag with OP_VERIFY) and leave the typed amount.
 pub(crate) fn emit_asset_lookup_asm(
     source: &AssetLookupSource,
     index: &Expression,
-    asset_txid: &Expression,
-    asset_gidx: &Expression,
+    asset_id: &Expression,
     asm: &mut Vec<Op>,
 ) {
-    emit_asset_lookup_operands(source, index, asset_txid, asset_gidx, asm);
+    emit_asset_lookup_operands(source, index, asset_id, asm);
     asm.push(Verify.into()); // consume success flag, leave amount
 }
 
-/// Emit `tx.{inputs,outputs}[i].assets.has(txid, gidx)`: boolean presence —
+/// Emit `tx.{inputs,outputs}[i].assets.has(id)`: boolean presence —
 /// keep the success flag, drop the amount below it with OP_NIP.
 pub(crate) fn emit_asset_has_asm(
     source: &AssetLookupSource,
     index: &Expression,
-    asset_txid: &Expression,
-    asset_gidx: &Expression,
+    asset_id: &Expression,
     asm: &mut Vec<Op>,
 ) {
-    emit_asset_lookup_operands(source, index, asset_txid, asset_gidx, asm);
+    emit_asset_lookup_operands(source, index, asset_id, asm);
     asm.push(Nip.into()); // drop amount, leave success flag (Bool)
 }
 
-/// Emit `tx.assetGroups.lookup(txid, gidx)`: assert existence (consume the success
+/// Emit `tx.assetGroups.lookup(id)`: assert existence (consume the success
 /// flag with OP_VERIFY) and leave the resolved packet position k.
-pub(crate) fn emit_group_lookup_asm(
-    asset_txid: &Expression,
-    asset_gidx: &Expression,
-    asm: &mut Vec<Op>,
-) {
-    emit_expression_asm(asset_txid, asm);
-    emit_expression_asm(asset_gidx, asm);
+pub(crate) fn emit_group_lookup_asm(asset_id: &Expression, asm: &mut Vec<Op>) {
+    emit_asset_id_asm(asset_id, asm);
     asm.push(FindAssetGroupByAssetId.into());
     asm.push(Verify.into()); // consume success flag, leave k; fail if absent
 }
 
-/// Emit `tx.assetGroups.has(txid, gidx)`: boolean presence — keep the success
+/// Emit `tx.assetGroups.has(id)`: boolean presence — keep the success
 /// flag, drop the resolved position k below it with OP_NIP.
-pub(crate) fn emit_group_has_asm(
-    asset_txid: &Expression,
-    asset_gidx: &Expression,
-    asm: &mut Vec<Op>,
-) {
-    emit_expression_asm(asset_txid, asm);
-    emit_expression_asm(asset_gidx, asm);
+pub(crate) fn emit_group_has_asm(asset_id: &Expression, asm: &mut Vec<Op>) {
+    emit_asset_id_asm(asset_id, asm);
     asm.push(FindAssetGroupByAssetId.into());
     asm.push(Nip.into()); // drop k, leave success flag (Bool)
 }
 
-/// Emit `group.controlIs(txid, gidx)`: boolean equality over the complete
-/// canonical control Asset ID. Stack after OP_INSPECTASSETGROUPCTRL is
+/// Emit `group.controlIs(id)`: boolean equality over the complete canonical
+/// control Asset ID. Stack after OP_INSPECTASSETGROUPCTRL is
 /// `[ctrl_txid, ctrl_gidx, flag]`; drop the flag, compare gidx then txid (no
 /// OP_EQUALVERIFY), and AND the two booleans. The absent tuple
 /// `[empty_bytes, 0, 0]` cannot equal a valid bytes32 txid, so absence is false.
 pub(crate) fn emit_group_control_is_asm(
     group: &Expression,
-    asset_txid: &Expression,
-    asset_gidx: &Expression,
+    asset_id: &Expression,
     asm: &mut Vec<Op>,
 ) {
     emit_expression_asm(group, asm);
     asm.push(InspectAssetGroupCtrl.into());
     asm.push(Drop.into()); // drop success flag -> [ctrl_txid, ctrl_gidx]
-    emit_expression_asm(asset_gidx, asm);
-    asm.push(Equal.into()); // ctrl_gidx == gidx -> [ctrl_txid, bool]
-    asm.push(Swap.into()); // -> [bool, ctrl_txid]
-    emit_expression_asm(asset_txid, asm);
+    match native_struct_leaves(asset_id, asset_id_fields()).as_deref() {
+        // A binding's or literal's fields are pushed where each comparison needs them.
+        Some([txid, gidx]) => {
+            emit_expression_asm(gidx, asm);
+            asm.push(Equal.into()); // ctrl_gidx == gidx -> [ctrl_txid, bool]
+            asm.push(Swap.into()); // -> [bool, ctrl_txid]
+            emit_expression_asm(txid, asm);
+        }
+        _ => {
+            emit_asset_id_asm(asset_id, asm); // -> [ctrl_txid, ctrl_gidx, txid, gidx]
+            asm.push(Rot.into()); // -> [ctrl_txid, txid, gidx, ctrl_gidx]
+            asm.push(Equal.into()); // -> [ctrl_txid, txid, bool]
+            asm.push(Swap.into()); // -> [ctrl_txid, bool, txid]
+            asm.push(Rot.into()); // -> [bool, txid, ctrl_txid]
+        }
+    }
     asm.push(Equal.into()); // ctrl_txid == txid -> [bool, bool]
     asm.push(BoolAnd.into()); // combine -> Bool
 }

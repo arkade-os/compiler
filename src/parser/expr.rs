@@ -261,9 +261,9 @@ pub(crate) fn parse_primary_expr(pair: Pair<Rule>) -> Result<Expression, String>
         // Packet introspection
         Rule::packet_inspect | Rule::packet_has => parse_packet_inspect(pair),
         Rule::input_packet_inspect | Rule::input_packet_has => parse_input_packet_inspect(pair),
-        Rule::asset_lookup => parse_asset_lookup_to_expression(pair),
-        Rule::asset_has => parse_asset_has_to_expression(pair),
-        Rule::asset_try_lookup => parse_asset_try_lookup_to_expression(pair),
+        Rule::asset_lookup | Rule::asset_has | Rule::asset_try_lookup => {
+            parse_asset_lookup_to_expression(pair)
+        }
         Rule::asset_count => parse_asset_count_to_expression(pair),
         Rule::asset_at => parse_asset_at_to_expression(pair),
         Rule::group_control_is => parse_group_control_is_to_expression(pair),
@@ -457,27 +457,4 @@ pub(crate) fn parse_constructor_to_expression(pair: Pair<Rule>) -> Result<Expres
 /// Constructor arguments use the same expression parser as builtin calls.
 pub(crate) fn parse_constructor_args(pair: Pair<Rule>) -> Result<Vec<Expression>, String> {
     pair.into_inner().map(parse_general_expression).collect()
-}
-
-// ─── Helper Functions ──────────────────────────────────────────────────────────
-
-/// Parse tx_property_access into the appropriate Expression type
-/// Handles special patterns like tx.assetGroups[idx].sumInputs/sumOutputs
-/// Reject malformed asset-API calls that fell through to the generic property
-/// path. A well-formed `.assets.lookup`/`.assets.has` matches the dedicated
-/// `asset_lookup`/`asset_has` rules (which require exactly two operands) before
-/// any property fallback, so seeing one of these method names in a property
-/// string means a legacy single-argument or otherwise malformed call.
-pub(crate) fn reject_malformed_asset_call(text: &str) -> Result<(), String> {
-    if text.contains(".assets.lookup(") {
-        return Err(format!(
-            "asset lookup requires two operands `lookup(txid, gidx)`: {text}"
-        ));
-    }
-    if text.contains(".assets.has(") {
-        return Err(format!(
-            "asset presence check requires two operands `has(txid, gidx)`: {text}"
-        ));
-    }
-    Ok(())
 }

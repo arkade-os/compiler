@@ -143,7 +143,7 @@ fn bare_asset_entry_binds_asset_id_and_amount_from_one_inspection() {
                 require(entry.assetId.txid == txid);
                 require(entry.assetId.gidx == 2);
                 require(entry.amount >= 100);
-                require(tx.outputs[0].assets.lookup(entry.assetId.txid, entry.assetId.gidx) >= entry.amount);
+                require(tx.outputs[0].assets.lookup(entry.assetId) >= entry.amount);
                 let out = tx.outputs[2].assets[1];
                 require(out.amount == entry.amount);
             }
@@ -169,7 +169,7 @@ fn try_lookup_binds_amount_and_presence_from_one_inspection() {
     let code = r#"
         contract C(bytes32 txid) {
             function spend() {
-                let found = tx.outputs[0].assets.tryLookup(txid, 0);
+                let found = tx.outputs[0].assets.tryLookup({ txid: txid, gidx: 0 });
                 if (found.found) {
                     require(found.amount >= 100);
                 } else {
@@ -194,7 +194,7 @@ fn whole_results_are_not_scalars() {
     for expression in [
         "tx.outputs[0].script",
         "tx.inputs[0].assets[0]",
-        "tx.inputs[0].assets.tryLookup(t, 0)",
+        "tx.inputs[0].assets.tryLookup({ txid: t, gidx: 0 })",
     ] {
         let code = format!(
             "contract C(bytes32 t) {{ function spend() {{ require({expression} == 1); }} }}"
@@ -212,8 +212,8 @@ fn repeated_multi_result_inspections_warn_with_the_whole_read() {
                 require(tx.outputs[3].witnessVersion == 1);
                 require(tx.inputs[0].assets[1].amount >= 1);
                 require(tx.inputs[0].assets[1].assetId == id);
-                if (tx.outputs[0].assets.has(t, g)) {
-                    require(tx.outputs[0].assets.lookup(t, g) >= 1);
+                if (tx.outputs[0].assets.has({ txid: t, gidx: g })) {
+                    require(tx.outputs[0].assets.lookup({ txid: t, gidx: g }) >= 1);
                 }
                 require(tx.input.current.witnessVersion == 1);
                 require(this.activeBytecode == script);
@@ -224,7 +224,7 @@ fn repeated_multi_result_inspections_warn_with_the_whole_read() {
     for whole in [
         "tx.outputs[3].script",
         "tx.inputs[0].assets[1]",
-        "tx.outputs[0].assets.tryLookup(t, g)",
+        "tx.outputs[0].assets.tryLookup({ txid: t, gidx: g })",
         "tx.input.current.script",
     ] {
         assert!(

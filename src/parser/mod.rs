@@ -864,7 +864,7 @@ mod tests {
             Ok(ExprKind::InputIntrospection { .. })
         ));
         assert!(matches!(
-            value("tx.assetGroups.has(t, g)"),
+            value("tx.assetGroups.has({ txid: t, gidx: g })"),
             Ok(ExprKind::GroupHas { .. })
         ));
         assert!(matches!(
@@ -1009,7 +1009,7 @@ mod tests {
             let prefixed = -!(n);
             let packet = tx.packet(-!(n));
             let sum = tx.assetGroups[n].sumInputs;
-            let owned = tx.assetGroups.lookup(h, n).controlIs(h, n);
+            let owned = tx.assetGroups.lookup(id).controlIs(AssetId { txid: h, gidx: n });
             require(total > 0);
         } }";
         let contract = parse(source).expect("parses");
@@ -1055,7 +1055,8 @@ mod tests {
             "!(n)",
             "tx.packet(-!(n))",
             "tx.assetGroups[n].sumInputs",
-            "tx.assetGroups.lookup(h, n).controlIs(h, n)",
+            "tx.assetGroups.lookup(id).controlIs(AssetId { txid: h, gidx: n })",
+            "AssetId { txid: h, gidx: n }",
             "total",
             "0",
         ] {

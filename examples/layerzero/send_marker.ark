@@ -18,8 +18,7 @@ pragma arkade ^0.1.0;
 
 contract SendMarker(
   bytes32 endpointSendScriptHash,
-  bytes32 endpointCtrlAssetIdTxid,
-  int     endpointCtrlAssetIdGidx
+  AssetId endpointCtrlAssetId
 ) {
   // Single execution path: consumed inside Endpoint.send().
   //
@@ -40,7 +39,7 @@ contract SendMarker(
 
     // (3) defense-in-depth: Endpoint control singleton on the consuming input.
     require(
-      tx.inputs[0].assets.lookup(endpointCtrlAssetIdTxid, endpointCtrlAssetIdGidx) == 1,
+      tx.inputs[0].assets.lookup(endpointCtrlAssetId) == 1,
       "endpoint state input missing control asset"
     );
   }

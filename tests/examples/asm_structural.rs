@@ -89,7 +89,9 @@ fn local_check_placeholder_consistency(
         {
             continue;
         }
-        if !witness_names.contains(&inner) && !ctor_names.contains(&inner) {
+        // Struct and array parameters read their fields, as in `<id.txid>`.
+        let root = inner.split('.').next().unwrap_or(inner);
+        if !witness_names.contains(&inner) && !ctor_names.contains(&root) {
             warnings.push(format!(
                 "placeholder <{inner}> cannot be constructed from witness or constructor inputs"
             ));

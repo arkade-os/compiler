@@ -53,6 +53,7 @@ assert.deepEqual(labels('tx.outputs[0].'), ['assets', 'script', 'value', 'witnes
 assert(labels('tx.inputs[this.activeInputIndex].').includes('arkadeScriptHash'));
 assert.deepEqual(labels('tx.outputs[idx[0]].'), ['assets', 'script', 'value', 'witnessVersion']);
 assert(labels('tx.inputs[i].assets.').includes('lookup'));
+assert(labels('tx.assetGroups.').includes('lookup') && !labels('tx.assetGroups.').includes('find'));
 assert.deepEqual(labels('tx.outputs[o].assets[0].'), ['amount', 'assetId']);
 assert(labels('tx.assetGroups[k].').includes('sumOutputs'));
 assert(labels('tx.input.current.').includes('value'));
@@ -97,6 +98,7 @@ assert.deepEqual(labels('tx.input.current.'), ['arkadeScriptHash', 'arkadeWitnes
 const describe = context.window.arkadeDescribe;
 assert.equal(describe('require(', 'sha256', null).declaration, 'function sha256(bytes data) bytes32');
 assert.equal(describe('tx.outputs[o].assets.', 'lookup', null).key, 'tx.inputs[].assets.lookup');
+assert.equal(describe('tx.assetGroups.', 'lookup', null).declaration, 'function tx.assetGroups.lookup(AssetId assetId) AssetGroup');
 assert.equal(describe('tx.input.current.', 'value', null).key, 'tx.inputs[].value');
 assert.equal(describe('tx.input.current.', 'assets', null), null);
 assert.equal(describe('tx.input.current.assets.', 'length', null), null);

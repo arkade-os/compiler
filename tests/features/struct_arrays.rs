@@ -345,7 +345,7 @@ struct Rule { AssetId id; int amount; }
 contract C(Rule[2] rules) {
     function spend() {
         for (i, rule) in rules {
-            require(tx.outputs[0].assets.lookup(rule.id.txid, rule.id.gidx) >= rule.amount);
+            require(tx.outputs[0].assets.lookup(rule.id) >= rule.amount);
         }
     }
 }

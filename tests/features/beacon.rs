@@ -6,7 +6,7 @@ use arkade_compiler::opcodes::{
 // Loop-unrolling primitive test over a declared array of asset group indices.
 const BEACON_LOOP_CODE: &str = r#"
 contract PriceBeacon(
-  bytes32 ctrlAssetIdTxid, int ctrlAssetIdGidx,
+  AssetId ctrlAssetId,
   pubkey oraclePk,
   AssetGroup[3] watchedGroups
 ) {
@@ -19,7 +19,7 @@ contract PriceBeacon(
   }
 
   function update(signature oracleSig) {
-    require(tx.inputs[0].assets.lookup(ctrlAssetIdTxid, ctrlAssetIdGidx) > 0, "no ctrl");
+    require(tx.inputs[0].assets.lookup(ctrlAssetId) > 0, "no ctrl");
     require(tx.outputs[0].script == tx.input.current.script, "broken");
     require(checkSig(oracleSig, oraclePk), "bad sig");
   }
@@ -29,8 +29,8 @@ contract PriceBeacon(
 // Price beacon with separate ticker and clock assets.
 const PRICE_BEACON_CODE: &str = r#"
 contract PriceBeacon(
-  bytes32 tickerTxid, int tickerGidx,
-  bytes32 clockTxid, int clockGidx,
+  AssetId tickerId,
+  AssetId clockId,
   pubkey  oraclePk,
   int     exit
 ) {
@@ -38,7 +38,7 @@ contract PriceBeacon(
     require(checkSig(oracleSig, oraclePk), "invalid oracle signature");
     require(newPrice > 0, "price must be positive");
 
-    int currentHeight = tx.inputs[0].assets.lookup(clockTxid, clockGidx);
+    int currentHeight = tx.inputs[0].assets.lookup(clockId);
     require(newBlockHeight >= currentHeight, "block height must not regress");
 
     require(
@@ -46,11 +46,11 @@ contract PriceBeacon(
       "beacon script must survive"
     );
     require(
-      tx.outputs[0].assets.lookup(tickerTxid, tickerGidx) == newPrice,
+      tx.outputs[0].assets.lookup(tickerId) == newPrice,
       "price not updated correctly"
     );
     require(
-      tx.outputs[0].assets.lookup(clockTxid, clockGidx) == newBlockHeight,
+      tx.outputs[0].assets.lookup(clockId) == newBlockHeight,
       "block height not updated correctly"
     );
   }
@@ -61,15 +61,15 @@ contract PriceBeacon(
       "beacon script must survive"
     );
 
-    int currentPrice = tx.inputs[0].assets.lookup(tickerTxid, tickerGidx);
+    int currentPrice = tx.inputs[0].assets.lookup(tickerId);
     require(
-      tx.outputs[0].assets.lookup(tickerTxid, tickerGidx) >= currentPrice,
+      tx.outputs[0].assets.lookup(tickerId) >= currentPrice,
       "price asset must survive"
     );
 
-    int currentHeight = tx.inputs[0].assets.lookup(clockTxid, clockGidx);
+    int currentHeight = tx.inputs[0].assets.lookup(clockId);
     require(
-      tx.outputs[0].assets.lookup(clockTxid, clockGidx) >= currentHeight,
+      tx.outputs[0].assets.lookup(clockId) >= currentHeight,
       "clock asset must survive"
     );
   }

@@ -16,25 +16,19 @@ fn test_token_vault_contract() {
     // Verify contract name
     assert_eq!(output.name, "TokenVault");
 
-    // Verify parameters, including explicit Asset ID (Txid, Gidx) pairs.
+    // Verify parameters.
     let param_names: Vec<&str> = output.parameters.iter().map(|p| p.name.as_str()).collect();
     assert!(param_names.contains(&"ownerPk"), "missing ownerPk");
-    assert!(
-        param_names.contains(&"tokenAssetIdTxid"),
-        "missing explicit tokenAssetIdTxid"
-    );
-    assert!(
-        param_names.contains(&"tokenAssetIdGidx"),
-        "missing explicit tokenAssetIdGidx"
-    );
-    assert!(
-        param_names.contains(&"ctrlAssetIdTxid"),
-        "missing explicit ctrlAssetIdTxid"
-    );
-    assert!(
-        param_names.contains(&"ctrlAssetIdGidx"),
-        "missing explicit ctrlAssetIdGidx"
-    );
+    // Asset IDs are AssetId parameters.
+    for id in ["tokenAssetId", "ctrlAssetId"] {
+        assert!(
+            output
+                .parameters
+                .iter()
+                .any(|p| p.name == id && p.param_type.to_string() == "AssetId"),
+            "missing AssetId {id}, got: {param_names:?}"
+        );
+    }
 
     // 2 covenant functions (deposit, withdraw) + 1 standalone unilateral = 3 groups
     assert_eq!(
@@ -134,8 +128,8 @@ fn test_token_vault_cli() {
     assert!(json_output.contains("\"contractName\": \"TokenVault\""));
     assert!(json_output.contains(OP_INSPECTINASSETLOOKUP));
     assert!(json_output.contains(OP_INSPECTOUTASSETLOOKUP));
-    assert!(json_output.contains("tokenAssetIdTxid"));
-    assert!(json_output.contains("ctrlAssetIdTxid"));
-    assert!(json_output.contains("tokenAssetIdGidx"));
-    assert!(json_output.contains("ctrlAssetIdGidx"));
+    assert!(json_output.contains("<tokenAssetId.txid>"));
+    assert!(json_output.contains("<ctrlAssetId.txid>"));
+    assert!(json_output.contains("<tokenAssetId.gidx>"));
+    assert!(json_output.contains("<ctrlAssetId.gidx>"));
 }

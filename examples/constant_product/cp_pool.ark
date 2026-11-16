@@ -12,10 +12,10 @@ import "./cp_math.ark";
 // the standing order, not by this contract.
 @expect(output-script-unchecked, "output 1 is the standing order's payout, and that order pins its script")
 contract ConstantProductPool(
-  bytes32 quoteTxid, int quoteGidx,
-  bytes32 lpTxid, int lpGidx,
-  bytes32 lpLedgTxid, int lpLedgGidx,
-  bytes32 ctrlTxid, int ctrlGidx,
+  AssetId quoteId,
+  AssetId lpId,
+  AssetId lpLedgId,
+  AssetId ctrlId,
   int feeBps
 ) {
   private function samePool() {
@@ -31,8 +31,8 @@ contract ConstantProductPool(
   }
 
   private function keepCtrl() {
-    require(tx.outputs[0].assets.lookup(ctrlTxid, ctrlGidx) == 1, "ctrl");
-    require(tx.assetGroups.lookup(ctrlTxid, ctrlGidx).delta == 0, "ctrl supply");
+    require(tx.outputs[0].assets.lookup(ctrlId) == 1, "ctrl");
+    require(tx.assetGroups.lookup(ctrlId).delta == 0, "ctrl supply");
   }
 
   // Trader at input 1 sells either BTC (value above the carrier, no assets) or
@@ -42,21 +42,21 @@ contract ConstantProductPool(
     oneCounterparty();
     CpMath.fee(feeBps);
     int base = tx.inputs[0].value - CpMath.DUST;
-    int quote = tx.inputs[0].assets.lookup(quoteTxid, quoteGidx);
-    int supply = tx.inputs[0].assets.lookup(lpLedgTxid, lpLedgGidx);
+    int quote = tx.inputs[0].assets.lookup(quoteId);
+    int supply = tx.inputs[0].assets.lookup(lpLedgId);
     require(base > 0, "base");
     require(quote > 0, "quote");
     require(supply > 0, "supply");
     require(tx.inputs[1].value >= CpMath.DUST, "carrier");
     int sellBase = tx.inputs[1].value - CpMath.DUST;
-    int sellQuote = CpMath.held(1, quoteTxid, quoteGidx);
+    int sellQuote = CpMath.held(1, quoteId);
     require(sellBase + sellQuote > 0, "amount");
     if (sellBase > 0) {
       require(sellQuote == 0, "one side");
       require(tx.inputs[1].assets.length == 0, "btc only");
       int paid = CpMath.bought(base, quote, sellBase, feeBps);
       require(tx.outputs[1].value == CpMath.DUST, "carrier");
-      require(tx.outputs[1].assets.lookup(quoteTxid, quoteGidx) == paid, "quote out");
+      require(tx.outputs[1].assets.lookup(quoteId) == paid, "quote out");
       require(tx.outputs[1].assets.length == 1, "quote only");
       base = base + sellBase;
       quote = quote - paid;
@@ -73,11 +73,11 @@ contract ConstantProductPool(
     require(tx.outputs[0].value == CpMath.DUST + base, "btc reserve");
     require(tx.outputs[0].assets.length == 3, "pool assets");
     keepCtrl();
-    require(tx.outputs[0].assets.lookup(quoteTxid, quoteGidx) == quote, "quote");
-    require(tx.outputs[0].assets.lookup(lpLedgTxid, lpLedgGidx) == supply, "ledger");
-    require(tx.assetGroups.lookup(quoteTxid, quoteGidx).delta == 0, "quote supply");
-    require(tx.assetGroups.lookup(lpLedgTxid, lpLedgGidx).delta == 0, "ledger supply");
-    require(!tx.assetGroups.has(lpTxid, lpGidx), "lp moved");
+    require(tx.outputs[0].assets.lookup(quoteId) == quote, "quote");
+    require(tx.outputs[0].assets.lookup(lpLedgId) == supply, "ledger");
+    require(tx.assetGroups.lookup(quoteId).delta == 0, "quote supply");
+    require(tx.assetGroups.lookup(lpLedgId).delta == 0, "ledger supply");
+    require(!tx.assetGroups.has(lpId), "lp moved");
   }
 
   // LP at input 1 adds BTC and quote. An empty pool (full exit) is re-opened
@@ -88,11 +88,11 @@ contract ConstantProductPool(
     oneCounterparty();
     CpMath.fee(feeBps);
     int base0 = tx.inputs[0].value - CpMath.DUST;
-    int quote0 = CpMath.held(0, quoteTxid, quoteGidx);
-    int supply = CpMath.held(0, lpLedgTxid, lpLedgGidx);
+    int quote0 = CpMath.held(0, quoteId);
+    int supply = CpMath.held(0, lpLedgId);
     require(tx.inputs[1].value > CpMath.DUST, "btc in");
     int dx = tx.inputs[1].value - CpMath.DUST;
-    int dy = tx.inputs[1].assets.lookup(quoteTxid, quoteGidx);
+    int dy = tx.inputs[1].assets.lookup(quoteId);
     require(tx.inputs[1].assets.length == 1, "quote only");
     int share = 0;
     if (supply == 0) {
@@ -104,21 +104,21 @@ contract ConstantProductPool(
       share = CpMath.sharesFor(base0, quote0, supply, dx, dy);
     }
     require(tx.outputs[1].value == CpMath.DUST, "token carrier");
-    require(tx.outputs[1].assets.lookup(lpTxid, lpGidx) == share, "token");
+    require(tx.outputs[1].assets.lookup(lpId) == share, "token");
     require(tx.outputs[1].assets.length == 1, "token only");
     require(tx.outputs[0].value == CpMath.DUST + base0 + dx, "btc reserve");
     keepCtrl();
-    require(tx.outputs[0].assets.lookup(quoteTxid, quoteGidx) == quote0 + dy, "quote");
-    require(tx.outputs[0].assets.lookup(lpLedgTxid, lpLedgGidx) == supply + share, "ledger");
+    require(tx.outputs[0].assets.lookup(quoteId) == quote0 + dy, "quote");
+    require(tx.outputs[0].assets.lookup(lpLedgId) == supply + share, "ledger");
     require(tx.outputs[0].assets.length == 3, "pool assets");
-    let lpGroup = tx.assetGroups.lookup(lpTxid, lpGidx);
-    require(lpGroup.controlIs(ctrlTxid, ctrlGidx), "lp control");
+    let lpGroup = tx.assetGroups.lookup(lpId);
+    require(lpGroup.controlIs(ctrlId), "lp control");
     require(lpGroup.delta == share, "issued");
     require(lpGroup.sumInputs == 0, "lp in");
-    let ledgGroup = tx.assetGroups.lookup(lpLedgTxid, lpLedgGidx);
-    require(ledgGroup.controlIs(ctrlTxid, ctrlGidx), "ledger control");
+    let ledgGroup = tx.assetGroups.lookup(lpLedgId);
+    require(ledgGroup.controlIs(ctrlId), "ledger control");
     require(ledgGroup.delta == share, "ledger");
-    require(tx.assetGroups.lookup(quoteTxid, quoteGidx).delta == 0, "quote supply");
+    require(tx.assetGroups.lookup(quoteId).delta == 0, "quote supply");
   }
 
   // LP at input 1 burns LP tokens for a pro-rata slice. A side that rounds to 0
@@ -129,37 +129,37 @@ contract ConstantProductPool(
     oneCounterparty();
     CpMath.fee(feeBps);
     int base0 = tx.inputs[0].value - CpMath.DUST;
-    int quote0 = tx.inputs[0].assets.lookup(quoteTxid, quoteGidx);
-    int supply = tx.inputs[0].assets.lookup(lpLedgTxid, lpLedgGidx);
+    int quote0 = tx.inputs[0].assets.lookup(quoteId);
+    int supply = tx.inputs[0].assets.lookup(lpLedgId);
     require(base0 > 0, "base");
     require(quote0 > 0, "quote");
     require(supply > 0, "supply");
     require(tx.inputs[1].value == CpMath.DUST, "carrier");
     require(tx.inputs[1].assets.length == 1, "token only");
-    int part = tx.inputs[1].assets.lookup(lpTxid, lpGidx);
+    int part = tx.inputs[1].assets.lookup(lpId);
     require(part > 0, "token");
     require(part <= supply, "supply");
     int partBase = (base0 * part) / supply;
     int partQuote = (quote0 * part) / supply;
-    CpMath.payout(quoteTxid, quoteGidx, partBase, partQuote);
+    CpMath.payout(quoteId, partBase, partQuote);
     require(tx.outputs[0].value == CpMath.DUST + base0 - partBase, "btc reserve");
     keepCtrl();
     if (part == supply) {
-      require(!tx.outputs[0].assets.has(quoteTxid, quoteGidx), "quote cleared");
-      require(!tx.outputs[0].assets.has(lpLedgTxid, lpLedgGidx), "ledger cleared");
+      require(!tx.outputs[0].assets.has(quoteId), "quote cleared");
+      require(!tx.outputs[0].assets.has(lpLedgId), "ledger cleared");
       require(tx.outputs[0].assets.length == 1, "ctrl only");
     } else {
-      require(tx.outputs[0].assets.lookup(quoteTxid, quoteGidx) == quote0 - partQuote, "quote");
-      require(tx.outputs[0].assets.lookup(lpLedgTxid, lpLedgGidx) == supply - part, "ledger");
+      require(tx.outputs[0].assets.lookup(quoteId) == quote0 - partQuote, "quote");
+      require(tx.outputs[0].assets.lookup(lpLedgId) == supply - part, "ledger");
       require(tx.outputs[0].assets.length == 3, "pool assets");
     }
-    let lpGroup = tx.assetGroups.lookup(lpTxid, lpGidx);
-    require(lpGroup.controlIs(ctrlTxid, ctrlGidx), "lp control");
+    let lpGroup = tx.assetGroups.lookup(lpId);
+    require(lpGroup.controlIs(ctrlId), "lp control");
     require(lpGroup.sumInputs == part, "token in");
     require(lpGroup.sumOutputs == 0, "burned");
-    let ledgGroup = tx.assetGroups.lookup(lpLedgTxid, lpLedgGidx);
-    require(ledgGroup.controlIs(ctrlTxid, ctrlGidx), "ledger control");
+    let ledgGroup = tx.assetGroups.lookup(lpLedgId);
+    require(ledgGroup.controlIs(ctrlId), "ledger control");
     require(ledgGroup.delta + part == 0, "ledger");
-    require(tx.assetGroups.lookup(quoteTxid, quoteGidx).delta == 0, "quote supply");
+    require(tx.assetGroups.lookup(quoteId).delta == 0, "quote supply");
   }
 }

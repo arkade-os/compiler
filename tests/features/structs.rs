@@ -860,7 +860,7 @@ struct Policy { pubkey key; int weight; bytes32 txid; int gidx; }
 contract C(Policy policy) {
     function spend(int amount) {
         require(amount == policy . weight);
-        require(tx.outputs[0].assets.lookup(policy . txid, policy . gidx) >= 0);
+        require(tx.outputs[0].assets.lookup({ txid: policy . txid, gidx: policy . gidx }) >= 0);
     }
 }
 "#,

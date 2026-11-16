@@ -62,7 +62,7 @@ pragma arkade ^0.1.0;
 //
 // POOL-AUTHENTICATION CAVEAT
 //   The "genuine pool not co-spent" check verifies only that an input holds
-//   the debit-control asset (`tx.inputs[poolIdx].assets.lookup(debitCtrlIdTxid, debitCtrlIdGidx)
+//   the debit-control asset (`tx.inputs[poolIdx].assets.lookup(debitCtrlId)
 //   >= 1`), not that the input's scriptPubKey is the canonical RepaymentPool
 //   covenant. Safety therefore rests on the asset-registry invariant that
 //   no pool function ever lets debitCtrlId leak from its output[0]. EVERY
@@ -79,10 +79,8 @@ import "../single_sig/single_sig.ark";
 
 contract BondMint(
   pubkey  borrowerPk,
-  bytes32 debitAssetIdTxid,
-  int     debitAssetIdGidx,
-  bytes32 debitCtrlIdTxid,
-  int     debitCtrlIdGidx,
+  AssetId debitAssetId,
+  AssetId debitCtrlId,
   int     mintedAmount,
   int     collateral,
   int     maturity,
@@ -96,9 +94,9 @@ contract BondMint(
     require(checkSig(borrowerSig, borrowerPk), "invalid borrower sig");
     require(!checkTime(maturity), "loan matured");
 
-    require(tx.inputs[poolIdx].assets.lookup(debitCtrlIdTxid, debitCtrlIdGidx) >= 1, "genuine pool not co-spent");
+    require(tx.inputs[poolIdx].assets.lookup(debitCtrlId) >= 1, "genuine pool not co-spent");
 
-    let debitGroup = tx.assetGroups.lookup(debitAssetIdTxid, debitAssetIdGidx);
+    let debitGroup = tx.assetGroups.lookup(debitAssetId);
     require(debitGroup.sumInputs == debitGroup.sumOutputs + mintedAmount, "debit not burned exactly mintedAmount");
 
     require(tx.outputs[1].value >= collateral, "collateral not returned");
@@ -122,12 +120,12 @@ contract BondMint(
   function liquidate(int poolIdx, ScriptPubKey auctioneerScriptPubKey) {
     require(!checkTime(maturity), "matured; use auction");
 
-    require(tx.inputs[poolIdx].assets.lookup(debitCtrlIdTxid, debitCtrlIdGidx) >= 1, "genuine pool not co-spent");
+    require(tx.inputs[poolIdx].assets.lookup(debitCtrlId) >= 1, "genuine pool not co-spent");
     // One vault per pool: the debit burn below is checked per asset group, so two vaults
     // sharing one pool input could both be settled by a single burn.
     require(this.activeInputIndex == poolIdx + 1, "vault must follow the pool");
 
-    let debitGroup = tx.assetGroups.lookup(debitAssetIdTxid, debitAssetIdGidx);
+    let debitGroup = tx.assetGroups.lookup(debitAssetId);
     require(debitGroup.sumInputs == debitGroup.sumOutputs + mintedAmount, "debit not burned exactly mintedAmount");
 
     require(tx.outputs[1].value > 0, "auctioneer output empty");
@@ -145,10 +143,10 @@ contract BondMint(
     int windowEnd = maturity + auctionWindow;
     require(!checkTime(windowEnd), "auction window closed");
 
-    require(tx.inputs[poolIdx].assets.lookup(debitCtrlIdTxid, debitCtrlIdGidx) >= 1, "genuine pool not co-spent");
+    require(tx.inputs[poolIdx].assets.lookup(debitCtrlId) >= 1, "genuine pool not co-spent");
     require(this.activeInputIndex == poolIdx + 1, "vault must follow the pool");
 
-    let debitGroup = tx.assetGroups.lookup(debitAssetIdTxid, debitAssetIdGidx);
+    let debitGroup = tx.assetGroups.lookup(debitAssetId);
     require(debitGroup.sumInputs == debitGroup.sumOutputs + mintedAmount, "debit not burned exactly mintedAmount");
 
     require(tx.outputs[1].value > 0, "auctioneer output empty");
@@ -171,9 +169,9 @@ contract BondMint(
     require(checkSig(borrowerSig, borrowerPk), "invalid borrower sig");
     require(!checkTime(maturity), "vault matured");
 
-    require(tx.inputs[poolIdx].assets.lookup(debitCtrlIdTxid, debitCtrlIdGidx) >= 1, "genuine pool not co-spent");
+    require(tx.inputs[poolIdx].assets.lookup(debitCtrlId) >= 1, "genuine pool not co-spent");
 
-    let debitGroup = tx.assetGroups.lookup(debitAssetIdTxid, debitAssetIdGidx);
+    let debitGroup = tx.assetGroups.lookup(debitAssetId);
     require(debitGroup.sumInputs == debitGroup.sumOutputs + mintedAmount, "debit not burned exactly mintedAmount");
   }
 

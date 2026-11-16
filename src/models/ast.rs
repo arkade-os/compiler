@@ -606,32 +606,29 @@ pub enum ExprKind {
     ArrayIndex { array: Path, index: Box<Expression> },
     /// `this.activeInputIndex`, `this.expiry`
     This(crate::properties::ThisProperty),
-    /// Asset lookup: tx.inputs[i].assets.lookup(txid, gidx) or
-    /// tx.outputs[o].assets.lookup(txid, gidx). Asserts the asset is present
+    /// Asset lookup: tx.inputs[i].assets.lookup(id) or
+    /// tx.outputs[o].assets.lookup(id) with an `AssetId` id. Asserts the asset is present
     /// (consumes the opcode success flag with OP_VERIFY) and leaves its amount.
     AssetLookup {
         source: AssetLookupSource,
         index: Box<Expression>,
-        asset_txid: Box<Expression>, // bytes32 expression
-        asset_gidx: Box<Expression>, // int reference or literal (0..65535)
+        asset_id: Box<Expression>,
     },
-    /// Asset presence predicate: tx.inputs[i].assets.has(txid, gidx) or
-    /// tx.outputs[o].assets.has(txid, gidx). Boolean — true when the asset is
+    /// Asset presence predicate: tx.inputs[i].assets.has(id) or
+    /// tx.outputs[o].assets.has(id). Boolean — true when the asset is
     /// present, false when absent (keeps the opcode success flag, drops amount).
     AssetHas {
         source: AssetLookupSource,
         index: Box<Expression>,
-        asset_txid: Box<Expression>,
-        asset_gidx: Box<Expression>,
+        asset_id: Box<Expression>,
     },
-    /// Non-aborting asset lookup: tx.inputs[i].assets.tryLookup(txid, gidx) or
-    /// tx.outputs[o].assets.tryLookup(txid, gidx). An `AssetLookup` holding the
+    /// Non-aborting asset lookup: tx.inputs[i].assets.tryLookup(id) or
+    /// tx.outputs[o].assets.tryLookup(id). An `AssetLookup` holding the
     /// amount and the opcode success flag.
     AssetTryLookup {
         source: AssetLookupSource,
         index: Box<Expression>,
-        asset_txid: Box<Expression>,
-        asset_gidx: Box<Expression>,
+        asset_id: Box<Expression>,
     },
     /// Asset count: tx.inputs[i].assets.length or tx.outputs[o].assets.length
     AssetCount {
@@ -667,18 +664,12 @@ pub enum ExprKind {
         op: crate::operators::BinaryOperator,
         right: Box<Expression>,
     },
-    /// Asset group lookup: tx.assetGroups.lookup(txid, gidx) → the `AssetGroup` with
+    /// Asset group lookup: tx.assetGroups.lookup(id) → the `AssetGroup` with
     /// that Asset ID. Asserts existence (consumes the success flag with OP_VERIFY).
-    GroupLookup {
-        asset_txid: Box<Expression>,
-        asset_gidx: Box<Expression>,
-    },
-    /// Asset group presence predicate: tx.assetGroups.has(txid, gidx). Boolean —
+    GroupLookup { asset_id: Box<Expression> },
+    /// Asset group presence predicate: tx.assetGroups.has(id). Boolean —
     /// true when a group with that Asset ID exists, false otherwise.
-    GroupHas {
-        asset_txid: Box<Expression>,
-        asset_gidx: Box<Expression>,
-    },
+    GroupHas { asset_id: Box<Expression> },
     /// The `AssetGroup` at packet position k: tx.assetGroups[k].
     AssetGroupAt { index: Box<Expression> },
     /// Asset group property: group.sumInputs, group.delta, etc.
@@ -687,13 +678,12 @@ pub enum ExprKind {
         property: crate::properties::GroupProperty,
     },
     /// Boolean equality over the complete canonical control Asset ID:
-    /// group.controlIs(txid, gidx). False when control is absent or either
+    /// group.controlIs(id). False when control is absent or either
     /// component differs. `group.hasControl` (presence only) is modeled as a
     /// plain `GroupProperty { property: "hasControl" }`.
     GroupControlIs {
         group: Box<Expression>,
-        asset_txid: Box<Expression>,
-        asset_gidx: Box<Expression>,
+        asset_id: Box<Expression>,
     },
     /// Asset groups length: tx.assetGroups.length → csn
     AssetGroupsLength,
@@ -795,23 +785,14 @@ macro_rules! expression_children {
                 }
 
                 ExprKind::AssetLookup {
-                    index,
-                    asset_txid,
-                    asset_gidx,
-                    ..
+                    index, asset_id, ..
                 }
                 | ExprKind::AssetHas {
-                    index,
-                    asset_txid,
-                    asset_gidx,
-                    ..
+                    index, asset_id, ..
                 }
                 | ExprKind::AssetTryLookup {
-                    index,
-                    asset_txid,
-                    asset_gidx,
-                    ..
-                } => vec![index, asset_txid, asset_gidx],
+                    index, asset_id, ..
+                } => vec![index, asset_id],
                 ExprKind::AssetCount { index, .. }
                 | ExprKind::InputIntrospection { index, .. }
                 | ExprKind::OutputIntrospection { index, .. }
@@ -825,19 +806,10 @@ macro_rules! expression_children {
                 ExprKind::BinaryOp { left, right, .. } => {
                     vec![left, right]
                 }
-                ExprKind::GroupLookup {
-                    asset_txid,
-                    asset_gidx,
+                ExprKind::GroupLookup { asset_id } | ExprKind::GroupHas { asset_id } => {
+                    vec![asset_id]
                 }
-                | ExprKind::GroupHas {
-                    asset_txid,
-                    asset_gidx,
-                } => vec![asset_txid, asset_gidx],
-                ExprKind::GroupControlIs {
-                    group,
-                    asset_txid,
-                    asset_gidx,
-                } => vec![group, asset_txid, asset_gidx],
+                ExprKind::GroupControlIs { group, asset_id } => vec![group, asset_id],
                 ExprKind::GroupIOAccess {
                     group, io_index, ..
                 } => vec![group, io_index],
@@ -905,6 +877,16 @@ impl Expression {
                     _ => e.source_text(),
                 };
                 format!("{} {op} {}", operand(left), operand(right))
+            }
+            ExprKind::StructLiteral { name, fields } => {
+                let fields: Vec<String> = fields
+                    .iter()
+                    .map(|(field, value)| format!("{field}: {}", value.source_text()))
+                    .collect();
+                let name = name
+                    .as_ref()
+                    .map_or(String::new(), |name| format!("{name} "));
+                format!("{name}{{ {} }}", fields.join(", "))
             }
             _ => self
                 .access_path(&Self::source_text)

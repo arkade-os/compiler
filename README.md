@@ -106,17 +106,15 @@ contract Splitter(pubkey alicePk, pubkey bobPk) {
 ```solidity
 contract TokenVault(
   pubkey ownerPk,
-  bytes32 tokenAssetIdTxid,
-  int tokenAssetIdGidx,
-  bytes32 ctrlAssetIdTxid,
-  int ctrlAssetIdGidx
+  AssetId tokenAssetId,
+  AssetId ctrlAssetId
 ) {
   function deposit(signature ownerSig) {
-    require(tx.inputs[0].assets.lookup(ctrlAssetIdTxid, ctrlAssetIdGidx) > 0, "no ctrl in input");
-    require(tx.outputs[0].assets.lookup(ctrlAssetIdTxid, ctrlAssetIdGidx) > 0, "no ctrl in output");
+    require(tx.inputs[0].assets.lookup(ctrlAssetId) > 0, "no ctrl in input");
+    require(tx.outputs[0].assets.lookup(ctrlAssetId) > 0, "no ctrl in output");
     require(
-      tx.outputs[0].assets.lookup(tokenAssetIdTxid, tokenAssetIdGidx) >=
-        tx.inputs[0].assets.lookup(tokenAssetIdTxid, tokenAssetIdGidx),
+      tx.outputs[0].assets.lookup(tokenAssetId) >=
+        tx.inputs[0].assets.lookup(tokenAssetId),
       "token balance decreased"
     );
     require(checkSig(ownerSig, ownerPk), "invalid owner signature");
@@ -129,7 +127,7 @@ contract TokenVault(
 }
 ```
 
-An Asset ID is a `(bytes32 txid, int gidx)` pair. `assets.lookup` asserts the asset is present on that input or output and yields its amount; `assets.has` is the boolean form. For supply accounting across the whole transaction, `tx.assetGroups.lookup(txid, gidx)` returns an `AssetGroup` with `sumInputs`, `sumOutputs`, `delta`, `controlIs(txid, gidx)`, and friends (see `examples/controlled_mint`).
+An Asset ID is an `AssetId` struct `{txid, gidx}`; write one as `AssetId { txid: t, gidx: 0 }`. `assets.lookup` asserts the asset is present on that input or output and yields its amount; `assets.has` is the boolean form. For supply accounting across the whole transaction, `tx.assetGroups.lookup(id)` returns an `AssetGroup` with `sumInputs`, `sumOutputs`, `delta`, `controlIs(id)`, and friends (see `examples/controlled_mint`).
 
 ### Arrays, structs, loops
 
@@ -494,7 +492,7 @@ In covenants, `checkTime(timestamp)` returns whether the emulator's wall clock h
 
 **Inputs and outputs.** `tx.inputs[i].value | witnessVersion | sequence | outpoint | arkadeScriptHash | arkadeWitnessHash | script`, `tx.outputs[o].value | witnessVersion | script`, and `tx.input.current.value | witnessVersion | sequence | outpoint | arkadeScriptHash | arkadeWitnessHash | script` for the input being spent. `script` is a `ScriptPubKey {program, version}` holding both values from one inspection. Native witness versions are 0–16; non-witness scripts return their SHA256 hash as `program` and `-1` as `version`. `witnessVersion` reads the version alone. Bind a script to inspect its fields: `let s = tx.outputs[0].script; require(s.program == p); require(s.version == 1);`. The compiler warns when a function inspects the same script, indexed asset, or asset lookup more than once, and names the whole read to bind instead.
 
-**Assets.** On any input or output: `.assets.lookup(txid, gidx)` (asserts presence, yields amount), `.assets.has(txid, gidx)`, `.assets.tryLookup(txid, gidx)` (an `AssetLookup` with `amount` and `found` from one inspection), `.assets.length`, `.assets[t].assetId`, `.assets[t].amount`, and `.assets[t]` (an `AssetEntry` with `assetId` and `amount` from one inspection). Groups: `tx.assetGroups.lookup(txid, gidx)` (asserts presence) and `tx.assetGroups[k]` (the group at packet position `k`) yield an `AssetGroup`; `tx.assetGroups.has(txid, gidx)` and `.length` inspect the packet. Every `AssetGroup` value, whether bound, a parameter, an array element, or inline such as `tx.assetGroups[k].delta`, has `numInputs`, `numOutputs`, `sumInputs`, `sumOutputs`, `delta`, `hasControl`, `controlIs(txid, gidx)`, `controlAssetId` (fails the spend when the group has no control asset), `metadataHash`, `assetId`, `isFresh`. An `int` has no group members; turn a position into a group with `tx.assetGroups[k]`. A group's `inputs[j]` and `outputs[j]` records have `amount`, `type` and `index`: an output's `type` is 1 and its `index` is its vout; an input's `type` is 1 for a local input, whose `index` is its vin, and 2 for an intent input, whose `index` is the output it references in the intent transaction and whose `txid` is that transaction; `txid` fails the spend on a local input, so read it behind a type check, such as `g.inputs[j].type == 1 || g.inputs[j].txid == t`, when the kind is not fixed, and does not exist on outputs. An index outside the group's records fails the spend.
+**Assets.** Every Asset ID operand is one `AssetId` expression: a parameter, a binding or field, a literal such as `AssetId { txid: t, gidx: 0 }` or `{ txid: t, gidx: 0 }`, `.assets[t].assetId`, `controlAssetId`, or a helper result. A constant `gidx` outside 0 to 65535 is rejected in an operand or a named `AssetId { ... }` literal. On any input or output: `.assets.lookup(id)` (asserts presence, yields amount), `.assets.has(id)`, `.assets.tryLookup(id)` (an `AssetLookup` with `amount` and `found` from one inspection), `.assets.length`, `.assets[t].assetId`, `.assets[t].amount`, and `.assets[t]` (an `AssetEntry` with `assetId` and `amount` from one inspection). Groups: `tx.assetGroups.lookup(id)` (asserts presence) and `tx.assetGroups[k]` (the group at packet position `k`) yield an `AssetGroup`; `tx.assetGroups.has(id)` and `.length` inspect the packet. Every `AssetGroup` value, whether bound, a parameter, an array element, or inline such as `tx.assetGroups[k].delta`, has `numInputs`, `numOutputs`, `sumInputs`, `sumOutputs`, `delta`, `hasControl`, `controlIs(id)`, `controlAssetId` (fails the spend when the group has no control asset), `metadataHash`, `assetId`, `isFresh`. An `int` has no group members; turn a position into a group with `tx.assetGroups[k]`. A group's `inputs[j]` and `outputs[j]` records have `amount`, `type` and `index`: an output's `type` is 1 and its `index` is its vout; an input's `type` is 1 for a local input, whose `index` is its vin, and 2 for an intent input, whose `index` is the output it references in the intent transaction and whose `txid` is that transaction; `txid` fails the spend on a local input, so read it behind a type check, such as `g.inputs[j].type == 1 || g.inputs[j].txid == t`, when the kind is not fixed, and does not exist on outputs. An index outside the group's records fails the spend.
 
 **Bytes.** `substr(data, offset, size)`, `left(data, count)`, `right(data, count)`, `cat(a, b)`, `bytes2int(bytes)`, `bytes2uint(bytes)`, `int2bytes(value, size)`, `reverseBytes(bytes)`, `size(bytes)`. `bytes2int` reads Script-number bytes, where the top bit of the last byte is the sign, so `bytes2int(0xff)` is `-127` and `bytes2int(0x80)` is `0`; `bytes2uint` reads unsigned little-endian bytes, so `bytes2uint(0xff)` is `255`. Use `bytes2uint` for unsigned fixed-width fields, after `reverseBytes` when they are big-endian. In covenants, `left` and `right` return the first or last `count` bytes. Zero returns empty bytes; negative counts and counts exceeding the data length fail execution.
 

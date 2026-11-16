@@ -17,20 +17,16 @@ pragma arkade ^0.1.0;
 import "../single_sig/single_sig.ark";
 
 contract ArkadeKitties(
-    bytes32 speciesControlIdTxid,
-    int speciesControlIdGidx,
+    AssetId speciesControlId,
     pubkey oraclePk,
     pubkey ownerPk
 ) {
     // Breed two kitties to create a new one
     // Parents must be species-controlled, child must be fresh
     function breed(
-        bytes32 sireIdTxid,
-        int sireIdGidx,
-        bytes32 dameIdTxid,
-        int dameIdGidx,
-        bytes32 childIdTxid,
-        int childIdGidx,
+        AssetId sireId,
+        AssetId dameId,
+        AssetId childId,
         bytes32 sireGenomeHash,
         bytes32 dameGenomeHash,
         bytes32 expectedChildMetadataHash,
@@ -41,52 +37,52 @@ contract ArkadeKitties(
         int ctrlOutputIdx
     ) {
         // Verify sire is species-controlled with correct genome
-        let sireGroup = tx.assetGroups.lookup(sireIdTxid, sireIdGidx);
-        require(sireGroup.controlIs(speciesControlIdTxid, speciesControlIdGidx), "sire not species-controlled");
+        let sireGroup = tx.assetGroups.lookup(sireId);
+        require(sireGroup.controlIs(speciesControlId), "sire not species-controlled");
         require(sireGroup.metadataHash == sireGenomeHash, "sire genome mismatch");
         require(sireGroup.delta == 0, "sire must be retained");
 
         // Verify dame is species-controlled with correct genome
-        let dameGroup = tx.assetGroups.lookup(dameIdTxid, dameIdGidx);
-        require(dameGroup.controlIs(speciesControlIdTxid, speciesControlIdGidx), "dame not species-controlled");
+        let dameGroup = tx.assetGroups.lookup(dameId);
+        require(dameGroup.controlIs(speciesControlId), "dame not species-controlled");
         require(dameGroup.metadataHash == dameGenomeHash, "dame genome mismatch");
         require(dameGroup.delta == 0, "dame must be retained");
 
         // Verify child is fresh (new issuance in this tx)
-        let childGroup = tx.assetGroups.lookup(childIdTxid, childIdGidx);
+        let childGroup = tx.assetGroups.lookup(childId);
         require(childGroup.isFresh == true, "child must be fresh");
         require(childGroup.delta == 1, "must mint exactly 1 child");
-        require(childGroup.controlIs(speciesControlIdTxid, speciesControlIdGidx), "child not species-controlled");
+        require(childGroup.controlIs(speciesControlId), "child not species-controlled");
         require(childGroup.metadataHash == expectedChildMetadataHash, "child genome mismatch");
 
         // Species control must be retained (delta == 0)
-        let ctrlGroup = tx.assetGroups.lookup(speciesControlIdTxid, speciesControlIdGidx);
+        let ctrlGroup = tx.assetGroups.lookup(speciesControlId);
         require(ctrlGroup.delta == 0, "species control must be retained");
 
         // Oracle signature validates the breeding (genome combination)
         require(checkSig(oracleSig, oraclePk), "invalid oracle sig");
 
         // Verify outputs contain all assets
-        require(tx.outputs[childOutputIdx].assets.lookup(childIdTxid, childIdGidx) == 1, "child not in output");
-        require(tx.outputs[sireOutputIdx].assets.lookup(sireIdTxid, sireIdGidx) == 1, "sire not returned");
-        require(tx.outputs[dameOutputIdx].assets.lookup(dameIdTxid, dameIdGidx) == 1, "dame not returned");
-        require(tx.outputs[ctrlOutputIdx].assets.lookup(speciesControlIdTxid, speciesControlIdGidx) == 1, "ctrl not retained");
+        require(tx.outputs[childOutputIdx].assets.lookup(childId) == 1, "child not in output");
+        require(tx.outputs[sireOutputIdx].assets.lookup(sireId) == 1, "sire not returned");
+        require(tx.outputs[dameOutputIdx].assets.lookup(dameId) == 1, "dame not returned");
+        require(tx.outputs[ctrlOutputIdx].assets.lookup(speciesControlId) == 1, "ctrl not retained");
     }
 
     // Transfer a kitty to a new owner
-    function transfer(bytes32 kittyIdTxid, int kittyIdGidx, ScriptPubKey newOwnerScriptPubKey, signature ownerSig) {
-        let kittyGroup = tx.assetGroups.lookup(kittyIdTxid, kittyIdGidx);
+    function transfer(AssetId kittyId, ScriptPubKey newOwnerScriptPubKey, signature ownerSig) {
+        let kittyGroup = tx.assetGroups.lookup(kittyId);
 
         // Must be existing kitty (not fresh)
         require(kittyGroup.isFresh == false, "must be existing kitty");
 
         // Must be species-controlled
-        require(kittyGroup.controlIs(speciesControlIdTxid, speciesControlIdGidx), "not species-controlled");
+        require(kittyGroup.controlIs(speciesControlId), "not species-controlled");
 
         // Must be transfer (delta == 0)
         require(kittyGroup.delta == 0, "must be transfer only");
 
-        require(tx.outputs[0].assets.lookup(kittyIdTxid, kittyIdGidx) == 1, "kitty not in output");
+        require(tx.outputs[0].assets.lookup(kittyId) == 1, "kitty not in output");
         require(tx.outputs[0].script == newOwnerScriptPubKey, "wrong destination");
         require(checkSig(ownerSig, ownerPk), "invalid owner sig");
     }

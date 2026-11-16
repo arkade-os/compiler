@@ -665,6 +665,13 @@ pub(super) fn validate_binding_expression(
                 | ExprKind::Tunnel { .. }
                 | ExprKind::FieldAccess { .. }
                 | ExprKind::IndexAccess { .. }
+                // Their AssetId operand is a whole struct.
+                | ExprKind::AssetLookup { .. }
+                | ExprKind::AssetHas { .. }
+                | ExprKind::AssetTryLookup { .. }
+                | ExprKind::GroupLookup { .. }
+                | ExprKind::GroupHas { .. }
+                | ExprKind::GroupControlIs { .. }
         ) {
             validate_value_expression(child, scopes, issues);
         } else {

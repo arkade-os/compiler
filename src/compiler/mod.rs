@@ -15,8 +15,8 @@ use crate::opcodes::Opcode::{
     InspectNumInputs, InspectNumOutputs, InspectOutAssetAt, InspectOutAssetCount,
     InspectOutAssetLookup, InspectOutputScriptPubKey, InspectOutputValue, InspectPacket,
     InspectVersion, Int0, Int1, LessThan, LessThanOrEqual, Mul, Nip, Not, NotEqual0, NumEqual,
-    Pick, PushCurrentInputIndex, PushExpiry, Put, Roll, Size, Sub, Swap, Tunnel, TxWeight, Txid,
-    Verify,
+    Pick, PushCurrentInputIndex, PushExpiry, Put, Roll, Rot, Size, Sub, Swap, Tunnel, TxWeight,
+    Txid, Verify,
 };
 use crate::types::{self};
 use crate::validator;
