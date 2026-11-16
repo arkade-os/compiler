@@ -118,15 +118,7 @@ impl<'de> Deserialize<'de> for TypeName {
 pub fn is_builtin_type(declared_type: &str) -> bool {
     matches!(
         declared_type,
-        "pubkey"
-            | "signature"
-            | "bytes"
-            | "bytes20"
-            | "bytes32"
-            | "int"
-            | "bool"
-            | "asset"
-            | "AssetGroup"
+        "pubkey" | "signature" | "bytes" | "bytes20" | "bytes32" | "int" | "bool" | "AssetGroup"
     )
 }
 

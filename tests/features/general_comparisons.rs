@@ -142,7 +142,6 @@ fn declared_scalar_types_compare_directly() {
         "bytes32",
         "int",
         "bool",
-        "asset",
     ] {
         let source = format!(
             "contract Compare() {{

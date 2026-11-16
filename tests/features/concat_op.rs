@@ -95,7 +95,7 @@ contract LoopHash(bytes32 tag) {
 
 #[test]
 fn concatenation_rejects_non_byte_scalar_types() {
-    for ty in ["AssetGroup", "asset", "int", "bool"] {
+    for ty in ["AssetGroup", "int", "bool"] {
         for (expression, side) in [
             ("0x01 + value", "right"),
             ("value + 0x01", "left"),
@@ -122,7 +122,7 @@ fn concatenation_rejects_non_byte_scalar_types() {
                 ty == "int",
                 "{error}"
             );
-            if matches!(ty, "AssetGroup" | "asset") {
+            if ty == "AssetGroup" {
                 assert!(
                     error.contains("both operands must be bytes-like"),
                     "{error}"

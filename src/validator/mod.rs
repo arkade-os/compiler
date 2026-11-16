@@ -445,7 +445,6 @@ fn validate_source_identifier(name: &str, context: &str, issues: &mut Vec<Valida
         "bytes32",
         "pubkey",
         "signature",
-        "asset",
         "contract",
         "library",
         "function",

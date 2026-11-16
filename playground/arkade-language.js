@@ -81,7 +81,7 @@ const arkadeCompletions = [
     S('false', 'Keyword', 'false'),
 
     // Types
-    ...['pubkey', 'signature', 'bytes', 'bytes20', 'bytes32', 'int', 'bool', 'asset', 'AssetGroup', 'ScriptPubKey'].map(t => S(t, 'TypeParameter', t)),
+    ...['pubkey', 'signature', 'bytes', 'bytes20', 'bytes32', 'int', 'bool', 'AssetGroup', 'ScriptPubKey'].map(t => S(t, 'TypeParameter', t)),
 
     // Implicit bindings
     S('tx', 'Variable', 'tx', 'Spending transaction'),
