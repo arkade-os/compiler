@@ -84,7 +84,10 @@ for (const path of ['destination', 'destinations[0]', 'segment.script', 'tx.outp
     assert.deepEqual(labels(`${path}.`, table), ['program', 'version']);
 }
 assert.deepEqual(labels('destinations.', table), ['length']);
-assert.deepEqual(labels('destination.program.', table), []);
+assert.deepEqual(labels('destination.program.', table), ['length']);
+for (const path of ['owner', 'sig', 'point.y', 'tx.id', 'tx.input.current.arkadeScriptHash', 'tx.inputs', 'tx.outputs', 'group.inputs', 'tx.assetGroups[k].outputs']) {
+    assert.deepEqual(labels(`${path}.`, table), ['length']);
+}
 
 // A lint attribute's state opens only before `(`, and its ids take the grammar's characters.
 const { tokenizer } = context.window.arkadeMonarch;
@@ -103,6 +106,8 @@ assert.equal(describe('tx.input.current.assets.', 'length', null), null);
 assert.deepEqual(labels('tx.input.current.assets.'), []);
 assert.equal(describe('(x).', 'size', null), null);
 assert.equal(describe('group.inputs[j].', 'txid', table).declaration, 'bytes32 tx.assetGroups[].inputs[].txid');
+assert.equal(describe('tx.inputs.', 'length', null).key, 'tx.inputs.length');
+assert.equal(describe('group.outputs.', 'length', table).key, 'tx.assetGroups[].outputs.length');
 assert.equal(describe('', 'constructor', null), null);
 assert.equal(describe('point.', 'x', table), null);
 

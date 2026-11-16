@@ -280,6 +280,17 @@ pub(crate) fn parse_tx_property_to_expr(pair: Pair<Rule>) -> Result<Expression, 
             })
         }
         _ => {
+            let count = match text.as_str() {
+                "tx.inputs.length" => Some(TxProperty::NumInputs),
+                "tx.outputs.length" => Some(TxProperty::NumOutputs),
+                _ => None,
+            };
+            if let Some(property) = count {
+                return Ok(Expression::new(
+                    ExprKind::TxIntrospection { property },
+                    span,
+                ));
+            }
             reject_malformed_asset_call(&text)?;
             // `tx.input.current` without a property it accepts reads as a plain property path.
             let mut names = std::iter::once(first.as_str())

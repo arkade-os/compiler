@@ -187,7 +187,7 @@ function memberPath(before) {
 
 // The documented path `path` stands for: an `AssetGroup` name stands for `tx.assetGroups[]`.
 function documentedPath(path, visible) {
-    const group = path.match(/^(\w+)(\.(?:inputs|outputs)\[\])?$/);
+    const group = path.match(/^(\w+)(\.(?:inputs|outputs)(?:\[\])?)?$/);
     if (visible.get(group?.[1])?.type === 'AssetGroup') return `tx.assetGroups[]${group[2] || ''}`;
     const alias = memberAliases.find(([from, , missing]) => (path === from || path.startsWith(from + '.') || path.startsWith(from + '['))
         && !missing.includes(path.slice(from.length + 1).split(/[.[]/)[0]));
@@ -219,6 +219,8 @@ function arkadeComplete(before, table) {
         if (segment.endsWith('[]')) type = type.endsWith(']') ? type.replace(/\[[^\]]*\]$/, '') : '';
     });
     if (type.endsWith(']')) return [prop('length', 'Array length')];
+    // A bytes-like binding, field or documented member, such as `tx.id`, has a byte length.
+    if (/^(bytes(20|32)?|pubkey|signature)$/.test(type || docs.members[documented]?.type)) return [prop('length', 'Length in bytes')];
     return struct(type)?.fields.map(field => prop(field.name, field.type)) || [];
 }
 
