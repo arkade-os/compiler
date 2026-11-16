@@ -144,11 +144,11 @@ pub(crate) fn emit_expression_asm(expr: &Expression, asm: &mut Vec<Op>) {
             emit_output_introspection_asm(index, *property, asm);
         }
         ExprKind::BinaryOp { left, op, right } => emit_binary_op_asm(left, *op, right, asm),
-        ExprKind::GroupFind {
+        ExprKind::GroupLookup {
             asset_txid,
             asset_gidx,
         } => {
-            emit_group_find_asm(asset_txid, asset_gidx, asm);
+            emit_group_lookup_asm(asset_txid, asset_gidx, asm);
         }
         ExprKind::GroupHas {
             asset_txid,

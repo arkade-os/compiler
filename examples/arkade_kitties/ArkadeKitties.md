@@ -19,7 +19,7 @@ Each ArkadeKitty is a unique Arkade Asset with an amount of 1. The asset is non-
 - **Provenance Verification**: To prevent counterfeit assets, the `BreedKitties` contract enforces that any parent Kitty (and any child) sets its `control` reference to the Species Control `assetId`. Any asset with a different or missing control reference cannot be used for breeding and cannot be minted by the contract.
 
 > Naming and API conventions:
-> - This document uses the example sugar API: `tx.assetGroups.find(...)`, `group.metadataHash`, `group.numInputs`, `group.delta`.
+> - This document uses the example sugar API: `tx.assetGroups.lookup(...)`, `group.metadataHash`, `group.numInputs`, `group.delta`.
 > - Type names are kept consistent in the contract: `assetId`, `pubkey`, `Sig`.
 > - A group's `assetId` identifies the group; the lineage pointer is a separate control asset reference, accessed via minimal opcode helpers.
 
@@ -168,15 +168,15 @@ contract BreedCommit(
         require(tx.outputs[revealOutputIndex].assets.lookup(sireIdTxid, sireIdGidx) == 1, "Sire not locked in reveal output");
         require(tx.outputs[revealOutputIndex].assets.lookup(dameIdTxid, dameIdGidx) == 1, "Dame not locked in reveal output");
         // 2. Verify parent assets are present and valid
-        let sireGroup = tx.assetGroups.find(sireIdTxid, sireIdGidx);
-        let dameGroup = tx.assetGroups.find(dameIdTxid, dameIdGidx);
+        let sireGroup = tx.assetGroups.lookup(sireIdTxid, sireIdGidx);
+        let dameGroup = tx.assetGroups.lookup(dameIdTxid, dameIdGidx);
         require(sireGroup.controlIs(speciesControlIdTxid, speciesControlIdGidx), "Sire not Species-Controlled");
         require(dameGroup.controlIs(speciesControlIdTxid, speciesControlIdGidx), "Dame not Species-Controlled");
         require(sireGroup.metadataHash == computeKittyMetadataRoot(sireGenome, sireGenerationBE8), "Sire metadata hash mismatch");
         require(dameGroup.metadataHash == computeKittyMetadataRoot(dameGenome, dameGenerationBE8), "Dame metadata hash mismatch");
 
         // 2. Verify Species Control asset is present and retained
-        let speciesGroup = tx.assetGroups.find(speciesControlIdTxid, speciesControlIdGidx);
+        let speciesGroup = tx.assetGroups.lookup(speciesControlIdTxid, speciesControlIdGidx);
         require(speciesGroup.delta == 0, "Species Control must be present and retained");
 
         // 3. Construct the reveal script and enforce its creation
@@ -242,12 +242,12 @@ contract BreedReveal(
         require(checkDataSig(oracleSig, sha256(commitOutpoint + oracleRand), oracle), "Invalid oracle signature");
 
         // 3. Verify Species Control is present and retained (delta == 0)
-        let speciesGroup = tx.assetGroups.find(speciesControlIdTxid, speciesControlIdGidx);
+        let speciesGroup = tx.assetGroups.lookup(speciesControlIdTxid, speciesControlIdGidx);
         require(speciesGroup.delta == 0, "Species Control must be present and retained");
         require(tx.outputs[speciesControlOutputIndex].assets.lookup(speciesControlIdTxid, speciesControlIdGidx) == 1, "Species Control not in output");
 
         // 4. Find the new Kitty's asset group
-        let newKittyGroup = tx.assetGroups.find(newKittyIdTxid, newKittyIdGidx);
+        let newKittyGroup = tx.assetGroups.lookup(newKittyIdTxid, newKittyIdGidx);
         require(newKittyGroup.isFresh && newKittyGroup.delta == 1, "Child must be a fresh NFT");
         require(newKittyGroup.controlIs(speciesControlIdTxid, speciesControlIdGidx), "Child not Species-Controlled");
         let newKittyOutput = tx.outputs[kittyOutputIndex];
@@ -276,7 +276,7 @@ contract BreedReveal(
         require(tx.outputs[dameOutputIndex].script == dameOwner, "Dame not refunded to owner");
 
         // 3. Verify Species Control is retained (delta == 0)
-        let speciesGroup = tx.assetGroups.find(speciesControlIdTxid, speciesControlIdGidx);
+        let speciesGroup = tx.assetGroups.lookup(speciesControlIdTxid, speciesControlIdGidx);
         require(speciesGroup.delta == 0, "Species Control must be retained");
         require(tx.outputs[speciesControlOutputIndex].assets.lookup(speciesControlIdTxid, speciesControlIdGidx) == 1, "Species Control not in output");
     }

@@ -317,7 +317,7 @@ fn parse_asset_group_access(
                 index: Box::new(parse_array_access_index(first)?),
             }
         } else {
-            ExprKind::GroupFind {
+            ExprKind::GroupLookup {
                 asset_txid: Box::new(parse_general_expression(first)?),
                 asset_gidx: Box::new(parse_general_expression(
                     operands.next().ok_or("Missing asset group gidx")?,

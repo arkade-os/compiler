@@ -32,7 +32,7 @@ contract ConstantProductPool(
 
   private function keepCtrl() {
     require(tx.outputs[0].assets.lookup(ctrlTxid, ctrlGidx) == 1, "ctrl");
-    require(tx.assetGroups.find(ctrlTxid, ctrlGidx).delta == 0, "ctrl supply");
+    require(tx.assetGroups.lookup(ctrlTxid, ctrlGidx).delta == 0, "ctrl supply");
   }
 
   // Trader at input 1 sells either BTC (value above the carrier, no assets) or
@@ -75,8 +75,8 @@ contract ConstantProductPool(
     keepCtrl();
     require(tx.outputs[0].assets.lookup(quoteTxid, quoteGidx) == quote, "quote");
     require(tx.outputs[0].assets.lookup(lpLedgTxid, lpLedgGidx) == supply, "ledger");
-    require(tx.assetGroups.find(quoteTxid, quoteGidx).delta == 0, "quote supply");
-    require(tx.assetGroups.find(lpLedgTxid, lpLedgGidx).delta == 0, "ledger supply");
+    require(tx.assetGroups.lookup(quoteTxid, quoteGidx).delta == 0, "quote supply");
+    require(tx.assetGroups.lookup(lpLedgTxid, lpLedgGidx).delta == 0, "ledger supply");
     require(!tx.assetGroups.has(lpTxid, lpGidx), "lp moved");
   }
 
@@ -111,14 +111,14 @@ contract ConstantProductPool(
     require(tx.outputs[0].assets.lookup(quoteTxid, quoteGidx) == quote0 + dy, "quote");
     require(tx.outputs[0].assets.lookup(lpLedgTxid, lpLedgGidx) == supply + share, "ledger");
     require(tx.outputs[0].assets.length == 3, "pool assets");
-    let lpGroup = tx.assetGroups.find(lpTxid, lpGidx);
+    let lpGroup = tx.assetGroups.lookup(lpTxid, lpGidx);
     require(lpGroup.controlIs(ctrlTxid, ctrlGidx), "lp control");
     require(lpGroup.delta == share, "issued");
     require(lpGroup.sumInputs == 0, "lp in");
-    let ledgGroup = tx.assetGroups.find(lpLedgTxid, lpLedgGidx);
+    let ledgGroup = tx.assetGroups.lookup(lpLedgTxid, lpLedgGidx);
     require(ledgGroup.controlIs(ctrlTxid, ctrlGidx), "ledger control");
     require(ledgGroup.delta == share, "ledger");
-    require(tx.assetGroups.find(quoteTxid, quoteGidx).delta == 0, "quote supply");
+    require(tx.assetGroups.lookup(quoteTxid, quoteGidx).delta == 0, "quote supply");
   }
 
   // LP at input 1 burns LP tokens for a pro-rata slice. A side that rounds to 0
@@ -153,13 +153,13 @@ contract ConstantProductPool(
       require(tx.outputs[0].assets.lookup(lpLedgTxid, lpLedgGidx) == supply - part, "ledger");
       require(tx.outputs[0].assets.length == 3, "pool assets");
     }
-    let lpGroup = tx.assetGroups.find(lpTxid, lpGidx);
+    let lpGroup = tx.assetGroups.lookup(lpTxid, lpGidx);
     require(lpGroup.controlIs(ctrlTxid, ctrlGidx), "lp control");
     require(lpGroup.sumInputs == part, "token in");
     require(lpGroup.sumOutputs == 0, "burned");
-    let ledgGroup = tx.assetGroups.find(lpLedgTxid, lpLedgGidx);
+    let ledgGroup = tx.assetGroups.lookup(lpLedgTxid, lpLedgGidx);
     require(ledgGroup.controlIs(ctrlTxid, ctrlGidx), "ledger control");
     require(ledgGroup.delta + part == 0, "ledger");
-    require(tx.assetGroups.find(quoteTxid, quoteGidx).delta == 0, "quote supply");
+    require(tx.assetGroups.lookup(quoteTxid, quoteGidx).delta == 0, "quote supply");
   }
 }

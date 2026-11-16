@@ -14,10 +14,10 @@ pub(super) fn validate_binding_requirement(
             let before = issues.len();
             validate_binding_expression(expression, scopes, issues, produces_value);
             let condition = expression.ty.clone();
-            // A bare find verifies the asset group exists; its index is dropped.
+            // A bare group lookup verifies the asset group exists; its index is dropped.
             if issues.len() == before
                 && produces_value
-                && !matches!(&expression.kind, ExprKind::GroupFind { .. })
+                && !matches!(&expression.kind, ExprKind::GroupLookup { .. })
                 && !matches!(condition, ArkType::Bool | ArkType::Unknown)
             {
                 issues.push(

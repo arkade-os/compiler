@@ -567,7 +567,7 @@ const SPELLED: &[Spelled] = &[
         "Whether the asset is present. Fails the spend without an asset packet.",
     ),
     method(
-        "tx.assetGroups.find",
+        "tx.assetGroups.lookup",
         &["bytes32 assetTxid", "int assetGidx"],
         "AssetGroup",
         "The asset group of the asset. Fails the spend when it or the asset packet is absent.",

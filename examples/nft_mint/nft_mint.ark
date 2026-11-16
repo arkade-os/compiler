@@ -16,7 +16,7 @@ contract NFTMint(
 ) {
     // Mint a new NFT: must be fresh with delta=1
     function mint(bytes32 nftAssetIdTxid, int nftAssetIdGidx, ScriptPubKey recipientScriptPubKey, signature issuerSig) {
-        let nftGroup = tx.assetGroups.find(nftAssetIdTxid, nftAssetIdGidx);
+        let nftGroup = tx.assetGroups.lookup(nftAssetIdTxid, nftAssetIdGidx);
 
         // Must be a brand new asset (genesis in this tx)
         require(nftGroup.isFresh == true, "must be fresh");
@@ -28,7 +28,7 @@ contract NFTMint(
         require(nftGroup.controlIs(collectionCtrlIdTxid, collectionCtrlIdGidx), "wrong collection");
 
         // Control asset must be retained (delta == 0)
-        let ctrlGroup = tx.assetGroups.find(collectionCtrlIdTxid, collectionCtrlIdGidx);
+        let ctrlGroup = tx.assetGroups.lookup(collectionCtrlIdTxid, collectionCtrlIdGidx);
         require(ctrlGroup.delta == 0, "control must be retained");
 
         // NFT goes to recipient
@@ -40,7 +40,7 @@ contract NFTMint(
 
     // Transfer existing NFT (not fresh)
     function transfer(bytes32 nftAssetIdTxid, int nftAssetIdGidx, ScriptPubKey newOwnerScriptPubKey, signature issuerSig) {
-        let nftGroup = tx.assetGroups.find(nftAssetIdTxid, nftAssetIdGidx);
+        let nftGroup = tx.assetGroups.lookup(nftAssetIdTxid, nftAssetIdGidx);
 
         // Must NOT be fresh (existing asset)
         require(nftGroup.isFresh == false, "cannot be fresh");
@@ -60,7 +60,7 @@ contract NFTMint(
 
     // Burn an NFT (delta = -1)
     function burn(bytes32 nftAssetIdTxid, int nftAssetIdGidx, signature issuerSig) {
-        let nftGroup = tx.assetGroups.find(nftAssetIdTxid, nftAssetIdGidx);
+        let nftGroup = tx.assetGroups.lookup(nftAssetIdTxid, nftAssetIdGidx);
 
         // Must be existing asset
         require(nftGroup.isFresh == false, "cannot burn fresh asset");

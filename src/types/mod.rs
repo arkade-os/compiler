@@ -565,7 +565,7 @@ fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
         }
 
         // Asset group introspection
-        ExprKind::GroupFind { .. } | ExprKind::AssetGroupAt { .. } => ArkType::AssetGroup,
+        ExprKind::GroupLookup { .. } | ExprKind::AssetGroupAt { .. } => ArkType::AssetGroup,
         ExprKind::GroupHas { .. } => ArkType::Bool,
         ExprKind::GroupControlIs { .. } => ArkType::Bool,
         ExprKind::AssetGroupsLength => ArkType::Int,

@@ -41,26 +41,26 @@ contract ArkadeKitties(
         int ctrlOutputIdx
     ) {
         // Verify sire is species-controlled with correct genome
-        let sireGroup = tx.assetGroups.find(sireIdTxid, sireIdGidx);
+        let sireGroup = tx.assetGroups.lookup(sireIdTxid, sireIdGidx);
         require(sireGroup.controlIs(speciesControlIdTxid, speciesControlIdGidx), "sire not species-controlled");
         require(sireGroup.metadataHash == sireGenomeHash, "sire genome mismatch");
         require(sireGroup.delta == 0, "sire must be retained");
 
         // Verify dame is species-controlled with correct genome
-        let dameGroup = tx.assetGroups.find(dameIdTxid, dameIdGidx);
+        let dameGroup = tx.assetGroups.lookup(dameIdTxid, dameIdGidx);
         require(dameGroup.controlIs(speciesControlIdTxid, speciesControlIdGidx), "dame not species-controlled");
         require(dameGroup.metadataHash == dameGenomeHash, "dame genome mismatch");
         require(dameGroup.delta == 0, "dame must be retained");
 
         // Verify child is fresh (new issuance in this tx)
-        let childGroup = tx.assetGroups.find(childIdTxid, childIdGidx);
+        let childGroup = tx.assetGroups.lookup(childIdTxid, childIdGidx);
         require(childGroup.isFresh == true, "child must be fresh");
         require(childGroup.delta == 1, "must mint exactly 1 child");
         require(childGroup.controlIs(speciesControlIdTxid, speciesControlIdGidx), "child not species-controlled");
         require(childGroup.metadataHash == expectedChildMetadataHash, "child genome mismatch");
 
         // Species control must be retained (delta == 0)
-        let ctrlGroup = tx.assetGroups.find(speciesControlIdTxid, speciesControlIdGidx);
+        let ctrlGroup = tx.assetGroups.lookup(speciesControlIdTxid, speciesControlIdGidx);
         require(ctrlGroup.delta == 0, "species control must be retained");
 
         // Oracle signature validates the breeding (genome combination)
@@ -75,7 +75,7 @@ contract ArkadeKitties(
 
     // Transfer a kitty to a new owner
     function transfer(bytes32 kittyIdTxid, int kittyIdGidx, ScriptPubKey newOwnerScriptPubKey, signature ownerSig) {
-        let kittyGroup = tx.assetGroups.find(kittyIdTxid, kittyIdGidx);
+        let kittyGroup = tx.assetGroups.lookup(kittyIdTxid, kittyIdGidx);
 
         // Must be existing kitty (not fresh)
         require(kittyGroup.isFresh == false, "must be existing kitty");

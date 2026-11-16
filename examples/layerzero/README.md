@@ -125,7 +125,7 @@ generated JSON as `_txid` + `_gidx` pairs, while others
 (`oappCtrlAssetId`, `endpointID`, `oappID`, `remoteOApp`) appear as
 single `bytes32` values. This is by design: the compiler decomposes
 only the asset IDs that are passed to `tx.{inputs,outputs}[i].assets.lookup(...)`
-or to `tx.assetGroups.find(...)` inside the function bodies — those
+or to `tx.assetGroups.lookup(...)` inside the function bodies — those
 need to be split into the `(txid32, gidx_u16)` pair the underlying
 `OP_INSPECT*ASSETLOOKUP` / `OP_FINDASSETGROUPBYASSETID` opcodes consume.
 `bytes32` params that only get passed through to a child constructor

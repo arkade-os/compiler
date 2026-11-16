@@ -667,9 +667,9 @@ pub enum ExprKind {
         op: crate::operators::BinaryOperator,
         right: Box<Expression>,
     },
-    /// Asset group find: tx.assetGroups.find(txid, gidx) → the `AssetGroup` with
+    /// Asset group lookup: tx.assetGroups.lookup(txid, gidx) → the `AssetGroup` with
     /// that Asset ID. Asserts existence (consumes the success flag with OP_VERIFY).
-    GroupFind {
+    GroupLookup {
         asset_txid: Box<Expression>,
         asset_gidx: Box<Expression>,
     },
@@ -825,7 +825,7 @@ macro_rules! expression_children {
                 ExprKind::BinaryOp { left, right, .. } => {
                     vec![left, right]
                 }
-                ExprKind::GroupFind {
+                ExprKind::GroupLookup {
                     asset_txid,
                     asset_gidx,
                 }

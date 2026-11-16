@@ -126,7 +126,7 @@ contract Structs(Account account) {
     require(present.found && present.amount == 7, "tryLookup present");
     let absent = tx.outputs[0].assets.tryLookup(outputAssetId.txid, 1);
     require(!absent.found && absent.amount == 0, "tryLookup absent");
-    let assetGroup = tx.assetGroups.find(outputAssetId.txid, outputAssetId.gidx);
+    let assetGroup = tx.assetGroups.lookup(outputAssetId.txid, outputAssetId.gidx);
     AssetId groupAssetId = assetGroup.assetId;
     require(groupAssetId.txid == outputAssetId.txid, "group asset txid");
     require(groupAssetId.gidx == outputAssetId.gidx, "group asset index");

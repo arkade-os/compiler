@@ -14,11 +14,11 @@ fn test_group_asset_id_returns_struct() {
         contract AssetIdTest(bytes32 tokenAssetIdTxid, int tokenAssetIdGidx) {
             function checkAssetId(signature ownerSig, pubkey owner) {
                 require(checkSig(ownerSig, owner));
-                let tokenGroup = tx.assetGroups.find(tokenAssetIdTxid, tokenAssetIdGidx);
+                let tokenGroup = tx.assetGroups.lookup(tokenAssetIdTxid, tokenAssetIdGidx);
                 AssetId id = tokenGroup.assetId;
                 require(id.txid == tokenAssetIdTxid, "asset txid mismatch");
                 require(id.gidx == tokenAssetIdGidx, "asset gidx mismatch");
-                let sameGroup = tx.assetGroups.find(id.txid, id.gidx);
+                let sameGroup = tx.assetGroups.lookup(id.txid, id.gidx);
                 require(sameGroup == tokenGroup);
             }
         }
@@ -38,7 +38,7 @@ fn test_group_is_fresh_basic() {
         contract FreshAssetTest(bytes32 newAssetIdTxid, int newAssetIdGidx) {
             function verifyFresh(signature ownerSig, pubkey owner) {
                 require(checkSig(ownerSig, owner));
-                let group = tx.assetGroups.find(newAssetIdTxid, newAssetIdGidx);
+                let group = tx.assetGroups.lookup(newAssetIdTxid, newAssetIdGidx);
                 require(group.isFresh == true, "must be fresh");
             }
         }
@@ -74,7 +74,7 @@ fn test_is_fresh_with_delta_combo() {
         contract NFTMintTest(bytes32 nftAssetIdTxid, int nftAssetIdGidx, bytes32 ctrlAssetIdTxid, int ctrlAssetIdGidx) {
             function mintNFT(signature issuerSig, pubkey issuer) {
                 require(checkSig(issuerSig, issuer));
-                let nftGroup = tx.assetGroups.find(nftAssetIdTxid, nftAssetIdGidx);
+                let nftGroup = tx.assetGroups.lookup(nftAssetIdTxid, nftAssetIdGidx);
                 require(nftGroup.isFresh == true, "must be new asset");
                 require(nftGroup.delta == 1, "must mint exactly 1");
                 require(nftGroup.controlIs(ctrlAssetIdTxid, ctrlAssetIdGidx), "wrong control");
@@ -115,7 +115,7 @@ fn test_is_fresh_zero_for_existing_asset() {
         contract ExistingAssetTest(bytes32 assetIdTxid, int assetIdGidx) {
             function transferExisting(signature ownerSig, pubkey owner) {
                 require(checkSig(ownerSig, owner));
-                let group = tx.assetGroups.find(assetIdTxid, assetIdGidx);
+                let group = tx.assetGroups.lookup(assetIdTxid, assetIdGidx);
                 require(group.isFresh == false, "must be existing asset");
                 require(group.delta == 0, "must be transfer only");
             }
@@ -143,7 +143,7 @@ fn test_group_metadata_hash() {
         contract MetadataTest(bytes32 assetIdTxid, int assetIdGidx, bytes32 expectedHash) {
             function verifyMetadata(signature ownerSig, pubkey owner) {
                 require(checkSig(ownerSig, owner));
-                let group = tx.assetGroups.find(assetIdTxid, assetIdGidx);
+                let group = tx.assetGroups.lookup(assetIdTxid, assetIdGidx);
                 require(group.metadataHash == expectedHash, "metadata mismatch");
             }
         }
@@ -172,7 +172,7 @@ fn test_all_group_properties() {
         ) {
             function fullCheck(signature sig, pubkey pk, int expectedDelta) {
                 require(checkSig(sig, pk));
-                let group = tx.assetGroups.find(assetIdTxid, assetIdGidx);
+                let group = tx.assetGroups.lookup(assetIdTxid, assetIdGidx);
 
                 // Test all group properties
                 require(group.isFresh == true, "not fresh");
@@ -228,7 +228,7 @@ fn test_group_num_inputs() {
         contract NumInputsTest(bytes32 assetIdTxid, int assetIdGidx) {
             function checkInputCount(signature sig, pubkey pk) {
                 require(checkSig(sig, pk));
-                let group = tx.assetGroups.find(assetIdTxid, assetIdGidx);
+                let group = tx.assetGroups.lookup(assetIdTxid, assetIdGidx);
                 require(group.numInputs >= 1, "need at least one input");
             }
         }
@@ -258,7 +258,7 @@ fn test_group_num_outputs() {
         contract NumOutputsTest(bytes32 assetIdTxid, int assetIdGidx) {
             function checkOutputCount(signature sig, pubkey pk) {
                 require(checkSig(sig, pk));
-                let group = tx.assetGroups.find(assetIdTxid, assetIdGidx);
+                let group = tx.assetGroups.lookup(assetIdTxid, assetIdGidx);
                 require(group.numOutputs >= 2, "need at least two outputs");
             }
         }
@@ -288,7 +288,7 @@ fn test_group_num_io_together() {
         contract NumIOTest(bytes32 assetIdTxid, int assetIdGidx) {
             function checkCounts(signature sig, pubkey pk) {
                 require(checkSig(sig, pk));
-                let group = tx.assetGroups.find(assetIdTxid, assetIdGidx);
+                let group = tx.assetGroups.lookup(assetIdTxid, assetIdGidx);
                 require(group.numInputs >= 1, "need inputs");
                 require(group.numOutputs >= 1, "need outputs");
                 require(group.numOutputs >= group.numInputs, "outputs must be >= inputs");
@@ -394,8 +394,8 @@ fn test_group_accesses_ignore_whitespace_and_comments() {
             "require(tx . assetGroups . length >= g);",
         ),
         (
-            "let x = tx.assetGroups.find(t, g); require(x == x);",
-            "let x = tx.assetGroups . find(t, g); require(x == x);",
+            "let x = tx.assetGroups.lookup(t, g); require(x == x);",
+            "let x = tx.assetGroups . lookup(t, g); require(x == x);",
         ),
         (
             "require(tx.input.current.value >= g);",
@@ -510,7 +510,7 @@ fn inline_group_properties_emit_their_opcode() {
             "OP_INSPECTASSETGROUPASSETID OP_DROP OP_TXID OP_EQUAL",
         ),
     ] {
-        for group in ["tx.assetGroups[0]", "tx.assetGroups.find(t, 0)"] {
+        for group in ["tx.assetGroups[0]", "tx.assetGroups.lookup(t, 0)"] {
             let code = format!(
                 "contract V(bytes32 t) {{ function spend() {{ let x = {group}.{property}; require(x == x); }} }}"
             );
@@ -530,9 +530,9 @@ fn asset_groups_bind_pass_index_and_nest_like_other_values() {
                 require(g.outputs[0].amount >= 0);
                 require(gs[i].delta >= 0);
                 require(gs[i].controlIs(t, 0));
-                AssetGroup found = tx.assetGroups.find(t, 0);
+                AssetGroup found = tx.assetGroups.lookup(t, 0);
                 require(found.outputs[0].type >= 0);
-                require(tx.assetGroups.find(t, 1).isFresh);
+                require(tx.assetGroups.lookup(t, 1).isFresh);
                 require(tx.assetGroups[i].controlIs(t, 2));
                 require(w.group.sumOutputs >= w.floor);
                 for (k, h) in gs {
@@ -570,7 +570,7 @@ fn asset_groups_are_typed() {
             "binding 'g' declares type 'AssetGroup' but initializer has type 'int'",
         ),
         (
-            "int k = tx.assetGroups.find(t, 0); require(k == 0);",
+            "int k = tx.assetGroups.lookup(t, 0); require(k == 0);",
             "binding 'k' declares type 'int' but initializer has type 'AssetGroup'",
         ),
         (

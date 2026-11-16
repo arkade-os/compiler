@@ -82,7 +82,7 @@ contract OApp(
       tx.inputs[0].assets.lookup(endpointIDAssetIdTxid, endpointIDAssetIdGidx) == 1,
       "marker asset not on input 0"
     );
-    let endpointIDGroup = tx.assetGroups.find(endpointIDAssetIdTxid, endpointIDAssetIdGidx);
+    let endpointIDGroup = tx.assetGroups.lookup(endpointIDAssetIdTxid, endpointIDAssetIdGidx);
     require(endpointIDGroup.sumOutputs == 0, "marker not burned");
 
     // LzReceive route fields are pinned by the contract configuration.
@@ -129,7 +129,7 @@ contract OApp(
     );
 
     // USDT0 delta equals the credited amount.
-    let usdt0Group = tx.assetGroups.find(usdt0AssetIdTxid, usdt0AssetIdGidx);
+    let usdt0Group = tx.assetGroups.lookup(usdt0AssetIdTxid, usdt0AssetIdGidx);
     require(
       usdt0Group.delta == bytes2uint(reverseBytes(substr(tx.inputs[0].packet(17), 179, 8))),
       "usdt0 delta != credit amount"
@@ -183,7 +183,7 @@ contract OApp(
     // USDT0 input sum minus output sum equals the invocation amount
     // (i.e. delta == -amount). Expressed as monotonic equality on sumInputs
     // - sumOutputs using the existing group_property arithmetic.
-    let usdt0Group = tx.assetGroups.find(usdt0AssetIdTxid, usdt0AssetIdGidx);
+    let usdt0Group = tx.assetGroups.lookup(usdt0AssetIdTxid, usdt0AssetIdGidx);
     require(
       usdt0Group.sumInputs == usdt0Group.sumOutputs + bytes2uint(reverseBytes(substr(tx.packet(20), 103, 8))),
       "burn amount mismatch"
@@ -200,7 +200,7 @@ contract OApp(
       ),
       "send marker pkScript not canonical"
     );
-    let oappIDGroup = tx.assetGroups.find(oappIDAssetIdTxid, oappIDAssetIdGidx);
+    let oappIDGroup = tx.assetGroups.lookup(oappIDAssetIdTxid, oappIDAssetIdGidx);
     require(oappIDGroup.sumOutputs == 1, "extra send marker minted");
 
     // OApp state continues at output 0: recursive covenant via the spent

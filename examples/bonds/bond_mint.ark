@@ -98,7 +98,7 @@ contract BondMint(
 
     require(tx.inputs[poolIdx].assets.lookup(debitCtrlIdTxid, debitCtrlIdGidx) >= 1, "genuine pool not co-spent");
 
-    let debitGroup = tx.assetGroups.find(debitAssetIdTxid, debitAssetIdGidx);
+    let debitGroup = tx.assetGroups.lookup(debitAssetIdTxid, debitAssetIdGidx);
     require(debitGroup.sumInputs == debitGroup.sumOutputs + mintedAmount, "debit not burned exactly mintedAmount");
 
     require(tx.outputs[1].value >= collateral, "collateral not returned");
@@ -127,7 +127,7 @@ contract BondMint(
     // sharing one pool input could both be settled by a single burn.
     require(this.activeInputIndex == poolIdx + 1, "vault must follow the pool");
 
-    let debitGroup = tx.assetGroups.find(debitAssetIdTxid, debitAssetIdGidx);
+    let debitGroup = tx.assetGroups.lookup(debitAssetIdTxid, debitAssetIdGidx);
     require(debitGroup.sumInputs == debitGroup.sumOutputs + mintedAmount, "debit not burned exactly mintedAmount");
 
     require(tx.outputs[1].value > 0, "auctioneer output empty");
@@ -148,7 +148,7 @@ contract BondMint(
     require(tx.inputs[poolIdx].assets.lookup(debitCtrlIdTxid, debitCtrlIdGidx) >= 1, "genuine pool not co-spent");
     require(this.activeInputIndex == poolIdx + 1, "vault must follow the pool");
 
-    let debitGroup = tx.assetGroups.find(debitAssetIdTxid, debitAssetIdGidx);
+    let debitGroup = tx.assetGroups.lookup(debitAssetIdTxid, debitAssetIdGidx);
     require(debitGroup.sumInputs == debitGroup.sumOutputs + mintedAmount, "debit not burned exactly mintedAmount");
 
     require(tx.outputs[1].value > 0, "auctioneer output empty");
@@ -173,7 +173,7 @@ contract BondMint(
 
     require(tx.inputs[poolIdx].assets.lookup(debitCtrlIdTxid, debitCtrlIdGidx) >= 1, "genuine pool not co-spent");
 
-    let debitGroup = tx.assetGroups.find(debitAssetIdTxid, debitAssetIdGidx);
+    let debitGroup = tx.assetGroups.lookup(debitAssetIdTxid, debitAssetIdGidx);
     require(debitGroup.sumInputs == debitGroup.sumOutputs + mintedAmount, "debit not burned exactly mintedAmount");
   }
 

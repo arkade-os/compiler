@@ -401,9 +401,9 @@ tx_property_suffix = {
     array_access | ("." ~ tx_property_part)
 }
 
-// An AssetGroup value: tx.assetGroups.find(txid, gidx) or tx.assetGroups[k]
+// An AssetGroup value: tx.assetGroups.lookup(txid, gidx) or tx.assetGroups[k]
 asset_group_ref = {
-    "." ~ "find" ~ "(" ~ asset_id_txid_operand ~ "," ~ asset_id_gidx_operand ~ ")" | array_access
+    "." ~ "lookup" ~ "(" ~ asset_id_txid_operand ~ "," ~ asset_id_gidx_operand ~ ")" | array_access
 }
 
 // Member access on an AssetGroup value

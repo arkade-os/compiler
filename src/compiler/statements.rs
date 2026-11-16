@@ -266,7 +266,7 @@ fn generate_requirement_asm(req: &Requirement, generator: &mut Generator) -> Res
     match req {
         Requirement::Expression(expr) => {
             match &expr.kind {
-                ExprKind::GroupFind { .. } => {
+                ExprKind::GroupLookup { .. } => {
                     generator.emit_expression(expr)?;
                     generator.apply(Drop, 1, 0)?;
                     generator.push_temporary(Int1);

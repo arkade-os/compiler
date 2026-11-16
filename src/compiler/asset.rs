@@ -49,9 +49,9 @@ pub(crate) fn emit_asset_has_asm(
     asm.push(Nip.into()); // drop amount, leave success flag (Bool)
 }
 
-/// Emit `tx.assetGroups.find(txid, gidx)`: assert existence (consume the success
+/// Emit `tx.assetGroups.lookup(txid, gidx)`: assert existence (consume the success
 /// flag with OP_VERIFY) and leave the resolved packet position k.
-pub(crate) fn emit_group_find_asm(
+pub(crate) fn emit_group_lookup_asm(
     asset_txid: &Expression,
     asset_gidx: &Expression,
     asm: &mut Vec<Op>,

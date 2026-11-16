@@ -2,7 +2,7 @@ use super::*;
 
 /// Reject malformed canonical Asset ID operands at compile time instead of
 /// relying on the emulator's runtime `popAssetID` check. For every
-/// `lookup`/`find`/`has`/`controlIs` operand:
+/// `lookup`/`has`/`controlIs` operand:
 /// - `asset_txid` must resolve to `Bytes32` (rejects `Unknown`/swapped types),
 /// - `asset_gidx` must resolve to `Int` (rejects `Unknown`); a numeric literal
 ///   must additionally be in `0..=65535`.
@@ -89,7 +89,7 @@ fn check_asset_id_expr(expr: &Expression, issues: &mut Vec<ValidationIssue>) {
             asset_gidx,
             ..
         }
-        | ExprKind::GroupFind {
+        | ExprKind::GroupLookup {
             asset_txid,
             asset_gidx,
         }

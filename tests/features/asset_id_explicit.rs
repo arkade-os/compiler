@@ -30,7 +30,7 @@ fn lookup_consumes_success_flag_with_single_verify() {
 fn find_leaves_k_via_verify_in_let_binding() {
     let src = "contract C(bytes32 fooTxid, int fooGidx, pubkey pk) {
             function f(signature sig) {
-                let g = tx.assetGroups.find(fooTxid, fooGidx);
+                let g = tx.assetGroups.lookup(fooTxid, fooGidx);
                 require(g.delta == 0);
                 require(checkSig(sig, pk));
             }
@@ -46,7 +46,7 @@ fn find_leaves_k_via_verify_in_let_binding() {
 fn general_expression_parses_group_find_with_literal_gidx_in_let_binding() {
     let src = "contract C(bytes32 fooTxid, pubkey pk) {
             function f(signature sig) {
-                let g = tx.assetGroups.find(fooTxid, 0);
+                let g = tx.assetGroups.lookup(fooTxid, 0);
                 require(g.delta == 0);
                 require(checkSig(sig, pk));
             }
@@ -64,7 +64,7 @@ fn bare_find_requirement_drops_k_and_pushes_true() {
     // dummy `== true` path must emit `find … OP_DROP OP_1`, not leave k.
     let src = "contract C(bytes32 fooTxid, int fooGidx, pubkey pk) {
             function f(signature sig) {
-                require(tx.assetGroups.find(fooTxid, fooGidx));
+                require(tx.assetGroups.lookup(fooTxid, fooGidx));
                 require(checkSig(sig, pk));
             }
         }";
@@ -127,7 +127,7 @@ fn general_expression_parses_group_has_in_if_condition() {
 fn control_is_compares_both_components_without_equalverify() {
     let src = "contract C(bytes32 fooTxid, int fooGidx, pubkey pk) {
             function f(signature sig) {
-                let g = tx.assetGroups.find(fooTxid, fooGidx);
+                let g = tx.assetGroups.lookup(fooTxid, fooGidx);
                 require(g.controlIs(fooTxid, fooGidx));
                 require(checkSig(sig, pk));
             }
@@ -150,7 +150,7 @@ fn control_is_compares_both_components_without_equalverify() {
 fn has_control_is_presence_only() {
     let src = "contract C(bytes32 fooTxid, int fooGidx, pubkey pk) {
             function f(signature sig) {
-                let g = tx.assetGroups.find(fooTxid, fooGidx);
+                let g = tx.assetGroups.lookup(fooTxid, fooGidx);
                 require(g.hasControl == true);
                 require(checkSig(sig, pk));
             }
@@ -166,7 +166,7 @@ fn has_control_is_presence_only() {
 fn control_asset_id_asserts_presence_and_binds_an_asset_id() {
     let src = "contract C(bytes32 fooTxid, int fooGidx, pubkey pk) {
             function f(signature sig) {
-                let g = tx.assetGroups.find(fooTxid, fooGidx);
+                let g = tx.assetGroups.lookup(fooTxid, fooGidx);
                 AssetId control = g.controlAssetId;
                 require(control.txid == fooTxid);
                 require(control.gidx == fooGidx);
@@ -181,7 +181,7 @@ fn control_asset_id_asserts_presence_and_binds_an_asset_id() {
 fn control_asset_id_binds_without_a_declared_type() {
     let src = "contract C(bytes32 fooTxid, int fooGidx) {
             function f() {
-                let g = tx.assetGroups.find(fooTxid, fooGidx);
+                let g = tx.assetGroups.lookup(fooTxid, fooGidx);
                 let control = g.controlAssetId;
                 require(control.txid == fooTxid);
                 require(control.gidx == fooGidx);
@@ -194,7 +194,7 @@ fn control_asset_id_binds_without_a_declared_type() {
 #[test]
 fn control_asset_id_is_typed() {
     let src = "contract C(bytes32 fooTxid, int fooGidx) { function f() {
-            let g = tx.assetGroups.find(fooTxid, fooGidx); require(g.controlAssetId == fooTxid);
+            let g = tx.assetGroups.lookup(fooTxid, fooGidx); require(g.controlAssetId == fooTxid);
         } }";
     let error = compile(src).expect_err(src).to_string();
     assert!(
@@ -207,7 +207,7 @@ fn control_asset_id_is_typed() {
 fn legacy_control_property_is_rejected() {
     let src = "contract C(bytes32 fooTxid, int fooGidx, pubkey pk) {
             function f(signature sig) {
-                let g = tx.assetGroups.find(fooTxid, fooGidx);
+                let g = tx.assetGroups.lookup(fooTxid, fooGidx);
                 require(g.control == fooTxid);
                 require(checkSig(sig, pk));
             }
@@ -252,7 +252,7 @@ fn rejects_legacy_single_arg_lookup() {
 
 #[test]
 fn rejects_single_arg_find() {
-    rejects("let g = tx.assetGroups.find(fooTxid); require(g.delta == 0);");
+    rejects("let g = tx.assetGroups.lookup(fooTxid); require(g.delta == 0);");
 }
 
 #[test]
@@ -437,7 +437,7 @@ fn txid_operands_accept_bytes32_expressions_at_every_site() {
         "let x = tx.outputs[0].assets.tryLookup(TXID, GIDX); require(x.found);",
         "require(tx.outputs[0].assets.has(TXID, GIDX));",
         "require(tx.assetGroups.has(TXID, GIDX));",
-        "require(tx.assetGroups.find(TXID, GIDX).delta == 0);",
+        "require(tx.assetGroups.lookup(TXID, GIDX).delta == 0);",
         "require(tx.assetGroups[0].controlIs(TXID, GIDX));",
         "let g = tx.assetGroups[0]; require(g.controlIs(TXID, GIDX));",
     ] {

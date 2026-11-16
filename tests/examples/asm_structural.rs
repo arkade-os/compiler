@@ -242,7 +242,7 @@ fn all_examples_have_well_formed_placeholders() {
 
 /// Verify placeholder resolution for simple contracts that have no let-binding
 /// placeholders or compound expression placeholders.  Complex contracts like
-/// arkade_kitties use `let sireGroup = tx.assetGroups.find(...)` which emits
+/// arkade_kitties use `let sireGroup = tx.assetGroups.lookup(...)` which emits
 /// `<sireGroup>` — an unresolved local-variable placeholder (a known current
 /// compiler limitation tracked by the variable-binding TODO).  Those are
 /// correctly surfaced as warnings by `local_check_placeholder_consistency` and
