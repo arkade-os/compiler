@@ -460,6 +460,10 @@ fn builtin_calls_take_arity_and_reserved_names_from_the_registry() {
             "`tweakVerify(...)` cannot be a statement; use it inside require()",
         ),
         (
+            "function spend() { this.tunnel(0); require(true); }",
+            "`this.tunnel(...)` cannot be a statement; use it inside require()",
+        ),
+        (
             "function spend(bytes a) { require(hash160(a, a) == substr(a, 0, 20)); }",
             "wrong number of arguments to `hash160`: expected hash160(data), got 2",
         ),

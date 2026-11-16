@@ -721,18 +721,14 @@ fn parse_statement(
         }
         Rule::function_call_stmt => {
             let call = pair.into_inner().next().ok_or("Missing function call")?;
-            match parse_general_expression(call)? {
-                Expression {
-                    kind: ExprKind::Builtin { builtin, .. },
-                    ..
-                } => {
-                    return Err(CompileError::from(format!(
-                        "`{}(...)` cannot be a statement; use it inside require()",
-                        builtin.name
-                    )));
-                }
-                call => Statement::Call(call),
+            let name = call.clone().into_inner().next();
+            let name = name.ok_or("Missing function name")?.as_str();
+            if name == "this.tunnel" || crate::builtins::find(name).is_some() {
+                return Err(CompileError::from(format!(
+                    "`{name}(...)` cannot be a statement; use it inside require()"
+                )));
             }
+            Statement::Call(parse_general_expression(call)?)
         }
         Rule::return_stmt => {
             let value = pair

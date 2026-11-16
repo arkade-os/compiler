@@ -750,7 +750,7 @@ pub enum ExprKind {
 /// Native struct returned by a fixed-width multi-item expression.
 pub fn expression_result_struct(expression: &Expression) -> Option<&'static str> {
     match &expression.kind {
-        ExprKind::Builtin { builtin, .. } => builtin.result,
+        ExprKind::Builtin { builtin, .. } => Some(builtin.result),
         ExprKind::AssetAt { property, .. } => {
             Some(property.map_or("AssetEntry", |p| p.value_type()))
         }

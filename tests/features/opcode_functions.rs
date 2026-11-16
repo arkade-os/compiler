@@ -778,45 +778,39 @@ fn bytes32_operands_accept_only_32_byte_literals() {
 }
 
 #[test]
-fn test_ec_mul_scalar_verify_cannot_be_value_bound() {
-    let code = r#"
-        contract CryptoOps(pubkey owner) {
-            function verifyScalarMul(signature ownerSig, bytes32 scalar, pubkey P, pubkey Q) {
-                require(checkSig(ownerSig, owner));
-                let result = ecMulScalarVerify(scalar, P, Q);
-            }
-        }
-    "#;
-
-    let result = compile(code);
-    assert!(
-        result
-            .expect_err("verify opcode produces no bindable value")
-            .to_string()
-            .contains("expression does not produce one stack item"),
-        "{OP_ECMULSCALARVERIFY} must not be accepted as a value"
-    );
-}
-
-#[test]
-fn test_tweak_verify_cannot_be_value_bound() {
-    let code = r#"
-        contract CryptoOps(pubkey owner) {
-            function verifyTweak(signature ownerSig, bytes32 P, bytes32 tweak, pubkey Q) {
-                require(checkSig(ownerSig, owner));
-                let result = tweakVerify(P, tweak, Q);
-            }
-        }
-    "#;
-
-    let result = compile(code);
-    assert!(
-        result
-            .expect_err("verify opcode produces no bindable value")
-            .to_string()
-            .contains("expression does not produce one stack item"),
-        "{OP_TWEAKVERIFY} must not be accepted as a value"
-    );
+fn verify_builtins_are_true_as_values_and_only_check_in_require() {
+    for (params, call, check) in [
+        (
+            "bytes32 p, bytes32 k, bytes q",
+            "tweakVerify(p, k, q)",
+            &[OP_TWEAKVERIFY][..],
+        ),
+        (
+            "bytes32 k, bytes p, bytes q",
+            "ecMulScalarVerify(k, p, q)",
+            &[OP_ECMULSCALARVERIFY],
+        ),
+        (
+            "signature s, pubkey p, bytes32 m",
+            "checkSigFromStackVerify(s, p, m)",
+            &[OP_CHECKSIGFROMSTACK, "OP_VERIFY"],
+        ),
+    ] {
+        let output = compile(&format!(
+            "contract C() {{ function spend({params}, bool flag) {{ if (flag) {{ require({call}); }} \
+             else {{ let ok = {call}; require(ok || flag); }} }} }}"
+        ))
+        .unwrap_or_else(|error| panic!("{call}: {error}"));
+        let asm = crate::common::arkade_asm_tokens(&output, "spend");
+        assert!(
+            contains_tokens(&asm, &[check, &["OP_ELSE"]].concat()),
+            "{call} inside require pushes nothing: {asm:?}"
+        );
+        assert!(
+            contains_tokens(&asm, &[check, &[OP_1]].concat()),
+            "{call} as a value pushes true: {asm:?}"
+        );
+    }
 }
 
 // ─── Signatures ────────────────────────────────────────────────────────
@@ -1432,8 +1426,6 @@ fn crypto_builtins_keep_operand_and_verify_validation() {
         "require(checkMultisig([key], [sig], true));",
         "require(checkMultisig([key], [sig], 0));",
         "require(checkMultisig([key], [sig], 2));",
-        "let x = checkSigFromStackVerify(sig, key, data); require(x);",
-        "require(checkSigFromStackVerify(sig, key, data) || true);",
     ] {
         let source = format!("contract C(pubkey key) {{ function spend(signature sig, bytes data) {{ require(checkSig(sig, key)); require(size(data) >= 0); {body} }} }}");
         assert!(compile(&source).is_err(), "{body}");

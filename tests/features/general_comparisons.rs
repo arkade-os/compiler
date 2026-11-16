@@ -745,16 +745,10 @@ fn logical_operands_require_booleans_even_when_skipped() {
             "{expression}: {error}"
         );
     }
-    for expression in [
-        "false && missing",
-        "true || absent()",
-        "false && checkSigFromStackVerify(sig, key, message)",
-    ] {
+    for expression in ["false && missing", "true || absent()"] {
         let error = compile(&format!("contract C(pubkey key, bytes32 message) {{ function compare(signature sig) {{ require({expression}); }} }}")).expect_err("invalid skipped expression").to_string();
         assert!(
-            error.contains("undefined")
-                || error.contains("unknown function")
-                || error.contains("does not produce one stack item"),
+            error.contains("undefined") || error.contains("unknown function"),
             "{expression}: {error}"
         );
     }
