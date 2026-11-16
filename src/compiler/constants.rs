@@ -77,9 +77,12 @@ fn collect(contract: &Contract) -> Result<HashMap<String, String>, CompileError>
                 "constant '{name}' collides with function '{name}'"
             )));
         }
-        if !matches!(const_type.name(), Some("int" | "bool" | "bytes")) {
+        if !matches!(
+            const_type.name(),
+            Some("int" | "bool" | "bytes" | "bytes20" | "bytes32" | "pubkey")
+        ) {
             return Err(error(format!(
-                "constant '{name}' must be int, bool or bytes"
+                "constant '{name}' must be int, bool, bytes, bytes20, bytes32 or pubkey"
             )));
         }
         declarations.insert(name.clone(), constant);
@@ -140,7 +143,14 @@ fn resolve_value(
             false => format!("constant '{name}': {error}"),
         })?;
     active.pop();
-    if constant.const_type.name() != Some(kind(&value)) {
+    let width = value.strip_prefix("0x").map(|hex| hex.len() / 2);
+    let valid = match constant.const_type.name() {
+        Some("bytes20") => width == Some(20),
+        Some("bytes32") => width == Some(32),
+        Some("pubkey") => width.is_some(),
+        declared => declared == Some(kind(&value)),
+    };
+    if !valid {
         return Err(format!(
             "constant '{name}' is not a valid '{}' literal",
             constant.const_type

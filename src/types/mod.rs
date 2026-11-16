@@ -644,7 +644,7 @@ pub(crate) fn static_byte_width(expr: &Expression) -> Option<usize> {
     }
 }
 
-fn bytes_of_width(width: Option<usize>) -> ArkType {
+pub(crate) fn bytes_of_width(width: Option<usize>) -> ArkType {
     match width {
         Some(20) => ArkType::Bytes20,
         Some(32) => ArkType::Bytes32,

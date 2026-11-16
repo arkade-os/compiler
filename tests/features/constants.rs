@@ -308,16 +308,84 @@ contract Vault(pubkey owner, int[3] limits) {
 }
 
 #[test]
-fn constant_must_be_int_bool_or_bytes() {
+fn constant_must_have_a_scalar_value_type() {
     assert!(error(
         r#"
 contract Vault(pubkey owner) {
-    const pubkey KEY = 1;
+    const signature SIG = 0x00;
     function spend(int amount) { require(amount > 0); }
 }
 "#
     )
-    .contains("constant 'KEY' must be int, bool or bytes"));
+    .contains("constant 'SIG' must be int, bool, bytes, bytes20, bytes32 or pubkey"));
+}
+
+#[test]
+fn sized_and_pubkey_constants_fold_with_their_declared_types() {
+    let hash = format!("0x{}", "ab".repeat(32));
+    let digest = format!("0x{}", "cd".repeat(20));
+    let key = format!("0x02{}", "ef".repeat(32));
+    let keys = format!(
+        "library Keys {{ const bytes32 HASH = {hash}; const bytes20 DIGEST = {digest}; const pubkey ORACLE = {key}; }}"
+    );
+    let source = |hash: &str, digest: &str, key: &str| {
+        format!(
+            r#"import "keys.ark";
+contract Vault() {{
+    static function check(bytes32 value) {{ require(value == {hash}); }}
+    function spend(signature sig, bytes32 h, bytes preimage) {{
+        require(h == {hash});
+        check({hash});
+        require(hash160(preimage) == {digest});
+        require(checkSig(sig, {key}));
+    }}
+    function exit(signature sig, bytes preimage) tapscript {{
+        require(sha256(preimage) == {hash});
+        require(older(blocks(10)));
+        require(checkSig(sig, server));
+    }}
+    function refund(signature sig, bytes preimage) tapscript {{
+        require(hash160(preimage) == Keys.DIGEST);
+        require(older(blocks(10)));
+        require(checkSig(sig, server));
+    }}
+    const bytes32 TAG = Keys.HASH;
+    const bytes20 ID = Keys.DIGEST;
+    const pubkey ORACLE = Keys.ORACLE;
+}}"#
+        )
+    };
+    let build = |main: &str| project("main.ark", &[("main.ark", main), ("keys.ark", &keys)]);
+    let output = build(&source("TAG", "ID", "ORACLE")).expect("sized constants");
+    let literal = build(&source(&hash, &digest, &key)).expect("literals");
+    assert_eq!(
+        arkade_asm_tokens(&output, "spend"),
+        arkade_asm_tokens(&literal, "spend")
+    );
+    assert_eq!(arkade_inputs(&output, "spend"), ["sig", "h", "preimage"]);
+    for name in ["spend", "exit", "refund"] {
+        assert_eq!(
+            leaf_asm(&output, name, name),
+            leaf_asm(&literal, name, name)
+        );
+    }
+    assert!(leaf_asm(&output, "exit", "exit").contains(&format!("OP_SHA256 {hash}")));
+    assert!(leaf_asm(&output, "refund", "refund").contains(&format!("OP_HASH160 {digest}")));
+    assert_eq!(witness_names(&output, "exit", "exit"), ["sig", "preimage"]);
+
+    for (declaration, body, message) in [
+        ("const bytes32 H = 0xabcd;", "", "constant 'H' is not a valid 'bytes32' literal"),
+        ("const bytes20 H = TAG;", "", "constant 'H' is not a valid 'bytes20' literal"),
+        ("const pubkey H = 1;", "", "constant 'H' is not a valid 'pubkey' literal"),
+        ("", "function spend(bytes p) { require(sha256(p) == ID); }", "not defined between 'bytes32' and 'bytes20'"),
+        ("", "function spend(bytes20 v) { require(v == TAG); }", "not defined between 'bytes20' and 'bytes32'"),
+        ("", "function exit(signature sig, bytes p) tapscript { require(sha256(p) == ID); require(older(10)); require(checkSig(sig, server)); }", "sha256 value"),
+    ] {
+        let error = error(&format!(
+            "contract Vault() {{ const bytes32 TAG = {hash}; const bytes20 ID = {digest}; {declaration} {body} }}"
+        ));
+        assert!(error.contains(message), "{declaration}{body}: {error}");
+    }
 }
 
 #[test]
