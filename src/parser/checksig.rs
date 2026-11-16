@@ -25,6 +25,7 @@ pub(crate) fn parse_multisig_threshold(
     } else {
         name
     };
-    text.parse::<u16>()
+    text.replace('_', "")
+        .parse::<u16>()
         .map_err(|e| format!("invalid multisig threshold '{name}': {e}"))
 }

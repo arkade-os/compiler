@@ -181,7 +181,8 @@ fn parse_time_operand(
     constants: &[Constant],
 ) -> Result<(crate::models::TapOperand, Option<crate::models::TimeUnit>), String> {
     use crate::models::TimeUnit;
-    let text = arg.as_str().trim_end();
+    let text = arg.as_str();
+    let text = &text[..code_end(text, text.len())];
     let Some(wrapper) = arg
         .clone()
         .into_inner()

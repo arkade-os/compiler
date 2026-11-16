@@ -1,0 +1,7 @@
+contract Vault(pubkey owner) {
+  function spend(signature sig) {
+    require(checkSig(sig, owner)) /* the owner
+      signs */
+    require(tx.outputs[0].value >= 1_000);
+  }
+}

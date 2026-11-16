@@ -214,9 +214,10 @@ fn references_in_parentheses_and_after_new_cover_the_name() {
 contract C(int a) {
     const int K = 1;
     function spend(int n) {
-        require(( n ) + (h(a)) > (K));
+        require(( n ) + (/* the
+            helper */ h(a)) > (K));
         require(tx.outputs[0].script == new // D
-            D(a));
+            /* D */ D(a));
     }
     private function h(int x) int { return x; }
 }";

@@ -364,13 +364,20 @@ fn parse_asset_group_access(
 
 /// `text` without the whitespace and comments the grammar allows between terms.
 fn without_trivia(text: &str) -> String {
-    text.lines()
-        .flat_map(|line| {
-            line.split_once("//")
-                .map_or(line, |(code, _)| code)
-                .split_whitespace()
-        })
-        .collect()
+    let mut code = String::new();
+    let mut rest = text;
+    while let Some(c) = rest.chars().next() {
+        match comment_len(rest) {
+            Some(comment) => rest = &rest[comment..],
+            None => {
+                if !c.is_whitespace() {
+                    code.push(c);
+                }
+                rest = &rest[c.len_utf8()..];
+            }
+        }
+    }
+    code
 }
 
 /// The index inside an `array_access` pair, without surrounding trivia.

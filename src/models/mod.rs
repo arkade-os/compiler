@@ -22,9 +22,10 @@ pub enum ArraySize {
 }
 
 impl ArraySize {
-    /// A length literal, or the constant that names one.
+    /// A length literal, or the constant that names one. A literal drops its `_` digit separators;
+    /// a constant name starts with a letter, so dropping its underscores never makes a number.
     pub fn parse(text: &str) -> Self {
-        match text.parse() {
+        match text.replace('_', "").parse() {
             Ok(length) => ArraySize::Fixed(length),
             Err(_) => ArraySize::Const(text.to_string()),
         }

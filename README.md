@@ -275,7 +275,7 @@ contract Name(<params>) {    // entry files require a contract
 // library Name { ... }
 ```
 
-Comments use `//`. Identifiers start with a letter and contain letters, digits, and underscores. Number literals are decimal integers. Double-quoted strings are `bytes` literals in expressions and declarations (see [Byte literals](#byte-literals)), and also serve as `import` paths and `require` messages.
+Comments run from `//` to the end of the line, or from `/*` to the next `*/`; block comments do not nest. Identifiers start with a letter and contain letters, digits, and underscores. Number literals are decimal integers, and `_` may separate two digits, as in `1_000_000`, which is the value `1000000`. Every comma-separated list, such as parameters, call arguments, array and struct literals, and attribute arguments, accepts one trailing comma after its last element. Double-quoted strings are `bytes` literals in expressions and declarations (see [Byte literals](#byte-literals)), and also serve as `import` paths and `require` messages.
 
 ### Version pragma
 

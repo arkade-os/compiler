@@ -1,0 +1,6 @@
+contract Vault(pubkey owner) {
+  function spend(signature sig) {
+    require(checkSig(sig, owner));
+  }
+  /* never closed
+}

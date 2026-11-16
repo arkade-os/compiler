@@ -350,8 +350,8 @@ impl Collector<'_> {
         let mut rest = self.source.get(start..).unwrap_or_default();
         loop {
             rest = rest.trim_start_matches(['(', ' ', '\t', '\r', '\n']);
-            match rest.strip_prefix("//") {
-                Some(comment) => rest = comment.find('\n').map_or("", |end| &comment[end..]),
+            match crate::parser::comment_len(rest) {
+                Some(comment) => rest = &rest[comment..],
                 None => return self.source.len() - rest.len(),
             }
         }

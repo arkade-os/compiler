@@ -162,8 +162,9 @@ pub(crate) fn parse_primary_expr(pair: Pair<Rule>) -> Result<Expression, String>
             ExprKind::Name(Path::from_key(pair.as_str())),
             span,
         )),
+        // A number's `_` digit separators carry no value.
         Rule::bool_literal | Rule::number_literal => Ok(Expression::new(
-            ExprKind::Literal(pair.as_str().to_string()),
+            ExprKind::Literal(pair.as_str().replace('_', "")),
             span,
         )),
         Rule::hex_literal | Rule::string_literal => Ok(Expression::new(

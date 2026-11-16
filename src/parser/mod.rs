@@ -69,7 +69,7 @@ fn readable_error(error: pest::error::Error<Rule>, source: &str) -> pest::error:
         .expected_tokens()
         .iter()
         .map(ToString::to_string)
-        .filter(|t| !t.trim().is_empty() && t != "//" && !t.contains(".."))
+        .filter(|t| !t.trim().is_empty() && t != "//" && t != "/*" && !t.contains(".."))
         .map(|t| format!("'{t}'"))
         .collect();
     let mut expected: Vec<String> = tokens
@@ -128,17 +128,38 @@ fn missing_at(source: &str, at: usize) -> usize {
     }
 }
 
-/// The end of the code before `at`, past whitespace and line comments.
-fn code_end(source: &str, at: usize) -> usize {
-    let mut end = at;
-    loop {
-        let code = source[..end].trim_end();
-        let line = code.rfind('\n').map_or(0, |i| i + 1);
-        match comment_start(&code[line..]) {
-            Some(comment) => end = line + comment,
-            None => return code.len(),
+/// The end of the code before `at`, past whitespace and comments.
+pub(crate) fn code_end(source: &str, at: usize) -> usize {
+    let code = &source[..at];
+    let (mut i, mut end, mut quoted) = (0, 0, false);
+    while let Some(c) = code[i..].chars().next() {
+        if let Some(comment) = comment_len(&code[i..]).filter(|_| !quoted) {
+            i += comment;
+            continue;
+        }
+        i += c.len_utf8();
+        match c {
+            '\\' if quoted => i += code[i..].chars().next().map_or(0, char::len_utf8),
+            '"' => quoted = !quoted,
+            // A string literal cannot span lines.
+            '\n' => quoted = false,
+            _ => {}
+        }
+        if quoted || !c.is_whitespace() {
+            end = i;
         }
     }
+    end
+}
+
+/// The length of the `//` or `/* */` comment that starts `text`; an unterminated block comment
+/// runs to the end of `text`.
+pub(crate) fn comment_len(text: &str) -> Option<usize> {
+    if text.starts_with("//") {
+        return Some(text.find('\n').unwrap_or(text.len()));
+    }
+    let body = text.strip_prefix("/*")?;
+    Some(body.find("*/").map_or(text.len(), |end| end + 4))
 }
 
 /// A single word that starts a statement and ends the code before `at`, as in `dasd` left on its
@@ -158,23 +179,6 @@ fn lone_word(source: &str, at: usize) -> Option<(&str, usize, usize)> {
         && !keyword
         && !split;
     lone.then_some((word, start, end))
-}
-
-/// The byte offset of a `//` comment in `line`, outside string literals.
-fn comment_start(line: &str) -> Option<usize> {
-    let mut quoted = false;
-    let mut characters = line.char_indices().peekable();
-    while let Some((i, c)) = characters.next() {
-        match c {
-            '\\' if quoted => {
-                characters.next();
-            }
-            '"' => quoted = !quoted,
-            '/' if !quoted && characters.peek().is_some_and(|(_, c)| *c == '/') => return Some(i),
-            _ => {}
-        }
-    }
-    None
 }
 
 fn rule_term(rule: &Rule) -> Option<String> {
@@ -1503,6 +1507,124 @@ contract Demo(pubkey first, pubkey second) {{
                 "contract C() {{ function spend(int x) {{ if (x == 1) {{ require(x > 0); }} {chain} }} }}"
             );
             assert!(parse(&source).is_err(), "{chain}");
+        }
+    }
+
+    #[test]
+    fn block_comments_separate_tokens_and_do_not_nest() {
+        let contract = parse(
+            r#"/* header
+            */ contract/**/C(/* none */) { function spend(/* a */int/* b */x/* c */) {
+                bytes text = "/* text */"; // a line comment holds /* without closing it
+                let groups = tx /* all */ . /* the */ assetGroups;
+                require(x /* multi
+                   line */ == /* // */ 1);
+            } }"#,
+        )
+        .unwrap();
+        let statements = &contract.functions[0].statements;
+        assert!(
+            matches!(&statements[0].statement, Statement::LetBinding { value: Expression { kind: ExprKind::Literal(value), .. }, .. } if value == "0x2f2a2074657874202a2f")
+        );
+        assert!(
+            matches!(&statements[1].statement, Statement::LetBinding { value: Expression { kind: ExprKind::Name(path), .. }, .. } if path.key() == "tx.assetGroups")
+        );
+        for source in [
+            "/* /* nested */ */ contract C() {}",
+            "contract C() {} /* unterminated",
+            "contract C() {} /* unterminated *",
+            "contract C() {} /*/",
+            "contract C() {} / * split * /",
+        ] {
+            assert!(parse(source).is_err(), "{source}");
+        }
+    }
+
+    #[test]
+    fn every_list_takes_one_trailing_comma() {
+        let contract = parse(
+            r#"@allow(unused-parameter, "kept",)
+            contract C(pubkey k, int[2] xs,) {
+            function spend(signature s, int n, bytes32 id,) {
+                let a = [n, 2,];
+                let p = { x: n, y: 2, };
+                let m = min(n, 2,);
+                let h = sha256(cat(id, id,),);
+                let v = int(0x01,);
+                let l = tx.inputs[0].assets.lookup(id, 0,);
+                let f = tx.intent.field("type",);
+                let t = this.tunnel(0, { script: true, value: true, assets: true, }, [id,],);
+                require(checkMultisig([k, k,], [s, s,], 2,), "m",);
+                require(n > 0,);
+            }
+            function exit(signature s,) tapscript {
+                require(checkSig(s, tweak(k, spend,),),);
+                require(older(blocks(144,),), "wait",);
+            }
+        }"#,
+        )
+        .unwrap();
+        assert_eq!(contract.parameters.len(), 2);
+        assert_eq!(contract.functions[0].parameters.len(), 3);
+        assert_eq!(contract.functions[0].statements.len(), 10);
+        // A lone quoted intent path is still checked at compile time.
+        let error = parse(r#"contract C() { function spend() { let f = tx.intent.field("Bad Path",); require(f == f); } }"#).unwrap_err();
+        assert!(error.contains("invalid intent message path"), "{error}");
+        for list in [
+            "f(,)",
+            "f(n,,)",
+            "f(, n)",
+            "[,]",
+            "[n,,]",
+            "{,}",
+            "{ x: n,, }",
+            "(n,)",
+            "int(,)",
+            "sha256(,)",
+            "new C(,)",
+        ] {
+            let source = format!(
+                "contract C() {{ function spend(int n) {{ let a = {list}; require(a); }} }}"
+            );
+            assert!(parse(&source).is_err(), "{list}");
+        }
+        for source in [
+            "contract C(,) {}",
+            "contract C(int n,,) {}",
+            "@allow(,) contract C() {}",
+            "contract C() { function spend(int n) { require(n > 0,,); } }",
+            "contract C() { function spend(int n) { require(,); } }",
+            "contract C(pubkey k) { function exit(signature s) tapscript { require(checkSig(s, k,,)); } }",
+        ] {
+            assert!(parse(source).is_err(), "{source}");
+        }
+    }
+
+    #[test]
+    fn digit_separators_sit_between_digits_and_drop_out_of_values() {
+        let contract = parse(
+            "contract C(int[1_0] xs) { const int BIG = 1_000_000; function spend(int n) { let a = 1_2_3 + 1000; require(n > 0); } }",
+        )
+        .unwrap();
+        assert_eq!(contract.parameters[0].param_type.to_string(), "int[10]");
+        assert!(
+            matches!(&contract.constants[0].value.kind, ExprKind::Literal(value) if value == "1000000")
+        );
+        assert!(
+            matches!(&contract.functions[0].statements[0].statement, Statement::LetBinding { value: Expression { kind: ExprKind::BinaryOp { left, .. }, .. }, .. } if matches!(&left.kind, ExprKind::Literal(value) if value == "123"))
+        );
+        for literal in ["_1", "1_", "1__0", "1_ 0", "0_1", "01", "0x1_0", "0x_10"] {
+            let source = format!(
+                "contract C() {{ function spend(int n) {{ let a = {literal}; require(n > a); }} }}"
+            );
+            assert!(parse(&source).is_err(), "{literal}");
+        }
+        for source in [
+            "contract C(int[0_1] xs) {}",
+            "contract C(int[1_] xs) {}",
+            "pragma arkade ^0.1_0.0; contract C() {}",
+        ] {
+            assert!(parse(source).is_err(), "{source}");
         }
     }
 }
