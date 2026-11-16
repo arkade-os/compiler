@@ -245,10 +245,10 @@ contract DupLeaves(pubkey owner) {
         require(tx.outputs[0].value >= 1);
     }
     function spend(signature serverSig, signature emulatorSig) tapscript {
-        require(checkMultisig([server, emulator], [serverSig, emulatorSig], 2));
+        require(checkMultisig([server, emulator], [serverSig, emulatorSig]));
     }
     function spend(signature serverSig, signature emulatorSig) tapscript {
-        require(checkMultisig([server, emulator], [serverSig, emulatorSig], 2));
+        require(checkMultisig([server, emulator], [serverSig, emulatorSig]));
     }
 }"#;
     let result = compile(source);

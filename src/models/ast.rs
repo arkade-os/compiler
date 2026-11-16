@@ -441,12 +441,8 @@ pub enum TapItem {
         value: TapOperand,
         unit: Option<TimeUnit>,
     },
-    /// `checkSig`/`checkMultisig` → multisig suffix. `threshold == None` means N-of-N.
-    Sig {
-        keys: Vec<KeyExpr>,
-        sigs: Vec<Path>,
-        threshold: Option<u16>,
-    },
+    /// `checkSig`/`checkMultisig` → N-of-N multisig suffix.
+    Sig { keys: Vec<KeyExpr>, sigs: Vec<Path> },
 }
 
 /// A hash value or timelock operand: a literal, with constants already folded in, or the

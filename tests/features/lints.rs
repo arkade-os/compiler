@@ -167,11 +167,11 @@ fn covenant_lints_report_unauthorized_and_half_constrained_spends() {
             &[],
         ),
         (
-            "function claim() { require(tx.outputs[this.activeInputIndex].value >= tx.input.current.value); require(tx.outputs[this.activeInputIndex].script == tx.input.current.script); } function claim(bytes p, signature a, signature b) tapscript { require(sha256(p) == hash); require(checkMultisig([server, emulator], [a, b], 2)); }",
+            "function claim() { require(tx.outputs[this.activeInputIndex].value >= tx.input.current.value); require(tx.outputs[this.activeInputIndex].script == tx.input.current.script); } function claim(bytes p, signature a, signature b) tapscript { require(sha256(p) == hash); require(checkMultisig([server, emulator], [a, b])); }",
             &["unsigned-spend-path"],
         ),
         (
-            "function claim(bytes p) { require(sha256(p) == hash); require(tx.outputs[this.activeInputIndex].value >= tx.input.current.value); require(tx.outputs[this.activeInputIndex].script == tx.input.current.script); } function claim(signature a, signature b) tapscript { require(checkMultisig([server, emulator], [a, b], 2)); }",
+            "function claim(bytes p) { require(sha256(p) == hash); require(tx.outputs[this.activeInputIndex].value >= tx.input.current.value); require(tx.outputs[this.activeInputIndex].script == tx.input.current.script); } function claim(signature a, signature b) tapscript { require(checkMultisig([server, emulator], [a, b])); }",
             &["unsigned-spend-path"],
         ),
         (
@@ -183,11 +183,11 @@ fn covenant_lints_report_unauthorized_and_half_constrained_spends() {
             &[],
         ),
         (
-            "function w(int x) { require(x > 0); } function w(signature a, signature b, signature c) tapscript { require(checkMultisig([owner, server, emulator], [a, b, c], 3)); }",
+            "function w(int x) { require(x > 0); } function w(signature a, signature b, signature c) tapscript { require(checkMultisig([owner, server, emulator], [a, b, c])); }",
             &[],
         ),
         (
-            "function w(int x) { require(x > 0); } function w(signature a, signature b) tapscript { require(checkMultisig([server, emulator], [a, b], 2)); }",
+            "function w(int x) { require(x > 0); } function w(signature a, signature b) tapscript { require(checkMultisig([server, emulator], [a, b])); }",
             &["unsigned-spend-path"],
         ),
     ] {
@@ -479,14 +479,14 @@ fn a_tapscript_reading_an_element_or_field_uses_its_parameter() {
     contract Vault(pubkey[2] guardians, Policy policy, Policy[2] backups, int exitDelay, int unused) {
         function exit(signature g0Sig, signature g1Sig) tapscript {
             require(older(exitDelay));
-            require(checkMultisig([guardians[0], guardians[1]], [g0Sig, g1Sig], 2));
+            require(checkMultisig([guardians[0], guardians[1]], [g0Sig, g1Sig]));
         }
         function claim(bytes32 preimage, signature serverSig, signature ownerSig) tapscript {
             require(sha256(preimage) == policy.lockHash);
-            require(checkMultisig([server, policy.owner], [serverSig, ownerSig], 2));
+            require(checkMultisig([server, policy.owner], [serverSig, ownerSig]));
         }
         function recover(signature serverSig, signature backupSig) tapscript {
-            require(checkMultisig([server, backups[1].owner], [serverSig, backupSig], 2));
+            require(checkMultisig([server, backups[1].owner], [serverSig, backupSig]));
         }
     }"#;
     let messages: Vec<String> = diagnostics_with(source, &Levels::default())
@@ -502,11 +502,11 @@ fn a_leaf_keyed_by_an_element_or_field_is_signed() {
     contract Vault(pubkey[2] guardians, Policy policy) {
         function claim() { require(tx.input.current.value >= 1); }
         function claim(signature serverSig, signature emulatorSig, signature gSig) tapscript {
-            require(checkMultisig([server, emulator, guardians[0]], [serverSig, emulatorSig, gSig], 3));
+            require(checkMultisig([server, emulator, guardians[0]], [serverSig, emulatorSig, gSig]));
         }
         function release() { require(tx.input.current.value >= 1); }
         function release(signature serverSig, signature emulatorSig, signature oSig) tapscript {
-            require(checkMultisig([server, emulator, policy.owner], [serverSig, emulatorSig, oSig], 3));
+            require(checkMultisig([server, emulator, policy.owner], [serverSig, emulatorSig, oSig]));
         }
         function refund() { require(tx.input.current.value >= 1); }
     }"#;

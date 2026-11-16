@@ -638,7 +638,7 @@ contract Main(pubkey[2] keys, pubkey owner) {
     }
     function exit(signature sig) tapscript {
         require(older(Limits.DELAY));
-        require(checkMultisig([owner], [sig], Limits.THRESHOLD));
+        require(checkMultisig([owner], [sig]));
     }
 }"#),
         ("limits.ark", "contract Limits() { const int INDEX = 1; const int THRESHOLD = 1; const int DELAY = 144; }"),

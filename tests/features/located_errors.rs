@@ -98,7 +98,7 @@ fn errors_outside_the_validator_are_located() {
             "contract name 'tx' is reserved",
         ),
         (
-            "contract C(pubkey owner) { function weird(signature serverSig, signature emulatorSig) tapscript { require(checkMultisig([server, emulator], [serverSig, emulatorSig], 2)); } }",
+            "contract C(pubkey owner) { function weird(signature serverSig, signature emulatorSig) tapscript { require(checkMultisig([server, emulator], [serverSig, emulatorSig])); } }",
             &[],
             "weird",
             "standalone",

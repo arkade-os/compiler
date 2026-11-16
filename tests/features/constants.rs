@@ -188,46 +188,27 @@ fn constant_indices_fold_in_named_operands() {
 #[test]
 fn multisig_threshold_constants_resolve_before_and_after_functions() {
     for declaration_first in [true, false] {
-        for modifier in ["", " tapscript"] {
-            let declaration = "const int QUORUM = 2;";
-            let timelock = if modifier.is_empty() {
-                ""
-            } else {
-                "require(older(10));"
-            };
-            let function = format!("function spend(signature firstSig, signature secondSig){modifier} {{ {timelock} require(checkMultisig([owner, backup], [firstSig, secondSig], QUORUM)); }}");
-            let members = if declaration_first {
-                format!("{declaration} {function}")
-            } else {
-                format!("{function} {declaration}")
-            };
-            let source = format!("contract Vault(pubkey owner, pubkey backup) {{ {members} }}");
-            let output = compile(&source).unwrap();
-            let literal = compile(&source.replace(", QUORUM)", ", 2)")).unwrap();
-            assert_eq!(output.functions.len(), 1);
-            assert_eq!(
-                leaf_asm(&output, "spend", "spend"),
-                leaf_asm(&literal, "spend", "spend")
-            );
-            assert_eq!(
-                witness_names(&output, "spend", "spend"),
-                witness_names(&literal, "spend", "spend")
-            );
-            if modifier.is_empty() {
-                assert_eq!(
-                    arkade_asm_tokens(&output, "spend"),
-                    arkade_asm_tokens(&literal, "spend")
-                );
-                assert_eq!(arkade_inputs(&output, "spend"), ["firstSig", "secondSig"]);
-            } else {
-                assert!(group(&output, "spend").arkade.is_none());
-            }
-        }
+        let declaration = "const int QUORUM = 2;";
+        let function = "function spend(signature firstSig, signature secondSig) { require(checkMultisig([owner, backup], [firstSig, secondSig], QUORUM)); }";
+        let members = if declaration_first {
+            format!("{declaration} {function}")
+        } else {
+            format!("{function} {declaration}")
+        };
+        let source = format!("contract Vault(pubkey owner, pubkey backup) {{ {members} }}");
+        let output = compile(&source).unwrap();
+        let literal = compile(&source.replace(", QUORUM)", ", 2)")).unwrap();
+        assert_eq!(output.functions.len(), 1);
+        assert_eq!(
+            arkade_asm_tokens(&output, "spend"),
+            arkade_asm_tokens(&literal, "spend")
+        );
+        assert_eq!(arkade_inputs(&output, "spend"), ["firstSig", "secondSig"]);
     }
 }
 
 #[test]
-fn multisig_threshold_checks_types_bounds_and_tapscript_constants() {
+fn multisig_threshold_checks_types_and_bounds() {
     for declaration in [
         "",
         "const bool QUORUM = true;",
@@ -235,22 +216,10 @@ fn multisig_threshold_checks_types_bounds_and_tapscript_constants() {
         "const int QUORUM = 0;",
         "const int QUORUM = 3;",
     ] {
-        for modifier in ["", " tapscript"] {
-            let timelock = if modifier.is_empty() {
-                ""
-            } else {
-                "require(older(10));"
-            };
-            let source = format!("contract Vault(pubkey owner, int QUORUM_INPUT) {{ {declaration} function spend(signature sig){modifier} {{ {timelock} require(checkMultisig([owner], [sig], QUORUM)); }} }}");
-            compile(&source.replace(", QUORUM)", ", 1)")).expect("literal threshold");
-            assert!(compile(&source).is_err(), "{declaration} {modifier}");
-            let runtime = compile(&source.replace(", QUORUM)", ", QUORUM_INPUT)"));
-            assert_eq!(
-                runtime.is_ok(),
-                modifier.is_empty(),
-                "{declaration} {modifier}: {runtime:?}"
-            );
-        }
+        let source = format!("contract Vault(pubkey owner, int QUORUM_INPUT) {{ {declaration} function spend(signature sig) {{ require(checkMultisig([owner], [sig], QUORUM)); }} }}");
+        compile(&source.replace(", QUORUM)", ", 1)")).expect("literal threshold");
+        assert!(compile(&source).is_err(), "{declaration}");
+        compile(&source.replace(", QUORUM)", ", QUORUM_INPUT)")).expect("runtime threshold");
     }
 }
 
@@ -444,7 +413,7 @@ fn constant_expressions_reject_runtime_values_type_errors_and_invalid_arithmetic
 fn constant_expressions_resolve_in_multisig_and_timelocks() {
     let source = r#"contract Vault(pubkey first, pubkey second) {
         function spend(signature a, signature b) { require(checkMultisig([first, second], [a, b], QUORUM)); require(DELAY > 1); }
-        function exit(signature a, signature b) tapscript { require(older(DELAY)); require(checkMultisig([first, second], [a, b], QUORUM)); }
+        function exit(signature a, signature b) tapscript { require(older(DELAY)); require(checkMultisig([first, second], [a, b])); }
         const int QUORUM = KEYS / 2;
         const int DELAY = QUORUM * 72;
         const int KEYS = 4;

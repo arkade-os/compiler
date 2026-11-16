@@ -288,7 +288,14 @@ impl Generator {
             self.apply(LessThanOrEqual, 2, 1)?;
             self.apply(Verify, 1, 0)?;
         }
-        self.apply(NumEqual, 2, 1)
+        // At least the threshold must sign; for N-of-N that is all, which NUMEQUAL checks and
+        // a following VERIFY fuses with.
+        let compare = if literal_threshold == Some(count) {
+            NumEqual
+        } else {
+            GreaterThanOrEqual
+        };
+        self.apply(compare, 2, 1)
     }
 
     /// One field of a group input record, which is `[type, txid, vin, amount]` for an

@@ -16,7 +16,7 @@ contract SingleSig(
 ) {
   // Collaborative path: server + user (N-of-N forfeit closure).
   function cooperative(signature serverSig, signature userSig) tapscript {
-    require(checkMultisig([server, user], [serverSig, userSig], 2));
+    require(checkMultisig([server, user], [serverSig, userSig]));
   }
 
   // Unilateral exit: user alone after a CSV delay (exit closure).
