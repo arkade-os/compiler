@@ -9,7 +9,18 @@ fn covenant_opcodes_report_their_context_in_tapscript() {
         ("checkTime(0)", "checkTime(...)"),
         ("!checkTime(0)", "checkTime(...)"),
         ("this.tunnel(0)", "this.tunnel(...)"),
+        ("this.tunnel()", "this.tunnel(...)"),
         ("this.tunnel(0) == true", "this.tunnel(...)"),
+        ("substr(0x00, 0, 1) == 0x00", "substr(...)"),
+        ("within(1, 0, 2)", "within(...)"),
+        (
+            "checkSigFromStack(0x00, server, 0x00)",
+            "checkSigFromStack(...)",
+        ),
+        (
+            "checkSigFromStackVerify(0x00, server, 0x00)",
+            "checkSigFromStackVerify(...)",
+        ),
         (
             "tx.intent.field(\"type\") == \"register\"",
             "tx.intent.field(...)",
@@ -22,6 +33,71 @@ fn covenant_opcodes_report_their_context_in_tapscript() {
         let error = compile(&source).unwrap_err().to_string();
         assert!(
             error.contains(&format!("`{name}` is only available in covenant functions")),
+            "{expression}: {error}"
+        );
+    }
+    for expression in [
+        "sha256(0x00)",
+        "sha256(0x00) != 0x00",
+        "0x00 == hash160(0x00)",
+    ] {
+        let source =
+            format!("contract C() {{ function spend() tapscript {{ require({expression}); }} }}");
+        let error = compile(&source).unwrap_err().to_string();
+        assert!(
+            error.contains("can use `sha256` only as `require(sha256(preimage) == hash)`")
+                || error.contains("can use `hash160` only as `require(hash160(preimage) == hash)`"),
+            "{expression}: {error}"
+        );
+    }
+}
+
+#[test]
+fn tapscript_opcodes_report_their_context_in_covenants() {
+    for (expression, name, hint) in [
+        (
+            "older(1)",
+            "older",
+            "covenant functions use `checkTime(timestamp)`",
+        ),
+        (
+            "after(t)",
+            "after",
+            "covenant functions use `checkTime(timestamp)`",
+        ),
+        ("blocks(1) > 0", "blocks", "inside older(...) or after(...)"),
+        (
+            "seconds(t) > 0",
+            "seconds",
+            "inside older(...) or after(...)",
+        ),
+        (
+            "checkSig(s, tweak(emulator, spend))",
+            "tweak",
+            "as a key inside checkSig or checkMultisig",
+        ),
+    ] {
+        let source = format!(
+            "contract C(int t) {{ function spend(signature s) {{ require({expression}); }} }}"
+        );
+        let error = compile(&source).unwrap_err().to_string();
+        assert!(
+            error.contains(&format!(
+                "`{name}(...)` is only available in tapscript functions"
+            )) && error.contains(hint),
+            "{expression}: {error}"
+        );
+    }
+    for (expression, signature) in [
+        ("older()", "older(sequence)"),
+        ("after(1, 2)", "after(locktime)"),
+        ("blocks(1, 2) > 0", "blocks(count)"),
+        ("tweak(emulator) == 0x00", "tweak(base, name)"),
+    ] {
+        let source = format!("contract C() {{ function spend() {{ require({expression}); }} }}");
+        let error = compile(&source).unwrap_err().to_string();
+        assert!(
+            error.contains(&format!("expected {signature}")),
             "{expression}: {error}"
         );
     }
@@ -375,7 +451,7 @@ fn check_time_uses_the_emulator_clock_and_preserves_operand_order() {
     assert!(tapscript("require(checkTime(0));")
         .contains("`checkTime(...)` is only available in covenant functions"));
     assert!(tapscript("require(cat(a, a) == a);")
-        .contains("unsupported compound expression in tapscript require()"));
+        .contains("`cat(...)` is only available in covenant functions"));
 }
 
 #[test]

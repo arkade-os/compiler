@@ -38,17 +38,28 @@ pub(crate) fn parse_named_tapscript(
             let mut inner = stmt.into_inner();
             let expr = inner.next().ok_or("Empty require() in tapscript")?;
             for part in std::iter::once(expr.clone()).chain(expr.clone().into_inner().flatten()) {
-                let callee = part.clone().into_inner().next();
                 let name = match part.as_rule() {
-                    Rule::function_call
-                        if callee.is_some_and(|name| name.as_str() == "checkTime") =>
-                    {
-                        "checkTime(...)"
+                    Rule::function_call => {
+                        let callee = part.clone().into_inner().next();
+                        let callee = callee.ok_or("Missing call name")?.as_str();
+                        if crate::models::HashFn::parse(callee).is_some() {
+                            let message = format!(
+                                "a tapscript function can use `{callee}` only as \
+                                 `require({callee}(preimage) == hash)`"
+                            );
+                            return Err(CompileError::from(message).at(part.as_span().into()));
+                        }
+                        let tapscript_call = crate::builtins::find(callee)
+                            .is_none_or(|b| matches!(b.name, "checkSig" | "checkMultisig"));
+                        if tapscript_call && callee != "this.tunnel" {
+                            continue;
+                        }
+                        format!("{callee}(...)")
                     }
-                    Rule::tunnel => "this.tunnel(...)",
-                    Rule::intent_field => "tx.intent.field(...)",
-                    Rule::intent_has => "tx.intent.has(...)",
-                    Rule::this_property if part.as_str() == "expiry" => "this.expiry",
+                    Rule::tunnel => "this.tunnel(...)".into(),
+                    Rule::intent_field => "tx.intent.field(...)".into(),
+                    Rule::intent_has => "tx.intent.has(...)".into(),
+                    Rule::this_property if part.as_str() == "expiry" => "this.expiry".into(),
                     _ => continue,
                 };
                 let message = format!("`{name}` is only available in covenant functions");
