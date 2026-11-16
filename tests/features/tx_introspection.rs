@@ -34,6 +34,7 @@ fn test_tx_version() {
 fn test_tx_locktime() {
     let code = r#"
         contract LocktimeChecker(pubkey owner) {
+            @allow(offchain-locktime, "tests nLockTime inspection")
             function checkLocktime(signature ownerSig, int minLocktime) {
                 require(checkSig(ownerSig, owner));
                 require(tx.locktime >= minLocktime);

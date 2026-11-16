@@ -230,6 +230,16 @@ fn levels_allow_warn_or_deny_each_lint() {
 }
 
 #[test]
+fn a_covenant_reading_tx_locktime_fails_to_compile() {
+    let error = arkade_compiler::compile(
+        "contract C(pubkey owner) { function f(signature s) { require(checkSig(s, owner)); require(tx.locktime >= 100); } }",
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(error.contains("error[offchain-locktime]"), "{error}");
+}
+
+#[test]
 fn lint_attributes_set_levels_on_the_node_they_precede() {
     let codes = |source: &str, levels: &Levels| {
         diagnostics_with(source, levels)

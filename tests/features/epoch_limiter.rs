@@ -12,6 +12,7 @@ contract EpochLimiter(
   int epochLimit,
   int epochBlocks
 ) {
+  @allow(offchain-locktime, "a fixture for let bindings and branches")
   function check(int transferAmount, int epochStartIdx, int epochTotalIdx) {
     require(transferAmount > 0, "zero");
 

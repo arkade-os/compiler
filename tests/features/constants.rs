@@ -83,7 +83,7 @@ contract Vault(pubkey owner) {{
 fn covenant_time_comparisons_use_inspection() {
     for bound in ["500000", "DEADLINE", "deadline", "deadline + 1"] {
         let source = format!(
-            "contract Vault(int deadline) {{ const int DEADLINE = 500000; function spend() {{ require(tx.locktime >= {bound}); }} }}"
+            "contract Vault(int deadline) {{ const int DEADLINE = 500000; @allow(offchain-locktime, \"tests nLockTime inspection\") function spend() {{ require(tx.locktime >= {bound}); }} }}"
         );
         let output = compile(&source).expect("time comparison");
         let asm = arkade_asm_tokens(&output, "spend");
