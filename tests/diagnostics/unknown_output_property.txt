@@ -1,4 +1,4 @@
-error[validation]: unknown output property 'valu'; expected one of value, witnessVersion, script
+error[validation]: unknown member 'valu' of 'tx.outputs[0]'; expected one of assets, script, value, witnessVersion
   --> 4:13
 4 |     require(tx.outputs[0].valu >= 1000);
   |             ^^^^^^^^^^^^^^^^^^
