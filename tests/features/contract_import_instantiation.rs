@@ -1,11 +1,11 @@
 fn compile(source: &str) -> Result<arkade_compiler::ContractJson, Box<dyn std::error::Error>> {
     let files = [
         ("main.ark", source),
-        ("single_sig.ark", "contract SingleSig(pubkey owner, int exit) {}"),
-        ("htlc.ark", "contract HTLC(pubkey sender, pubkey receiver, bytes hash, int refundTime, int exit) {}"),
-        ("random_num.ark", "contract RandomNum() {}"),
-        ("time_locked.ark", "contract TimeLocked(pubkey owner, int exit) {}"),
-        ("threshold_oracle.ark", "contract ThresholdOracle(pubkey[3] owners) {}"),
+        ("single_sig.ark", "contract SingleSig(pubkey owner, int exit) { function spend() { require(tx.numOutputs == 1); } }"),
+        ("htlc.ark", "contract HTLC(pubkey sender, pubkey receiver, bytes hash, int refundTime, int exit) { function spend() { require(tx.numOutputs == 1); } }"),
+        ("random_num.ark", "contract RandomNum() { function spend() { require(tx.numOutputs == 1); } }"),
+        ("time_locked.ark", "contract TimeLocked(pubkey owner, int exit) { function spend() { require(tx.numOutputs == 1); } }"),
+        ("threshold_oracle.ark", "contract ThresholdOracle(pubkey[3] owners) { function spend() { require(tx.numOutputs == 1); } }"),
     ]
     .into_iter()
     .map(|(path, code)| (path.to_string(), code.to_string()))
@@ -77,7 +77,7 @@ contract SingleSig(pubkey ownerPk) {
 #[test]
 fn test_new_expression_compiles() {
     // `new SingleSig(ownerPk, exit)` on the right of an output scriptPubKey comparison.
-    // This is the canonical recursion-enforcement pattern.
+    // This is the canonical pattern for paying an output to another contract.
     let code = r#"
 import "single_sig.ark";
 
@@ -654,27 +654,43 @@ contract SelfEnforcing(pubkey ownerPk, int exit) {
     );
 }
 
-// ─── Current-input self-reference ────────────────────────────────────────────
+// ─── Instantiation loops ──────────────────────────────────────────────────────
 
 #[test]
-fn test_self_referential_contract() {
-    // A contract that enforces its own output script matches itself (the most
-    // common recursion pattern for VTXOs). SelfRef has 1 param (ownerPk only)
-    // as the inline contract defines it; renew passes ownerPk back to itself.
-    let code = r#"
-
-contract SelfRef(pubkey ownerPk) {
+fn test_instantiation_loops_are_rejected() {
+    // A contract's key would depend on its own key, so its address cannot be computed.
+    let code = "contract SelfRef(pubkey ownerPk) {
   function renew() {
     require(tx.outputs[0].script == new SelfRef(ownerPk));
   }
-}
-"#;
-
-    let result = compile(code).expect("Compile failed");
-
-    let renew_asm = arkade_asm(&result, "renew");
+}";
+    let files = [("main.ark".to_string(), code.to_string())].into();
+    let diagnostics = arkade_compiler::check("main.ark", &files);
+    let [error] = &diagnostics[..] else {
+        panic!("{diagnostics:?}")
+    };
+    let span = error.span.expect("located error");
+    assert_eq!(&code[span.start..span.end], "new SelfRef(ownerPk)");
     assert!(
-        renew_asm.contains("CONTRACT:SelfRef(<ownerPk>)"),
-        "Missing CONTRACT:SelfRef(<ownerPk>) in {renew_asm:?}"
+        error
+            .message
+            .contains("`tx.outputs[0].script == tx.input.current.script`"),
+        "{}",
+        error.message
+    );
+
+    // A -> B -> A: each file has to import the other.
+    let files = [
+        ("a.ark", "import \"b.ark\"; contract A(pubkey k) { function f() { require(tx.outputs[0].script == new B(k)); } }"),
+        ("b.ark", "import \"a.ark\"; contract B(pubkey k) { function f() { require(tx.outputs[0].script == new A(k)); } }"),
+    ]
+    .map(|(path, source)| (path.to_string(), source.to_string()))
+    .into();
+    let error = arkade_compiler::compile_sources("a.ark", &files)
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains("circular import: a.ark -> b.ark -> a.ark"),
+        "{error}"
     );
 }

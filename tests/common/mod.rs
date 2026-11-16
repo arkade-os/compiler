@@ -20,6 +20,20 @@ pub fn compile_unoptimized(source: &str) -> Result<ContractJson, Box<dyn std::er
     )
 }
 
+/// Compile `entry` from in-memory `(path, source)` pairs.
+pub fn project(
+    entry: &str,
+    sources: &[(&str, &str)],
+) -> Result<ContractJson, Box<dyn std::error::Error>> {
+    arkade_compiler::compile_sources(
+        entry,
+        &sources
+            .iter()
+            .map(|(path, source)| (path.to_string(), source.to_string()))
+            .collect(),
+    )
+}
+
 /// Locate a spend group by name or panic with a descriptive message.
 pub fn group<'a>(out: &'a ContractJson, name: &str) -> &'a AbiFunctionGroup {
     out.functions

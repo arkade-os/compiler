@@ -368,7 +368,7 @@ contract Compare(pubkey owner, ScriptPubKey expectedScript, bytes32 expectedTxid
             ("main.ark".into(), source.into()),
             (
                 "single_sig.ark".into(),
-                "contract SingleSig(pubkey owner) {}".into(),
+                "contract SingleSig(pubkey owner) { function spend() { require(tx.numOutputs == 1); } }".into(),
             ),
         ]
         .into_iter()

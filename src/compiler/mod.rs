@@ -503,6 +503,7 @@ pub(crate) fn emit(
     source: crate::models::SourceBundle,
     warnings: Vec<String>,
     options: crate::CompileOptions,
+    code_hash: &mut dyn FnMut(&str) -> Result<String>,
 ) -> Result<ContractJson> {
     let parameters = contract.parameters.clone();
     let entry_source = source.files.get(&source.entry).cloned().unwrap_or_default();
@@ -517,6 +518,8 @@ pub(crate) fn emit(
         structs: contract.structs.clone(),
         parameters,
         functions: Vec::new(),
+        contracts: Default::default(),
+        code_hash: None,
         source: Some(source),
         compiler: Some(CompilerInfo {
             name: "arkadec".to_string(),
@@ -564,16 +567,33 @@ pub(crate) fn emit(
             .join("; ")
             .into());
     }
-    // Serialized field order is part of the fingerprint; reordering artifact fields changes it.
-    let bytes = serde_json::to_vec(&json).map_err(|error| error.to_string())?;
-    let digest = Sha256::digest(bytes);
-    json.fingerprint = Some(format!(
-        "sha256:{}",
-        digest
-            .iter()
-            .map(|byte| format!("{byte:02x}"))
-            .collect::<String>()
-    ));
+    let instantiated: std::collections::BTreeSet<String> = json
+        .functions
+        .iter()
+        .filter_map(|group| group.arkade.as_ref())
+        .flat_map(|arkade| &arkade.asm)
+        .filter_map(|token| Some(token.strip_prefix("<CONTRACT:")?.split_once('(')?.0.into()))
+        .collect();
+    for name in instantiated {
+        let hash = code_hash(&name)?;
+        json.contracts.insert(name, hash);
+    }
+    // Serialized field order is part of both hashes; reordering artifact fields changes them.
+    let sha256 = |json: &ContractJson| -> Result<String> {
+        let bytes = serde_json::to_vec(json).map_err(|error| error.to_string())?;
+        let digest = Sha256::digest(bytes);
+        Ok(format!(
+            "sha256:{}",
+            digest
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect::<String>()
+        ))
+    };
+    let (source, compiler) = (json.source.take(), json.compiler.take());
+    json.code_hash = Some(sha256(&json)?);
+    (json.source, json.compiler) = (source, compiler);
+    json.fingerprint = Some(sha256(&json)?);
     json.updated_at = Some(Utc::now().to_rfc3339());
 
     Ok(json)

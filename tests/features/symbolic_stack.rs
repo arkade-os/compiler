@@ -479,7 +479,7 @@ fn constructor_references_cover_nested_bodies_and_named_operands() {
                 ),
                 (
                     "child.ark".into(),
-                    "import \"policy.ark\"; contract Child(Policy policy) {}".into(),
+                    "import \"policy.ark\"; contract Child(Policy policy) { function spend() { require(tx.numOutputs == 1); } }".into(),
                 ),
             ]
             .into_iter()

@@ -19,7 +19,7 @@ contract Vault(Point p, pubkey owner) {
         }
         require(checkSig(sig, owner));
         require(helper(total) == p.x);
-        require(tx.outputs[0].script == new Vault(p, owner));
+        require(tx.outputs[0].script == tx.input.current.script);
     }
     private function helper(int amount) int { return amount + Vault.LIMIT; }
     function unilateral(signature ownerSig) tapscript {
@@ -139,9 +139,6 @@ fn symbols_resolve_bindings_calls_and_constants_across_files() {
             "main.ark:12:17 helper -> Function helper int main.ark:15:22",
             "main.ark:12:24 total -> Variable total int main.ark:6:13",
             "main.ark:12:34 p -> Parameter p Point main.ark:3:22",
-            "main.ark:13:45 Vault -> Contract Vault main.ark:3:10",
-            "main.ark:13:51 p -> Parameter p Point main.ark:3:22",
-            "main.ark:13:54 owner -> Parameter owner pubkey main.ark:3:32",
             "main.ark:15:54 amount -> Parameter amount int main.ark:15:33",
         ]
     );
@@ -213,16 +210,23 @@ fn symbols_survive_constant_and_scope_errors() {
 
 #[test]
 fn references_in_parentheses_and_after_new_cover_the_name() {
-    let source = "contract C(int a) {
+    let source = "import \"d.ark\";
+contract C(int a) {
     const int K = 1;
     function spend(int n) {
         require(( n ) + (h(a)) > (K));
-        require(tx.outputs[0].script == new // C
-            C(a));
+        require(tx.outputs[0].script == new // D
+            D(a));
     }
     private function h(int x) int { return x; }
 }";
-    let files = BTreeMap::from([("main.ark".to_string(), source.to_string())]);
+    let files = BTreeMap::from([
+        ("main.ark".to_string(), source.to_string()),
+        (
+            "d.ark".to_string(),
+            "contract D(int a) { function spend() { require(true); } }".to_string(),
+        ),
+    ]);
     let analysis = analyze("main.ark", &files);
     let symbols = analysis.symbols();
     let mut names: Vec<_> = symbols
@@ -235,7 +239,7 @@ fn references_in_parentheses_and_after_new_cover_the_name() {
         })
         .collect();
     names.sort();
-    assert_eq!(names, ["C", "K", "a", "a", "h", "n", "x"]);
+    assert_eq!(names, ["D", "K", "a", "a", "h", "n", "x"]);
 }
 
 #[test]

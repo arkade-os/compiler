@@ -38,7 +38,9 @@ contract StabilityOffer(
 
   // Taking an offer needs dynamic taproot reconstruction. Restore this
   // function once private functions plus EC return decomposition can implement
-  // it, or once a generic builtin provides the same verification.
+  // it, or once a generic builtin provides the same verification. Its
+  // commented-out `new StabilityOffer(...)` check cannot return as written, since
+  // a contract cannot instantiate itself.
 
   // -------------------------------------------------------------------------
   // TAKE

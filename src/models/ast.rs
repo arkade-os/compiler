@@ -711,8 +711,9 @@ pub enum ExprKind {
     ///
     /// Resolves to the Taproot program and witness version 1 of the named contract instantiated
     /// with the given arguments. Options (server key, exit timelock) are
-    /// inherited from the enclosing contract. Used for recursion enforcement
-    /// via output introspection: `tx.outputs[0].script == new Foo(x)`
+    /// inherited from the enclosing contract. Used to pin an output to another
+    /// contract: `tx.outputs[0].script == new Foo(x)`. A contract cannot
+    /// instantiate itself; it compares against `tx.input.current.script` instead.
     ContractInstance {
         /// Name of the contract to instantiate
         contract_name: String,

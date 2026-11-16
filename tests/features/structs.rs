@@ -381,15 +381,19 @@ contract C() {
 
 #[test]
 fn constructor_struct_arguments_expand_recursively() {
-    let output = compile(
-        r#"
-struct Point { int x; int y; }
+    let output = crate::common::project(
+        "main.ark",
+        &[("main.ark", r#"
+import "child.ark";
 contract C(Point point) {
     function renew() {
-        require(tx.outputs[0].script == new C(point));
+        require(tx.outputs[0].script == new Child(point));
     }
 }
-"#,
+"#), (
+            "child.ark",
+            "struct Point { int x; int y; } contract Child(Point point) { function spend() { require(point.x == point.y); } }",
+        )],
     )
     .expect("whole constructor struct argument");
 
@@ -398,7 +402,7 @@ contract C(Point point) {
         .as_ref()
         .expect("covenant")
         .asm
-        .contains(&"<CONTRACT:C(<point.x>,<point.y>)>".to_string()));
+        .contains(&"<CONTRACT:Child(<point.x>,<point.y>)>".to_string()));
 }
 
 #[test]

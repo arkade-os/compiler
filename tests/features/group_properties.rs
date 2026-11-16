@@ -469,16 +469,18 @@ fn test_group_io_access_without_property_is_rejected() {
 #[test]
 fn test_group_access_as_constructor_argument_is_parsed() {
     let code = r#"
+        import "u.ark";
         contract T(int amount, pubkey owner) {
             function spend(signature sig) {
                 require(checkSig(sig, owner));
                 require(amount >= 0);
-                require(tx.outputs[0].script == new T(tx.assetGroups[0].sumInputs, owner));
+                require(tx.outputs[0].script == new U(tx.assetGroups[0].sumInputs, owner));
             }
         }
     "#;
+    let child = "contract U(int amount, pubkey owner) { function spend(signature sig) { require(checkSig(sig, owner)); } }";
 
-    let error = compile(code)
+    let error = crate::common::project("main.ark", &[("main.ark", code), ("u.ark", child)])
         .expect_err("computed constructor arguments are rejected")
         .to_string();
     assert!(
