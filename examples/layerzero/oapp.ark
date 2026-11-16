@@ -72,7 +72,7 @@ contract OApp(
 
     // CreditMessage length field must equal 74 (creditMessageSize).
     require(
-      bin2num(substr(tx.inputs[0].packet(17), 141, 4)) == 74,
+      bytes2uint(reverseBytes(substr(tx.inputs[0].packet(17), 141, 4))) == 74,
       "credit message length"
     );
 
@@ -91,7 +91,7 @@ contract OApp(
       "lz receiver != oappID"
     );
     require(
-      bin2num(substr(tx.inputs[0].packet(17), 33, 4)) == remoteEID,
+      bytes2uint(reverseBytes(substr(tx.inputs[0].packet(17), 33, 4))) == remoteEID,
       "lz srcEID != remoteEID"
     );
     require(
@@ -124,14 +124,14 @@ contract OApp(
     // Recipient output receives exactly CreditMessage.amount USDT0.
     require(
       tx.outputs[1].assets.lookup(usdt0AssetIdTxid, usdt0AssetIdGidx)
-        == bin2num(substr(tx.inputs[0].packet(17), 179, 8)),
+        == bytes2uint(reverseBytes(substr(tx.inputs[0].packet(17), 179, 8))),
       "recipient amount mismatch"
     );
 
     // USDT0 delta equals the credited amount.
     let usdt0Group = tx.assetGroups.find(usdt0AssetIdTxid, usdt0AssetIdGidx);
     require(
-      usdt0Group.delta == bin2num(substr(tx.inputs[0].packet(17), 179, 8)),
+      usdt0Group.delta == bytes2uint(reverseBytes(substr(tx.inputs[0].packet(17), 179, 8))),
       "usdt0 delta != credit amount"
     );
 
@@ -174,18 +174,18 @@ contract OApp(
     require(substr(tx.packet(20), 33, 32) == endpointID, "invocation endpointID");
 
     // Destination route matches the configured remote.
-    require(bin2num(substr(tx.packet(20), 67, 4)) == remoteEID, "invocation dstEID");
+    require(bytes2uint(reverseBytes(substr(tx.packet(20), 67, 4))) == remoteEID, "invocation dstEID");
     require(substr(tx.packet(20), 71, 32) == remoteOApp, "invocation receiver");
 
     // invocation_vout points at the marker output (output 1).
-    require(bin2num(substr(tx.packet(20), 65, 2)) == 1, "invocation_vout != 1");
+    require(bytes2uint(reverseBytes(substr(tx.packet(20), 65, 2))) == 1, "invocation_vout != 1");
 
     // USDT0 input sum minus output sum equals the invocation amount
     // (i.e. delta == -amount). Expressed as monotonic equality on sumInputs
     // - sumOutputs using the existing group_property arithmetic.
     let usdt0Group = tx.assetGroups.find(usdt0AssetIdTxid, usdt0AssetIdGidx);
     require(
-      usdt0Group.sumInputs == usdt0Group.sumOutputs + bin2num(substr(tx.packet(20), 103, 8)),
+      usdt0Group.sumInputs == usdt0Group.sumOutputs + bytes2uint(reverseBytes(substr(tx.packet(20), 103, 8))),
       "burn amount mismatch"
     );
 

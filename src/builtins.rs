@@ -90,14 +90,25 @@ pub(crate) const BUILTINS: &[Builtin] = &[
         "a followed by b. A result over 520 bytes fails the spend.",
     ),
     builtin(
-        "bin2num",
+        "bytes2int",
         &[("data", "bytes")],
         "int",
         &[Bin2Num],
-        "Script-number bytes as an int.",
+        "Script-number bytes as an int: little-endian, with the top bit of the last byte as the \
+         sign.",
+    ),
+    // ponytail: OP_0 OP_1 OP_NUM2BIN builds the 0x00 byte because table lowerings carry no
+    // data pushes; a direct 0x00 push would save one byte per call.
+    builtin(
+        "bytes2uint",
+        &[("data", "bytes")],
+        "int",
+        &[Int0, Int1, Num2Bin, Cat, Bin2Num],
+        "Unsigned little-endian bytes as a non-negative int, the same as bytes2int(data + 0x00). \
+         Data over 519 bytes fails the spend.",
     ),
     builtin(
-        "num2bin",
+        "int2bytes",
         &[("value", "int"), ("size", "int")],
         "bytes",
         &[Num2Bin],

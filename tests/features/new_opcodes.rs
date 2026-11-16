@@ -96,7 +96,7 @@ fn intent_fields_assert_presence_and_has_keeps_the_flag() {
             private function kind() bytes { return tx.intent.field("type"); }
             function spend() {
                 require(kind() == "register");
-                int expiry = bin2num(tx . intent . field("expire_at"));
+                int expiry = bytes2int(tx . intent . field("expire_at"));
                 require(expiry >= 0);
                 bool present = tx.intent.has("cosigners.0");
                 require(present);

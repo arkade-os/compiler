@@ -67,7 +67,7 @@ contract OptionVault(
     require(price <= PRICE_MAX, "price cap");
     require(time > 0, "nonpositive time");
     let ticker = 0x425443555344;
-    let msg = sha256(ticker + num2bin(price, 8) + num2bin(time, 8));
+    let msg = sha256(ticker + int2bytes(price, 8) + int2bytes(time, 8));
     require(checkSigFromStack(sig, oracles[index], msg), "bad oracle sig");
   }
 

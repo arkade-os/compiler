@@ -123,7 +123,7 @@ fn bytes_literals_work_through_expressions_and_named_operands() {
                 require(size("") == 0);
                 require(substr("hello", 0, 2) == 0x6865);
                 require(cat("he", 0x6c6c6f) == y);
-                require(bin2num(0x01) == 1);
+                require(bytes2int(0x01) == 1);
                 require(reverseBytes(0x0001) == 0x0100);
                 require(sha256("hello") == hash);
                 require(sha256(y) == 0x00);

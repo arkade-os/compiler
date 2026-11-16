@@ -98,7 +98,7 @@ fn nested_expression_reads_bindings_without_consuming_them() {
         r#"
 contract Nested() {
     function spend(int x, int y, int z) {
-        let w = (bin2num(num2bin(x, 8)) + y) * z;
+        let w = (bytes2int(int2bytes(x, 8)) + y) * z;
         require(w > x);
     }
 }
