@@ -346,8 +346,17 @@ fn all_examples_compile_and_satisfy_invariants() {
     for path in &paths {
         let rel = path.strip_prefix(&dir).unwrap_or(path);
         let label = rel.display().to_string();
-        let output =
-            compile_file(path).unwrap_or_else(|e| panic!("failed to compile {label}: {e}"));
+        let output = match compile_file(path) {
+            Ok(output) => output,
+            // Libraries are checked through the contracts that import them.
+            Err(e)
+                if e.to_string()
+                    .ends_with("entry file must declare a contract, not a library") =>
+            {
+                continue
+            }
+            Err(e) => panic!("failed to compile {label}: {e}"),
+        };
         assert_output_invariants(&output, &label);
     }
 

@@ -1,0 +1,122 @@
+pragma arkade ^0.1.0;
+
+struct CompactSize { int value; int next; }
+
+library Bitcoin {
+  function doubleSha(bytes data) bytes32 {
+    bytes first = sha256(data);
+    return sha256(first);
+  }
+
+  // Little-endian unsigned bytes need an extra zero sign byte for ScriptNum.
+  function uint(bytes data) int {
+    bytes positive = data + 0x00;
+    return bin2num(positive);
+  }
+
+  function power256(int exponent) int {
+    require(exponent >= 0 && exponent <= 32, "byte exponent");
+    bytes positive = num2bin(0, exponent) + 0x0100;
+    return bin2num(positive);
+  }
+
+  function powLimit() int {
+    return 65535 * Bitcoin.power256(26);
+  }
+
+  function target(bytes compact) int {
+    require(size(compact) == 4, "nBits size");
+    int exponent = Bitcoin.uint(substr(compact, 3, 1));
+    int coefficient = Bitcoin.uint(substr(compact, 0, 3));
+    require(coefficient > 0 && coefficient < 8388608, "target sign");
+    require(exponent <= 34, "target exponent");
+    int result = 0;
+    if (exponent <= 3) {
+      result = coefficient / Bitcoin.power256(3 - exponent);
+    } else {
+      result = coefficient * Bitcoin.power256(exponent - 3);
+    }
+    require(result > 0 && result <= Bitcoin.powLimit(), "mainnet target");
+    return result;
+  }
+
+  // Check Core's GetCompact(rawTarget), including exponent normalization and
+  // mantissa truncation, without a floating-point logarithm.
+  function compactMatches(int rawTarget, bytes compact) {
+    int decoded = Bitcoin.target(compact);
+    int exponent = Bitcoin.uint(substr(compact, 3, 1));
+    int coefficient = Bitcoin.uint(substr(compact, 0, 3));
+    int quantum = 1;
+    if (exponent > 1) { require(coefficient >= 32768, "compact normalization"); }
+    if (exponent <= 3) {
+      require(coefficient == decoded * Bitcoin.power256(3 - exponent), "compact low bits");
+    } else {
+      quantum = Bitcoin.power256(exponent - 3);
+    }
+    require(decoded <= rawTarget && rawTarget - decoded < quantum, "retarget encoding");
+  }
+
+  function retarget(int oldTarget, int firstTime, int lastTime, bytes nextBits) {
+    int elapsed = lastTime - firstTime;
+    if (elapsed < 302400) { elapsed = 302400; }
+    if (elapsed > 4838400) { elapsed = 4838400; }
+    int target = oldTarget * elapsed / 1209600;
+    int limit = Bitcoin.powLimit();
+    if (target > limit) { target = limit; }
+    Bitcoin.compactMatches(target, nextBits);
+  }
+
+  function confirmations(int oldTarget, int newTarget) int {
+    require(oldTarget > 0 && newTarget > 0, "positive targets");
+    int delta = newTarget - oldTarget;
+    if (delta < 0) { delta = 0; }
+    // Exact max(6, ceil(8 * newTarget / oldTarget - 2)); no rounded ratio.
+    int count = 6 + (8 * delta + oldTarget - 1) / oldTarget;
+    require(count <= 30, "confirmation bound");
+    return count;
+  }
+
+  function compactSize(bytes transaction, int offset) CompactSize {
+    int prefix = Bitcoin.uint(substr(transaction, offset, 1));
+    // A <=4096-byte transaction cannot contain a valid length or count that
+    // needs the four- or eight-byte CompactSize forms.
+    require(prefix <= 253, "CompactSize capacity");
+    int value = prefix;
+    int next = offset + 1;
+    if (prefix == 253) {
+      value = Bitcoin.uint(substr(transaction, next, 2));
+      require(value >= 253, "CompactSize minimal");
+      next = next + 2;
+    }
+    return { value: value, next: next };
+  }
+
+  // First-pass capacity: stripped coinbase <=4096 bytes, <=16 outputs.
+  // Reject unsupported transactions; never issue a substitute observation.
+  function reward(bytes transaction) int {
+    require(size(transaction) <= 4096, "coinbase capacity");
+    require(substr(transaction, 4, 1) == 0x01, "one stripped input");
+    require(substr(transaction, 5, 32) == num2bin(0, 32), "coinbase prev hash");
+    require(substr(transaction, 37, 4) == 0xffffffff, "coinbase prev index");
+    let script = Bitcoin.compactSize(transaction, 41);
+    require(script.value <= size(transaction), "input script length");
+    int outputOffset = script.next + script.value + 4;
+    let outputs = Bitcoin.compactSize(transaction, outputOffset);
+    require(outputs.value >= 1 && outputs.value <= 16, "coinbase output capacity");
+    int cursor = outputs.next;
+    int amount = 0;
+    int i = 0;
+    for (16) {
+      if (i < outputs.value) {
+        amount = amount + Bitcoin.uint(substr(transaction, cursor, 8));
+        let outputScript = Bitcoin.compactSize(transaction, cursor + 8);
+        require(outputScript.value <= size(transaction), "output script length");
+        cursor = outputScript.next + outputScript.value;
+      }
+      i = i + 1;
+    }
+    require(cursor + 4 == size(transaction), "complete stripped transaction");
+    require(amount <= bin2num(0xffffffffffffffff00), "reward encoding");
+    return amount;
+  }
+}
