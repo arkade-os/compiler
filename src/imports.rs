@@ -579,6 +579,8 @@ fn load(
                 format!("{path}: Parse error: {error}"),
             )
         })?;
+        parser::check_pragma(&pairs, env!("CARGO_PKG_VERSION"))
+            .map_err(|error| locate(path, source, error, None))?;
         let imports =
             parser::imports(&pairs).map_err(|error| locate(path, source, error.into(), None))?;
         let mut dependencies = Vec::new();

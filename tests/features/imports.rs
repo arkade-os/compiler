@@ -15,7 +15,7 @@ fn pragmas_preserve_scripts_and_sources_across_compilation_entry_points() {
 
     let entry = format!("pragma arkade >=0.1.0 <0.2.0;\nimport \"helper.ark\";\n{contract}");
     let helper =
-        "pragma arkade 99.0.0; import \"types.ark\"; library Helper { const int VALUE = 1; }";
+        "pragma arkade ^0.1.0 || ^1.0.0; import \"types.ark\"; library Helper { const int VALUE = 1; }";
     let types = "pragma arkade ~0.1.0; struct Policy { int maximum; }";
     let output = project(
         "main.ark",
@@ -55,6 +55,31 @@ fn pragmas_preserve_scripts_and_sources_across_compilation_entry_points() {
     .to_string();
     assert!(error.contains("Parse error"), "{error}");
     assert!(error.contains("helper.ark"), "{error}");
+}
+
+#[test]
+fn an_unsatisfied_pragma_fails_in_the_file_that_declares_it() {
+    let pragma = "pragma arkade >=99.0.0 || <0.0.1;";
+    let helper = format!("// helper\n{pragma}\nlibrary Helper {{}}");
+    let files = BTreeMap::from([
+        (
+            "main.ark".to_string(),
+            "pragma arkade >=0.0.0; import \"helper.ark\"; contract C() { function f() { require(true); } }".to_string(),
+        ),
+        ("helper.ark".to_string(), helper.clone()),
+    ]);
+    let message = format!(
+        "pragma requires arkade >=99.0.0 || <0.0.1, but this compiler is version {}",
+        env!("CARGO_PKG_VERSION")
+    );
+    let error = compile_sources("main.ark", &files).unwrap_err().to_string();
+    assert_eq!(error, format!("helper.ark: line 2, column 1: {message}"));
+    let diagnostics = arkade_compiler::check("main.ark", &files);
+    assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+    let span = diagnostics[0].span.unwrap();
+    assert_eq!(diagnostics[0].file, "helper.ark");
+    assert_eq!(diagnostics[0].message, message);
+    assert_eq!(&helper[span.start..span.end], pragma);
 }
 
 #[test]
