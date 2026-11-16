@@ -51,13 +51,17 @@ pub(crate) fn imports(
         .collect()
 }
 
-/// Fail at the pragma of `pairs` when compiler `version` satisfies none of its alternatives.
-/// Only `version`'s major.minor.patch counts, so a prerelease satisfies what its release does.
-pub(crate) fn check_pragma(pairs: &Pairs<'_, Rule>, version: &str) -> Result<(), CompileError> {
-    let main = pairs.clone().next().expect("main");
-    let Some(pragma) = main.into_inner().find(|p| p.as_rule() == Rule::pragma_stmt) else {
+/// Fail at the leading pragma of `source` when compiler `version` satisfies none of its
+/// alternatives. Only `version`'s major.minor.patch counts, so a prerelease satisfies what its
+/// release does. The pragma is parsed on its own, so a file written for another compiler fails
+/// here rather than on syntax this one does not know; an absent or malformed pragma passes, and
+/// the full parse reports a malformed one.
+pub(crate) fn check_pragma(source: &str, version: &str) -> Result<(), CompileError> {
+    let Ok(mut head) = ArkadeParser::parse(Rule::pragma_head, source) else {
         return Ok(());
     };
+    let head = head.next().expect("pragma head");
+    let pragma = head.into_inner().next().expect("pragma");
     let current = version_numbers(version);
     let mut satisfied = false;
     let mut alternatives = Vec::new();
@@ -1178,7 +1182,7 @@ contract C(pubkey k, int unused) {
     fn checks_version_pragmas_against_the_compiler_version() {
         let check = |constraint: &str, version: &str| {
             let source = format!("pragma arkade {constraint}; contract C() {{}}");
-            super::check_pragma(&super::try_parse(&source).unwrap(), version)
+            super::check_pragma(&source, version)
         };
         for (constraint, version, accepted) in [
             ("1.2.3", "1.2.3", true),

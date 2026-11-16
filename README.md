@@ -283,7 +283,7 @@ Each source file may start with one `pragma arkade <constraint>;` directive, inc
 
 Use three-component versions such as `0.1.0`. A bare version or `=` matches exactly; `>`, `>=`, `<`, and `<=` compare; `^` allows changes that keep the first nonzero component (`^1.2.3` is `>=1.2.3 <2.0.0`, `^0.1.2` is `>=0.1.2 <0.2.0`, `^0.0.3` is `>=0.0.3 <0.0.4`); `~` allows patch changes (`~1.2.3` is `>=1.2.3 <1.3.0`). Space-separated constraints must all hold (`>=0.1.0 <0.2.0`); `||` separates alternatives (`^0.1.0 || ^0.2.0`). Version components cannot have leading zeroes. Partial versions, wildcards, prerelease versions, and build metadata are not supported.
 
-The compiler checks the pragma of every file it loads, the entry and each import, against its own version, and rejects a file whose pragma it does not satisfy with an error at that pragma. Only the compiler's major.minor.patch counts, so `0.1.0-rc.1` satisfies `^0.1.0`. Pragmas apply to their own file, remain verbatim in the artifact's source bundle, and do not affect generated scripts.
+The compiler checks the pragma of every file it loads, the entry and each import, against its own version, and rejects a file whose pragma it does not satisfy with an error at that pragma. The pragma is checked before the rest of the file is parsed, so a file written for a newer compiler reports the version mismatch rather than syntax this compiler does not know. Only the compiler's major.minor.patch counts, so `0.1.0-rc.1` satisfies `^0.1.0`. Pragmas apply to their own file, remain verbatim in the artifact's source bundle, and do not affect generated scripts.
 
 ### Imports
 

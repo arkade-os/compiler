@@ -13,6 +13,8 @@ pragma_version = @{ pragma_version_part ~ "." ~ pragma_version_part ~ "." ~ prag
 pragma_constraint = { (">=" | "<=" | ">" | "<" | "=" | "^" | "~")? ~ pragma_version }
 pragma_range = { pragma_constraint+ }
 pragma_stmt = { pragma_keyword ~ pragma_language ~ pragma_range ~ ("||" ~ pragma_range)* ~ ";" }
+// A file's leading pragma alone, so it is checked even when the rest of the file does not parse.
+pragma_head = { SOI ~ pragma_stmt }
 
 // Main entry point - must consume the entire input
 main = { SOI ~ pragma_stmt? ~ import_stmt* ~ struct_definition* ~ (attribute* ~ (contract | library))? ~ EOI }

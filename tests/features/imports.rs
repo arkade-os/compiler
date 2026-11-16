@@ -83,6 +83,33 @@ fn an_unsatisfied_pragma_fails_in_the_file_that_declares_it() {
 }
 
 #[test]
+fn an_unsatisfied_pragma_is_reported_before_unknown_syntax() {
+    let main = "import \"future.ark\"; contract M() { function f() { require(true); } }";
+    for (pragma, expected) in [
+        (
+            ">=99.0.0",
+            "line 1, column 1: pragma requires arkade >=99.0.0",
+        ),
+        (">=0.0.0", "Parse error"),
+    ] {
+        let future = format!("pragma arkade {pragma};\ncontract C() {{ future syntax; }}");
+        for (entry, files) in [
+            ("future.ark", vec![("future.ark", future.as_str())]),
+            (
+                "main.ark",
+                vec![("main.ark", main), ("future.ark", &future)],
+            ),
+        ] {
+            let error = project(entry, &files).unwrap_err().to_string();
+            assert!(
+                error.starts_with(&format!("future.ark: {expected}")),
+                "{error}"
+            );
+        }
+    }
+}
+
+#[test]
 fn libraries_inline_private_helpers_and_preserve_artifacts() {
     let source = r#"import "fees.ark";
 contract Vault(Policy policy, int amount, pubkey owner) {
