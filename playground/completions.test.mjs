@@ -85,7 +85,11 @@ for (const path of ['destination', 'destinations[0]', 'segment.script', 'tx.outp
 }
 assert.deepEqual(labels('destinations.', table), ['length']);
 assert.deepEqual(labels('destination.program.', table), ['length']);
-for (const path of ['owner', 'sig', 'point.y', 'tx.id', 'tx.input.current.arkadeScriptHash', 'tx.inputs', 'tx.outputs', 'group.inputs', 'tx.assetGroups[k].outputs']) {
+for (const path of [
+    'owner', 'sig', 'point.y', 'segment.script.program', 'tx.id', 'tx.input.current.arkadeScriptHash', 'tx.inputs', 'tx.outputs', 'group.inputs', 'tx.assetGroups[k].outputs',
+    'tx.outputs[0].script.program', 'tx.inputs[i].script.program', 'tx.input.current.script.program', 'this.activeBytecode.program',
+    'tx.inputs[idx[0]].arkadeWitnessHash', 'tx.assetGroups[k].metadataHash', 'tx.assetGroups[k].inputs[j].txid', 'group.metadataHash', 'group.inputs[j].txid',
+]) {
     assert.deepEqual(labels(`${path}.`, table), ['length']);
 }
 
