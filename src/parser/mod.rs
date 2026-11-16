@@ -97,7 +97,10 @@ fn readable_error(error: pest::error::Error<Rule>, source: &str) -> pest::error:
     };
     let closing = ["';'", "')'", "'}'", "']'", "','", "an operator"];
     let mut at = attempts.max_position;
-    if let Some((word, start, end)) = lone_word(source, at) {
+    if expected == ["'*/'"] {
+        // An unterminated block comment fails where the file ends; report where it opens.
+        at = unterminated_comment(source).unwrap_or(at);
+    } else if let Some((word, start, end)) = lone_word(source, at) {
         let message = format!("`{word}` on its own is not a statement");
         return match (
             pest::Position::new(source, start),
@@ -150,6 +153,19 @@ pub(crate) fn code_end(source: &str, at: usize) -> usize {
         }
     }
     end
+}
+
+/// Where the block comment that `source` ends inside opens, if it ends inside one.
+fn unterminated_comment(source: &str) -> Option<usize> {
+    let mut at = code_end(source, source.len());
+    loop {
+        at = source.len() - source[at..].trim_start().len();
+        let comment = &source[at..at + comment_len(&source[at..])?];
+        if comment.starts_with("/*") && !comment[2..].ends_with("*/") {
+            return Some(at);
+        }
+        at += comment.len();
+    }
 }
 
 /// The length of the `//` or `/* */` comment that starts `text`; an unterminated block comment

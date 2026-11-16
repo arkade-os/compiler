@@ -1,5 +1,5 @@
 error: expected '*/'
-  --> 6:1
-6 | }
-  | ^
+  --> 6:3
+6 |   /* never closed
+  |   ^
 
