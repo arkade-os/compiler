@@ -42,7 +42,7 @@ pub(crate) const CONSTANT_DOMAINS: &[Domain] = &[
     ("ecAdd", 2, "curveId", &[(0, 2)]),
     ("ecMul", 2, "curveId", &[(0, 2)]),
     ("ecPairing", 2, "curveId", &[(2, 2)]),
-    ("int2bin", 1, "size", &[(0, 520)]),
+    ("int2bytes", 1, "size", &[(0, 520)]),
     ("checkTime", 0, "timestamp", &[(0, i128::MAX)]),
     ("modExp", 1, "exponent", &[(0, i128::MAX)]),
     ("modExp", 2, "modulus", &[(1, i128::MAX)]),

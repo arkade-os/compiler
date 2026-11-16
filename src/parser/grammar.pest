@@ -534,7 +534,7 @@ cast_func = { cast_type ~ "(" ~ general_expression ~ ")" }
 // Extension-packet introspection over the current transaction or a previous
 // Arkade transaction referenced by an input. Returns the raw packet bytes;
 // presence is enforced by OP_INSPECTPACKET's bool flag — emission verifies
-// it. Use substr / bin2uint / sha256 to parse fields.
+// it. Use substr / bytes2uint / sha256 to parse fields.
 
 // Current-tx packet: tx.packet(packetType) → <packetType> OP_INSPECTPACKET OP_1 OP_EQUALVERIFY
 packet_inspect = {

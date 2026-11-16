@@ -605,7 +605,7 @@ fn qualified_static_calls_are_distinct_from_group_methods() {
 fn qualified_constants_in_builtin_operands_and_transaction_indices_match_literals() {
     let body = r#"contract Main(bytes32 txid) {
         function spend() {
-            require(size(int2bin(Limits.VALUE, Limits.WIDTH)) == Limits.WIDTH);
+            require(size(int2bytes(Limits.VALUE, Limits.WIDTH)) == Limits.WIDTH);
             require(size(tx.inputs[Limits.INDEX].packet(Limits.PACKET)) >= 0);
             require(size(tx.packet(Limits.PACKET)) >= 0);
             require(tx.inputs[Limits.INDEX].value >= Limits.VALUE);

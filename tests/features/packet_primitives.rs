@@ -1,7 +1,7 @@
 // Tests for new introspector primitives:
 //   - tx.packet(packetType)         → OP_INSPECTPACKET
 //   - tx.inputs[i].packet(...)      → OP_INSPECTINPUTPACKET
-//   - substr / cat / bin2int / int2bin / size
+//   - substr / cat / bytes2int / int2bytes / size
 //   - tx.inputs[i].arkadeScriptHash → OP_INSPECTINPUTARKADESCRIPTHASH
 //   - tx.id                         → OP_TXID
 //
@@ -167,12 +167,12 @@ contract CatDemo(int exit) {{
 }
 
 #[test]
-fn test_bin2int_emits_op_bin2num() {
+fn test_bytes2int_emits_op_bin2num() {
     let src = format!(
         r#"{PROLOGUE}
 contract Bin2NumDemo(int exit) {{
   function probe(bytes data) {{
-    require(bin2int(data) > 0);
+    require(bytes2int(data) > 0);
   }}
 }}"#
     );
@@ -186,7 +186,10 @@ contract Bin2NumDemo(int exit) {{
 
 #[test]
 fn test_old_conversion_names_point_to_the_new_ones() {
-    for (call, renamed) in [("bin2num(data)", "bin2int"), ("num2bin(1, 1)", "int2bin")] {
+    for (call, renamed) in [
+        ("bin2num(data)", "bytes2int"),
+        ("num2bin(1, 1)", "int2bytes"),
+    ] {
         let src = format!("contract Renamed() {{ function probe(bytes data) {{ {call}; }} }}");
         let error = compile(&src).unwrap_err().to_string();
         assert!(
@@ -197,12 +200,12 @@ fn test_old_conversion_names_point_to_the_new_ones() {
 }
 
 #[test]
-fn test_int2bin_emits_op_num2bin() {
+fn test_int2bytes_emits_op_num2bin() {
     let src = format!(
         r#"{PROLOGUE}
 contract Num2BinDemo(int exit) {{
   function probe(int value, int size) {{
-    require(int2bin(value, size) == 0x00);
+    require(int2bytes(value, size) == 0x00);
   }}
 }}"#
     );

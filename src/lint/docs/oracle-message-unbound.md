@@ -8,7 +8,7 @@ Fix: derive the message from what the spend must match, such as the input's outp
 
 ```solidity
 let outpoint = tx.input.current.outpoint;
-let message = sha256(outpoint.txid + int2bin(outpoint.vout, 4) + int2bin(amount, 8) + recipient);
+let message = sha256(outpoint.txid + int2bytes(outpoint.vout, 4) + int2bytes(amount, 8) + recipient);
 require(checkSigFromStack(sig, oracle, message));
 ```
 

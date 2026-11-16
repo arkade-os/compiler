@@ -11,7 +11,7 @@ pragma arkade ^0.1.0;
 // the full Go-script semantics natively using introspector primitives:
 //
 //   tx.packet(PacketType)          — current-tx extension packet
-//   substr / reverseBytes / bin2uint — big-endian field extraction
+//   substr / reverseBytes / bytes2uint — big-endian field extraction
 //   sha256(substr(...))            — DVN attestation hash binding
 //   checkSigFromStack              — DVN Schnorr verification
 //   tx.outputs[0].script ==  — recursive covenant (state continuation)
@@ -147,25 +147,25 @@ contract Endpoint(
     // Endpoint state route fields are fixed by this contract's configuration.
     require(substr(tx.packet(16), 1, 32)  == endpointID, "wrong endpointID");
     require(substr(tx.packet(16), 33, 32) == oappID, "wrong oappID");
-    require(bin2uint(reverseBytes(substr(tx.packet(16), 65, 4))) == remoteEID, "wrong remoteEID");
+    require(bytes2uint(reverseBytes(substr(tx.packet(16), 65, 4))) == remoteEID, "wrong remoteEID");
     require(substr(tx.packet(16), 69, 32) == remoteOApp, "wrong remoteOApp");
 
     // DVN threshold and count both equal 2.
-    require(bin2uint(substr(tx.packet(16), 101, 1)) == 2, "dvn threshold != 2");
-    require(bin2uint(substr(tx.packet(16), 102, 1)) == 2, "dvn count != 2");
+    require(bytes2uint(substr(tx.packet(16), 101, 1)) == 2, "dvn threshold != 2");
+    require(bytes2uint(substr(tx.packet(16), 102, 1)) == 2, "dvn count != 2");
     require(substr(tx.packet(16), 103, 32) == dvn0Pk, "endpoint state dvn0 mismatch");
     require(substr(tx.packet(16), 135, 32) == dvn1Pk, "endpoint state dvn1 mismatch");
 
     // The LzReceive route fields match Endpoint state.
     require(substr(tx.packet(17), 1, 32)  == oappID, "lz receiver != oapp");
-    require(bin2uint(reverseBytes(substr(tx.packet(17), 33, 4))) == remoteEID, "lz srcEID != remote");
+    require(bytes2uint(reverseBytes(substr(tx.packet(17), 33, 4))) == remoteEID, "lz srcEID != remote");
     require(substr(tx.packet(17), 37, 32) == remoteOApp, "lz sender != remoteOApp");
 
     // DvnAttestation: canonical two-entry layout, attested hash equals the
     // sha256 of the LzReceive header (receiver..messageHash).
-    require(bin2uint(substr(tx.packet(18), 33, 1)) == 2, "dvn count != 2");
-    require(bin2uint(substr(tx.packet(18), 34, 1)) == 0, "dvn att0 index != 0");
-    require(bin2uint(substr(tx.packet(18), 131, 1)) == 1, "dvn att1 index != 1");
+    require(bytes2uint(substr(tx.packet(18), 33, 1)) == 2, "dvn count != 2");
+    require(bytes2uint(substr(tx.packet(18), 34, 1)) == 0, "dvn att0 index != 0");
+    require(bytes2uint(substr(tx.packet(18), 131, 1)) == 1, "dvn att1 index != 1");
     require(substr(tx.packet(18), 35, 32) == dvn0Pk, "dvn att0 pk mismatch");
     require(substr(tx.packet(18), 132, 32) == dvn1Pk, "dvn att1 pk mismatch");
     require(
@@ -238,18 +238,18 @@ contract Endpoint(
     // Route preservation.
     require(substr(tx.packet(16), 1, 32)  == endpointID, "wrong endpointID");
     require(substr(tx.packet(16), 33, 32) == oappID, "wrong oappID");
-    require(bin2uint(reverseBytes(substr(tx.packet(16), 65, 4))) == remoteEID, "wrong remoteEID");
+    require(bytes2uint(reverseBytes(substr(tx.packet(16), 65, 4))) == remoteEID, "wrong remoteEID");
     require(substr(tx.packet(16), 69, 32) == remoteOApp, "wrong remoteOApp");
 
     // LzSend route fields match Endpoint state.
     require(substr(tx.packet(19), 1, 32)  == oappID, "lz send sender != oapp");
-    require(bin2uint(reverseBytes(substr(tx.packet(19), 33, 4))) == remoteEID, "lz dstEID != remote");
+    require(bytes2uint(reverseBytes(substr(tx.packet(19), 33, 4))) == remoteEID, "lz dstEID != remote");
     require(substr(tx.packet(19), 37, 32) == remoteOApp, "lz receiver != remoteOApp");
 
     // The OApp invocation packet addresses this exact Endpoint/OApp pair.
     require(substr(tx.inputs[1].packet(20), 1, 32)  == oappID, "invocation oappID mismatch");
     require(substr(tx.inputs[1].packet(20), 33, 32) == endpointID, "invocation endpointID mismatch");
-    require(bin2uint(reverseBytes(substr(tx.inputs[1].packet(20), 67, 4))) == remoteEID, "invocation dstEID mismatch");
+    require(bytes2uint(reverseBytes(substr(tx.inputs[1].packet(20), 67, 4))) == remoteEID, "invocation dstEID mismatch");
     require(substr(tx.inputs[1].packet(20), 71, 32) == remoteOApp, "invocation receiver mismatch");
 
     // LzSend GUID = sha256(OAppSendInvocation) — binds the outbound packet

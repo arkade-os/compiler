@@ -72,13 +72,13 @@ pub(crate) fn reject_reserved_function_call(pair: &Pair<Rule>) -> Result<(), Str
 
     if matches!(name.as_str(), "neg64" | "le64ToScriptNum" | "le32ToLe64") {
         return Err(format!(
-            "`{name}` was removed with fixed-width arithmetic; use BigNum arithmetic or bin2int/int2bin"
+            "`{name}` was removed with fixed-width arithmetic; use BigNum arithmetic or bytes2int/int2bytes"
         ));
     }
 
     match name.as_str() {
-        "bin2num" => return Err("`bin2num` was renamed to `bin2int`".to_string()),
-        "num2bin" => return Err("`num2bin` was renamed to `int2bin`".to_string()),
+        "bin2num" => return Err("`bin2num` was renamed to `bytes2int`".to_string()),
+        "num2bin" => return Err("`num2bin` was renamed to `int2bytes`".to_string()),
         _ => {}
     }
 

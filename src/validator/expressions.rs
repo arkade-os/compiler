@@ -218,7 +218,7 @@ pub(super) fn validate_binding_expression(
                 {
                     if *actual != ArkType::Unknown && !crate::types::is_bytes_like(actual) {
                         let hint = match actual {
-                            ArkType::Int => "convert it explicitly with bytes(value) for minimal Script-number encoding or int2bin(value, width) for fixed-width encoding",
+                            ArkType::Int => "convert it explicitly with bytes(value) for minimal Script-number encoding or int2bytes(value, width) for fixed-width encoding",
                             ArkType::Bool => "convert it explicitly with bytes(value) for minimal Script-number encoding",
                             _ => "both operands must be bytes-like",
                         };
@@ -477,7 +477,7 @@ pub(super) fn validate_binding_expression(
             let (source, hint) = match target.as_str() {
                 "int" => (
                     ArkType::Bool,
-                    "only bool converts to int; use int(0x..) for a hex constant or bin2int for bytes",
+                    "only bool converts to int; use int(0x..) for a hex constant or bytes2int for bytes",
                 ),
                 "bool" => (ArkType::Int, "only int converts to bool"),
                 "bytes" => (ArkType::Int, "only int, bool or bytes-like values convert to bytes"),

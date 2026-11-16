@@ -17,7 +17,7 @@ contract Packets() {
         require(tx.packet.has(2) == (current == 1));
         require(tx.inputs[0].packet.has(2) == (previous == 1));
         if (tx.packet.has(2)) {
-            require(bin2int(tx.packet(2)) == 7);
+            require(bytes2int(tx.packet(2)) == 7);
         }
     }
 }`), 0600)
