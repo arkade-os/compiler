@@ -510,8 +510,6 @@ fn parse_function(
                     | "neg64"
                     | "le64ToScriptNum"
                     | "le32ToLe64"
-                    | "bin2num"
-                    | "num2bin"
                     | "pubkey"
                     | "signature"
                     | "bytes"

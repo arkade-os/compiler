@@ -76,12 +76,6 @@ pub(crate) fn reject_reserved_function_call(pair: &Pair<Rule>) -> Result<(), Str
         ));
     }
 
-    match name.as_str() {
-        "bin2num" => return Err("`bin2num` was renamed to `bytes2int`".to_string()),
-        "num2bin" => return Err("`num2bin` was renamed to `int2bytes`".to_string()),
-        _ => {}
-    }
-
     if let Some(signature) = reserved_function_signature(&name) {
         return Err(format!("wrong arguments to `{name}`: expected {signature}"));
     }

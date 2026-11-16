@@ -185,21 +185,6 @@ contract Bin2NumDemo(int exit) {{
 }
 
 #[test]
-fn test_old_conversion_names_point_to_the_new_ones() {
-    for (call, renamed) in [
-        ("bin2num(data)", "bytes2int"),
-        ("num2bin(1, 1)", "int2bytes"),
-    ] {
-        let src = format!("contract Renamed() {{ function probe(bytes data) {{ {call}; }} }}");
-        let error = compile(&src).unwrap_err().to_string();
-        assert!(
-            error.contains(&format!("was renamed to `{renamed}`")),
-            "{error}"
-        );
-    }
-}
-
-#[test]
 fn test_int2bytes_emits_op_num2bin() {
     let src = format!(
         r#"{PROLOGUE}
