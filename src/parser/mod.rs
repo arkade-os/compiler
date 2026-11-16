@@ -892,6 +892,60 @@ mod tests {
     }
 
     #[test]
+    fn typed_struct_literals_nest_and_leave_loop_bodies_alone() {
+        let source = "contract C() { function spend(int a) {
+            let p = Outer { inner: Inner { x: a }, id: { txid: t, gidx: 0 } };
+            for (i, x) in items { require(x > i); }
+            for (i, x) in Lib.items { require(x > i); }
+            for (i, x) in items { y = x; }
+            for (i, x) in items {}
+            require(f(AssetId { txid: t, gidx: 0 }) == AssetId { txid: t, gidx: 1 });
+        } }";
+        let contract = parse(source).unwrap();
+        let statements = &contract.functions[0].statements;
+        let Statement::LetBinding { value, .. } = &statements[0].statement else {
+            panic!("{:?}", statements[0]);
+        };
+        assert!(source[value.span.start..value.span.end].starts_with("Outer {"));
+        let ExprKind::StructLiteral {
+            name: Some(outer),
+            fields,
+        } = &value.kind
+        else {
+            panic!("{value:?}");
+        };
+        assert_eq!(outer, "Outer");
+        assert!(
+            matches!(&fields[0].1.kind, ExprKind::StructLiteral { name: Some(name), .. } if name == "Inner")
+        );
+        assert!(matches!(
+            &fields[1].1.kind,
+            ExprKind::StructLiteral { name: None, .. }
+        ));
+        let loops = [("items", 1), ("Lib.items", 1), ("items", 1), ("items", 0)];
+        for (statement, (name, length)) in statements[1..5].iter().zip(loops) {
+            let Statement::ForIn { iterable, body, .. } = &statement.statement else {
+                panic!("{statement:?}");
+            };
+            assert!(matches!(&iterable.kind, ExprKind::Name(path) if path.key() == name));
+            assert_eq!(body.len(), length);
+        }
+        let Statement::Require(Requirement::Comparison { left, right, .. }) =
+            &statements[5].statement
+        else {
+            panic!("{:?}", statements[5]);
+        };
+        let ExprKind::Call { args, .. } = &left.kind else {
+            panic!("{left:?}");
+        };
+        for literal in [&args[0], right] {
+            assert!(
+                matches!(&literal.kind, ExprKind::StructLiteral { name: Some(name), .. } if name == "AssetId")
+            );
+        }
+    }
+
+    #[test]
     fn typed_declarations_may_omit_initializers() {
         let contract = parse("contract C() { function spend() { int x; int[2] values; x = 7; values = [7, 9]; require(x == values[0]); } }").unwrap();
         let statements = &contract.functions[0].statements;

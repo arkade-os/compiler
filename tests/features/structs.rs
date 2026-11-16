@@ -658,7 +658,36 @@ contract C() { function spend() { Point point = { x: true, y: 2 }; require(true)
 struct Point { int x; int y; }
 contract C() { function spend() { let point = { x: 1, y: 2 }; require(true); } }
 "#,
-            "needs a declared struct type",
+            "name it, as in 'let point = Name { field: value };'",
+        ),
+        (
+            r#"
+struct Point { int x; int y; }
+contract C() { function spend() { let point = Point { x: 1 }; require(point.x == 1); } }
+"#,
+            "Point literal: missing field 'y'",
+        ),
+        (
+            r#"
+struct Point { int x; int y; }
+contract C() { function spend() { AssetId id = Point { x: 1, y: 2 }; require(id.gidx == 1); } }
+"#,
+            "binding 'id' declares type 'AssetId' but initializer has type 'Point'",
+        ),
+        (
+            r#"
+struct Point { int x; int y; }
+contract C() { private function f(Point p) int { return p.x; } function spend() { require(f(ECPoint { x: 1, y: 2 }) == 1); } }
+"#,
+            "argument 'p' to 'f': expected 'Point', got 'ECPoint'",
+        ),
+        (
+            "contract C() { function spend() { let point = Missing { x: 1 }; require(point.x == 1); } }",
+            "unknown type 'Missing'",
+        ),
+        (
+            "contract C() { function spend() { let value = int { x: 1 }; require(value == 1); } }",
+            "'int' is not a struct type",
         ),
     ];
 
@@ -666,6 +695,62 @@ contract C() { function spend() { let point = { x: 1, y: 2 }; require(true); } }
         let error = compile(source).expect_err(expected).to_string();
         assert!(error.contains(expected), "unexpected error: {error}");
     }
+}
+
+#[test]
+fn named_struct_literals_emit_like_literals_typed_by_their_position() {
+    let contract = |body: &str| {
+        format!(
+            r#"
+struct Point {{ int x; int y; }}
+struct Segment {{ Point from; Point to; }}
+contract C(Point origin, bytes32 t) {{
+    private function length(Segment s) int {{ return s.to.x - s.from.x; }}
+    function spend(int a) {{
+        {body}
+    }}
+}}
+"#
+        )
+    };
+    for (named, positional) in [
+        (
+            "let p = Point { x: a, y: 2 }; require(p.x == p.y);",
+            "Point p = { x: a, y: 2 }; require(p.x == p.y);",
+        ),
+        (
+            "require(length(Segment { from: Point { x: 1, y: a }, to: origin }) > 0);",
+            "require(length({ from: { x: 1, y: a }, to: origin }) > 0);",
+        ),
+        (
+            "require(origin == Point { x: a, y: 2 });",
+            "require(origin == { x: a, y: 2 });",
+        ),
+    ] {
+        let named = compile(&contract(named)).expect(named);
+        let positional = compile(&contract(positional)).expect(positional);
+        assert_eq!(
+            crate::common::arkade_asm_tokens(&named, "spend"),
+            crate::common::arkade_asm_tokens(&positional, "spend"),
+        );
+    }
+    // An exception list has no expected element type, so only a named literal fits it.
+    let body = "require(this.tunnel(0, {script: true, value: true, assets: true}, [AssetId { txid: t, gidx: a }]));";
+    let tunnel = compile(&contract(body)).expect(body);
+    assert_eq!(
+        crate::common::arkade_asm_tokens(&tunnel, "spend"),
+        [
+            "0",
+            "7",
+            "<t>",
+            "OP_3",
+            "OP_ROLL",
+            "1",
+            "OP_TUNNEL",
+            "OP_VERIFY",
+            "OP_1"
+        ]
+    );
 }
 
 #[test]

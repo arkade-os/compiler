@@ -21,7 +21,7 @@ fn emit_native_struct_asm(value: &Expression, fields: &[(&str, &str)], asm: &mut
         }
         // ponytail: validation checked the literal against `fields`, which are all scalars for
         // today's native struct parameters; one with struct fields needs recursive emission.
-        ExprKind::StructLiteral(values) => {
+        ExprKind::StructLiteral { fields: values, .. } => {
             for (field, _) in fields {
                 let (_, value) = values
                     .iter()
@@ -82,7 +82,7 @@ pub(crate) fn emit_expression_asm(expr: &Expression, asm: &mut Vec<Op>) {
         // Rejected before emission; array declarations emit their elements directly.
         ExprKind::ArrayLiteral(_) => {}
         // Rejected before emission; typed struct declarations emit scalar leaves directly.
-        ExprKind::StructLiteral(_) => {}
+        ExprKind::StructLiteral { .. } => {}
         ExprKind::FieldAccess { .. } | ExprKind::IndexAccess { .. } => {
             unreachable!("binding accesses are extracted before emission")
         }

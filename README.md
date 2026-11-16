@@ -156,7 +156,7 @@ contract StructVault(Policy policy) {
     require(total >= policy.primary.weight);
 
     Policy local = {
-      primary: { key: next.primary.key, weight: total },
+      primary: Signer { key: next.primary.key, weight: total },
       limits: [next.limits[0], next.limits[1]],
       exitDelay: policy.exitDelay
     };
@@ -170,7 +170,7 @@ contract StructVault(Policy policy) {
 }
 ```
 
-Arrays are fixed-size and part of the type. Loops unroll at compile time, one copy per element, so script size grows with the declared size. Structs flatten to their scalar leaves; the artifact keeps the declaration so clients can flatten the same way. `examples/threshold_oracle` shows the same machinery counting `checkSigFromStack` successes over `pubkey[3] oracles` to enforce a quorum.
+Arrays are fixed-size and part of the type. Loops unroll at compile time, one copy per element, so script size grows with the declared size. Structs flatten to their scalar leaves; the artifact keeps the declaration so clients can flatten the same way. A struct literal names its type, as in `Signer { key: k, weight: 1 }`, or leaves it to its position, as `local` and its `limits` do. `examples/threshold_oracle` shows the same machinery counting `checkSigFromStack` successes over `pubkey[3] oracles` to enforce a quorum.
 
 ### More in `examples/`
 
@@ -360,7 +360,7 @@ Libraries can import other libraries, contracts, and struct files using the same
 | `struct` | User-declared, nested structs and fixed-size arrays allowed |
 | `AssetId`, `Outpoint`, `ECPoint`, `G2Point`, `ScriptPubKey`, `AssetEntry`, `AssetLookup` | Native structs: `{txid, gidx}`, `{txid, vout}`, `{x, y}`, `{xC1, xC0, yC1, yC0}`, `{program, version}`, `{assetId, amount}`, `{amount, found}` |
 
-Arrays and structs can be constructor parameters, covenant parameters, or locals. Arrays contain scalars or structs; structs contain scalars, arrays, and nested structs. Indexed fields support literal and runtime indexes, such as `items[0].value` and `items[index].value`. Helper results and native structs take the same suffixes, such as `make().value`, `getArray()[i]` and `tx.outputs[0].script.version`, evaluating each base and index once. Local arrays, structs, and covenant parameters support whole-value reassignment from matching values, helper results, and literals, such as `values = [1, 2, 3];` or `sc = ecAdd(sc, point, 0);`. Array element types and lengths must match the destination. Nested fields and indexed composite elements support the same assignments. The full right-hand side is evaluated before replacing any fields; constructor parameters remain immutable. Whole arrays and structs support `==` and `!=` when both sides have the same declared type. These comparisons return `bool` and work in bindings, conditions, helper returns, and short-circuit expressions such as `require(left == right || fallback);`. Tapscript inputs are scalars.
+Struct literals work wherever an expression does, for any user-declared or native struct: `let id = AssetId { txid: t, gidx: 0 };`, as a call argument, nested in another literal, or compared with `==`. An unnamed `{ txid: t, gidx: 0 }` takes the type its position expects: a typed declaration or assignment, a helper parameter or return type, a builtin operand, an enclosing literal's field, or the other side of `==`. Arrays and structs can be constructor parameters, covenant parameters, or locals. Arrays contain scalars or structs; structs contain scalars, arrays, and nested structs. Indexed fields support literal and runtime indexes, such as `items[0].value` and `items[index].value`. Helper results and native structs take the same suffixes, such as `make().value`, `getArray()[i]` and `tx.outputs[0].script.version`, evaluating each base and index once. Local arrays, structs, and covenant parameters support whole-value reassignment from matching values, helper results, and literals, such as `values = [1, 2, 3];` or `sc = ecAdd(sc, point, 0);`. Array element types and lengths must match the destination. Nested fields and indexed composite elements support the same assignments. The full right-hand side is evaluated before replacing any fields; constructor parameters remain immutable. Whole arrays and structs support `==` and `!=` when both sides have the same declared type. These comparisons return `bool` and work in bindings, conditions, helper returns, and short-circuit expressions such as `require(left == right || fallback);`. Tapscript inputs are scalars.
 
 ### Functions
 
@@ -456,6 +456,7 @@ let x = <expr>;                    // inferred type
 int fee = amount / 100;            // declared type
 int result;                       // no value or stack slot until assignment
 Policy p = { primary: {...}, limits: [1, 2], exitDelay: 10 };
+let q = Point { x: 1, y: 2 };      // named struct literal
 int[3] scale = [1, 2, 3];
 x = <expr>;                        // reassignment keeps the declared type
 scale[x + 1] = 10;                 // runtime index with bounds checking

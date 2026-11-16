@@ -202,6 +202,7 @@ primary_expr = {
     identifier_property_access |
     constructor |
     array_index_access |
+    typed_struct_literal |
     struct_literal |
     array_literal |
     byte_literal |
@@ -466,6 +467,11 @@ struct_literal = {
 }
 
 struct_literal_field = { identifier ~ ":" ~ general_expression }
+
+// `Point { x: 1, y: 2 }`. A block after an expression, as in `for (i, x) in items { ... }`,
+// is no literal: a statement never starts with `name:`. The lookahead keeps a name followed by
+// anything else, such as a missing `;`, from reporting an expected literal.
+typed_struct_literal = { identifier ~ &"{" ~ struct_literal }
 
 // Function call
 qualified_name = @{ identifier ~ ("." ~ identifier)? }

@@ -55,7 +55,7 @@ pub(crate) fn parse_tunnel(pair: Pair<Rule>) -> Result<Expression, String> {
     let output_index =
         parse_general_expression(inner.next().ok_or("Missing tunnel output index")?)?;
     let policy = if let Some(policy) = inner.next() {
-        let ExprKind::StructLiteral(fields) = parse_primary_expr(policy)?.kind else {
+        let ExprKind::StructLiteral { fields, .. } = parse_primary_expr(policy)?.kind else {
             return Err("tunnel policy must be a struct literal".to_string());
         };
         let mut values = [None, None, None];

@@ -586,8 +586,12 @@ pub enum ExprKind {
     },
     /// Array literal; only valid as the initializer of an array declaration.
     ArrayLiteral(Vec<Expression>),
-    /// Named struct literal; only valid as the initializer of a typed declaration.
-    StructLiteral(Vec<(String, Expression)>),
+    /// Struct literal: `Point { x: 1, y: 2 }` names its type; `{ x: 1, y: 2 }` takes the
+    /// type its position expects.
+    StructLiteral {
+        name: Option<String>,
+        fields: Vec<(String, Expression)>,
+    },
     /// A field of a statically laid-out value.
     FieldAccess {
         value: Box<Expression>,
@@ -786,7 +790,9 @@ macro_rules! expression_children {
                 ExprKind::ArrayLiteral(elements)
                 | ExprKind::Call { args: elements, .. }
                 | ExprKind::Builtin { args: elements, .. } => elements.$iter().collect(),
-                ExprKind::StructLiteral(fields) => fields.$iter().map(|(_, value)| value).collect(),
+                ExprKind::StructLiteral { fields, .. } => {
+                    fields.$iter().map(|(_, value)| value).collect()
+                }
 
                 ExprKind::AssetLookup {
                     index,

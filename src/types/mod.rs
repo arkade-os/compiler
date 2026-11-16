@@ -381,11 +381,11 @@ impl Typing<'_> {
     }
 }
 
-/// A struct or array literal takes the resolved type of the value it is tested
-/// for equality with, as an initializer takes its declared type, while an array
-/// literal keeps its length; the validator checks the literal against that type.
-/// Two literals keep their own types, as typing one from the other would depend
-/// on operand order.
+/// An unnamed struct literal or an array literal takes the resolved type of the
+/// value it is tested for equality with, as an initializer takes its declared
+/// type, while an array literal keeps its length; the validator checks the
+/// literal against that type. Two literals keep their own types, as typing one
+/// from the other would depend on operand order.
 fn type_compared_literal(left: &mut Expression, op: BinaryOperator, right: &mut Expression) {
     if op.class() != OperatorClass::Equality {
         return;
@@ -393,7 +393,7 @@ fn type_compared_literal(left: &mut Expression, op: BinaryOperator, right: &mut 
     let literal = |e: &Expression| {
         matches!(
             e.kind,
-            ExprKind::ArrayLiteral(_) | ExprKind::StructLiteral(_)
+            ExprKind::ArrayLiteral(_) | ExprKind::StructLiteral { .. }
         )
     };
     let typed_by = |value: &Expression, peer: &Expression| match (&value.kind, &peer.ty) {
@@ -401,7 +401,7 @@ fn type_compared_literal(left: &mut Expression, op: BinaryOperator, right: &mut 
         (ExprKind::ArrayLiteral(elements), ArkType::Array(element, _)) => {
             Some(ArkType::Array(element.clone(), elements.len()))
         }
-        (ExprKind::StructLiteral(_), ArkType::Struct(_)) => Some(peer.ty.clone()),
+        (ExprKind::StructLiteral { name: None, .. }, ArkType::Struct(_)) => Some(peer.ty.clone()),
         _ => None,
     };
     if let Some(ty) = typed_by(left, right) {
@@ -523,7 +523,9 @@ fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
             ),
             elements.len(),
         ),
-        ExprKind::StructLiteral(_) => ArkType::Unknown,
+        ExprKind::StructLiteral { name, .. } => name
+            .as_ref()
+            .map_or(ArkType::Unknown, |name| ArkType::Struct(name.clone())),
         ExprKind::FieldAccess { .. } => expr
             .binding_path()
             .map(|path| infer_type(&expr.with_kind(ExprKind::Name(path)), scope))

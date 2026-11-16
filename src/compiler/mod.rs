@@ -298,7 +298,7 @@ impl Generator {
         if matches!(&expression.kind, ExprKind::ArrayLiteral(_)) {
             return Err("array literals may only initialize an array declaration; composite values are not supported".into());
         }
-        if matches!(&expression.kind, ExprKind::StructLiteral(_)) {
+        if matches!(&expression.kind, ExprKind::StructLiteral { .. }) {
             return Err("struct literals may only initialize a typed struct declaration; composite values are not supported".into());
         }
         self.emit_expression_items(expression, 1)

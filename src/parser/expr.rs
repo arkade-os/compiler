@@ -190,9 +190,25 @@ pub(crate) fn parse_primary_expr(pair: Pair<Rule>) -> Result<Expression, String>
             ),
             span,
         )),
+        Rule::typed_struct_literal => {
+            let mut inner = pair.into_inner();
+            let name = inner
+                .next()
+                .ok_or("Missing struct type")?
+                .as_str()
+                .to_string();
+            let mut literal = parse_primary_expr(inner.next().ok_or("Missing struct literal")?)?;
+            if let ExprKind::StructLiteral { name: ty, .. } = &mut literal.kind {
+                *ty = Some(name);
+            }
+            literal.span = span;
+            Ok(literal)
+        }
         Rule::struct_literal => Ok(Expression::new(
-            ExprKind::StructLiteral(
-                pair.into_inner()
+            ExprKind::StructLiteral {
+                name: None,
+                fields: pair
+                    .into_inner()
                     .map(|field| {
                         let mut field = field.into_inner();
                         let name = field
@@ -206,7 +222,7 @@ pub(crate) fn parse_primary_expr(pair: Pair<Rule>) -> Result<Expression, String>
                         Ok((name, value))
                     })
                     .collect::<Result<Vec<_>, String>>()?,
-            ),
+            },
             span,
         )),
         Rule::array_length_access => {

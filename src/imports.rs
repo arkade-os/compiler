@@ -896,6 +896,14 @@ fn validate_scope(
                 {
                     return Err(format!("unknown constant '{}'", path.key()));
                 }
+                ExprKind::StructLiteral {
+                    name: Some(name), ..
+                } => {
+                    check_type(&models::TypeName::Named(name.clone()))?;
+                    if models::is_builtin_type(name) {
+                        return Err(format!("'{name}' is not a struct type"));
+                    }
+                }
                 ExprKind::ContractInstance {
                     contract_name,
                     args,

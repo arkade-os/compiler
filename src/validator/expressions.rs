@@ -107,7 +107,7 @@ pub(super) fn validate_value_expression(
         ArkType::Array(..) | ArkType::Struct(..)
     ) && !matches!(
         &expression.kind,
-        ExprKind::StructLiteral(_) | ExprKind::ArrayLiteral(_)
+        ExprKind::StructLiteral { .. } | ExprKind::ArrayLiteral(_)
     );
     validate_binding_expression(expression, scopes, issues, scalar);
 }
@@ -160,7 +160,7 @@ pub(super) fn validate_binding_expression(
     {
         if matches!(
             &value.kind,
-            ExprKind::StructLiteral(_) | ExprKind::ArrayLiteral(_)
+            ExprKind::StructLiteral { .. } | ExprKind::ArrayLiteral(_)
         ) {
             issues.push(ValidationIssue::error(
                 "cannot read a field or element of a literal; declare it with a type first",
@@ -310,9 +310,9 @@ pub(super) fn validate_binding_expression(
                 // Composite operands are emitted field by field, so their type must be known.
                 let known = actual != ArkType::Unknown
                     || matches!(expected, ArkType::Struct(_) | ArkType::Array(..));
-                // A struct literal has no type of its own, so it is checked against the
-                // parameter type; signatures name only native structs.
-                if matches!(&operand.kind, ExprKind::StructLiteral(_)) {
+                // A struct literal is checked against the parameter type; signatures name
+                // only native structs.
+                if matches!(&operand.kind, ExprKind::StructLiteral { .. }) {
                     super::functions::validate_value(
                         &(&expected).into(),
                         operand,
@@ -327,7 +327,7 @@ pub(super) fn validate_binding_expression(
                 {
                     for (index, value) in elements.iter().enumerate() {
                         let actual = &value.ty;
-                        if matches!(&value.kind, ExprKind::StructLiteral(_)) {
+                        if matches!(&value.kind, ExprKind::StructLiteral { .. }) {
                             super::functions::validate_value(
                                 &(&**element).into(),
                                 value,
@@ -534,7 +534,7 @@ pub(super) fn validate_binding_expression(
             }
         }
 
-        ExprKind::StructLiteral(_) if value_position => {
+        ExprKind::StructLiteral { name: None, .. } if value_position => {
             issues.push(ValidationIssue::error(
                 "struct literals may only initialize typed struct declarations",
             ));
@@ -660,7 +660,7 @@ pub(super) fn validate_binding_expression(
             &expression.kind,
             ExprKind::Call { .. }
                 | ExprKind::Builtin { .. }
-                | ExprKind::StructLiteral(_)
+                | ExprKind::StructLiteral { .. }
                 | ExprKind::ArrayLiteral(_)
                 | ExprKind::Tunnel { .. }
                 | ExprKind::FieldAccess { .. }
