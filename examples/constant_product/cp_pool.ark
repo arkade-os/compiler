@@ -12,18 +12,13 @@ import "./cp_math.ark";
 // the standing order, not by this contract.
 // The operator refuses a mint unless the transaction spends the control unit,
 // and this output keeps it.
-// The operator refuses a batch registration for a coin with no CSV path, so
-// the pool keeps unilateral. noExitKey is a public key nobody can sign
-// for, such as the BIP341 NUMS point 50929b74c1a04954b78b4b6035e97a5e078a5a0f28ec96d547bfee9ace803ac0,
-// so nobody can spend that path.
 @expect(output-script-unchecked, "output 1 is the standing order's payout, and that order pins its script")
 contract ConstantProductPool(
   bytes32 quoteTxid, int quoteGidx,
   bytes32 lpTxid, int lpGidx,
   bytes32 lpLedgTxid, int lpLedgGidx,
   bytes32 ctrlTxid, int ctrlGidx,
-  int feeBps,
-  pubkey noExitKey
+  int feeBps
 ) {
   private function samePool() {
     require(tx.outputs[0].script == tx.input.current.script, "pool");
@@ -164,10 +159,5 @@ contract ConstantProductPool(
     let ledgGroup = tx.assetGroups.find(lpLedgTxid, lpLedgGidx);
     require(ledgGroup.delta + part == 0, "ledger");
     require(tx.assetGroups.find(quoteTxid, quoteGidx).delta == 0, "quote supply");
-  }
-
-  function unilateral(signature noExitSig) tapscript {
-    require(older(serverExitDelay));
-    require(checkSig(noExitSig, noExitKey));
   }
 }

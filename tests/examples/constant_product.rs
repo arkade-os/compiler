@@ -41,10 +41,11 @@ fn constant_product_pool_is_one_counterparty() {
             "{function} is {bytes} bytes; a batched unroll no longer fits the one-step pool"
         );
     }
-    let unilateral = crate::common::leaf_asm(&pool, "unilateral", "unilateral");
     assert!(
-        unilateral.contains("<noExitKey>") && unilateral.contains("OP_CHECKSEQUENCEVERIFY"),
-        "the pool's exit path should wait for serverExitDelay and need noExitKey: {unilateral}"
+        pool.parameters
+            .iter()
+            .all(|parameter| parameter.param_type != "pubkey".into()),
+        "the pool takes no key, so no key can spend it"
     );
     for function in ["deposit", "withdraw"] {
         let script = crate::common::arkade_asm(&pool, function);
