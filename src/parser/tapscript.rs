@@ -312,14 +312,30 @@ pub(crate) fn parse_tap_multisig(
     })
 }
 
-/// Parse a `key_expr` (a pubkey binding or `tweak(emulator, func)`).
+/// Parse a `key_expr` (a pubkey binding, a pubkey constant or `tweak(emulator, func)`).
 pub(crate) fn parse_key_expr(
     pair: Pair<Rule>,
     constants: &[Constant],
 ) -> Result<crate::models::KeyExpr, String> {
     use crate::models::KeyExpr;
     match pair.as_rule() {
-        Rule::named_binding => parse_binding(pair, constants).map(KeyExpr::Ident),
+        Rule::named_binding => {
+            let path = parse_binding(pair, constants)?;
+            let pubkey = constants.iter().any(|c| {
+                c.name == path.key() && c.const_type.ark_type() == crate::types::ArkType::Bytes
+            });
+            if !pubkey {
+                return Ok(KeyExpr::Ident(path));
+            }
+            // BIP-342 checks accept any signature for a key of another non-zero length.
+            let value = constant_value(&path, constants)?;
+            match (value.len() - 2) / 2 {
+                32 => Ok(KeyExpr::Literal(value)),
+                width => Err(format!(
+                    "tapscript key '{path}' is {width} bytes; tapscript keys are 32-byte x-only public keys"
+                )),
+            }
+        }
         Rule::key_expr => {
             let inner = pair.into_inner().next().ok_or("Empty key expression")?;
             parse_key_expr(inner, constants)

@@ -533,9 +533,10 @@ pub(crate) fn tapscript_reads(tapscript: &crate::models::NamedTapscript) -> Hash
                 used.extend(value.path().map(|p| &*p.root));
             }
             TapItem::Sig { keys, sigs, .. } => {
-                used.extend(keys.iter().map(|key| match key {
-                    KeyExpr::Ident(path) => &*path.root,
-                    KeyExpr::Tweak { base, .. } => base,
+                used.extend(keys.iter().filter_map(|key| match key {
+                    KeyExpr::Ident(path) => Some(&*path.root),
+                    KeyExpr::Literal(_) => None,
+                    KeyExpr::Tweak { base, .. } => Some(base.as_str()),
                 }));
                 used.extend(sigs.iter().map(|p| &*p.root));
             }

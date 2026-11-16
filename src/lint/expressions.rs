@@ -30,6 +30,7 @@ pub(super) fn check(contract: &Contract, findings: &mut Vec<Finding>) {
             if let Some(key) = repeated {
                 let key = match key {
                     KeyExpr::Ident(name) => format!("'{name}'"),
+                    KeyExpr::Literal(key) => key.clone(),
                     KeyExpr::Tweak { base, func } => format!("tweak({base}, {func})"),
                 };
                 findings.push(duplicate_key(&key, tapscript.span));

@@ -389,6 +389,56 @@ contract Vault() {{
 }
 
 #[test]
+fn pubkey_constants_are_x_only_tapscript_keys() {
+    let key = format!("0x{}", "ef".repeat(32));
+    let keys = format!(
+        "library Keys {{ const pubkey ORACLE = {key}; const pubkey WIDE = 0x02{}; }}",
+        "ef".repeat(32)
+    );
+    let build = |members: &str| {
+        let main = format!("import \"keys.ark\"; contract Vault(pubkey owner) {{ const pubkey LOCAL = Keys.ORACLE; function spend(signature sig) {{ require(checkSig(sig, owner)); }} {members} }}");
+        project("main.ark", &[("main.ark", &main), ("keys.ark", &keys)])
+    };
+    let output = build(
+        "function exit(signature sig) tapscript { require(older(blocks(10))); require(checkSig(sig, LOCAL)); }
+         function settle(signature serverSig, signature oracleSig, signature ownerSig) tapscript { require(checkMultisig([server, Keys.ORACLE, owner], [serverSig, oracleSig, ownerSig])); }",
+    )
+    .unwrap();
+    assert_eq!(
+        leaf_asm(&output, "exit", "exit"),
+        format!("10 OP_CHECKSEQUENCEVERIFY OP_DROP {key} OP_CHECKSIG")
+    );
+    assert_eq!(
+        leaf_asm(&output, "settle", "settle"),
+        format!("<SERVER_KEY> OP_CHECKSIGVERIFY {key} OP_CHECKSIGVERIFY <owner> OP_CHECKSIG")
+    );
+    assert_eq!(witness_names(&output, "exit", "exit"), ["sig"]);
+    assert_eq!(
+        witness_names(&output, "settle", "settle"),
+        ["serverSig", "oracleSig", "ownerSig"]
+    );
+    assert_eq!(output.parameters.len(), 1);
+
+    for (members, message) in [
+        (
+            "function exit(signature sig) tapscript { require(older(10)); require(checkSig(sig, Keys.WIDE)); }",
+            "tapscript key 'Keys.WIDE' is 33 bytes; tapscript keys are 32-byte x-only public keys",
+        ),
+        (
+            "function exit(signature sig) tapscript { require(older(10)); require(checkSig(sig, tweak(LOCAL, spend))); }",
+            "`LOCAL` is not a constructor pubkey",
+        ),
+        (
+            "function exit(signature sig) tapscript { require(checkSig(sig, LOCAL)); }",
+            "must include `server`",
+        ),
+    ] {
+        let error = build(members).expect_err(members).to_string();
+        assert!(error.contains(message), "{members}: {error}");
+    }
+}
+
+#[test]
 fn constant_literal_must_match_its_declared_type() {
     assert!(error(
         r#"

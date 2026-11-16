@@ -360,6 +360,7 @@ pub fn validate_arkd_rules(
             // `resolve_binding` admits a bare `emulator` only on a leaf named after its function.
             KeyExpr::Ident(id) if id == EMULATOR => Pushed::Emulator(ts.name.clone()),
             KeyExpr::Tweak { base, func } if base == EMULATOR => Pushed::Emulator(func.clone()),
+            KeyExpr::Literal(key) => Pushed::Literal(key.clone()),
             KeyExpr::Ident(id) => {
                 if fixed(&id.key(), "key")? != Some(ArkType::Bytes) {
                     return Err(format!("unknown key `{id}` in tapscript `{}`", ts.name));
