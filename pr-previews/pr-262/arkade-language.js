@@ -187,7 +187,7 @@ function memberPath(before) {
 
 // The documented path `path` stands for: an `AssetGroup` name stands for `tx.assetGroups[]`.
 function documentedPath(path, visible) {
-    const group = path.match(/^(\w+)(\.(?:inputs|outputs)(?:\[\])?)?$/);
+    const group = path.match(/^(\w+)(\..*)?$/);
     if (visible.get(group?.[1])?.type === 'AssetGroup') return `tx.assetGroups[]${group[2] || ''}`;
     const alias = memberAliases.find(([from, , missing]) => (path === from || path.startsWith(from + '.') || path.startsWith(from + '['))
         && !missing.includes(path.slice(from.length + 1).split(/[.[]/)[0]));
@@ -210,17 +210,21 @@ function arkadeComplete(before, table) {
     if (Object.hasOwn(members, path) && ['library', 'contract'].includes(visible.get(path)?.kind)) return members[path].map(symbolItem);
     const documented = documentedPath(path, visible);
     if (Object.hasOwn(arkadeMembers, documented)) return arkadeMembers[documented];
-    // The type the path names, such as `Signer` for `next.primary`, through struct fields.
+    // The type the path names, such as `Signer` for `next.primary` or `bytes` for
+    // `tx.outputs[0].script.program`: each prefix's documented type, else its binding's or field's.
     const struct = type => type === 'ScriptPubKey' ? { fields: scriptFields } : structs.find(s => s.name === type);
     let type = '';
+    let prefix = '';
     path.split('.').forEach((segment, index) => {
         const name = segment.replace(/\[\]$/, '');
-        type = index === 0 ? visible.get(name)?.type || '' : struct(type)?.fields.find(f => f.name === name)?.type || '';
+        prefix += (index ? '.' : '') + name;
+        const entry = docs.members[prefix] ?? docs.members[documentedPath(prefix, visible)];
+        type = entry?.type || (index === 0 ? visible.get(name)?.type : struct(type)?.fields.find(f => f.name === name)?.type) || '';
         if (segment.endsWith('[]')) type = type.endsWith(']') ? type.replace(/\[[^\]]*\]$/, '') : '';
+        prefix += segment.slice(name.length);
     });
     if (type.endsWith(']')) return [prop('length', 'Array length')];
-    // A bytes-like binding, field or documented member, such as `tx.id`, has a byte length.
-    if (/^(bytes(20|32)?|pubkey|signature)$/.test(type || docs.members[documented]?.type)) return [prop('length', 'Length in bytes')];
+    if (/^(bytes(20|32)?|pubkey|signature)$/.test(type)) return [prop('length', 'Length in bytes')];
     return struct(type)?.fields.map(field => prop(field.name, field.type)) || [];
 }
 
