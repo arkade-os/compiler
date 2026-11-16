@@ -506,10 +506,6 @@ fn parse_function(
                 name.as_str(),
                 "require"
                     | "return"
-                    | "negate"
-                    | "neg64"
-                    | "le64ToScriptNum"
-                    | "le32ToLe64"
                     | "pubkey"
                     | "signature"
                     | "bytes"

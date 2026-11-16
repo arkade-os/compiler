@@ -503,9 +503,7 @@ In covenants, `checkTime(timestamp)` returns whether the emulator's wall clock h
 
 **Arithmetic and curves.** In covenants, `abs(value)`, `min(a, b)`, and `max(a, b)` take and return `int`; `within(value, lower, upper)` takes `int` operands and returns `bool` for `lower <= value && value < upper`. Empty or reversed ranges return false. Also available: `modExp(base, exp, mod)`, `ecAdd(P, Q, curve)` and `ecMul(P, k, curve)` taking and returning `ECPoint`, `ecPairing(g1, g2, curve)` over aligned `ECPoint[n]` and `G2Point[n]` arrays (curve id 2, 1–16 pairs), `ecMulScalarVerify(k, P, Q)`, `tweakVerify(P, k, Q)`.
 
-**Instantiation.** `new Contract(args...)` returns a `ScriptPubKey` with witness version `1`, usable on either side of a `.script` comparison against `tx.outputs[o]`, `tx.inputs[i]`, or `tx.input.current`. Zero-argument constructors are allowed. Array and struct arguments flatten to scalar fields. Destination parameters use `ScriptPubKey`, for example `ScriptPubKey destination = {program: p, version: 1}; require(tx.outputs[0].script == destination);`. The `.scriptPubKey` accessor is removed; comparing script structs enforces their versions too.
-
-**Breaking script migration.** Replace `.scriptPubKey` with `.script` and change destination parameters from `bytes` or `bytes32` to `ScriptPubKey`. `this.activeBytecode` also returns `ScriptPubKey`; bind it and read `.program` only when a program-only comparison is intentional. Recompile contracts and regenerate bindings together. Artifact consumers must expand `ScriptPubKey` into `.program` (`bytes`), then `.version` (`int`), including constructor parameters and covenant witnesses. `arkade-bindgen` handles this for TypeScript and Go; SDK artifact loaders must support the native layout before consuming these artifacts. Existing deployed bytecode is unchanged, but source recompilation requires migration.
+**Instantiation.** `new Contract(args...)` returns a `ScriptPubKey` with witness version `1`, usable on either side of a `.script` comparison against `tx.outputs[o]`, `tx.inputs[i]`, or `tx.input.current`. Zero-argument constructors are allowed. Array and struct arguments flatten to scalar fields. Destination parameters use `ScriptPubKey`, for example `ScriptPubKey destination = {program: p, version: 1}; require(tx.outputs[0].script == destination);`. Comparing script structs enforces their versions too.
 
 ### Tapscript bodies
 
@@ -596,7 +594,7 @@ The innermost attribute wins, and an attribute wins over the CLI, except that `-
 
 | Field | Meaning |
 |---|---|
-| `formatVersion` | Artifact schema version; absent on legacy artifacts |
+| `formatVersion` | Artifact schema version |
 | `structs` | User struct layouts, so clients can flatten parameters the way the compiler does |
 | `constructorInputs` | One entry per source parameter, declaration order; arrays keep their size in the type, structs keep their type name |
 | `functions[]` | Spend groups: `{ name, arkade?, leaves[] }` |

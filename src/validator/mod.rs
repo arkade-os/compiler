@@ -877,7 +877,7 @@ contract Demo() {
             injected: false,
         }];
         ContractJson {
-            format_version: None,
+            format_version: crate::models::ARTIFACT_FORMAT_VERSION,
             name: name.to_string(),
             structs: vec![],
             parameters: vec![],
