@@ -624,7 +624,7 @@ fn final_use_after_a_private_call_consumes_the_caller_binding() {
     let covenant = covenant(
         r#"
 contract Framed() {
-    public function spend(int x, int y) {
+    function spend(int x, int y) {
         require(double(x) > 0);
         require(double(x) == y);
         require(x >= 1);

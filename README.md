@@ -341,7 +341,7 @@ library Fees {
 }
 ```
 
-Plain `function` and `public function` are exported; `private function` is callable only within its defining library. `static function` is also accepted as an exported library helper. All library functions are stateless: they see their parameters, locals, and constants, and can inspect the transaction and enforce `require` checks. They cannot capture a calling contract's constructor state. Pass any required contract state as arguments.
+A plain `function` is exported; a `private function` is callable only within its defining library. Library functions take no `static` modifier, since all of them are stateless: they see their parameters, locals, and constants, and can inspect the transaction and enforce `require` checks. They cannot capture a calling contract's constructor state. Pass any required contract state as arguments.
 
 Libraries can import other libraries, contracts, and struct files using the same direct-import scope rules. Local helper calls can be unqualified or use the library's own name, including calls to private helpers. Calls inline using the existing helper return and recursion rules; library functions never create ABI entrypoints or witness inputs of their own. Library constants can also be used in tapscripts, but helper calls remain covenant-only.
 
@@ -365,8 +365,7 @@ Arrays and structs can be constructor parameters, covenant parameters, or locals
 ### Functions
 
 ```solidity
-function name(<params>) { ... }                // Public Arkade transaction entrypoint
-public function name(<params>) { ... }         // Explicit public visibility
+function name(<params>) { ... }                // Covenant: an Arkade transaction entrypoint
 private function name(<params>) { ... }        // Void helper
 private function name(<params>) bool { ... }   // Helper with a typed result
 static function name(<params>) int { ... }     // Helper without access to constructor state
@@ -375,7 +374,7 @@ function name(<params>) tapscript { ... }      // L1 tapleaf, plain Bitcoin Scri
 
 A covenant and its tapscripts form one spend group: a tapscript whose name matches the covenant, and a tapscript that tweaks a key to that covenant. The group keeps a synthesized `server` + `tweak(emulator, name)` leaf unless one of those tapscripts already signs with `emulator`. A constructor-pubkey tweak is an extra leaf; it does not replace that emulator leaf. A tapscript that tweaks nothing is a standalone leaf, which is how unilateral exits are written.
 
-Private functions are helpers called from covenants and other private helpers in the same contract. Calls inline into the caller's script. Public functions define transaction entrypoints, and tapscript functions define L1 leaves. Functions can be declared in any order; call graphs must be acyclic.
+Private functions are helpers called from covenants and other private helpers in the same contract. Calls inline into the caller's script. Functions without a modifier are public: covenant functions define transaction entrypoints, and tapscript functions define L1 leaves. Functions can be declared in any order; call graphs must be acyclic.
 
 Arguments are evaluated once, left to right, and passed by value. Private helpers see their own parameters and locals plus immutable constructor state. Modifying a parameter changes the helper's local copy.
 

@@ -107,7 +107,7 @@ fn locate(issues: &mut [ValidationIssue], span: crate::diagnostics::Span) {
 ///
 /// Checks performed:
 /// - Contract name is non-empty.
-/// - At least one public function is declared.
+/// - At least one covenant or tapscript function is declared.
 /// - Function names are unique within the contract.
 /// - Tapscript names are unique within the contract.
 /// - Constructor parameter names are unique.
@@ -127,11 +127,11 @@ pub(crate) fn validate_ast(contract: &Contract, require_entrypoint: bool) -> Vec
         issues.push(ValidationIssue::error("contract name must not be empty"));
     }
 
-    // ── At least one public function or tapscript ──────────────────
+    // ── At least one covenant or tapscript function ──────────────────
     let public_count = contract.functions.iter().filter(|f| !f.is_private).count();
     if require_entrypoint && public_count == 0 && contract.tapscripts.is_empty() {
         issues.push(ValidationIssue::error(
-            "contract must declare at least one public function",
+            "contract must declare at least one covenant or tapscript function",
         ));
     }
 
@@ -464,7 +464,6 @@ fn validate_source_identifier(name: &str, context: &str, issues: &mut Vec<Valida
         "false",
         "tapscript",
         "private",
-        "public",
         "static",
         "tx",
         "this",
@@ -841,7 +840,9 @@ contract Demo() {
         contract.functions.clear();
         let issues = validate(&contract);
         assert!(!issues.is_empty());
-        assert!(issues.iter().any(|i| i.message.contains("public function")));
+        assert!(issues
+            .iter()
+            .any(|i| i.message.contains("at least one covenant")));
     }
 
     #[test]

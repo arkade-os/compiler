@@ -483,16 +483,16 @@ fn parse_function(
 ) -> Result<Function, CompileError> {
     let declaration = pair.as_span().into();
     let mut inner = pair.into_inner().peekable();
-    let visibility = if inner
-        .peek()
-        .is_some_and(|p| p.as_rule() == Rule::function_visibility)
-    {
-        inner.next().expect("visibility").as_str()
-    } else {
-        "public"
-    };
+    let modifier = inner.next_if(|p| p.as_rule() == Rule::function_visibility);
+    let visibility = modifier.as_ref().map_or("", |p| p.as_str());
+    if is_library && visibility == "static" {
+        let message =
+            "`static` marks a contract's stateless helper; library functions need no modifier";
+        let span = modifier.expect("static modifier").as_span().into();
+        return Err(CompileError::from(message).at(span));
+    }
     let is_static = is_library || visibility == "static";
-    let is_private = is_library || visibility != "public";
+    let is_private = is_library || !visibility.is_empty();
     let is_exported = is_static && visibility != "private";
     let name = inner.next().ok_or("Missing function name")?;
     let span = crate::diagnostics::Span {
@@ -1177,7 +1177,7 @@ contract C(pubkey k, int unused) {
         use crate::models::{ExprKind, Expression};
         let contract = parse(
             r#"contract C() {
-            public function spend(int amount) { check(amount + 1 * 2); }
+            function spend(int amount) { check(amount + 1 * 2); }
             private function check(int value) { let returnValue = value; return; }
             private function sufficient(int value) bool { return value >= 1; }
             function other() { require(true); }
