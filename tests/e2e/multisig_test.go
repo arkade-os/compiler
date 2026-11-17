@@ -8,50 +8,85 @@ import (
 	"github.com/btcsuite/btcd/btcec/v2/schnorr"
 )
 
-func TestCovenantThresholdMultisig(t *testing.T) {
+type multisigCase struct {
+	name    string
+	signed  []string
+	wantErr string
+}
+
+// checkMultisigSpends spends a covenant over keys a, b, c with each case's signers.
+func checkMultisigSpends(t *testing.T, code string, values map[string][]byte, cases []multisigCase) {
+	t.Helper()
 	source := filepath.Join(t.TempDir(), "multisig.ark")
-	err := os.WriteFile(source, []byte(`pragma arkade ^0.1.0;
-contract TwoOfThree(pubkey a, pubkey b, pubkey c) {
-    function spend(signature aSig, signature bSig, signature cSig) {
-        require(checkMultisig([a, b, c], [aSig, bSig, cSig], 2));
-    }
-}`), 0600)
-	if err != nil {
+	if err := os.WriteFile(source, []byte(code), 0600); err != nil {
 		t.Fatal(err)
 	}
 	contract := compileArtifact(t, source)
 	serverKey, emulatorKey := fixedPrivateKey(1), fixedPrivateKey(2)
 	names := []string{"a", "b", "c"}
-	keys := map[string][]byte{}
 	for i, name := range names {
-		keys[name] = schnorr.SerializePubKey(fixedPrivateKey(byte(4 + i)).PubKey())
+		values[name] = schnorr.SerializePubKey(fixedPrivateKey(byte(4 + i)).PubKey())
 	}
-	instance := instantiateGroup(t, contract, "spend", keys, serverKey.PubKey(), emulatorKey.PubKey())
+	instance := instantiateGroup(t, contract, "spend", values, serverKey.PubKey(), emulatorKey.PubKey())
 	group := covenantGroup(t, contract, "spend")
 	deployment := fundingTx(instance.pkScript, 10_000)
-	values := map[string][]byte{"aSig": nil, "bSig": nil, "cSig": nil}
-	unsigned := spendingPSBTWithWitness(t, deployment, instance, 10_000, instance.pkScript, covenantWitness(t, contract, group, values))
+	unsignedValues := map[string][]byte{"aSig": nil, "bSig": nil, "cSig": nil}
+	unsigned := spendingPSBTWithWitness(t, deployment, instance, 10_000, instance.pkScript, covenantWitness(t, contract, group, unsignedValues))
 	signatures := map[string][]byte{}
 	for i, name := range names {
 		signatures[name] = signArkadeSighash(t, unsigned, 0, fixedPrivateKey(byte(4+i)))
 	}
 	// A key that does not sign takes an empty signature.
-	for _, tc := range []struct {
-		name    string
-		signed  []string
-		wantErr string
-	}{
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			witness := map[string][]byte{"aSig": nil, "bSig": nil, "cSig": nil}
+			for _, name := range tc.signed {
+				witness[name+"Sig"] = signatures[name]
+			}
+			spend := spendingPSBTWithWitness(t, deployment, instance, 10_000, instance.pkScript, covenantWitness(t, contract, group, witness))
+			requireVMResult(t, spend, emulatorKey.PubKey(), tc.wantErr)
+		})
+	}
+}
+
+func TestCovenantThresholdMultisig(t *testing.T) {
+	checkMultisigSpends(t, `pragma arkade ^0.1.0;
+contract TwoOfThree(pubkey a, pubkey b, pubkey c) {
+    function spend(signature aSig, signature bSig, signature cSig) {
+        require(checkMultisig([a, b, c], [aSig, bSig, cSig], 2));
+    }
+}`, map[string][]byte{}, []multisigCase{
 		{"three of three", []string{"a", "b", "c"}, ""},
 		{"two of three", []string{"a", "c"}, ""},
 		{"one of three", []string{"b"}, "false stack entry"},
+		{"none of three", nil, "false stack entry"},
+	})
+}
+
+func TestCovenantRuntimeThresholdMultisig(t *testing.T) {
+	const code = `pragma arkade ^0.1.0;
+contract KOfThree(pubkey a, pubkey b, pubkey c, int k) {
+    function spend(signature aSig, signature bSig, signature cSig) {
+        require(checkMultisig([a, b, c], [aSig, bSig, cSig], k));
+    }
+}`
+	for _, tc := range []struct {
+		name  string
+		k     int64
+		cases []multisigCase
+	}{
+		{"k=2", 2, []multisigCase{
+			{"three of three", []string{"a", "b", "c"}, ""},
+			{"two of three", []string{"a", "c"}, ""},
+			{"one of three", []string{"b"}, "false stack entry"},
+		}},
+		// An out-of-range threshold fails its bounds check whoever signs.
+		{"k=0", 0, []multisigCase{{"none of three", nil, "OP_VERIFY failed"}}},
+		{"k=-1", -1, []multisigCase{{"none of three", nil, "OP_VERIFY failed"}}},
+		{"k=4", 4, []multisigCase{{"three of three", []string{"a", "b", "c"}, "OP_VERIFY failed"}}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			values := map[string][]byte{"aSig": nil, "bSig": nil, "cSig": nil}
-			for _, name := range tc.signed {
-				values[name+"Sig"] = signatures[name]
-			}
-			spend := spendingPSBTWithWitness(t, deployment, instance, 10_000, instance.pkScript, covenantWitness(t, contract, group, values))
-			requireVMResult(t, spend, emulatorKey.PubKey(), tc.wantErr)
+			checkMultisigSpends(t, code, map[string][]byte{"k": scriptInt(t, tc.k)}, tc.cases)
 		})
 	}
 }
