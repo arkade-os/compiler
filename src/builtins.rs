@@ -363,6 +363,13 @@ pub(crate) fn find(name: &str) -> Option<&'static Builtin> {
     BUILTINS.iter().find(|builtin| builtin.name == name)
 }
 
+/// Parameter names of the tapscript-only call `name`, such as `older`.
+pub(crate) fn tapscript_params(name: &str) -> Option<Vec<&'static str>> {
+    let spelled = SPELLED.iter().find(|s| s.tapscript && s.name == name)?;
+    let name = |param: &&'static str| param.split_once(' ').map_or(*param, |(_, name)| name);
+    Some(spelled.params?.iter().map(name).collect())
+}
+
 /// A call or member the grammar spells rule by rule, so neither BUILTINS nor
 /// the properties describe it.
 struct Spelled {
