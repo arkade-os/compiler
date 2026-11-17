@@ -15,14 +15,12 @@ pub struct ArkadeParser;
 // Parser split into domain submodules. Each declares its pub(crate)
 // parse_* helpers; siblings reach them via `use super::*`.
 mod asset;
-mod checksig;
 mod crypto;
 mod expr;
 mod introspection;
 mod tapscript;
 
 pub(crate) use asset::*;
-pub(crate) use checksig::*;
 pub(crate) use crypto::*;
 pub(crate) use expr::*;
 pub(crate) use introspection::*;

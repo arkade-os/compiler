@@ -24,7 +24,7 @@ pub enum Lowering {
     /// Push each (G1, G2) array element field by field, then the pair count
     /// and the curve.
     Pairing,
-    /// Count valid signatures with CHECKSIGADD and compare with the optional threshold.
+    /// Count valid signatures with CHECKSIGADD and require at least the optional threshold.
     Multisig,
 }
 
@@ -213,7 +213,7 @@ pub(crate) const BUILTINS: &[Builtin] = &[
         ],
         result: Some("bool"),
         lowering: Lowering::Multisig,
-        doc: "Whether exactly threshold signatures are non-empty, each valid for the key at its \
+        doc: "Whether at least threshold signatures are non-empty, each valid for the key at its \
               index; an invalid non-empty one fails the spend. Without a threshold, all must be \
               valid; a runtime threshold outside 1 to the key count fails the spend.",
     },

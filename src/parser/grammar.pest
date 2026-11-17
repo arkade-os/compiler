@@ -503,13 +503,10 @@ check_sig_from_stack = {
 // Signature-check operand: a binding or byte literal (type-checked by position).
 sig_arg = { byte_literal | named_binding }
 
-// CheckMultisig expression
-check_multisig = { check_threshold_multisig }
-
-// checkMultisig([keys], [sigs], threshold?) — keys may be tweak()s; the second
-// array carries the aligned signature inputs and the final threshold is optional.
-check_threshold_multisig = {
-    "checkMultisig" ~ "(" ~ key_array ~ "," ~ array ~ ("," ~ (number_literal | qualified_name))? ~ ")"
+// checkMultisig([keys], [sigs]) — keys may be tweak()s; the second array carries the
+// aligned signature inputs. arkd recognizes only N-of-N closures, so it takes no threshold.
+check_multisig = {
+    "checkMultisig" ~ "(" ~ key_array ~ "," ~ array ~ ")"
 }
 
 // Array of identifiers

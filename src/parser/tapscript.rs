@@ -125,17 +125,9 @@ pub(crate) fn parse_tap_item(
             Ok(TapItem::Sig {
                 keys: vec![key],
                 sigs: vec![sig],
-                threshold: Some(1),
             })
         }
-        Rule::check_multisig => {
-            // check_multisig wraps check_threshold_multisig.
-            let inner = pair
-                .into_inner()
-                .next()
-                .ok_or("Missing checkMultisig body")?;
-            parse_tap_multisig(inner, constants)
-        }
+        Rule::check_multisig => parse_tap_multisig(pair, constants),
         Rule::function_call => {
             // older(n) / after(n)
             let mut inner = pair.into_inner();
@@ -272,7 +264,7 @@ fn parse_binding(pair: Pair<Rule>, constants: &[Constant]) -> Result<crate::mode
     })
 }
 
-/// Parse `check_threshold_multisig` inner pairs into a Sig item.
+/// Parse `check_multisig` inner pairs into a Sig item.
 pub(crate) fn parse_tap_multisig(
     pair: Pair<Rule>,
     constants: &[Constant],
@@ -280,7 +272,6 @@ pub(crate) fn parse_tap_multisig(
     use crate::models::TapItem;
     let mut keys = Vec::new();
     let mut sigs = Vec::new();
-    let mut threshold = None;
     for child in pair.into_inner() {
         match child.as_rule() {
             Rule::key_array => {
@@ -293,17 +284,10 @@ pub(crate) fn parse_tap_multisig(
                     sigs.push(parse_binding(s, constants)?);
                 }
             }
-            Rule::number_literal | Rule::qualified_name => {
-                threshold = Some(parse_multisig_threshold(child, constants)?);
-            }
             _ => {}
         }
     }
-    Ok(TapItem::Sig {
-        keys,
-        sigs,
-        threshold,
-    })
+    Ok(TapItem::Sig { keys, sigs })
 }
 
 /// Parse a `key_expr` (a pubkey binding, a pubkey constant or `tweak(emulator, func)`).
@@ -371,7 +355,7 @@ contract Demo(pubkey owner) {
     }
     function claim(bytes preimage, signature serverSig, signature emulatorSig) tapscript {
         require(hash160(preimage) == preimageHash);
-        require(checkMultisig([server, emulator], [serverSig, emulatorSig], 2));
+        require(checkMultisig([server, emulator], [serverSig, emulatorSig]));
     }
 }
 "#;
@@ -396,13 +380,9 @@ contract Demo(pubkey owner) {
             }
             other => panic!("expected Hash item, got {other:?}"),
         }
-        // Second item: multisig with two keys, two sigs, threshold 2.
+        // Second item: multisig with two keys and two sigs.
         match &ts.items[1] {
-            TapItem::Sig {
-                keys,
-                sigs,
-                threshold,
-            } => {
+            TapItem::Sig { keys, sigs } => {
                 assert_eq!(
                     keys,
                     &vec![
@@ -414,7 +394,6 @@ contract Demo(pubkey owner) {
                     sigs,
                     &vec![Path::new("serverSig"), Path::new("emulatorSig")]
                 );
-                assert_eq!(*threshold, Some(2));
             }
             other => panic!("expected Sig item, got {other:?}"),
         }
@@ -458,11 +437,6 @@ contract Demo(pubkey owner) {
         assert!(
             matches!(&cancel.items[0], TapItem::After { value: TapOperand::Name(value), unit: None } if value == "cancelTime")
         );
-        // Omitted threshold → N-of-N (None).
-        match &cancel.items[1] {
-            TapItem::Sig { threshold, .. } => assert_eq!(*threshold, None),
-            other => panic!("expected Sig, got {other:?}"),
-        }
     }
 
     #[test]
@@ -474,7 +448,7 @@ contract Demo(pubkey[2] keys, Policy[2] ps) {
     function exit(bytes32 pre , signature s1 , signature s2 ) tapscript {
         require(sha256(pre ) == ps[ 0 ].h );
         require(older(ps[SECOND].delay ));
-        require(checkMultisig([keys[ SECOND ] , ps[0].owner ], [s1 , s2 ], 2));
+        require(checkMultisig([keys[ SECOND ] , ps[0].owner ], [s1 , s2 ]));
     }
 }
 "#;
@@ -516,8 +490,12 @@ contract Demo(pubkey[2] keys, Policy[2] ps) {
     }
 
     #[test]
-    fn rejects_extra_arguments_to_tapscript_time_locks() {
-        for call in ["older(exitDelay, extra)", "after(cancelTime, extra)"] {
+    fn rejects_extra_arguments_to_tapscript_time_locks_and_multisig() {
+        for call in [
+            "older(exitDelay, extra)",
+            "after(cancelTime, extra)",
+            "checkMultisig([owner], [ownerSig], 1)",
+        ] {
             let src = format!(
                 r#"
 contract Demo(pubkey owner) {{

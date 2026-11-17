@@ -23,11 +23,11 @@ contract HTLC(
   // L1 leaves, bound by name.
   function claim(bytes preimage, signature serverSig, signature emulatorSig) tapscript {
     require(hash160(preimage) == preimageHash);
-    require(checkMultisig([server, emulator], [serverSig, emulatorSig], 2));
+    require(checkMultisig([server, emulator], [serverSig, emulatorSig]));
   }
   function refund(signature serverSig, signature emulatorSig) tapscript {
     require(after(refundTime));
-    require(checkMultisig([server, emulator], [serverSig, emulatorSig], 2));
+    require(checkMultisig([server, emulator], [serverSig, emulatorSig]));
   }
 
   // Unilateral exit (CSV).
