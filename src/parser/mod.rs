@@ -87,7 +87,12 @@ fn readable_error(error: pest::error::Error<Rule>, source: &str) -> pest::error:
             }
         }
     }
-    if expected.is_empty() {
+    // A block comment left open fails where the file ends, where pest may not name `*/`.
+    let unterminated =
+        unterminated_comment(source).filter(|_| attempts.max_position == source.len());
+    if unterminated.is_some() {
+        expected = vec!["'*/'".to_string()];
+    } else if expected.is_empty() {
         expected = tokens;
     }
     let message = match expected.split_last() {
@@ -97,9 +102,8 @@ fn readable_error(error: pest::error::Error<Rule>, source: &str) -> pest::error:
     };
     let closing = ["';'", "')'", "'}'", "']'", "','", "an operator"];
     let mut at = attempts.max_position;
-    if expected == ["'*/'"] {
-        // An unterminated block comment fails where the file ends; report where it opens.
-        at = unterminated_comment(source).unwrap_or(at);
+    if let Some(open) = unterminated {
+        at = open;
     } else if let Some((word, start, end)) = lone_word(source, at) {
         let message = format!("`{word}` on its own is not a statement");
         return match (
@@ -1554,6 +1558,12 @@ contract Demo(pubkey first, pubkey second) {{
         ] {
             assert!(parse(source).is_err(), "{source}");
         }
+        // Reported where it opens, also after the contract, where pest does not name `*/`.
+        let error = parse("contract C() {}\n/* unterminated").unwrap_err();
+        assert!(
+            error.contains("--> 2:1") && error.contains("expected '*/'"),
+            "{error}"
+        );
     }
 
     #[test]
