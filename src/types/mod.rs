@@ -715,3 +715,31 @@ pub fn is_bytes_like(t: &ArkType) -> bool {
         ArkType::Bytes | ArkType::Bytes20 | ArkType::Bytes32 | ArkType::Signature
     )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_asset_groups_have_group_members() {
+        let mut contract = crate::parser::parse(
+            "struct S { int delta; }
+            contract V(AssetGroup g, int x, S s, bytes b) {
+                function spend() { let p = g.delta; let q = x.delta; let r = s.delta; let t = (b + b).delta; }
+            }",
+        )
+        .expect("parses");
+        annotate(&mut contract);
+        let members: Vec<_> = contract.functions[0]
+            .statements
+            .iter()
+            .map(|statement| match &statement.statement {
+                Statement::LetBinding { value, .. } => {
+                    matches!(value.kind, ExprKind::GroupProperty { .. })
+                }
+                other => panic!("{other:?}"),
+            })
+            .collect();
+        assert_eq!(members, [true, false, false, false]);
+    }
+}
