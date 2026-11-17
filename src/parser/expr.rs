@@ -64,18 +64,6 @@ pub(crate) fn reject_reserved_function_call(pair: &Pair<Rule>) -> Result<(), Str
         .as_str()
         .to_string();
 
-    if name == "negate" {
-        return Err(
-            "`negate(value)` was replaced by the unary minus operator; write `-value`".to_string(),
-        );
-    }
-
-    if matches!(name.as_str(), "neg64" | "le64ToScriptNum" | "le32ToLe64") {
-        return Err(format!(
-            "`{name}` was removed with fixed-width arithmetic; use BigNum arithmetic or bytes2int/int2bytes"
-        ));
-    }
-
     if let Some(signature) = reserved_function_signature(&name) {
         return Err(format!("wrong arguments to `{name}`: expected {signature}"));
     }

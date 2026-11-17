@@ -253,7 +253,7 @@ pub(crate) fn render_errors(diagnostics: &[Diagnostic], source: &str) -> String 
 }
 
 /// Prefix `message` with its 1-based line and column, derived from `span`'s
-/// byte offset into `source` — display-only, for the legacy string API;
+/// byte offset into `source` — display-only, for the joined error string;
 /// `Diagnostic::span` itself carries the byte range for structured consumers.
 pub(crate) fn located(message: &str, span: Option<Span>, source: &str) -> String {
     match span.and_then(|s| pest::Position::new(source, s.start)) {
