@@ -157,7 +157,13 @@ fn lower_statement(
             let types::ArkType::Array(_, length) = iterable.ty else {
                 return Err("unsupported loop iterable".into());
             };
-            if iterable.static_path().is_none() {
+            // A runtime-indexed access is bound only when the body writes nothing it reads, so the
+            // copy matches a live read and folding an index to a literal never changes results.
+            // ponytail: such a body still re-evaluates the index per element; binding just the
+            // index would cover it.
+            if iterable.static_path().is_none()
+                && (iterable.binding_path().is_none() || !assigns_read(&body, &iterable))
+            {
                 // Nested loops start at distinct offsets, so their names never collide.
                 let name = format!("$iterable:{}", span.start);
                 let ty = TypeName::from(&iterable.ty);
@@ -247,6 +253,16 @@ fn lower_statement(
         }
         _ => Lowered::Simple(statement),
     }))
+}
+
+/// Whether `body` assigns a name `expression` reads. Helpers cannot write their caller's
+/// names, so only the names in `expression` itself count.
+fn assigns_read(body: &[LocatedStatement], expression: &Expression) -> bool {
+    matches!(&expression.kind, ExprKind::Name(path) | ExprKind::ArrayIndex { array: path, .. }
+        if super::functions::assigns(body, &path.root))
+        || crate::models::child_exprs(expression)
+            .into_iter()
+            .any(|child| assigns_read(body, child))
 }
 
 /// Each iteration lowered in its own scope; folding stops after one that cannot fall through.

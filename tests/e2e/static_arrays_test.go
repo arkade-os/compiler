@@ -201,3 +201,43 @@ contract Loops() {
 		})
 	}
 }
+
+// A loop reads each element when the body uses it, so a write in the body to a later element is
+// seen whether the iterable's index is a runtime value or folds to a literal.
+func TestLoopsSeeWritesToTheirIterable(t *testing.T) {
+	source := filepath.Join(t.TempDir(), "writes.ark")
+	err := os.WriteFile(source, []byte(`
+struct S { int[2] vals; }
+contract Writes() {
+    function spend(int k, int expected) {
+        S[2] local = [{ vals: [1, 2] }, { vals: [3, 4] }];
+        int total = 0;
+        for (j, y) in local[k].vals { local[k].vals[1] = 100; total = total + y; }
+        for (j, y) in local[0 + 0].vals { local[0].vals[1] = 200; total = total + y; }
+        require(total == expected);
+    }
+}`), 0600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	contract := compileArtifact(t, source)
+	serverKey, emulatorKey := fixedPrivateKey(1), fixedPrivateKey(2)
+	group := covenantGroup(t, contract, "spend")
+	instance := instantiateGroup(t, contract, "spend", nil, serverKey.PubKey(), emulatorKey.PubKey())
+	deployment := fundingTx(instance.pkScript, 10_000)
+	for _, tc := range []struct {
+		name        string
+		k, expected int64
+		wantErr     string
+	}{
+		{"first struct", 0, 1 + 100 + 1 + 200, ""},
+		{"second struct", 1, 3 + 100 + 1 + 200, ""},
+		{"elements copied before the loop", 0, 1 + 2 + 1 + 100, "OP_NUMEQUALVERIFY failed"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			values := map[string][]byte{"k": scriptInt(t, tc.k), "expected": scriptInt(t, tc.expected)}
+			spend := spendingPSBTWithWitness(t, deployment, instance, 10_000, instance.pkScript, covenantWitness(t, contract, group, values))
+			requireVMResult(t, spend, emulatorKey.PubKey(), tc.wantErr)
+		})
+	}
+}
