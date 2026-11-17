@@ -33,9 +33,11 @@ fn test_repayment_pool_compiles() {
         "debitCtrlId",
     ] {
         assert!(
-            names.contains(&format!("{id}Txid").as_str())
-                && names.contains(&format!("{id}Gidx").as_str()),
-            "{id} not present as explicit Txid/Gidx params, got: {names:?}"
+            output
+                .parameters
+                .iter()
+                .any(|p| p.name == id && p.param_type.to_string() == "AssetId"),
+            "{id} not present as an AssetId parameter, got: {names:?}"
         );
     }
     // Phased timeline + margin-call threshold + auction-incentive surface.
@@ -83,7 +85,7 @@ fn test_all_burn_checks_are_strict_equality() {
     // *only* use of `sumInputs` in either contract is for burn checks
     // (debit, credit, or any future group), so the filter doesn't depend on
     // the variable being named `debitGroup`/`creditGroup`. A refactor that
-    // renames the variable to e.g. `let g = tx.assetGroups.find(...)` is
+    // renames the variable to e.g. `let g = tx.assetGroups.lookup(...)` is
     // still caught because the access `g.sumInputs` is the matched token.
     let src_pool = include_str!("../../examples/bonds/repayment_pool.ark");
     let src_vault = include_str!("../../examples/bonds/bond_mint.ark");
@@ -131,13 +133,13 @@ fn test_all_burn_checks_are_strict_equality() {
 #[ignore = "dynamic contract reconstruction is temporarily disabled"]
 fn test_pool_retains_debit_ctrl_in_every_function() {
     // SECURITY: BondMint authenticates "genuine pool co-spent" only by
-    // `tx.inputs[poolIdx].assets.lookup(debitCtrlIdTxid, debitCtrlIdGidx) >= 1` — no scriptPubKey
+    // `tx.inputs[poolIdx].assets.lookup(debitCtrlId) >= 1` — no scriptPubKey
     // reconstruction. The safety of every BondMint settlement therefore
     // depends on the asset-registry invariant that NO RepaymentPool function
     // ever lets debitCtrlId leak from its output[0] (or outIdxPool for
     // variable-output functions).
     //
-    // If a future function omits the `tx.outputs[*].assets.lookup(debitCtrlIdTxid, debitCtrlIdGidx)
+    // If a future function omits the `tx.outputs[*].assets.lookup(debitCtrlId)
     // >= 1` retention check, the control asset can migrate into a malicious
     // covenant that the BondMint will then accept as "the pool" on its next
     // settlement, redirecting collateral to the attacker.

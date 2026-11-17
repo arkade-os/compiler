@@ -288,7 +288,7 @@ contract Scalar(int limit) {
         r#"
 contract Group(bytes32 assetTxid) {
     function spend() {
-        let g = tx.assetGroups.find(assetTxid, 0);
+        let g = tx.assetGroups.lookup({ txid: assetTxid, gidx: 0 });
         require(g.length == 1);
     }
 }
@@ -330,8 +330,8 @@ fn length_emits_the_same_assembly_as_its_equivalent() {
             "require(tx.numInputs == tx.numOutputs);",
         ),
         (
-            "let g = tx.assetGroups.find(assetTxid, 0); require(g.inputs.length < g.outputs.length);",
-            "let g = tx.assetGroups.find(assetTxid, 0); require(g.numInputs < g.numOutputs);",
+            "let g = tx.assetGroups.lookup({ txid: assetTxid, gidx: 0 }); require(g.inputs.length < g.outputs.length);",
+            "let g = tx.assetGroups.lookup({ txid: assetTxid, gidx: 0 }); require(g.numInputs < g.numOutputs);",
         ),
         (
             "require(tx.assetGroups[1].inputs.length < tx.assetGroups[1].outputs.length);",

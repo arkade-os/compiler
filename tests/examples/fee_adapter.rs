@@ -24,12 +24,11 @@ fn test_fee_adapter_contract() {
     assert!(param_names.contains(&"minFee"));
 
     assert!(
-        param_names.contains(&"paymentAssetIdTxid"),
-        "missing explicit paymentAssetIdTxid, got: {param_names:?}"
-    );
-    assert!(
-        param_names.contains(&"paymentAssetIdGidx"),
-        "missing explicit paymentAssetIdGidx"
+        output
+            .parameters
+            .iter()
+            .any(|p| p.name == "paymentAssetId" && p.param_type.to_string() == "AssetId"),
+        "missing AssetId paymentAssetId, got: {param_names:?}"
     );
 
     // 2 covenant functions (execute, adjust) + 1 standalone unilateral = 3 groups

@@ -158,7 +158,7 @@ impl Generator {
             }
             return Ok(());
         }
-        let ExprKind::StructLiteral(values) = &expression.kind else {
+        let ExprKind::StructLiteral { fields: values, .. } = &expression.kind else {
             return Err(format!("expected struct value of type '{ty}'").into());
         };
         let fields = if let Some(fields) = ty.name().and_then(crate::models::builtin_struct_fields)

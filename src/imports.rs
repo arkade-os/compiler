@@ -655,12 +655,7 @@ fn load(
         }
         for function in &mut contract.functions {
             visit_statements(&mut function.statements, &mut |expression| {
-                if let ExprKind::GroupControlIs {
-                    group,
-                    asset_txid,
-                    asset_gidx,
-                } = &expression.kind
-                {
+                if let ExprKind::GroupControlIs { group, asset_id } = &expression.kind {
                     // Only a bare name can be a library; other groups stay asset groups.
                     let ExprKind::Name(models::Path {
                         root: group,
@@ -675,7 +670,7 @@ fn load(
                     if group == &contract.name || visible_contracts.contains_key(group) {
                         expression.kind = ExprKind::Call {
                             name: format!("{group}.controlIs"),
-                            args: vec![*asset_txid.clone(), *asset_gidx.clone()],
+                            args: vec![*asset_id.clone()],
                             return_type: None,
                         };
                     }
@@ -897,6 +892,14 @@ fn validate_scope(
                     if !path.segments.is_empty() && contracts.contains_key(&path.root) =>
                 {
                     return Err(format!("unknown constant '{}'", path.key()));
+                }
+                ExprKind::StructLiteral {
+                    name: Some(name), ..
+                } => {
+                    check_type(&models::TypeName::Named(name.clone()))?;
+                    if models::is_builtin_type(name) {
+                        return Err(format!("'{name}' is not a struct type"));
+                    }
                 }
                 ExprKind::ContractInstance {
                     contract_name,

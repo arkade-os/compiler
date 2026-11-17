@@ -106,17 +106,15 @@ contract Splitter(pubkey alicePk, pubkey bobPk) {
 ```solidity
 contract TokenVault(
   pubkey ownerPk,
-  bytes32 tokenAssetIdTxid,
-  int tokenAssetIdGidx,
-  bytes32 ctrlAssetIdTxid,
-  int ctrlAssetIdGidx
+  AssetId tokenAssetId,
+  AssetId ctrlAssetId
 ) {
   function deposit(signature ownerSig) {
-    require(tx.inputs[0].assets.lookup(ctrlAssetIdTxid, ctrlAssetIdGidx) > 0, "no ctrl in input");
-    require(tx.outputs[0].assets.lookup(ctrlAssetIdTxid, ctrlAssetIdGidx) > 0, "no ctrl in output");
+    require(tx.inputs[0].assets.lookup(ctrlAssetId) > 0, "no ctrl in input");
+    require(tx.outputs[0].assets.lookup(ctrlAssetId) > 0, "no ctrl in output");
     require(
-      tx.outputs[0].assets.lookup(tokenAssetIdTxid, tokenAssetIdGidx) >=
-        tx.inputs[0].assets.lookup(tokenAssetIdTxid, tokenAssetIdGidx),
+      tx.outputs[0].assets.lookup(tokenAssetId) >=
+        tx.inputs[0].assets.lookup(tokenAssetId),
       "token balance decreased"
     );
     require(checkSig(ownerSig, ownerPk), "invalid owner signature");
@@ -129,7 +127,7 @@ contract TokenVault(
 }
 ```
 
-An Asset ID is a `(bytes32 txid, int gidx)` pair. `assets.lookup` asserts the asset is present on that input or output and yields its amount; `assets.has` is the boolean form. For supply accounting across the whole transaction, `tx.assetGroups.find(txid, gidx)` returns an `AssetGroup` with `sumInputs`, `sumOutputs`, `delta`, `controlIs(txid, gidx)`, and friends (see `examples/controlled_mint`).
+An Asset ID is an `AssetId` struct `{txid, gidx}`; write one as `AssetId { txid: t, gidx: 0 }`. `assets.lookup` asserts the asset is present on that input or output and yields its amount; `assets.has` is the boolean form. For supply accounting across the whole transaction, `tx.assetGroups.lookup(id)` returns an `AssetGroup` with `sumInputs`, `sumOutputs`, `delta`, `controlIs(id)`, and friends (see `examples/controlled_mint`).
 
 ### Arrays, structs, loops
 
@@ -156,7 +154,7 @@ contract StructVault(Policy policy) {
     require(total >= policy.primary.weight);
 
     Policy local = {
-      primary: { key: next.primary.key, weight: total },
+      primary: Signer { key: next.primary.key, weight: total },
       limits: [next.limits[0], next.limits[1]],
       exitDelay: policy.exitDelay
     };
@@ -170,7 +168,7 @@ contract StructVault(Policy policy) {
 }
 ```
 
-Arrays are fixed-size and part of the type. Loops unroll at compile time, one copy per element, so script size grows with the declared size. Structs flatten to their scalar leaves; the artifact keeps the declaration so clients can flatten the same way. `examples/threshold_oracle` shows the same machinery counting `checkSigFromStack` successes over `pubkey[3] oracles` to enforce a quorum.
+Arrays are fixed-size and part of the type. Loops unroll at compile time, one copy per element, so script size grows with the declared size. Structs flatten to their scalar leaves; the artifact keeps the declaration so clients can flatten the same way. A struct literal names its type, as in `Signer { key: k, weight: 1 }`, or leaves it to its position, as `local` and its `limits` do. `examples/threshold_oracle` shows the same machinery counting `checkSigFromStack` successes over `pubkey[3] oracles` to enforce a quorum.
 
 ### More in `examples/`
 
@@ -359,7 +357,7 @@ Libraries can import other libraries, contracts, and struct files using the same
 | `struct` | User-declared, nested structs and fixed-size arrays allowed |
 | `AssetId`, `Outpoint`, `ECPoint`, `G2Point`, `ScriptPubKey`, `AssetEntry`, `AssetLookup` | Native structs: `{txid, gidx}`, `{txid, vout}`, `{x, y}`, `{xC1, xC0, yC1, yC0}`, `{program, version}`, `{assetId, amount}`, `{amount, found}` |
 
-Arrays and structs can be constructor parameters, covenant parameters, or locals. Arrays contain scalars or structs; structs contain scalars, arrays, and nested structs. Indexed fields support literal and runtime indexes, such as `items[0].value` and `items[index].value`. Helper results and native structs take the same suffixes, such as `make().value`, `getArray()[i]` and `tx.outputs[0].script.version`, evaluating each base and index once. Local arrays, structs, and covenant parameters support whole-value reassignment from matching values, helper results, and literals, such as `values = [1, 2, 3];` or `sc = ecAdd(sc, point, 0);`. Array element types and lengths must match the destination. Nested fields and indexed composite elements support the same assignments. The full right-hand side is evaluated before replacing any fields; constructor parameters remain immutable. Whole arrays and structs support `==` and `!=` when both sides have the same declared type. These comparisons return `bool` and work in bindings, conditions, helper returns, and short-circuit expressions such as `require(left == right || fallback);`. Tapscript inputs are scalars.
+Struct literals work wherever an expression does, for any user-declared or native struct: `let id = AssetId { txid: t, gidx: 0 };`, as a call argument, nested in another literal, or compared with `==`. An unnamed `{ txid: t, gidx: 0 }` takes the type its position expects: a typed declaration or assignment, a helper parameter or return type, a builtin operand, an enclosing literal's field, or the other side of `==`. Arrays and structs can be constructor parameters, covenant parameters, or locals. Arrays contain scalars or structs; structs contain scalars, arrays, and nested structs. Indexed fields support literal and runtime indexes, such as `items[0].value` and `items[index].value`. Helper results and native structs take the same suffixes, such as `make().value`, `getArray()[i]` and `tx.outputs[0].script.version`, evaluating each base and index once. Local arrays, structs, and covenant parameters support whole-value reassignment from matching values, helper results, and literals, such as `values = [1, 2, 3];` or `sc = ecAdd(sc, point, 0);`. Array element types and lengths must match the destination. Nested fields and indexed composite elements support the same assignments. The full right-hand side is evaluated before replacing any fields; constructor parameters remain immutable. Whole arrays and structs support `==` and `!=` when both sides have the same declared type. These comparisons return `bool` and work in bindings, conditions, helper returns, and short-circuit expressions such as `require(left == right || fallback);`. Tapscript inputs are scalars.
 
 ### Functions
 
@@ -455,6 +453,7 @@ let x = <expr>;                    // inferred type
 int fee = amount / 100;            // declared type
 int result;                       // no value or stack slot until assignment
 Policy p = { primary: {...}, limits: [1, 2], exitDelay: 10 };
+let q = Point { x: 1, y: 2 };      // named struct literal
 int[3] scale = [1, 2, 3];
 x = <expr>;                        // reassignment keeps the declared type
 scale[x + 1] = 10;                 // runtime index with bounds checking
@@ -492,7 +491,7 @@ In covenants, `checkTime(timestamp)` returns whether the emulator's wall clock h
 
 **Inputs and outputs.** `tx.inputs[i].value | witnessVersion | sequence | outpoint | arkadeScriptHash | arkadeWitnessHash | script`, `tx.outputs[o].value | witnessVersion | script`, and `tx.input.current.value | witnessVersion | sequence | outpoint | arkadeScriptHash | arkadeWitnessHash | script` for the input being spent. `script` is a `ScriptPubKey {program, version}` holding both values from one inspection. Native witness versions are 0–16; non-witness scripts return their SHA256 hash as `program` and `-1` as `version`. `witnessVersion` reads the version alone. Bind a script to inspect its fields: `let s = tx.outputs[0].script; require(s.program == p); require(s.version == 1);`. The compiler warns when a function inspects the same script, indexed asset, or asset lookup more than once, and names the whole read to bind instead.
 
-**Assets.** On any input or output: `.assets.lookup(txid, gidx)` (asserts presence, yields amount), `.assets.has(txid, gidx)`, `.assets.tryLookup(txid, gidx)` (an `AssetLookup` with `amount` and `found` from one inspection), `.assets.length`, `.assets[t].assetId`, `.assets[t].amount`, and `.assets[t]` (an `AssetEntry` with `assetId` and `amount` from one inspection). Groups: `tx.assetGroups.find(txid, gidx)` (asserts presence) and `tx.assetGroups[k]` (the group at packet position `k`) yield an `AssetGroup`; `tx.assetGroups.has(txid, gidx)` and `.length` inspect the packet. Every `AssetGroup` value, whether bound, a parameter, an array element, or inline such as `tx.assetGroups[k].delta`, has `numInputs` (or `inputs.length`), `numOutputs` (or `outputs.length`), `sumInputs`, `sumOutputs`, `delta`, `hasControl`, `controlIs(txid, gidx)`, `controlAssetId` (fails the spend when the group has no control asset), `metadataHash`, `assetId`, `isFresh`. An `int` has no group members; turn a position into a group with `tx.assetGroups[k]`. A group's `inputs[j]` and `outputs[j]` records have `amount`, `type` and `index`: an output's `type` is 1 and its `index` is its vout; an input's `type` is 1 for a local input, whose `index` is its vin, and 2 for an intent input, whose `index` is the output it references in the intent transaction and whose `txid` is that transaction; `txid` fails the spend on a local input, so read it behind a type check, such as `g.inputs[j].type == 1 || g.inputs[j].txid == t`, when the kind is not fixed, and does not exist on outputs. An index outside the group's records fails the spend.
+**Assets.** Every Asset ID operand is one `AssetId` expression: a parameter, a binding or field, a literal such as `AssetId { txid: t, gidx: 0 }` or `{ txid: t, gidx: 0 }`, `.assets[t].assetId`, `controlAssetId`, or a helper result. A constant `gidx` outside 0 to 65535 is rejected in any `AssetId` literal. On any input or output: `.assets.lookup(id)` (asserts presence, yields amount), `.assets.has(id)`, `.assets.tryLookup(id)` (an `AssetLookup` with `amount` and `found` from one inspection), `.assets.length`, `.assets[t].assetId`, `.assets[t].amount`, and `.assets[t]` (an `AssetEntry` with `assetId` and `amount` from one inspection). Groups: `tx.assetGroups.lookup(id)` (asserts presence) and `tx.assetGroups[k]` (the group at packet position `k`) yield an `AssetGroup`; `tx.assetGroups.has(id)` and `.length` inspect the packet. Every `AssetGroup` value, whether bound, a parameter, an array element, or inline such as `tx.assetGroups[k].delta`, has `numInputs` (or `inputs.length`), `numOutputs` (or `outputs.length`), `sumInputs`, `sumOutputs`, `delta`, `hasControl`, `controlIs(id)`, `controlAssetId` (fails the spend when the group has no control asset), `metadataHash`, `assetId`, `isFresh`. An `int` has no group members; turn a position into a group with `tx.assetGroups[k]`. A group's `inputs[j]` and `outputs[j]` records have `amount`, `type` and `index`: an output's `type` is 1 and its `index` is its vout; an input's `type` is 1 for a local input, whose `index` is its vin, and 2 for an intent input, whose `index` is the output it references in the intent transaction and whose `txid` is that transaction; `txid` fails the spend on a local input, so read it behind a type check, such as `g.inputs[j].type == 1 || g.inputs[j].txid == t`, when the kind is not fixed, and does not exist on outputs. An index outside the group's records fails the spend.
 
 **Bytes.** `substr(data, offset, size)`, `left(data, count)`, `right(data, count)`, `cat(a, b)`, `bytes2int(bytes)`, `bytes2uint(bytes)`, `int2bytes(value, size)`, `reverseBytes(bytes)`, `size(bytes)` (or `bytes.length`). `bytes2int` reads Script-number bytes, where the top bit of the last byte is the sign, so `bytes2int(0xff)` is `-127` and `bytes2int(0x80)` is `0`; `bytes2uint` reads unsigned little-endian bytes, so `bytes2uint(0xff)` is `255`. Use `bytes2uint` for unsigned fixed-width fields, after `reverseBytes` when they are big-endian. In covenants, `left` and `right` return the first or last `count` bytes. Zero returns empty bytes; negative counts and counts exceeding the data length fail execution.
 

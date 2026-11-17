@@ -954,7 +954,7 @@ mod tests {
             Ok(ExprKind::InputIntrospection { .. })
         ));
         assert!(matches!(
-            value("tx.assetGroups.has(t, g)"),
+            value("tx.assetGroups.has({ txid: t, gidx: g })"),
             Ok(ExprKind::GroupHas { .. })
         ));
         assert!(matches!(
@@ -981,6 +981,60 @@ mod tests {
             assert!(
                 error.contains("tx.input.current requires one of"),
                 "{misuse}: {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn typed_struct_literals_nest_and_leave_loop_bodies_alone() {
+        let source = "contract C() { function spend(int a) {
+            let p = Outer { inner: Inner { x: a }, id: { txid: t, gidx: 0 } };
+            for (i, x) in items { require(x > i); }
+            for (i, x) in Lib.items { require(x > i); }
+            for (i, x) in items { y = x; }
+            for (i, x) in items {}
+            require(f(AssetId { txid: t, gidx: 0 }) == AssetId { txid: t, gidx: 1 });
+        } }";
+        let contract = parse(source).unwrap();
+        let statements = &contract.functions[0].statements;
+        let Statement::LetBinding { value, .. } = &statements[0].statement else {
+            panic!("{:?}", statements[0]);
+        };
+        assert!(source[value.span.start..value.span.end].starts_with("Outer {"));
+        let ExprKind::StructLiteral {
+            name: Some(outer),
+            fields,
+        } = &value.kind
+        else {
+            panic!("{value:?}");
+        };
+        assert_eq!(outer, "Outer");
+        assert!(
+            matches!(&fields[0].1.kind, ExprKind::StructLiteral { name: Some(name), .. } if name == "Inner")
+        );
+        assert!(matches!(
+            &fields[1].1.kind,
+            ExprKind::StructLiteral { name: None, .. }
+        ));
+        let loops = [("items", 1), ("Lib.items", 1), ("items", 1), ("items", 0)];
+        for (statement, (name, length)) in statements[1..5].iter().zip(loops) {
+            let Statement::ForIn { iterable, body, .. } = &statement.statement else {
+                panic!("{statement:?}");
+            };
+            assert!(matches!(&iterable.kind, ExprKind::Name(path) if path.key() == name));
+            assert_eq!(body.len(), length);
+        }
+        let Statement::Require(Requirement::Comparison { left, right, .. }) =
+            &statements[5].statement
+        else {
+            panic!("{:?}", statements[5]);
+        };
+        let ExprKind::Call { args, .. } = &left.kind else {
+            panic!("{left:?}");
+        };
+        for literal in [&args[0], right] {
+            assert!(
+                matches!(&literal.kind, ExprKind::StructLiteral { name: Some(name), .. } if name == "AssetId")
             );
         }
     }
@@ -1049,7 +1103,7 @@ mod tests {
             let prefixed = -!(n);
             let packet = tx.packet(-!(n));
             let sum = tx.assetGroups[n].sumInputs;
-            let owned = tx.assetGroups.find(h, n).controlIs(h, n);
+            let owned = tx.assetGroups.lookup(id).controlIs(AssetId { txid: h, gidx: n });
             require(total > 0);
         } }";
         let contract = parse(source).expect("parses");
@@ -1095,7 +1149,8 @@ mod tests {
             "!(n)",
             "tx.packet(-!(n))",
             "tx.assetGroups[n].sumInputs",
-            "tx.assetGroups.find(h, n).controlIs(h, n)",
+            "tx.assetGroups.lookup(id).controlIs(AssetId { txid: h, gidx: n })",
+            "AssetId { txid: h, gidx: n }",
             "total",
             "0",
         ] {
@@ -1701,7 +1756,7 @@ contract Demo(pubkey first, pubkey second) {{
                 let m = min(n, 2,);
                 let h = sha256(cat(id, id,),);
                 let v = int(0x01,);
-                let l = tx.inputs[0].assets.lookup(id, 0,);
+                let l = tx.inputs[0].assets.lookup(AssetId { txid: id, gidx: 0, },);
                 let f = tx.intent.field("type",);
                 let t = this.tunnel(0, { script: true, value: true, assets: true, }, [id,],);
                 require(checkMultisig([k, k,], [s, s,], 2,), "m",);

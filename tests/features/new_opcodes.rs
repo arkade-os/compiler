@@ -306,7 +306,7 @@ fn intent_paths_can_be_runtime_bytes() {
 fn intent_accessors_validate_arity_types_and_context() {
     for body in [
         "require(tx.intent.has());",
-        "require(tx.intent.has(\"type\", \"other\"));",
+        "require(tx.intent.has({ txid: \"type\", gidx: \"other\" }));",
         "require(tx.intent.has(1));",
         "int value = tx.intent.field(\"expire_at\");",
         "bytes value = tx.intent.has(\"type\");",

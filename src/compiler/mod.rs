@@ -15,8 +15,8 @@ use crate::opcodes::Opcode::{
     InspectNumInputs, InspectNumOutputs, InspectOutAssetAt, InspectOutAssetCount,
     InspectOutAssetLookup, InspectOutputScriptPubKey, InspectOutputValue, InspectPacket,
     InspectVersion, Int0, Int1, LessThan, LessThanOrEqual, Mul, Nip, Not, NotEqual0, NumEqual,
-    Pick, PushCurrentInputIndex, PushExpiry, Put, Roll, Size, Sub, Swap, Tunnel, TxWeight, Txid,
-    Verify,
+    Pick, PushCurrentInputIndex, PushExpiry, Put, Roll, Rot, Size, Sub, Swap, Tunnel, TxWeight,
+    Txid, Verify,
 };
 use crate::types::{self};
 use crate::validator;
@@ -298,7 +298,7 @@ impl Generator {
         if matches!(&expression.kind, ExprKind::ArrayLiteral(_)) {
             return Err("array literals may only initialize an array declaration; composite values are not supported".into());
         }
-        if matches!(&expression.kind, ExprKind::StructLiteral(_)) {
+        if matches!(&expression.kind, ExprKind::StructLiteral { .. }) {
             return Err("struct literals may only initialize a typed struct declaration; composite values are not supported".into());
         }
         self.emit_expression_items(expression, 1)

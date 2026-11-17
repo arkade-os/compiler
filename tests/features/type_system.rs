@@ -356,7 +356,7 @@ contract Casts(pubkey owner, int gidx) {
         bytes32 id = bytes32(substr(data, 0, 32));
         bytes20 short = bytes20(substr(data, 32, 20));
         pubkey key = pubkey(substr(data, 52, 32));
-        require(tx.outputs[0].assets.lookup(id, gidx) > 0);
+        require(tx.outputs[0].assets.lookup({ txid: id, gidx: gidx }) > 0);
         require(short != 0x00);
         require(checkSig(sig, key));
         require(bytes32Of(data) == id);

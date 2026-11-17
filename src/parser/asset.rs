@@ -6,29 +6,11 @@ use pest::iterators::Pair;
 
 // ─── Asset Lookup Parsing ──────────────────────────────────────────────────────
 
-/// Parse the two Asset ID operands from an asset-group access pair.
-pub(crate) fn parse_asset_group_id_operands(
-    pair: Pair<Rule>,
-) -> Result<(Expression, Expression), String> {
-    let mut operands = pair.into_inner();
-    let txid_pair = operands
-        .next()
-        .ok_or("asset id requires (txid, gidx) operands")?;
-    let gidx_pair = operands
-        .next()
-        .ok_or("asset id requires (txid, gidx) operands")?;
-
-    Ok((
-        parse_general_expression(txid_pair)?,
-        parse_general_expression(gidx_pair)?,
-    ))
-}
-
-/// Shared parse for `tx.{inputs,outputs}[i].assets.{lookup,has}(txid, gidx)`:
-/// returns the source, the input/output index, and the two Asset ID operands.
+/// Shared parse for `tx.{inputs,outputs}[i].assets.{lookup,has,tryLookup}(id)`:
+/// returns the source, the input/output index, and the Asset ID operand.
 pub(crate) fn parse_asset_lookup_operands(
     pair: Pair<Rule>,
-) -> Result<(AssetLookupSource, Expression, Expression, Expression), String> {
+) -> Result<(AssetLookupSource, Box<Expression>, Box<Expression>), String> {
     let mut inner = pair.into_inner();
 
     // Parse source: "inputs" or "outputs"
@@ -52,56 +34,34 @@ pub(crate) fn parse_asset_lookup_operands(
         .ok_or("Missing index value")?;
     let index = parse_general_expression(index_pair)?;
 
-    // Parse the canonical Asset ID operands: txid (bytes32) then gidx (int).
-    let asset_txid = parse_general_expression(inner.next().ok_or("Missing asset txid")?)?;
-    let asset_gidx = parse_general_expression(inner.next().ok_or("Missing asset gidx")?)?;
+    let asset_id = parse_general_expression(inner.next().ok_or("Missing asset id")?)?;
 
-    Ok((source, index, asset_txid, asset_gidx))
+    Ok((source, Box::new(index), Box::new(asset_id)))
 }
 
-/// Parse an asset_lookup pair into an ExprKind::AssetLookup
+/// Parse an asset_lookup, asset_has or asset_try_lookup pair.
 pub(crate) fn parse_asset_lookup_to_expression(pair: Pair<Rule>) -> Result<Expression, String> {
     let span: crate::diagnostics::Span = pair.as_span().into();
-    let (source, index, asset_txid, asset_gidx) = parse_asset_lookup_operands(pair)?;
-    Ok(Expression::new(
-        ExprKind::AssetLookup {
+    let rule = pair.as_rule();
+    let (source, index, asset_id) = parse_asset_lookup_operands(pair)?;
+    let kind = match rule {
+        Rule::asset_has => ExprKind::AssetHas {
             source,
-            index: Box::new(index),
-            asset_txid: Box::new(asset_txid),
-            asset_gidx: Box::new(asset_gidx),
+            index,
+            asset_id,
         },
-        span,
-    ))
-}
-
-/// Parse an asset_has pair into an ExprKind::AssetHas
-pub(crate) fn parse_asset_has_to_expression(pair: Pair<Rule>) -> Result<Expression, String> {
-    let span: crate::diagnostics::Span = pair.as_span().into();
-    let (source, index, asset_txid, asset_gidx) = parse_asset_lookup_operands(pair)?;
-    Ok(Expression::new(
-        ExprKind::AssetHas {
+        Rule::asset_try_lookup => ExprKind::AssetTryLookup {
             source,
-            index: Box::new(index),
-            asset_txid: Box::new(asset_txid),
-            asset_gidx: Box::new(asset_gidx),
+            index,
+            asset_id,
         },
-        span,
-    ))
-}
-
-/// Parse an asset_try_lookup pair into an ExprKind::AssetTryLookup
-pub(crate) fn parse_asset_try_lookup_to_expression(pair: Pair<Rule>) -> Result<Expression, String> {
-    let span: crate::diagnostics::Span = pair.as_span().into();
-    let (source, index, asset_txid, asset_gidx) = parse_asset_lookup_operands(pair)?;
-    Ok(Expression::new(
-        ExprKind::AssetTryLookup {
+        _ => ExprKind::AssetLookup {
             source,
-            index: Box::new(index),
-            asset_txid: Box::new(asset_txid),
-            asset_gidx: Box::new(asset_gidx),
+            index,
+            asset_id,
         },
-        span,
-    ))
+    };
+    Ok(Expression::new(kind, span))
 }
 
 /// Parse an asset_count pair into an ExprKind::AssetCount
@@ -186,14 +146,14 @@ pub(crate) fn parse_asset_at_to_expression(pair: Pair<Rule>) -> Result<Expressio
     ))
 }
 
-/// Parse a group_control_is pair: `group.controlIs(txid, gidx)` → GroupControlIs.
+/// Parse a group_control_is pair: `group.controlIs(id)` → GroupControlIs.
 pub(crate) fn parse_group_control_is_to_expression(pair: Pair<Rule>) -> Result<Expression, String> {
     let span = pair.as_span().into();
     let mut inner = pair.into_inner();
     let group = parse_property_access(inner.next().ok_or("Missing group in controlIs")?)?;
     parse_group_control_is(
         Box::new(group),
-        inner.next().ok_or("Missing controlIs operands")?,
+        inner.next().ok_or("Missing controlIs operand")?,
         span,
     )
 }
@@ -205,15 +165,15 @@ pub(crate) fn parse_group_control_is(
     pair: Pair<Rule>,
     span: crate::diagnostics::Span,
 ) -> Result<Expression, String> {
-    let mut inner = pair.into_inner();
-    let asset_txid = parse_general_expression(inner.next().ok_or("Missing controlIs txid")?)?;
-    let asset_gidx = parse_general_expression(inner.next().ok_or("Missing controlIs gidx")?)?;
+    let asset_id = parse_asset_id(pair)?;
     Ok(Expression::new(
-        ExprKind::GroupControlIs {
-            group,
-            asset_txid: Box::new(asset_txid),
-            asset_gidx: Box::new(asset_gidx),
-        },
+        ExprKind::GroupControlIs { group, asset_id },
         span,
     ))
+}
+
+/// The Asset ID operand of a call pair that has nothing else.
+pub(crate) fn parse_asset_id(pair: Pair<Rule>) -> Result<Box<Expression>, String> {
+    let operand = pair.into_inner().next().ok_or("Missing asset id")?;
+    Ok(Box::new(parse_general_expression(operand)?))
 }

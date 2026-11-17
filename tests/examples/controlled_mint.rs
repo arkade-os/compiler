@@ -20,23 +20,16 @@ fn test_controlled_mint_contract() {
     let param_names: Vec<&str> = output.parameters.iter().map(|p| p.name.as_str()).collect();
     assert!(param_names.contains(&"issuerPk"), "missing issuerPk");
 
-    // Asset IDs are authored as explicit (Txid, Gidx) param pairs.
-    assert!(
-        param_names.contains(&"tokenAssetIdTxid"),
-        "missing explicit tokenAssetIdTxid, got: {param_names:?}"
-    );
-    assert!(
-        param_names.contains(&"tokenAssetIdGidx"),
-        "missing explicit tokenAssetIdGidx"
-    );
-    assert!(
-        param_names.contains(&"ctrlAssetIdTxid"),
-        "missing explicit ctrlAssetIdTxid, got: {param_names:?}"
-    );
-    assert!(
-        param_names.contains(&"ctrlAssetIdGidx"),
-        "missing explicit ctrlAssetIdGidx"
-    );
+    // Asset IDs are AssetId parameters.
+    for id in ["tokenAssetId", "ctrlAssetId"] {
+        assert!(
+            output
+                .parameters
+                .iter()
+                .any(|p| p.name == id && p.param_type.to_string() == "AssetId"),
+            "missing AssetId {id}, got: {param_names:?}"
+        );
+    }
 
     // 3 covenant functions + 1 standalone unilateral tapscript = 4 groups
     assert_eq!(output.functions.len(), 4, "expected 4 groups");

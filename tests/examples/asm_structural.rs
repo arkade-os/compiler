@@ -89,7 +89,9 @@ fn local_check_placeholder_consistency(
         {
             continue;
         }
-        if !witness_names.contains(&inner) && !ctor_names.contains(&inner) {
+        // Struct and array parameters read their fields, as in `<id.txid>`.
+        let root = inner.split('.').next().unwrap_or(inner);
+        if !witness_names.contains(&inner) && !ctor_names.contains(&root) {
             warnings.push(format!(
                 "placeholder <{inner}> cannot be constructed from witness or constructor inputs"
             ));
@@ -242,7 +244,7 @@ fn all_examples_have_well_formed_placeholders() {
 
 /// Verify placeholder resolution for simple contracts that have no let-binding
 /// placeholders or compound expression placeholders.  Complex contracts like
-/// arkade_kitties use `let sireGroup = tx.assetGroups.find(...)` which emits
+/// arkade_kitties use `let sireGroup = tx.assetGroups.lookup(...)` which emits
 /// `<sireGroup>` — an unresolved local-variable placeholder (a known current
 /// compiler limitation tracked by the variable-binding TODO).  Those are
 /// correctly surfaced as warnings by `local_check_placeholder_consistency` and
