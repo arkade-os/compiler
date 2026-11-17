@@ -2,9 +2,8 @@ use super::*;
 
 /// Reject malformed canonical Asset ID operands at compile time instead of
 /// relying on the emulator's runtime `popAssetID` check: every
-/// `lookup`/`has`/`tryLookup`/`controlIs` operand must be an `AssetId`, and the
-/// gidx of an `AssetId` literal there or anywhere else must be in `0..=65535`
-/// when it is a constant.
+/// `lookup`/`has`/`tryLookup`/`controlIs` operand must be an `AssetId`; checking
+/// it as one also range-checks a literal's constant gidx (see `validate_gidx`).
 pub(super) fn check_asset_id_operands(contract: &Contract, issues: &mut Vec<ValidationIssue>) {
     for func in contract.functions.iter().filter(|f| !f.is_imported()) {
         walk_asset_id_stmts(&func.statements, &contract.structs, issues);
@@ -87,14 +86,7 @@ fn check_asset_id_expr(
         | ExprKind::GroupControlIs { asset_id, .. } => {
             let asset = crate::models::TypeName::Named("AssetId".to_string());
             super::functions::validate_value(&asset, asset_id, structs, "asset id", issues);
-            // A named literal's gidx is checked where the literal itself is visited.
-            if matches!(&asset_id.kind, ExprKind::StructLiteral { name: None, .. }) {
-                validate_gidx(asset_id, issues);
-            }
         }
-        ExprKind::StructLiteral {
-            name: Some(name), ..
-        } if name == "AssetId" => validate_gidx(expr, issues),
         _ => {}
     }
 
@@ -104,10 +96,7 @@ fn check_asset_id_expr(
 }
 
 /// A constant gidx field of an `AssetId` literal must be in range.
-fn validate_gidx(literal: &Expression, issues: &mut Vec<ValidationIssue>) {
-    let ExprKind::StructLiteral { fields, .. } = &literal.kind else {
-        return;
-    };
+pub(super) fn validate_gidx(fields: &[(String, Expression)], issues: &mut Vec<ValidationIssue>) {
     let Some((_, gidx)) = fields.iter().find(|(name, _)| name == "gidx") else {
         return;
     };

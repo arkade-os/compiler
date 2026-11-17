@@ -411,6 +411,27 @@ fn constant_gidx_expressions_are_typed_and_range_checked() {
 }
 
 #[test]
+fn unnamed_asset_id_literals_are_range_checked_wherever_typed() {
+    for body in [
+        "AssetId id = { txid: t, gidx: 70000 }; require(tx.inputs[0].assets.lookup(id) >= 1);",
+        "AssetEntry e = { assetId: { txid: t, gidx: 70000 }, amount: 1 }; require(tx.inputs[0].assets.lookup(e.assetId) >= e.amount);",
+        "require(h({ txid: t, gidx: 70000 }) >= 1);",
+        "require(w == { txid: t, gidx: 70000 });",
+    ] {
+        let err = compile(&format!(
+            "contract C(bytes32 t, AssetId w) {{
+                private function h(AssetId id) int {{ return tx.inputs[0].assets.lookup(id); }}
+                function f() {{ {body} }}
+            }}"
+        ))
+        .err()
+        .unwrap_or_else(|| panic!("{body} must be rejected"))
+        .to_string();
+        assert!(err.contains("gidx 70000 is out of range"), "{body}: {err}");
+    }
+}
+
+#[test]
 fn control_is_accepts_computed_gidx() {
     let asm = arkade_asm(
         "contract C(bytes32 fooTxid) {

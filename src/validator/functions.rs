@@ -356,6 +356,9 @@ fn validate_fields(
                 )));
             }
         }
+        if name == "AssetId" {
+            super::assets::validate_gidx(fields, issues);
+        }
     }
 }
 
