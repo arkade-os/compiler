@@ -179,8 +179,9 @@ pub(crate) const BUILTINS: &[Builtin] = &[
         &[("signature", "signature"), ("pubkey", "bytes")],
         "bool",
         &[CheckSig],
-        "Whether signature by pubkey is valid for the spending transaction. An empty signature is \
-         false; an invalid non-empty one fails the spend.",
+        "Whether signature by pubkey is valid for the spending transaction. An empty pubkey fails \
+         the spend; otherwise an empty signature is false and an invalid non-empty one fails the \
+         spend.",
     ),
     builtin(
         "checkSigFromStack",
@@ -215,8 +216,9 @@ pub(crate) const BUILTINS: &[Builtin] = &[
         result: "bool",
         lowering: Lowering::Multisig,
         doc: "Whether at least threshold signatures are non-empty, each valid for the key at its \
-              index; an invalid non-empty one fails the spend. Without a threshold, all must be \
-              valid; a runtime threshold outside 1 to the key count fails the spend.",
+              index; an invalid non-empty one, or an empty pubkey, fails the spend. Without a \
+              threshold, all must be valid; a runtime threshold outside 1 to the key count fails \
+              the spend.",
     },
     // A streaming context is opaque VM state with no language-defined width.
     builtin(
@@ -231,14 +233,16 @@ pub(crate) const BUILTINS: &[Builtin] = &[
         &[("ctx", "bytes"), ("chunk", "bytes")],
         "bytes",
         &[Sha256Update],
-        "Adds chunk to a streaming SHA-256 context.",
+        "Adds chunk to a streaming SHA-256 context. Fails the spend when ctx is not a context \
+         from sha256Initialize or sha256Update.",
     ),
     builtin(
         "sha256Finalize",
         &[("ctx", "bytes"), ("lastChunk", "bytes")],
         "bytes32",
         &[Sha256Finalize],
-        "Adds lastChunk and returns the streaming SHA-256 digest.",
+        "Adds lastChunk and returns the streaming SHA-256 digest. Fails the spend when ctx is not \
+         a context from sha256Initialize or sha256Update.",
     ),
     builtin(
         "sighash",
@@ -259,9 +263,9 @@ pub(crate) const BUILTINS: &[Builtin] = &[
         "bytes32",
         &[MerkleBranchVerify],
         "Root of a BIP-341 tagged-hash Merkle proof. Siblings in proof are 32 bytes each and \
-         combined in sorted order. An empty leafTag takes leaf as already hashed. Fails the spend \
-         when proof is not a multiple of 32 bytes, branchTag is empty, or an already hashed leaf \
-         is not 32 bytes.",
+         combined in sorted order. An empty leafTag takes a 32-byte leaf as already hashed. Fails \
+         the spend when proof is not a multiple of 32 bytes, branchTag is empty, or an already \
+         hashed leaf has another length.",
     ),
     builtin(
         "checkTime",
@@ -529,15 +533,16 @@ const SPELLED: &[Spelled] = &[
         "bytes",
         "The intent field at a dot-separated path of lowercase keys and indexes such as \
          \"cosigners.0\": a string's bytes, an integer as a Script number, true as 0x01, false as \
-         empty, an object or array as JSON. Fails the spend when the path is malformed, the field \
-         is missing, null or fractional, or outside an intent proof.",
+         empty, an object or array as JSON. Fails the spend outside an intent proof, and inside \
+         one when the path is malformed or the field is missing, null, fractional or over 520 \
+         bytes.",
     ),
     method(
         "tx.intent.has",
         &["bytes path"],
         "bool",
-        "Whether tx.intent.field(path) has a value; false outside an intent proof. A malformed \
-         path fails the spend.",
+        "Whether tx.intent.field(path) has a value; false outside an intent proof. Inside one, a \
+         malformed path or a value over 520 bytes fails the spend.",
     ),
     property(
         "tx.inputs[].assets",
@@ -549,14 +554,16 @@ const SPELLED: &[Spelled] = &[
         &["int packetType"],
         "bytes",
         "Extension packet of packetType of the Arkade transaction that created this input. Fails \
-         the spend when packetType is outside 0 to 255 or the packet is absent or over 520 bytes.",
+         the spend when the input index is out of range, that transaction is unavailable, \
+         packetType is outside 0 to 255, or the packet is absent or over 520 bytes.",
     ),
     method(
         "tx.inputs[].packet.has",
         &["int packetType"],
         "bool",
         "Whether the Arkade transaction that created this input carries an extension packet of \
-         packetType. A packetType outside 0 to 255 or a packet over 520 bytes fails the spend.",
+         packetType. Fails the spend when the input index is out of range, that transaction is \
+         unavailable, packetType is outside 0 to 255, or the packet is over 520 bytes.",
     ),
     property(
         "tx.outputs[].assets",
