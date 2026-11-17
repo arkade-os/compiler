@@ -906,7 +906,11 @@ mod tests {
             value("tx.version"),
             Ok(ExprKind::TxIntrospection { .. })
         ));
-        for misuse in ["tx.input.current", "tx.input.current.weight"] {
+        for misuse in [
+            "tx.input.current",
+            "tx.input.current.weight",
+            "tx.input. /* c */ current",
+        ] {
             let error = value(misuse).unwrap_err();
             assert!(
                 error.contains("tx.input.current requires one of"),

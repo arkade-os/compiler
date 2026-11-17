@@ -282,8 +282,9 @@ pub(crate) fn parse_tx_property_to_expr(pair: Pair<Rule>) -> Result<Expression, 
         _ => {
             reject_malformed_asset_call(&text)?;
             // `tx.input.current` without a property it accepts reads as a plain property path.
-            let mut names = std::iter::once(first.as_str())
-                .chain(parts.map(|suffix| suffix.as_str().trim_start_matches('.').trim()));
+            let mut names = std::iter::once(first.as_str()).chain(
+                parts.map(|suffix| suffix.into_inner().next().map_or("", |part| part.as_str())),
+            );
             if names.next() == Some("input") && names.next() == Some("current") {
                 return Err(format!(
                     "tx.input.current requires one of: {} (got '{text}')",
