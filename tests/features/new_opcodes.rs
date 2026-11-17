@@ -36,17 +36,45 @@ fn covenant_opcodes_report_their_context_in_tapscript() {
             "{expression}: {error}"
         );
     }
-    for expression in [
-        "sha256(0x00)",
-        "sha256(0x00) != 0x00",
-        "0x00 == hash160(0x00)",
+    for (expression, place) in [
+        (
+            "sha256(0x00)",
+            "`sha256` only as `require(sha256(preimage) == hash)`",
+        ),
+        (
+            "sha256(0x00) != 0x00",
+            "`sha256` only as `require(sha256(preimage) == hash)`",
+        ),
+        (
+            "0x00 == hash160(0x00)",
+            "`hash160` only as `require(hash160(preimage) == hash)`",
+        ),
+        (
+            "older(1) == true",
+            "`older` only as `require(older(sequence))`",
+        ),
+        (
+            "older(1 + after(1))",
+            "`after` only as `require(after(locktime))`",
+        ),
+        (
+            "older(blocks(1) + 1)",
+            "`blocks` only as `older(blocks(count))` or `after(blocks(count))`",
+        ),
+        (
+            "after(seconds(seconds(1)))",
+            "`seconds` only as `older(seconds(count))` or `after(seconds(count))`",
+        ),
+        (
+            "sha256(tweak(server, spend)) == 0x00",
+            "`tweak` only as a key inside checkSig or checkMultisig",
+        ),
     ] {
         let source =
             format!("contract C() {{ function spend() tapscript {{ require({expression}); }} }}");
         let error = compile(&source).unwrap_err().to_string();
         assert!(
-            error.contains("can use `sha256` only as `require(sha256(preimage) == hash)`")
-                || error.contains("can use `hash160` only as `require(hash160(preimage) == hash)`"),
+            error.contains(&format!("a tapscript function can use {place}")),
             "{expression}: {error}"
         );
     }

@@ -37,16 +37,44 @@ pub(crate) fn parse_named_tapscript(
         if stmt.as_rule() == Rule::tap_require_stmt {
             let mut inner = stmt.into_inner();
             let expr = inner.next().ok_or("Empty require() in tapscript")?;
+            // Start and text of the older/after argument a blocks/seconds unit may fill.
+            let mut units = Vec::new();
             for part in std::iter::once(expr.clone()).chain(expr.clone().into_inner().flatten()) {
                 let name = match part.as_rule() {
                     Rule::function_call => {
-                        let callee = part.clone().into_inner().next();
-                        let callee = callee.ok_or("Missing call name")?.as_str();
+                        let mut call = part.clone().into_inner();
+                        let callee = call.next().ok_or("Missing call name")?.as_str();
+                        let args: Vec<_> = call.collect();
                         if crate::models::HashFn::parse(callee).is_some() {
                             let message = format!(
                                 "a tapscript function can use `{callee}` only as \
                                  `require({callee}(preimage) == hash)`"
                             );
+                            return Err(CompileError::from(message).at(part.as_span().into()));
+                        }
+                        if let Some(params) = crate::builtins::tapscript_params(callee) {
+                            let whole = matches!(callee, "older" | "after")
+                                && part.as_str() == expr.as_str().trim_end();
+                            if whole {
+                                units.extend(
+                                    args.first().map(|arg| {
+                                        (arg.as_span().start(), arg.as_str().trim_end())
+                                    }),
+                                );
+                            }
+                            let unit = matches!(callee, "blocks" | "seconds")
+                                && units.contains(&(part.as_span().start(), part.as_str()));
+                            if whole || unit || params.len() != args.len() {
+                                continue;
+                            }
+                            let signature = format!("{callee}({})", params.join(", "));
+                            let place = match callee {
+                                "older" | "after" => format!("`require({signature})`"),
+                                "tweak" => "a key inside checkSig or checkMultisig".to_string(),
+                                _ => format!("`older({signature})` or `after({signature})`"),
+                            };
+                            let message =
+                                format!("a tapscript function can use `{callee}` only as {place}");
                             return Err(CompileError::from(message).at(part.as_span().into()));
                         }
                         let tapscript_call = crate::builtins::find(callee)
