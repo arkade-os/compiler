@@ -169,7 +169,7 @@ function arkadeUseDocs(json) {
     for (const [alias, path, missing] of memberAliases) {
         arkadeMembers[alias] = arkadeMembers[path].filter(item => !missing.includes(item.label));
     }
-    for (const path of ['tx.inputs[].script', 'tx.input.current.script', 'tx.outputs[].script', 'this.activeBytecode']) {
+    for (const path of ['tx.inputs[].script', 'tx.input.current.script', 'tx.outputs[].script']) {
         arkadeMembers[path] = scriptFields.map(field => prop(field.name, field.type));
     }
 }
