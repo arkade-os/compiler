@@ -248,7 +248,7 @@ fn an_unknown_transaction_property_is_reported_by_validation() {
     assert_eq!((line, text.as_str()), (3, "tx.outputs[0].valu"));
     assert_eq!(
         message,
-        "unknown output property 'valu'; expected one of value, witnessVersion, script"
+        "unknown member 'valu' of 'tx.outputs[0]'; expected one of assets, script, value, witnessVersion"
     );
     for access in ["tx.assetGroups", "tx.outputs[0]", "tx.outputs[0].assets"] {
         let message = at_line(&source.replace("tx.outputs[0].valu", access)).2;
