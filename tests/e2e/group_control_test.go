@@ -142,3 +142,50 @@ contract ComputedTxid() {
 		})
 	}
 }
+
+func TestControlIsSeesOneEncodingPerGidx(t *testing.T) {
+	source := filepath.Join(t.TempDir(), "control_gate.ark")
+	err := os.WriteFile(source, []byte(`
+contract ControlGate() {
+    function spend(AssetId id) {
+        require(id.txid == 0x0900000000000000000000000000000000000000000000000000000000000000);
+        require(bytes(id.gidx) == 0x02);
+        require(!tx.assetGroups[0].controlIs(id));
+    }
+}`), 0600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	contract := compileArtifact(t, source)
+	serverKey, emulatorKey := fixedPrivateKey(1), fixedPrivateKey(2)
+	group := covenantGroup(t, contract, "spend")
+	instance := instantiateGroup(t, contract, "spend", nil, serverKey.PubKey(), emulatorKey.PubKey())
+	deployment := fundingTx(instance.pkScript, 10_000)
+	txid := chainhash.Hash{9}
+	control, err := asset.NewAssetRefFromId(asset.AssetId{Txid: txid, Index: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	issuance := asset.AssetGroup{
+		ControlAsset: control,
+		Outputs:      []asset.AssetOutput{{Type: asset.AssetOutputTypeLocal, Vout: 0, Amount: 5}},
+	}
+	for _, tc := range []struct {
+		name    string
+		gidx    []byte
+		wantErr string
+	}{
+		{"canonical", []byte{0x02}, "false stack entry"},
+		// bytes() accepts the padded gidx, while controlIs compares it byte for byte.
+		{"padded", []byte{0x02, 0x00}, "OP_EQUALVERIFY failed"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			witness := covenantWitness(t, contract, group, map[string][]byte{
+				"id.txid": txid[:], "id.gidx": tc.gidx,
+			})
+			spend := spendingPSBTWithWitness(t, deployment, instance, 10_000, instance.pkScript,
+				witness, extension.Packet(asset.Packet{issuance}))
+			requireVMResult(t, spend, emulatorKey.PubKey(), tc.wantErr)
+		})
+	}
+}

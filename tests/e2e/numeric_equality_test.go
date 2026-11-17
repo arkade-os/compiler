@@ -32,9 +32,9 @@ contract NumericEquality() {
 	}{
 		{"different number", "differs", map[string][]byte{"x": {0x06}}, ""},
 		{"equal number", "differs", map[string][]byte{"x": {0x05}}, "false stack entry"},
-		{"non-minimal equal number", "differs", map[string][]byte{"x": {0x05, 0x00}}, "minimally encoded"},
+		{"non-minimal equal number", "differs", map[string][]byte{"x": {0x05, 0x00}}, "OP_EQUALVERIFY failed"},
 		{"other branch", "branches", map[string][]byte{"x": {0x06}, "flag": {0x01}}, ""},
-		{"non-minimal number in a branch", "branches", map[string][]byte{"x": {0x05, 0x00}, "flag": {0x01}}, "minimally encoded"},
+		{"non-minimal number in a branch", "branches", map[string][]byte{"x": {0x05, 0x00}, "flag": {0x01}}, "OP_EQUALVERIFY failed"},
 		{"negative zero bool", "branches", map[string][]byte{"x": {0x06}, "flag": {0x80}}, "minimally encoded"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

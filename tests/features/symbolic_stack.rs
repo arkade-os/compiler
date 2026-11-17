@@ -58,7 +58,7 @@ contract Shape(int limit) {
     );
     assert_eq!(
         crate::common::arkade_asm(&optimized, "write"),
-        "2 1 4 OP_NIP OP_ROT OP_OVER OP_GREATERTHANOREQUAL OP_NIP OP_NIP"
+        "OP_DUP OP_DUP OP_BIN2NUM OP_EQUALVERIFY 2 1 4 OP_NIP OP_ROT OP_OVER OP_GREATERTHANOREQUAL OP_NIP OP_NIP"
     );
 }
 
@@ -114,8 +114,8 @@ contract Nested() {
             .iter()
             .filter(|token| token.as_str() == OP_PICK)
             .count()
-            == 1,
-        "only the first x read must use OP_PICK: {:?}",
+            == 3,
+        "only the y and z witness checks and the first x read must use OP_PICK: {:?}",
         covenant.asm
     );
 }
@@ -397,7 +397,7 @@ fn single_read_constructor_leaves_are_pushed_at_their_read() {
         ),
         (
             "contract C(int k) { function spend(int a, int b) { require(over(a)); require(over(b)); } private function over(int v) bool { return v > k; } }",
-            "<k> OP_1 OP_PICK OP_1 OP_PICK OP_GREATERTHAN OP_VERIFY OP_2 OP_PICK OP_1 OP_PICK OP_GREATERTHAN OP_VERIFY OP_1 OP_NIP OP_NIP OP_NIP",
+            "<k> OP_1 OP_PICK OP_DUP OP_BIN2NUM OP_EQUALVERIFY OP_2 OP_PICK OP_DUP OP_BIN2NUM OP_EQUALVERIFY OP_1 OP_PICK OP_1 OP_PICK OP_GREATERTHAN OP_VERIFY OP_2 OP_PICK OP_1 OP_PICK OP_GREATERTHAN OP_VERIFY OP_1 OP_NIP OP_NIP OP_NIP",
         ),
         (
             "contract C(int k, pubkey owner) { function spend(signature s) { require(check(s, owner)); require(k > 0); } private function check(signature s, pubkey p) bool { return checkSig(s, p); } }",
@@ -435,7 +435,7 @@ contract Paths(int unused, int left, int right, pubkey exitKey, int delay) {
         let covenant = group.arkade.as_ref().unwrap();
         assert_eq!(
             covenant.asm,
-            format!("OP_0 OP_ROLL <{parameter}> OP_NUMEQUAL OP_VERIFY OP_1")
+            format!("OP_DUP OP_DUP OP_BIN2NUM OP_EQUALVERIFY OP_0 OP_ROLL <{parameter}> OP_NUMEQUAL OP_VERIFY OP_1")
                 .split_whitespace()
                 .map(String::from)
                 .collect::<Vec<_>>()
@@ -549,7 +549,13 @@ fn final_use_liveness_keeps_repeated_reads_and_assignment_targets() {
         ),
     ] {
         let source = format!("contract FinalUse() {{ function spend(int x, int y) {{ {body} }} }}");
-        assert_eq!(covenant(&source, "spend").asm.join(" "), expected, "{body}");
+        let checks =
+            "OP_DUP OP_DUP OP_BIN2NUM OP_EQUALVERIFY OP_1 OP_PICK OP_DUP OP_BIN2NUM OP_EQUALVERIFY";
+        assert_eq!(
+            covenant(&source, "spend").asm.join(" "),
+            format!("{checks} {expected}"),
+            "{body}"
+        );
     }
 }
 
@@ -567,7 +573,12 @@ fn short_circuit_operands_move_outside_open_branches() {
     ] {
         let source =
             format!("contract ShortCircuit() {{ function spend(int x, int y, int z) {{ {body} }} }}");
-        assert_eq!(covenant(&source, "spend").asm.join(" "), expected, "{body}");
+        let checks = "OP_DUP OP_DUP OP_BIN2NUM OP_EQUALVERIFY OP_1 OP_PICK OP_DUP OP_BIN2NUM OP_EQUALVERIFY OP_2 OP_PICK OP_DUP OP_BIN2NUM OP_EQUALVERIFY";
+        assert_eq!(
+            covenant(&source, "spend").asm.join(" "),
+            format!("{checks} {expected}"),
+            "{body}"
+        );
     }
 }
 
@@ -679,7 +690,8 @@ contract C() {
         "spend",
     );
 
-    assert_eq!(&covenant.asm[..4], ["OP_0", OP_PICK, "1", OP_ADD]);
+    // After the witness check `OP_DUP OP_DUP OP_BIN2NUM OP_EQUALVERIFY`.
+    assert_eq!(&covenant.asm[4..8], ["OP_0", OP_PICK, "1", OP_ADD]);
     assert!(contains_tokens(
         &covenant.asm,
         &["OP_1", OP_PICK, "2", OP_MUL]

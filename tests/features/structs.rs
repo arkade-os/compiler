@@ -605,7 +605,10 @@ contract C(Snapshot expected) {
     .expect("native struct result nested in a user struct");
 
     let asm = &output.functions[0].arkade.as_ref().expect("covenant").asm;
-    assert_eq!(asm[0], "<expected.minimumVout>");
+    assert_eq!(
+        asm[..5].join(" "),
+        "OP_DUP OP_DUP OP_BIN2NUM OP_EQUALVERIFY <expected.minimumVout>"
+    );
     assert!(asm
         .windows(2)
         .any(|tokens| tokens == ["<expected.outpoint.vout>", "OP_GREATERTHANOREQUAL"]));
@@ -740,6 +743,10 @@ contract C(Point origin, bytes32 t) {{
     assert_eq!(
         crate::common::arkade_asm_tokens(&tunnel, "spend"),
         [
+            "OP_DUP",
+            "OP_DUP",
+            "OP_BIN2NUM",
+            "OP_EQUALVERIFY",
             "0",
             "7",
             "<t>",
