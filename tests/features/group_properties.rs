@@ -2,7 +2,8 @@ use arkade_compiler::compile;
 use arkade_compiler::opcodes::{
     OP_0, OP_1, OP_2DROP, OP_DROP, OP_FINDASSETGROUPBYASSETID, OP_INSPECTASSETGROUP,
     OP_INSPECTASSETGROUPASSETID, OP_INSPECTASSETGROUPCTRL, OP_INSPECTASSETGROUPMETADATAHASH,
-    OP_INSPECTASSETGROUPNUM, OP_INSPECTASSETGROUPSUM, OP_NIP, OP_SUB, OP_SWAP, OP_TXID,
+    OP_INSPECTASSETGROUPNUM, OP_INSPECTASSETGROUPSUM, OP_NIP, OP_NUMEQUALVERIFY, OP_SUB, OP_SWAP,
+    OP_TXID,
 };
 
 use crate::common::arkade_asm;
@@ -446,24 +447,72 @@ fn only_input_records_have_a_txid() {
     );
 }
 
-/// Without a property, the raw (type, data..., amount) tuple isn't one
-/// stack item and can't be bound either.
+/// A record read without a property is an `AssetGroupInput` or `AssetGroupOutput`
+/// value, inspected once and normalized to `[type, index, amount]`.
 #[test]
-fn test_group_io_access_without_property_is_rejected() {
-    let code = r#"
+fn group_records_are_values_from_one_inspection() {
+    let output = compile(
+        r#"
         contract GroupIOTest(pubkey owner) {
+            private function amountOf(AssetGroupInput r) int { return r.amount; }
+            private function firstOutput(AssetGroup g) AssetGroupOutput { return g.outputs[0]; }
             function spend(signature sig) {
                 require(checkSig(sig, owner));
-                let result = tx.assetGroups[0].outputs[0];
-                require(result >= 0);
+                let g = tx.assetGroups[0];
+                let x = g.inputs[0];
+                let y = g.outputs[0];
+                require(x.type == 1 && x.index == 2 && x.amount == y.amount);
+                require(y.type == 1 && y.index == 0);
+            }
+            function same(signature sig) {
+                require(checkSig(sig, owner));
+                let g = tx.assetGroups[0];
+                require(g.inputs[0] == g.inputs[1]);
+            }
+            function helpers(signature sig) {
+                require(checkSig(sig, owner));
+                let g = tx.assetGroups[0];
+                require(amountOf(g.inputs[0]) == firstOutput(g).amount);
             }
         }
-    "#;
+    "#,
+    )
+    .expect("group records are struct values");
+    let count = |function, op| crate::common::opcode_count_in_arkade(&output, function, op);
+    let normalize = "OP_0 OP_INSPECTASSETGROUP OP_TOALTSTACK OP_TOALTSTACK OP_SIZE 32 OP_EQUAL OP_IF OP_DROP OP_ENDIF OP_FROMALTSTACK OP_FROMALTSTACK";
+    assert_eq!(count("spend", OP_INSPECTASSETGROUP), 2);
+    let spend = arkade_asm(&output, "spend");
+    assert_eq!(spend.matches(normalize).count(), 1, "{spend}");
+    assert!(spend.contains("OP_1 OP_INSPECTASSETGROUP"), "{spend}");
+    // Field by field over type, index and amount.
+    assert_eq!(count("same", OP_INSPECTASSETGROUP), 2);
+    assert_eq!(count("same", OP_NUMEQUALVERIFY), 3);
+    assert_eq!(count("helpers", OP_INSPECTASSETGROUP), 2);
 
-    let error = compile(code)
-        .expect_err("a raw group IO access must not bind a value")
-        .to_string();
-    assert!(error.contains("does not produce one stack item"), "{error}");
+    let body = |statement: &str| {
+        format!("contract C(bytes32 t) {{ private function first(AssetGroup g) AssetGroupInput {{ return g.inputs[0]; }} function spend() {{ let g = tx.assetGroups[0]; {statement} }} }}")
+    };
+    for (statement, message) in [
+        (
+            "let r = g.inputs[0]; require(r.txid == t);",
+            "asset group input records have no txid; read it with g.inputs[j].txid",
+        ),
+        (
+            "require(first(g).txid == t);",
+            "asset group input records have no txid; read it with g.inputs[j].txid",
+        ),
+        (
+            "let r = g.outputs[0]; require(r.txid == t);",
+            "asset group output records have no txid",
+        ),
+        (
+            "require(g.inputs[0] == g.outputs[0]);",
+            "comparison '==' is not defined between 'AssetGroupInput' and 'AssetGroupOutput'",
+        ),
+    ] {
+        let error = compile(&body(statement)).expect_err(statement).to_string();
+        assert!(error.contains(message), "{statement}: {error}");
+    }
 }
 
 #[test]

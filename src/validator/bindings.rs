@@ -146,26 +146,14 @@ fn validate_binding_statements(
                         }
                         validate_value_expression(value, scopes, issues);
                     }
-                    ExprKind::ArrayLiteral(_)
-                    | ExprKind::ArrayIndex { .. }
-                    | ExprKind::FieldAccess { .. }
-                    | ExprKind::IndexAccess { .. }
-                    | ExprKind::Name(_) => validate_value_expression(value, scopes, issues),
-                    _ => validate_binding_expression(
-                        value,
-                        scopes,
-                        issues,
-                        crate::models::expression_result_struct(value).is_none()
-                            && !matches!(&value.kind, ExprKind::Call { .. }),
-                    ),
+                    _ => validate_value_expression(value, scopes, issues),
                 }
                 let inferred = value.ty.clone();
                 let binding_type = declared_type
                     .as_ref()
                     .map_or_else(|| inferred.clone(), TypeName::ark_type);
-                if declared_type.is_some()
-                    && !matches!(&inferred, ArkType::Array(element, _) if **element == ArkType::Unknown)
-                    && inferred != ArkType::Unknown
+                if issues.len() == first
+                    && declared_type.is_some()
                     && !binding_types_compatible(&binding_type, &inferred)
                 {
                     issues.push(ValidationIssue::error(format!(
@@ -249,7 +237,10 @@ fn validate_binding_statements(
                 };
                 let composite_target =
                     matches!(target_type, Some(ArkType::Struct(_) | ArkType::Array(..)));
-                validate_binding_expression(value, scopes, issues, !composite_target);
+                let before = issues.len();
+                let value_position = !composite_target || value.ty == ArkType::Void;
+                validate_binding_expression(value, scopes, issues, value_position);
+                let valid = issues.len() == before;
                 if let (
                     Some(expected),
                     ExprKind::StructLiteral { name: None, .. } | ExprKind::ArrayLiteral(_),
@@ -263,11 +254,13 @@ fn validate_binding_statements(
                         issues,
                     );
                 }
-                // Array literal elements are checked against the target's complete shape.
-                let inferred = if matches!(&value.kind, ExprKind::ArrayLiteral(_)) {
-                    ArkType::Unknown
-                } else {
-                    value.ty.clone()
+                // Array literal elements are checked against the target's complete shape. A
+                // target left untyped by its failed initializer was reported there.
+                let changes = |target: &ArkType| {
+                    valid
+                        && *target != ArkType::Unknown
+                        && !matches!(&value.kind, ExprKind::ArrayLiteral(_))
+                        && !binding_types_compatible(target, &value.ty)
                 };
                 match target {
                     AssignmentTarget::Access(access) => {
@@ -275,12 +268,8 @@ fn validate_binding_statements(
                         validate_binding_expression(access, scopes, issues, !composite_target);
                         // An invalid access already explains the target.
                         if issues.len() == before {
-                            let expected = access.ty.clone();
-                            if expected != ArkType::Unknown
-                                && inferred != ArkType::Unknown
-                                && !binding_types_compatible(&expected, &inferred)
-                            {
-                                issues.push(ValidationIssue::error(format!("assignment to an indexed field changes its type from '{}' to '{}'", expected.as_str(), inferred.as_str())));
+                            if changes(&access.ty) {
+                                issues.push(ValidationIssue::error(format!("assignment to an indexed field changes its type from '{}' to '{}'", access.ty.as_str(), value.ty.as_str())));
                             }
                             match access
                                 .binding_path()
@@ -309,44 +298,48 @@ fn validate_binding_statements(
                                 "cannot assign to compile-time loop variable '{name}'"
                             )));
                         }
-                        Some(binding)
-                            if inferred != ArkType::Unknown
-                                && binding.binding_type != ArkType::Unknown
-                                && !binding_types_compatible(&binding.binding_type, &inferred) =>
-                        {
+                        Some(binding) if changes(&binding.binding_type) => {
                             issues.push(ValidationIssue::error(format!(
                                 "assignment to '{}' changes its type from '{}' to '{}'",
                                 name,
                                 binding.binding_type.as_str(),
-                                inferred.as_str()
+                                value.ty.as_str()
                             )));
                         }
                         Some(_) => {}
                     },
                     AssignmentTarget::ArrayIndex { array, index } => {
-                        if let Some((element_type, source)) =
-                            validate_array_index(&array.key(), &array.key(), index, scopes, issues)
+                        let before = issues.len();
+                        validate_binding_expression(index, scopes, issues, true);
+                        if let Some((element_type, source)) = (issues.len() == before)
+                            .then(|| {
+                                validate_array_index(
+                                    &array.key(),
+                                    &array.key(),
+                                    index,
+                                    scopes,
+                                    issues,
+                                )
+                            })
+                            .flatten()
                         {
                             if source == BindingSource::Loop {
                                 issues.push(ValidationIssue::error(format!(
                                     "cannot assign to compile-time loop variable '{array}'"
                                 )));
-                            } else if inferred != ArkType::Unknown
-                                && element_type != ArkType::Unknown
-                                && !binding_types_compatible(&element_type, &inferred)
-                            {
+                            } else if changes(&element_type) {
                                 issues.push(ValidationIssue::error(format!(
                                     "assignment to an element of '{}' changes its type from '{}' to '{}'",
                                     array,
                                     element_type.as_str(),
-                                    inferred.as_str()
+                                    value.ty.as_str()
                                 )));
                             }
                         }
-                        validate_binding_expression(index, scopes, issues, true);
                     }
                 }
-                if issues.len() == first {
+                // A value whose error is reported elsewhere still initializes the target.
+                if issues[first..].iter().all(|issue| issue.code == "reported") {
                     if let AssignmentTarget::Binding(name) = target {
                         let name = name.key();
                         if let Some(frame) = scopes
@@ -375,7 +368,7 @@ fn validate_binding_statements(
             } => {
                 validate_binding_expression(condition, scopes, issues, true);
                 let condition_type = condition.ty.clone();
-                if condition_type != ArkType::Bool {
+                if issues.len() == first && condition_type != ArkType::Bool {
                     issues.push(ValidationIssue::error(format!(
                         "if condition has type '{}', expected bool; use an explicit comparison",
                         condition_type.as_str()
@@ -547,7 +540,7 @@ pub(super) fn validate_named_binding(
         ))),
         Some(binding)
             if expected.as_ref().is_some_and(|expected| {
-                binding.binding_type != *expected && binding.binding_type != ArkType::Unknown
+                binding.binding_type != *expected
             }) =>
         {
             issues.push(ValidationIssue::error(format!(

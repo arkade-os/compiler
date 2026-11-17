@@ -14,7 +14,7 @@ pub(super) fn validate_binding_requirement(
     // A bare group lookup verifies the asset group exists; its index is dropped.
     if issues.len() == before
         && !matches!(&expression.kind, ExprKind::GroupLookup { .. })
-        && !matches!(condition, ArkType::Bool | ArkType::Unknown)
+        && condition != ArkType::Bool
     {
         issues.push(
             ValidationIssue::type_error(format!(
@@ -46,9 +46,7 @@ fn validate_comparison(
     let bytes_like = crate::types::is_bytes_like;
     let compatible = match op.class() {
         class if composite && class != OperatorClass::Equality => false,
-        _ if issues.len() != before || *left == ArkType::Unknown || *right == ArkType::Unknown => {
-            return
-        }
+        _ if issues.len() != before => return,
         // An array literal takes its type only from a typed array peer, and emission needs every
         // element's type; against a struct it is a mismatch instead.
         _ if matches!((left, right), (ArkType::Array(..), ArkType::Array(..)))
@@ -117,15 +115,12 @@ pub(super) fn validate_binding_expression(
             "{kind} expressions are composite values and cannot be used here",
         )));
     }
-    if value_position
-        && matches!(
-            &expression.kind,
-            ExprKind::GroupIOAccess { property: None, .. }
-        )
+    if let (true, ArkType::Void, ExprKind::Call { name, .. }) =
+        (value_position, &expression_type, &expression.kind)
     {
-        issues.push(ValidationIssue::error(
-            "expression does not produce one stack item",
-        ));
+        issues.push(ValidationIssue::error(format!(
+            "function '{name}' does not return a value"
+        )));
     }
     // An input's kind is only known at runtime, so `txid` on a local input fails the
     // spend like `controlAssetId` without control; a type check before `||`/`&&` guards it.
@@ -141,6 +136,25 @@ pub(super) fn validate_binding_expression(
             "asset group output records have no txid",
         ));
     }
+    // A record value leaves out the txid, which only an intent input has.
+    let record = match &expression.kind {
+        ExprKind::FieldAccess { value, field } if field == "txid" => Some(value.ty.clone()),
+        ExprKind::Name(path) => path
+            .split_last()
+            .filter(|&(_, field)| field == "txid")
+            .and_then(|(record, _)| find_binding(scopes, &record.key()))
+            .map(|binding| binding.binding_type.clone()),
+        _ => None,
+    };
+    match record.as_ref().map(ArkType::as_str).as_deref() {
+        Some("AssetGroupInput") => issues.push(ValidationIssue::error(
+            "asset group input records have no txid; read it with g.inputs[j].txid, which fails the spend on a local input",
+        )),
+        Some("AssetGroupOutput") => issues.push(ValidationIssue::error(
+            "asset group output records have no txid",
+        )),
+        _ => {}
+    }
 
     if let ExprKind::FieldAccess { value, .. } | ExprKind::IndexAccess { value, .. } =
         &expression.kind
@@ -155,15 +169,28 @@ pub(super) fn validate_binding_expression(
         }
     }
 
+    // Operands are checked first, and an expression over an invalid one reports nothing
+    // more; comparisons and accesses check their own operands.
+    let compares = matches!(&expression.kind, ExprKind::BinaryOp { op, .. } if op.compares());
+    if !compares
+        && !matches!(
+            &expression.kind,
+            ExprKind::FieldAccess { .. } | ExprKind::IndexAccess { .. }
+        )
+    {
+        validate_operands(expression, scopes, issues);
+    }
+    if issues.len() != first {
+        locate(&mut issues[first..], expression.span);
+        return;
+    }
     let registered_builtin = operands::operands(expression);
-    let mut children_checked = false;
 
     match &expression.kind {
         ExprKind::BinaryOp { left, op, right } if op.class() == OperatorClass::Bytewise => {
             for operand in [left, right] {
                 let actual = operand.ty.clone();
-                if actual != ArkType::Unknown && !binding_types_compatible(&ArkType::Bytes, &actual)
-                {
+                if !binding_types_compatible(&ArkType::Bytes, &actual) {
                     issues.push(
                         ValidationIssue::error(format!(
                             "bytewise '{op}' operand has type '{}', expected 'bytes'",
@@ -203,7 +230,7 @@ pub(super) fn validate_binding_expression(
                 for ((side, operand), actual) in
                     [("left", left), ("right", right)].iter().zip(&types)
                 {
-                    if *actual != ArkType::Unknown && !crate::types::is_bytes_like(actual) {
+                    if !crate::types::is_bytes_like(actual) {
                         let hint = match actual {
                             ArkType::Int => "convert it explicitly with bytes(value) for minimal Script-number encoding or int2bytes(value, width) for fixed-width encoding",
                             ArkType::Bool => "convert it explicitly with bytes(value) for minimal Script-number encoding",
@@ -220,7 +247,7 @@ pub(super) fn validate_binding_expression(
                 }
             }
             for (operand, actual) in [left, right].iter().zip(&types).filter(|_| !concat) {
-                if *actual != expected && *actual != ArkType::Unknown {
+                if *actual != expected {
                     issues.push(
                         ValidationIssue::error(format!(
                             "{kind} '{}' operand has type '{}', expected '{}'",
@@ -251,14 +278,12 @@ pub(super) fn validate_binding_expression(
             }
         }
         ExprKind::BinaryOp { left, op, right } if op.compares() => {
-            let span = expression.span;
-            validate_comparison(left, *op, right, span, scopes, issues);
-            children_checked = true;
+            validate_comparison(left, *op, right, expression.span, scopes, issues);
         }
         ExprKind::Unary { op, value } => {
             let (operator, expected) = (op.symbol(), ArkType::parse(op.operand_type()));
             let actual = value.ty.clone();
-            if actual != ArkType::Unknown && !binding_types_compatible(&expected, &actual) {
+            if !binding_types_compatible(&expected, &actual) {
                 issues.push(
                     ValidationIssue::error(format!(
                         "unary '{}' operand has type '{}', expected '{}'",
@@ -294,9 +319,6 @@ pub(super) fn validate_binding_expression(
                     }
                     None => ArkType::parse(declared),
                 };
-                // Composite operands are emitted field by field, so their type must be known.
-                let known = actual != ArkType::Unknown
-                    || matches!(expected, ArkType::Struct(_) | ArkType::Array(..));
                 // A struct literal is checked against the parameter type; signatures name
                 // only native structs.
                 if matches!(&operand.kind, ExprKind::StructLiteral { .. }) {
@@ -322,9 +344,7 @@ pub(super) fn validate_binding_expression(
                                 &format!("{name} operand, element {index}"),
                                 issues,
                             );
-                        } else if actual != &ArkType::Unknown
-                            && !binding_types_compatible(element, actual)
-                        {
+                        } else if !binding_types_compatible(element, actual) {
                             issues.push(
                                 ValidationIssue::error(format!(
                                     "{name} '{}' has type '{}', expected '{}'",
@@ -347,7 +367,7 @@ pub(super) fn validate_binding_expression(
                     }
                     continue;
                 }
-                if known && !binding_types_compatible(&expected, &actual) {
+                if !binding_types_compatible(&expected, &actual) {
                     issues.push(
                         ValidationIssue::error(format!(
                             "{name} operand has type '{}', expected '{}'",
@@ -473,7 +493,6 @@ pub(super) fn validate_binding_expression(
             // Same-type casts are no-ops; emission drops them.
             if actual != source
                 && !binding_types_compatible(&ArkType::parse(target), &actual)
-                && actual != ArkType::Unknown
                 && !(target == "bytes" && actual == ArkType::Bool)
             {
                 issues.push(ValidationIssue::error(format!(
@@ -578,14 +597,13 @@ pub(super) fn validate_binding_expression(
                             expression.source_text()
                         )));
                     }
-                } else if expression.ty == ArkType::Unknown && value.ty != ArkType::Unknown {
+                } else if expression.ty == ArkType::Unknown {
                     issues.push(ValidationIssue::error(format!(
                         "value of type '{}' has no field '{field}'",
                         value.ty.as_str()
                     )));
                 }
             }
-            children_checked = true;
         }
         ExprKind::IndexAccess { value, index } => {
             let before = issues.len();
@@ -605,14 +623,12 @@ pub(super) fn validate_binding_expression(
                     (None, ArkType::Array(_, length)) => {
                         validate_index(index, Some((value.ty.as_str(), *length)), scopes, issues)
                     }
-                    (None, ArkType::Unknown) => {}
                     (None, actual) => issues.push(ValidationIssue::error(format!(
                         "value of type '{}' is not an array",
                         actual.as_str()
                     ))),
                 }
             }
-            children_checked = true;
         }
         ExprKind::ArrayIndex { array, index } => {
             validate_array_index(&array.key(), &array.key(), index, scopes, issues);
@@ -647,11 +663,25 @@ pub(super) fn validate_binding_expression(
         }
         _ => {}
     }
-
-    locate(&mut issues[first..], expression.span);
-    if children_checked {
-        return;
+    // An untyped expression's error is reported where it arises: a name by the checks
+    // above, an unknown function by `validate_calls`, a literal by the check of its
+    // position, anything else by the backstop in `validate_ast`. The marker keeps
+    // enclosing checks from reporting it again.
+    if issues.len() == first
+        && expression.ty == ArkType::Unknown
+        && !matches!(&expression.kind, ExprKind::StructLiteral { .. })
+    {
+        issues.push(ValidationIssue::reported());
     }
+    locate(&mut issues[first..], expression.span);
+}
+
+/// Validate the operands of `expression`, each as a value unless the operator takes it whole.
+fn validate_operands(
+    expression: &Expression,
+    scopes: &BindingScopes,
+    issues: &mut Vec<ValidationIssue>,
+) {
     for child in child_exprs(expression) {
         if matches!(
             &expression.kind,
@@ -660,8 +690,6 @@ pub(super) fn validate_binding_expression(
                 | ExprKind::StructLiteral { .. }
                 | ExprKind::ArrayLiteral(_)
                 | ExprKind::Tunnel { .. }
-                | ExprKind::FieldAccess { .. }
-                | ExprKind::IndexAccess { .. }
                 // Their AssetId operand is a whole struct.
                 | ExprKind::AssetLookup { .. }
                 | ExprKind::AssetHas { .. }
@@ -742,7 +770,7 @@ fn validate_index(
     issues: &mut Vec<ValidationIssue>,
 ) {
     let index_type = index.ty.clone();
-    if !matches!(index_type, ArkType::Int | ArkType::Unknown) {
+    if index_type != ArkType::Int {
         issues.push(
             ValidationIssue::error(format!(
                 "array index has type '{}', expected 'int'",

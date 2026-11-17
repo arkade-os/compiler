@@ -87,6 +87,8 @@ function expandFields(name, typeStr, isInjected, structs = []) {
         ScriptPubKey: [{ name: 'program', type: 'bytes' }, { name: 'version', type: 'int' }],
         AssetEntry: [{ name: 'assetId', type: 'AssetId' }, { name: 'amount', type: 'int' }],
         AssetLookup: [{ name: 'amount', type: 'int' }, { name: 'found', type: 'bool' }],
+        AssetGroupInput: [{ name: 'type', type: 'int' }, { name: 'index', type: 'int' }, { name: 'amount', type: 'int' }],
+        AssetGroupOutput: [{ name: 'type', type: 'int' }, { name: 'index', type: 'int' }, { name: 'amount', type: 'int' }],
         G2Point: [
             { name: 'xC1', type: 'int' }, { name: 'xC0', type: 'int' },
             { name: 'yC1', type: 'int' }, { name: 'yC0', type: 'int' },

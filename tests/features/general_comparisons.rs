@@ -90,7 +90,7 @@ fn composite_comparison_expressions_validate_operand_types() {
         .expect_err("composite ordering is invalid even with a literal").to_string();
     assert!(error.contains("not defined"), "{error}");
     let ordering = &["'<' is not defined", "'right.missing' is undefined"][..];
-    let record = &["does not produce one stack item"][..];
+    let record = &["'==' is not defined between 'Item' and 'AssetGroupOutput'"][..];
     for (comparison, diagnostics) in [
         ("left < right.missing", ordering),
         ("true || (left < right.missing)", ordering),

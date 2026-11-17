@@ -491,6 +491,16 @@ pub enum GroupIOSource {
     Outputs,
 }
 
+impl GroupIOSource {
+    /// The native struct of a record read without a property.
+    pub fn record_type(&self) -> &'static str {
+        match self {
+            GroupIOSource::Inputs => "AssetGroupInput",
+            GroupIOSource::Outputs => "AssetGroupOutput",
+        }
+    }
+}
+
 /// An expression with the byte range of the source text it came from.
 /// Nodes the compiler builds in place of another keep that node's span.
 #[derive(Debug, Clone)]
@@ -664,12 +674,12 @@ pub enum ExprKind {
     /// Asset groups length: tx.assetGroups.length → csn
     AssetGroupsLength,
     /// Per-group input/output access: group.inputs[j] or group.outputs[j]
-    /// Returns: type_u8, data..., amount_u64 based on input/output type
     GroupIOAccess {
         group: Box<Expression>,
         io_index: Box<Expression>,
         source: GroupIOSource,
-        property: Option<crate::properties::GroupIoProperty>, // None returns the raw record
+        // None is the whole record: an `AssetGroupInput` or `AssetGroupOutput`
+        property: Option<crate::properties::GroupIoProperty>,
     },
     // ─── Arithmetic ────────────────────────────────────────────────────
     /// Prefix operator: -value, !value or ~value
@@ -727,6 +737,11 @@ pub fn expression_result_struct(expression: &Expression) -> Option<&'static str>
         ExprKind::AssetTryLookup { .. } => Some("AssetLookup"),
         ExprKind::ContractInstance { .. } => Some("ScriptPubKey"),
         ExprKind::GroupProperty { property, .. } => Some(property.value_type()),
+        ExprKind::GroupIOAccess {
+            source,
+            property: None,
+            ..
+        } => Some(source.record_type()),
         ExprKind::InputIntrospection { property, .. } => Some(property.value_type()),
         ExprKind::OutputIntrospection { property, .. } => Some(property.value_type()),
         _ => None,

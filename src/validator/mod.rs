@@ -92,6 +92,14 @@ impl ValidationIssue {
             ..Self::error(message)
         }
     }
+
+    /// Marks an expression whose error is reported elsewhere; `validate_ast` drops it.
+    fn reported() -> Self {
+        Self {
+            code: "reported",
+            ..Self::error("")
+        }
+    }
 }
 
 /// Positions issues that a nested statement has not already positioned.
@@ -115,8 +123,8 @@ fn locate(issues: &mut [ValidationIssue], span: crate::diagnostics::Span) {
 /// - Tapscript inputs do not collide with reserved arkd names.
 /// - Asset ID operands have the expected txid/gidx types.
 ///
-/// Reads `Expression::ty`, so `types::annotate` must run first; on an
-/// unannotated contract every type is `Unknown` and type checks pass vacuously.
+/// Reads `Expression::ty`, so `types::annotate` must run first; an expression it
+/// leaves `Unknown` is an error.
 pub(crate) fn validate_ast(contract: &Contract, require_entrypoint: bool) -> Vec<ValidationIssue> {
     let mut issues = Vec::new();
 
@@ -266,8 +274,54 @@ pub(crate) fn validate_ast(contract: &Contract, require_entrypoint: bool) -> Vec
             }
         }
     }
+    // Errors leave their expressions `Unknown`, so this backstop runs only on a clean contract.
+    issues.retain(|issue| issue.code != "reported");
+    if issues.is_empty() {
+        for function in contract.functions.iter().filter(|f| !f.is_imported()) {
+            check_typed(&function.statements, &mut issues);
+        }
+    }
 
     issues
+}
+
+/// Reports each innermost expression `types::annotate` left `Unknown`; every type
+/// check reads `Expression::ty`, so none of them may have passed over it.
+fn check_typed(statements: &[LocatedStatement], issues: &mut Vec<ValidationIssue>) {
+    fn visit(expression: &Expression, issues: &mut Vec<ValidationIssue>) {
+        let children = child_exprs(expression);
+        if expression.ty == ArkType::Unknown && children.iter().all(|c| c.ty != ArkType::Unknown) {
+            issues.push(
+                ValidationIssue::type_error(format!(
+                    "cannot infer the type of '{}'",
+                    expression.source_text()
+                ))
+                .at(expression.span),
+            );
+        }
+        children.into_iter().for_each(|child| visit(child, issues));
+    }
+    for statement in statements {
+        statement
+            .statement
+            .expressions()
+            .into_iter()
+            .for_each(|value| visit(value, issues));
+        match &statement.statement {
+            Statement::IfElse {
+                then_body,
+                else_body,
+                ..
+            } => {
+                check_typed(then_body, issues);
+                check_typed(else_body.as_deref().unwrap_or_default(), issues);
+            }
+            Statement::ForIn { body, .. } | Statement::ForCount { body, .. } => {
+                check_typed(body, issues)
+            }
+            _ => {}
+        }
+    }
 }
 
 fn check_struct_definitions(contract: &Contract, issues: &mut Vec<ValidationIssue>) {
@@ -898,6 +952,65 @@ contract Demo() {
             updated_at: None,
             fingerprint: None,
             warnings: vec![],
+        }
+    }
+
+    #[test]
+    fn examples_are_fully_typed_and_values_without_a_type_are_rejected() {
+        fn ark_files(directory: &std::path::Path, paths: &mut Vec<std::path::PathBuf>) {
+            for entry in std::fs::read_dir(directory).unwrap() {
+                let path = entry.unwrap().path();
+                if path.is_dir() {
+                    ark_files(&path, paths);
+                } else if path.extension().is_some_and(|e| e == "ark") {
+                    paths.push(path);
+                }
+            }
+        }
+        let mut paths = Vec::new();
+        ark_files(
+            &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("examples"),
+            &mut paths,
+        );
+        assert!(!paths.is_empty());
+        for path in paths {
+            let analysis = crate::analyze_file(&path);
+            let contract = analysis
+                .contract()
+                .unwrap_or_else(|| panic!("{} does not compile", path.display()));
+            let mut issues = Vec::new();
+            for function in contract.functions.iter().filter(|f| !f.is_imported()) {
+                check_typed(&function.statements, &mut issues);
+            }
+            assert!(issues.is_empty(), "{}: {issues:?}", path.display());
+        }
+
+        let group = "let g = tx.assetGroups.lookup(aid);";
+        for (statement, message) in [
+            (
+                format!("{group} require(sha256(pk) == g.inputs[0]);"),
+                "not defined between 'bytes32' and 'AssetGroupInput'",
+            ),
+            (
+                format!("{group} S s = {{ a: 1 }}; s = g.outputs[0];"),
+                "changes its type from 'S' to 'AssetGroupOutput'",
+            ),
+            (
+                "require({ a: 1 } == { a: 2 });".to_string(),
+                "struct literals may only initialize typed struct declarations",
+            ),
+            (
+                "require(check(pk));".to_string(),
+                "function 'check' does not return a value",
+            ),
+        ] {
+            let source = format!(
+                "struct S {{ int a; }} contract C(pubkey pk, AssetId aid) {{ \
+                 private function check(pubkey k) {{ require(k == pk); }} \
+                 function spend(signature sig) {{ {statement} require(checkSig(sig, pk)); }} }}"
+            );
+            let error = crate::compile(&source).expect_err(&statement).to_string();
+            assert!(error.contains(message), "{statement}: {error}");
         }
     }
 

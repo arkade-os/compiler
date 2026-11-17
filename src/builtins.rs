@@ -614,7 +614,7 @@ const SPELLED: &[Spelled] = &[
     Spelled {
         name: "tx.assetGroups[].inputs",
         params: None,
-        ty: Some("GroupInput[]"),
+        ty: Some("AssetGroupInput[]"),
         index: Some("j"),
         tapscript: false,
         doc: "The group's input records.",
@@ -622,7 +622,7 @@ const SPELLED: &[Spelled] = &[
     Spelled {
         name: "tx.assetGroups[].outputs",
         params: None,
-        ty: Some("GroupOutput[]"),
+        ty: Some("AssetGroupOutput[]"),
         index: Some("j"),
         tapscript: false,
         doc: "The group's output records.",
