@@ -4,36 +4,25 @@ use super::bindings::{
 use super::*;
 
 pub(super) fn validate_binding_requirement(
-    requirement: &Requirement,
+    expression: &Expression,
     scopes: &BindingScopes,
     issues: &mut Vec<ValidationIssue>,
 ) {
-    match requirement {
-        Requirement::Expression(expression) => {
-            let before = issues.len();
-            validate_binding_expression(expression, scopes, issues, true);
-            let condition = expression.ty.clone();
-            // A bare group lookup verifies the asset group exists; its index is dropped.
-            if issues.len() == before
-                && !matches!(&expression.kind, ExprKind::GroupLookup { .. })
-                && !matches!(condition, ArkType::Bool | ArkType::Unknown)
-            {
-                issues.push(
-                    ValidationIssue::type_error(format!(
-                        "require condition has type '{}', expected bool",
-                        condition.as_str()
-                    ))
-                    .at(expression.span),
-                );
-            }
-        }
-        Requirement::Comparison { left, op, right } => {
-            let span = crate::diagnostics::Span {
-                start: left.span.start,
-                end: right.span.end,
-            };
-            validate_comparison(left, *op, right, span, scopes, issues);
-        }
+    let before = issues.len();
+    validate_binding_expression(expression, scopes, issues, true);
+    let condition = expression.ty.clone();
+    // A bare group lookup verifies the asset group exists; its index is dropped.
+    if issues.len() == before
+        && !matches!(&expression.kind, ExprKind::GroupLookup { .. })
+        && !matches!(condition, ArkType::Bool | ArkType::Unknown)
+    {
+        issues.push(
+            ValidationIssue::type_error(format!(
+                "require condition has type '{}', expected bool",
+                condition.as_str()
+            ))
+            .at(expression.span),
+        );
     }
 }
 

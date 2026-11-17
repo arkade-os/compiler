@@ -301,34 +301,6 @@ pub(crate) fn parse_primary_expr(pair: Pair<Rule>) -> Result<Expression, String>
     }
 }
 
-/// Parse a complex expression into a Requirement AST node
-pub(crate) fn parse_complex_expression(pair: Pair<Rule>) -> Result<Requirement, String> {
-    match pair.as_rule() {
-        Rule::general_expression => {
-            let expression = parse_general_expression(pair)?;
-            let span = expression.span;
-            if let ExprKind::BinaryOp { left, op, right } = expression.kind {
-                if op.compares() {
-                    return Ok(Requirement::Comparison {
-                        left: *left,
-                        op,
-                        right: *right,
-                    });
-                }
-                return Ok(Requirement::Expression(Expression::new(
-                    ExprKind::BinaryOp { left, op, right },
-                    span,
-                )));
-            }
-            Ok(Requirement::Expression(expression))
-        }
-        _ => Err(format!(
-            "Unexpected rule in complex expression: {:?}",
-            pair.as_rule()
-        )),
-    }
-}
-
 // ─── Byte-string Manipulation Parsing ──────────────────────────────────
 
 pub(crate) fn parse_property_access(pair: Pair<Rule>) -> Result<Expression, String> {

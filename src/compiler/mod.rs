@@ -1,8 +1,8 @@
 use crate::diagnostics::{CompileError, Diagnostic, Span};
 use crate::models::{
     ArkadeCovenant, AssignmentTarget, CompilerInfo, Contract, ContractJson, ExprKind, Expression,
-    Function, FunctionInput, LocatedStatement, Parameter, Path, Requirement, Segment, SourceRange,
-    Statement, TypeName,
+    Function, FunctionInput, LocatedStatement, Parameter, Path, Segment, SourceRange, Statement,
+    TypeName,
 };
 use crate::opcodes::Opcode::{
     self, Add, Bin2Num, BoolAnd, Cat, CheckSig, CheckSigAdd, Drop, Dup, EcPairing, Else, EndIf,

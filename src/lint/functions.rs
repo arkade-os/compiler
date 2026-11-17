@@ -9,7 +9,7 @@ use crate::compiler::tapscript::shared_tweak_func;
 use crate::diagnostics::Span;
 use crate::models::{
     AssetLookupSource, Contract, ExprKind, Expression, Function, KeyExpr, LocatedStatement,
-    Requirement, Statement, TapItem, EMULATOR,
+    Statement, TapItem, EMULATOR,
 };
 use crate::properties::{OutputProperty, ThisProperty, TxProperty};
 
@@ -287,12 +287,8 @@ fn report(function: &Function, facts: &Facts, findings: &mut Vec<Finding>) {
 
 impl<'a> Visitor<'a> for Facts {
     fn statement(&mut self, statement: &'a LocatedStatement) {
-        let Statement::Require(requirement) = &statement.statement else {
-            return;
-        };
-        self.path.never_passes |= never_passes(requirement);
-        if let Requirement::Comparison { left, right, .. } = requirement {
-            self.bounds_inputs |= [left, right].iter().any(|side| is_active_input(side));
+        if let Statement::Require(condition) = &statement.statement {
+            self.path.never_passes |= never_passes(condition);
         }
     }
 
@@ -469,17 +465,9 @@ fn find_witness_choices(
 }
 
 /// A requirement the constant folder evaluates to false, as in a disabled function.
-fn never_passes(requirement: &Requirement) -> bool {
-    let condition = match requirement {
-        Requirement::Expression(value) => value.clone(),
-        Requirement::Comparison { left, op, right } => left.with_kind(ExprKind::BinaryOp {
-            left: Box::new(left.clone()),
-            op: *op,
-            right: Box::new(right.clone()),
-        }),
-    };
+fn never_passes(condition: &Expression) -> bool {
     let mut no_names = |_: &crate::models::Path| Err(String::new());
-    crate::compiler::constants::evaluate(&condition, &mut no_names).as_deref() == Ok("false")
+    crate::compiler::constants::evaluate(condition, &mut no_names).as_deref() == Ok("false")
 }
 
 fn is_active_input(expression: &Expression) -> bool {

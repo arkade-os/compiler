@@ -681,13 +681,13 @@ fn parse_statement(
                     .into())
                 }
             };
-            let requirement = parse_complex_expression(expr)?;
+            let condition = parse_general_expression(expr)?;
 
             if let Some(text) = inner.next() {
                 message = Some(parse_string_literal(text.as_str())?);
             }
 
-            Statement::Require(requirement)
+            Statement::Require(condition)
         }
         Rule::let_binding => {
             let mut inner = pair.into_inner();
@@ -933,7 +933,7 @@ pub(crate) fn parse_parameters(params: Pair<Rule>) -> Result<Vec<Parameter>, Str
 mod tests {
     use super::parse;
     use crate::models::{
-        AssignmentTarget, Attribute, AttributeArg, ExprKind, Expression, Requirement, Statement,
+        AssignmentTarget, Attribute, AttributeArg, ExprKind, Expression, Statement,
     };
     use crate::operators::UnaryOperator;
 
@@ -1024,15 +1024,17 @@ mod tests {
             assert!(matches!(&iterable.kind, ExprKind::Name(path) if path.key() == name));
             assert_eq!(body.len(), length);
         }
-        let Statement::Require(Requirement::Comparison { left, right, .. }) =
-            &statements[5].statement
+        let Statement::Require(Expression {
+            kind: ExprKind::BinaryOp { left, right, .. },
+            ..
+        }) = &statements[5].statement
         else {
             panic!("{:?}", statements[5]);
         };
         let ExprKind::Call { args, .. } = &left.kind else {
             panic!("{left:?}");
         };
-        for literal in [&args[0], right] {
+        for literal in [&args[0], &**right] {
             assert!(
                 matches!(&literal.kind, ExprKind::StructLiteral { name: Some(name), .. } if name == "AssetId")
             );
@@ -1121,11 +1123,9 @@ mod tests {
         let mut nodes = Vec::new();
         for statement in &contract.functions[0].statements {
             match &statement.statement {
-                Statement::Require(Requirement::Comparison { left, right, .. }) => {
-                    walk(left, &mut nodes);
-                    walk(right, &mut nodes);
+                Statement::Require(value) | Statement::LetBinding { value, .. } => {
+                    walk(value, &mut nodes)
                 }
-                Statement::LetBinding { value, .. } => walk(value, &mut nodes),
                 other => panic!("unexpected statement {other:?}"),
             }
         }
@@ -1356,7 +1356,8 @@ contract C(pubkey k, int unused) {
             matches!(&statements[1].statement, Statement::LetBinding { value: Expression { kind: ExprKind::Literal(value), .. }, .. } if value == "0xc5be0a")
         );
         assert!(
-            matches!(&statements[2].statement, Statement::Require(Requirement::Comparison { left: Expression { kind: ExprKind::Literal(left), .. }, right: Expression { kind: ExprKind::Literal(right), .. }, .. }) if left == "0x68656c6c6f" && left == right)
+            matches!(&statements[2].statement, Statement::Require(Expression { kind: ExprKind::BinaryOp { left, right, .. }, .. })
+                if matches!((&left.kind, &right.kind), (ExprKind::Literal(left), ExprKind::Literal(right)) if left == "0x68656c6c6f" && left == right))
         );
     }
 
@@ -1424,7 +1425,7 @@ contract C(pubkey k, int unused) {
         assert!(matches!(&right.kind, ExprKind::BinaryOp { left, op, .. }
             if op.symbol() == "&&" && matches!(&left.kind, ExprKind::BinaryOp { op, .. } if op.symbol() == "&&")));
         assert!(matches!(&contract.functions[0].statements[1].statement,
-            Statement::Require(Requirement::Expression(Expression { kind: ExprKind::BinaryOp { left, op, right }, .. }))
+            Statement::Require(Expression { kind: ExprKind::BinaryOp { left, op, right }, .. })
             if op.symbol() == "&&"
                 && matches!(&left.kind, ExprKind::BinaryOp { op, .. } if op.symbol() == "||")
                 && matches!(&right.kind, ExprKind::Unary { op: UnaryOperator::Not, value }
@@ -1483,7 +1484,7 @@ contract C() {
         let statements = &contract.functions[0].statements;
         assert!(matches!(
             &statements[0].statement,
-            Statement::Require(Requirement::Expression(Expression { kind: ExprKind::Builtin { builtin, args }, .. }))
+            Statement::Require(Expression { kind: ExprKind::Builtin { builtin, args }, .. })
                 if builtin.name == "checkSig" && matches!(&args[1].kind, ExprKind::IndexAccess { .. })
                     && args[1].source_text() == "signers[i + 1].keys[0]"
         ));
@@ -1504,8 +1505,10 @@ contract C() {
         } }";
         let contract = parse(source).unwrap();
         let statements = &contract.functions[0].statements;
-        let Statement::Require(Requirement::Comparison { left, right, .. }) =
-            &statements[0].statement
+        let Statement::Require(Expression {
+            kind: ExprKind::BinaryOp { left, right, .. },
+            ..
+        }) = &statements[0].statement
         else {
             panic!("{:?}", statements[0].statement);
         };
@@ -1528,7 +1531,7 @@ contract C() {
         // A grouped binding keeps its binding path.
         assert!(matches!(
             &statements[1].statement,
-            Statement::Require(Requirement::Comparison { left, .. })
+            Statement::Require(Expression { kind: ExprKind::BinaryOp { left, .. }, .. })
                 if matches!(&left.kind, ExprKind::Name(path) if path.key() == "p.x")
         ));
     }
@@ -1613,7 +1616,7 @@ contract Demo(pubkey first, pubkey second) {
         ));
         assert!(matches!(
             &statements[2].statement,
-            Statement::Require(Requirement::Expression(Expression { kind: ExprKind::Builtin { builtin, args }, .. }))
+            Statement::Require(Expression { kind: ExprKind::Builtin { builtin, args }, .. })
                 if builtin.name == "checkMultisig" && args.len() == 2
                     && matches!(&args[0].kind, ExprKind::ArrayLiteral(keys) if keys.iter().map(Expression::source_text).eq(["first", "second"]))
                     && matches!(&args[1].kind, ExprKind::ArrayLiteral(sigs) if sigs.iter().map(Expression::source_text).eq(["firstSig", "secondSig"]))
@@ -1645,7 +1648,7 @@ contract Demo() {
         for body in [then_body, else_body] {
             assert!(matches!(
                 &body[0].statement,
-                Statement::Require(Requirement::Expression(Expression { kind: ExprKind::Builtin { builtin, args }, .. }))
+                Statement::Require(Expression { kind: ExprKind::Builtin { builtin, args }, .. })
                     if builtin.name == "checkMultisig" && matches!(&args[2].kind, ExprKind::Name(path) if path.key() == "QUORUM")
             ));
         }

@@ -351,7 +351,7 @@ pub(crate) fn emit_binary_op_asm(
 }
 
 /// The opcodes applying a non-logical `op` to `left` and `right`.
-pub(crate) fn operator_opcodes(
+fn operator_opcodes(
     op: BinaryOperator,
     left: &Expression,
     right: &Expression,

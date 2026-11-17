@@ -97,8 +97,8 @@ fn validate_binding_statements(
                 validate_value_expression(expression, scopes, issues)
             }
             Statement::Return(None) => {}
-            Statement::Require(requirement) => {
-                validate_binding_requirement(requirement, scopes, issues);
+            Statement::Require(condition) => {
+                validate_binding_requirement(condition, scopes, issues);
             }
             Statement::Declaration {
                 name,
