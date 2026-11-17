@@ -131,8 +131,7 @@ pub fn user_signatures(out: &ContractJson, group_name: &str) -> Vec<String> {
 /// Whether `lint` judges a covenant's authorization or outputs; the toy contracts of tests for
 /// other features have neither, so those tests leave such lints out.
 pub fn is_covenant_lint(lint: arkade_compiler::lint::Lint) -> bool {
-    use arkade_compiler::lint::{Category, Lint};
-    lint.category() == Category::Security || lint == Lint::OffchainLocktime
+    lint.category() == arkade_compiler::lint::Category::Security
 }
 
 /// `out`'s warnings except covenant lints.

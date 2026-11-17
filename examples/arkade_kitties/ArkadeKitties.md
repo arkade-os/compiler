@@ -158,8 +158,11 @@ contract BreedCommit(
         feeOutputIndex: int,
         // the script for the new Kitty owner
         newKittyOwner: ScriptPubKey,
+        // Unix time in seconds after which the parents can be refunded
+        expirationTime: int,
     ) {
-
+        require(!checkTime(expirationTime - timeout), "Reveal window shorter than timeout");
+        require(checkTime(expirationTime - 2 * timeout), "Reveal window longer than twice the timeout");
 
         // 1. Verify a fee is paid to the designated fee script
         require(tx.outputs[feeOutputIndex].script == feeScript, "Fee output script mismatch");
@@ -195,7 +198,7 @@ contract BreedCommit(
             saltHash,
             sireOwner, dameOwner,
             newKittyOwner,
-            tx.locktime + timeout,
+            expirationTime,
         );
 
         require(tx.outputs[revealOutputIndex].script == revealScript, "Reveal output script mismatch");
@@ -267,7 +270,7 @@ contract BreedReveal(
     // If the reveal doesn't happen, allow parents to be reclaimed.
     function refund(dameOutputIndex: int, sireOutputIndex: int, speciesControlOutputIndex: int) {
         // 1. Check that the timeout has passed
-        require(tx.locktime >= expirationTime, "Timeout not yet reached");
+        require(checkTime(expirationTime), "Timeout not yet reached");
 
         // 2. Verify parents are returned to their owners
         require(tx.outputs[sireOutputIndex].assets.lookup(sireIdTxid, sireIdGidx) == 1, "Sire not refunded");

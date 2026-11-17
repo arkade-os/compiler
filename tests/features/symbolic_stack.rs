@@ -508,7 +508,7 @@ fn constructor_references_cover_nested_bodies_and_named_operands() {
          "if (checkSig(sig, key)) { require(true); } else { require(false); }",
          vec!["<key>"]),
         ("bytes32 digest, int deadline", "bytes preimage",
-         "require(sha256(preimage) == digest); require(tx.locktime >= deadline);",
+         "require(sha256(preimage) == digest); require(checkTime(deadline));",
          vec!["<digest>", "<deadline>"]),
         ("AssetGroup groupIndex, bytes32 txid, int gidx", "",
          "require(groupIndex.sumInputs >= 0); require(groupIndex.controlIs(txid, gidx));",

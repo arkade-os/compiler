@@ -525,7 +525,7 @@ Lints report code that compiles but is likely unsafe or wrong. Each has an id, w
 | `signer-from-witness` | security | warn | A `checkSig`, `checkSigFromStack` or `checkMultisig` key, or a multisig threshold, that is a witness parameter used nowhere else, so the spender chooses who must sign |
 | `duplicate-multisig-key` | security | warn | A key listed twice in `checkMultisig`, so one signature counts for each |
 | `ambiguous-hash-concat` | security | warn | A hash of two or more `bytes` parameters joined with `+`: their lengths vary, so other values can join to the same bytes |
-| `offchain-locktime` | correctness | warn | `tx.locktime` in a covenant: arkd rebuilds offchain spends with nLockTime 0, so use `checkTime(t)` |
+| `offchain-locktime` | correctness | deny | `tx.locktime` in a covenant: arkd rebuilds offchain spends with nLockTime 0, so use `checkTime(t)` |
 | `outputs-shared-across-inputs` | security | warn | An unsigned function whose outputs are constrained at fixed indexes without bounding `tx.numInputs`, comparing `this.activeInputIndex`, or reading an outpoint, so two inputs locked by the contract can be satisfied by the same outputs |
 | `divide-before-multiply` | correctness | warn | `(a / b) * c`, which drops the remainder before it scales |
 | `self-comparison` | correctness | warn | A comparison, `&&` or `\|\|` with the same operand on both sides |
