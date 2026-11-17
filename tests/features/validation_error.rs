@@ -653,6 +653,7 @@ fn check_reports_unknown_tx_and_this_members_at_their_path() {
     for (path, message) in [
         ("this.foo", "unknown member 'foo' of 'this'; expected one of "),
         ("this.tunnel.x", "unknown member 'x' of 'this.tunnel'"),
+        ("this.foo[0]", "unknown member 'foo' of 'this'; expected one of "),
         ("tx.inputs.lengthX", "unknown member 'lengthX' of 'tx.inputs'"),
         ("tx.inputs[0].foo.bar", "unknown member 'foo' of 'tx.inputs[0]'; expected one of arkadeScriptHash, arkadeWitnessHash, assets, outpoint, packet, script, sequence, value, witnessVersion"),
         ("tx.outputs[0].assets.frob(1, 2)", "unknown member 'frob' of 'tx.outputs[0].assets'; expected one of has, length, lookup, tryLookup"),

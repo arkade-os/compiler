@@ -540,7 +540,9 @@ pub(super) fn validate_binding_expression(
             ));
         }
         // `tx` and `this` are reserved, so no binding resolves a path under them.
-        ExprKind::Name(path) if matches!(path.root.as_str(), "tx" | "this") => {
+        ExprKind::Name(path) | ExprKind::ArrayIndex { array: path, .. }
+            if matches!(path.root.as_str(), "tx" | "this") =>
+        {
             issues.push(ValidationIssue::error(unknown_member(path)));
         }
         ExprKind::Name(path) if path.segments.is_empty() => {
