@@ -3,7 +3,8 @@
 // Language configuration (for setLanguageConfiguration)
 const arkadeLanguageConfig = {
     comments: {
-        lineComment: '//'
+        lineComment: '//',
+        blockComment: ['/*', '*/']
     },
     brackets: [
         ['{', '}'],
@@ -101,13 +102,12 @@ const arkadeMonarch = {
 
     tokenizer: {
         root: [
-            [/\/\/.*$/, 'comment'],
-            [/\s+/, 'white'],
+            { include: '@whitespace' },
             [/@(allow|warn|deny|expect)(?=\s*\()/, { token: 'annotation', next: '@lints' }],
             [/(pragma)(\s+)(arkade)\b/, ['keyword', 'white', 'keyword']],
             [/\d+\.\d+\.\d+/, 'number'],
             [/0x[0-9a-fA-F]*/, 'number.hex'],
-            [/\d+/, 'number'],
+            [/\d+(?:_\d+)*/, 'number'],
             [/"(?:[^"\\]|\\.)*"/, 'string'],
             [/[a-zA-Z]\w*/, {
                 cases: {
@@ -125,12 +125,23 @@ const arkadeMonarch = {
         // The parenthesized lint ids and reason of a lint attribute, ids spelled as grammar.pest's
         // `attribute_name`; anything else ends the attribute.
         lints: [
-            [/\s+/, 'white'],
+            { include: '@whitespace' },
             [/[a-zA-Z][\w-]*/, 'annotation.lint'],
             [/"(?:[^"\\]|\\.)*"/, 'string'],
             [/[(,]/, 'delimiter'],
             [/\)/, { token: 'delimiter', next: '@pop' }],
             [/./, { token: '@rematch', next: '@pop' }],
+        ],
+        whitespace: [
+            [/\s+/, 'white'],
+            [/\/\/.*$/, 'comment'],
+            [/\/\*/, 'comment', '@comment'],
+        ],
+        // Block comments do not nest.
+        comment: [
+            [/[^*]+/, 'comment'],
+            [/\*\//, 'comment', '@pop'],
+            [/\*/, 'comment'],
         ]
     }
 };
