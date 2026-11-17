@@ -51,6 +51,77 @@ pub(crate) fn imports(
         .collect()
 }
 
+/// Fail at the leading pragma of `source` when compiler `version` satisfies none of its
+/// alternatives. Only `version`'s major.minor.patch counts, so a prerelease satisfies what its
+/// release does. The pragma is parsed on its own, so a file written for another compiler fails
+/// here rather than on syntax this one does not know; an absent or malformed pragma passes, and
+/// the full parse reports a malformed one.
+pub(crate) fn check_pragma(source: &str, version: &str) -> Result<(), CompileError> {
+    let Ok(mut head) = ArkadeParser::parse(Rule::pragma_head, source) else {
+        return Ok(());
+    };
+    let head = head.next().expect("pragma head");
+    let pragma = head.into_inner().next().expect("pragma");
+    let current = version_numbers(version);
+    let mut satisfied = false;
+    let mut alternatives = Vec::new();
+    for range in pragma
+        .clone()
+        .into_inner()
+        .filter(|p| p.as_rule() == Rule::pragma_range)
+    {
+        let mut all = true;
+        let mut constraints = Vec::new();
+        for constraint in range.into_inner() {
+            let operator = [">=", "<=", ">", "<", "=", "^", "~"]
+                .into_iter()
+                .find(|operator| constraint.as_str().starts_with(operator))
+                .unwrap_or("");
+            let wanted = constraint
+                .into_inner()
+                .next()
+                .expect("pragma version")
+                .as_str();
+            all &= satisfies(operator, version_numbers(wanted), current);
+            constraints.push(format!("{operator}{wanted}"));
+        }
+        satisfied |= all;
+        alternatives.push(constraints.join(" "));
+    }
+    if satisfied {
+        return Ok(());
+    }
+    Err(CompileError::from(format!(
+        "pragma requires arkade {}, but this compiler is version {version}",
+        alternatives.join(" || ")
+    ))
+    .at(pragma.as_span().into()))
+}
+
+/// The major, minor and patch numbers that start `version`.
+fn version_numbers(version: &str) -> [u64; 3] {
+    // A component beyond u64 saturates; the compiler's own never does, so comparisons stay exact.
+    let mut parts = version
+        .split(['.', '-', '+'])
+        .map(|part| part.parse().unwrap_or(u64::MAX));
+    std::array::from_fn(|_| parts.next().expect("three version components"))
+}
+
+/// Whether `version` satisfies `operator` `wanted`, with npm's caret and tilde ranges.
+fn satisfies(operator: &str, wanted: [u64; 3], version: [u64; 3]) -> bool {
+    match operator {
+        ">" => version > wanted,
+        ">=" => version >= wanted,
+        "<" => version < wanted,
+        "<=" => version <= wanted,
+        // `^` keeps the first nonzero component, so `^0.0.x` is exact; `~` keeps major.minor.
+        "^" if wanted[0] > 0 => version >= wanted && version[0] == wanted[0],
+        "^" if wanted[1] > 0 => version >= wanted && version[..2] == wanted[..2],
+        "~" => version >= wanted && version[..2] == wanted[..2],
+        _ => version == wanted,
+    }
+}
+
 /// Parse a source file, naming expected tokens in source terms instead of grammar rules.
 #[cfg(test)]
 pub(crate) fn parse_main(source: &str) -> Result<Pairs<'_, Rule>, String> {
@@ -1101,6 +1172,60 @@ contract C(pubkey k, int unused) {
         }
         assert!(parse("contract C() { pragma arkade ^0.1.0; }").is_err());
         assert!(parse("contract C() {} pragma arkade ^0.1.0;").is_err());
+    }
+
+    #[test]
+    fn checks_version_pragmas_against_the_compiler_version() {
+        let check = |constraint: &str, version: &str| {
+            let source = format!("pragma arkade {constraint}; contract C() {{}}");
+            super::check_pragma(&source, version)
+        };
+        for (constraint, version, accepted) in [
+            ("1.2.3", "1.2.3", true),
+            ("1.2.3", "1.2.4", false),
+            ("=1.2.3", "1.2.3", true),
+            ("=1.2.3", "1.2.2", false),
+            (">1.2.3", "1.2.4", true),
+            (">1.2.3", "1.2.3", false),
+            (">=1.2.3", "1.2.3", true),
+            (">=1.2.3", "1.2.2", false),
+            ("<1.2.3", "1.2.2", true),
+            ("<1.2.3", "1.2.3", false),
+            ("<=1.2.3", "1.2.3", true),
+            ("<=1.2.3", "1.2.4", false),
+            ("^1.2.3", "1.9.0", true),
+            ("^1.2.3", "2.0.0", false),
+            ("^1.2.3", "1.2.2", false),
+            ("^0.1.2", "0.1.9", true),
+            ("^0.1.2", "0.2.0", false),
+            ("^0.1.2", "0.1.1", false),
+            ("^0.0.3", "0.0.3", true),
+            ("^0.0.3", "0.0.4", false),
+            ("~1.2.3", "1.2.9", true),
+            ("~1.2.3", "1.3.0", false),
+            ("~1.2.3", "1.2.2", false),
+            ("~0.0.3", "0.0.9", true),
+            (">=0.1.0 <0.2.0", "0.1.5", true),
+            (">=0.1.0 <0.2.0", "0.2.0", false),
+            ("^0.1.0 || ^1.0.0", "0.1.3", true),
+            ("^0.1.0 || ^1.0.0", "1.4.0", true),
+            ("^0.1.0 || ^1.0.0", "0.2.0", false),
+            ("^0.1.0", "0.1.0-rc.1", true),
+            (">0.1.0", "0.1.0-rc.1", false),
+            ("^ // constraint\n 1.2.3", "1.3.0", true),
+            ("<99999999999999999999.0.0", "0.1.0", true),
+        ] {
+            assert_eq!(
+                check(constraint, version).is_ok(),
+                accepted,
+                "{constraint} with {version}"
+            );
+        }
+        let error = check("^1.0.0 || >=2.0.0 // range\n <3.0.0", "0.1.0-rc.1").unwrap_err();
+        assert_eq!(
+            error.message,
+            "pragma requires arkade ^1.0.0 || >=2.0.0 <3.0.0, but this compiler is version 0.1.0-rc.1"
+        );
     }
 
     #[test]
