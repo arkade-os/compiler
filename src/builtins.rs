@@ -259,8 +259,9 @@ pub(crate) const BUILTINS: &[Builtin] = &[
         "bytes32",
         &[MerkleBranchVerify],
         "Root of a BIP-341 tagged-hash Merkle proof. Siblings in proof are 32 bytes each and \
-         combined in sorted order. An empty leafTag takes a 32-byte leaf as already hashed; an \
-         empty branchTag fails the spend.",
+         combined in sorted order. An empty leafTag takes leaf as already hashed. Fails the spend \
+         when proof is not a multiple of 32 bytes, branchTag is empty, or an already hashed leaf \
+         is not 32 bytes.",
     ),
     builtin(
         "checkTime",
@@ -512,15 +513,15 @@ const SPELLED: &[Spelled] = &[
         "tx.packet",
         &["int packetType"],
         "bytes",
-        "Bytes of this transaction's extension packet of packetType. Fails the spend when it is \
-         absent or over 520 bytes.",
+        "Bytes of this transaction's extension packet of packetType. Fails the spend when \
+         packetType is outside 0 to 255 or the packet is absent or over 520 bytes.",
     ),
     method(
         "tx.packet.has",
         &["int packetType"],
         "bool",
-        "Whether this transaction carries an extension packet of packetType. A packet over 520 \
-         bytes fails the spend.",
+        "Whether this transaction carries an extension packet of packetType. A packetType outside \
+         0 to 255 or a packet over 520 bytes fails the spend.",
     ),
     method(
         "tx.intent.field",
@@ -528,14 +529,15 @@ const SPELLED: &[Spelled] = &[
         "bytes",
         "The intent field at a dot-separated path of lowercase keys and indexes such as \
          \"cosigners.0\": a string's bytes, an integer as a Script number, true as 0x01, false as \
-         empty, an object or array as JSON. Fails the spend when it is missing, null or \
-         fractional, or outside an intent proof.",
+         empty, an object or array as JSON. Fails the spend when the path is malformed, the field \
+         is missing, null or fractional, or outside an intent proof.",
     ),
     method(
         "tx.intent.has",
         &["bytes path"],
         "bool",
-        "Whether tx.intent.field(path) has a value; false outside an intent proof.",
+        "Whether tx.intent.field(path) has a value; false outside an intent proof. A malformed \
+         path fails the spend.",
     ),
     property(
         "tx.inputs[].assets",
@@ -547,14 +549,14 @@ const SPELLED: &[Spelled] = &[
         &["int packetType"],
         "bytes",
         "Extension packet of packetType of the Arkade transaction that created this input. Fails \
-         the spend when it is absent or over 520 bytes.",
+         the spend when packetType is outside 0 to 255 or the packet is absent or over 520 bytes.",
     ),
     method(
         "tx.inputs[].packet.has",
         &["int packetType"],
         "bool",
         "Whether the Arkade transaction that created this input carries an extension packet of \
-         packetType. A packet over 520 bytes fails the spend.",
+         packetType. A packetType outside 0 to 255 or a packet over 520 bytes fails the spend.",
     ),
     property(
         "tx.outputs[].assets",
