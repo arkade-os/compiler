@@ -535,6 +535,17 @@ pub(super) fn validate_binding_expression(
         ExprKind::Name(path) if path.segments.is_empty() => {
             validate_named_binding(&path.root, None, "binding", scopes, issues);
         }
+        // A path under an unbound root reports the root.
+        ExprKind::Name(path) | ExprKind::ArrayIndex { array: path, .. }
+            if find_binding(scopes, &path.root).is_none() =>
+        {
+            validate_named_binding(&path.root, None, "binding", scopes, issues);
+        }
+        // A root of unknown type was reported where its type was lost.
+        _ if expression.binding_path().is_some_and(|path| {
+            find_binding(scopes, &path.root)
+                .is_some_and(|root| root.binding_type == ArkType::Unknown)
+        }) => {}
         // Inner accesses are validated first so a bad path reports only its first fault.
         ExprKind::FieldAccess { value, field } => {
             if let Some(array) = expression.binding_path().and_then(|path| {
@@ -610,10 +621,7 @@ pub(super) fn validate_binding_expression(
             Some((array, "length")) if find_binding(scopes, &path.key()).is_none() => {
                 validate_array_length(&array.key(), scopes, issues);
             }
-            _ if find_binding(scopes, &path.root).is_some() => {
-                validate_named_binding(&path.key(), None, "field", scopes, issues);
-            }
-            _ => validate_named_binding(&path.root, None, "binding", scopes, issues),
+            _ => validate_named_binding(&path.key(), None, "field", scopes, issues),
         },
         ExprKind::ContractInstance { args, .. } => {
             for argument in args {
