@@ -8,15 +8,15 @@ import "./cp_pool.ark";
 // paid to payScript. Refund returns the unminted funds.
 contract ConstantProductDeposit(
   ScriptPubKey payScript,
-  bytes32 quoteTxid, int quoteGidx,
-  bytes32 lpTxid, int lpGidx,
-  bytes32 lpLedgTxid, int lpLedgGidx,
-  bytes32 ctrlTxid, int ctrlGidx,
+  AssetId quoteId,
+  AssetId lpId,
+  AssetId lpLedgId,
+  AssetId ctrlId,
   int feeBps,
   pubkey ownerPk
 ) {
   private function isPool(ScriptPubKey script) {
-    require(script == new ConstantProductPool(quoteTxid, quoteGidx, lpTxid, lpGidx, lpLedgTxid, lpLedgGidx, ctrlTxid, ctrlGidx, feeBps), "pool");
+    require(script == new ConstantProductPool(quoteId, lpId, lpLedgId, ctrlId, feeBps), "pool");
   }
 
   @allow(unsigned-spend-path, "the pool at input 0 is the counterparty, and output 1 pays the minted LP tokens to the depositor")
@@ -26,11 +26,11 @@ contract ConstantProductDeposit(
     require(this.activeInputIndex == 1, "order input");
     isPool(tx.inputs[0].script);
     int base0 = tx.inputs[0].value - CpMath.DUST;
-    int quote0 = CpMath.held(0, quoteTxid, quoteGidx);
-    int supply = CpMath.held(0, lpLedgTxid, lpLedgGidx);
+    int quote0 = CpMath.held(0, quoteId);
+    int supply = CpMath.held(0, lpLedgId);
     require(tx.inputs[1].value > CpMath.DUST, "btc in");
     int dx = tx.inputs[1].value - CpMath.DUST;
-    int dy = tx.inputs[1].assets.lookup(quoteTxid, quoteGidx);
+    int dy = tx.inputs[1].assets.lookup(quoteId);
     require(tx.inputs[1].assets.length == 1, "quote only");
     int share = 0;
     if (supply == 0) {
@@ -43,7 +43,7 @@ contract ConstantProductDeposit(
     }
     require(tx.outputs[1].script == payScript, "receiver");
     require(tx.outputs[1].value == CpMath.DUST, "token carrier");
-    require(tx.outputs[1].assets.lookup(lpTxid, lpGidx) == share, "token");
+    require(tx.outputs[1].assets.lookup(lpId) == share, "token");
     require(tx.outputs[1].assets.length == 1, "token only");
   }
 
@@ -53,11 +53,11 @@ contract ConstantProductDeposit(
     require(this.activeInputIndex == 0, "order input");
     require(tx.numOutputs == 3, "outputs");
     require(tx.inputs[0].value > CpMath.DUST, "btc in");
-    int quote = tx.inputs[0].assets.lookup(quoteTxid, quoteGidx);
+    int quote = tx.inputs[0].assets.lookup(quoteId);
     require(tx.inputs[0].assets.length == 1, "quote only");
     require(tx.outputs[0].script == payScript, "receiver");
     require(tx.outputs[0].value == tx.inputs[0].value, "value");
-    require(tx.outputs[0].assets.lookup(quoteTxid, quoteGidx) == quote, "quote");
+    require(tx.outputs[0].assets.lookup(quoteId) == quote, "quote");
     require(tx.outputs[0].assets.length == 1, "quote only");
   }
 

@@ -8,15 +8,15 @@ import "./cp_pool.ark";
 // rounds to 0 is omitted.
 contract ConstantProductExit(
   ScriptPubKey payScript,
-  bytes32 quoteTxid, int quoteGidx,
-  bytes32 lpTxid, int lpGidx,
-  bytes32 lpLedgTxid, int lpLedgGidx,
-  bytes32 ctrlTxid, int ctrlGidx,
+  AssetId quoteId,
+  AssetId lpId,
+  AssetId lpLedgId,
+  AssetId ctrlId,
   int feeBps,
   pubkey ownerPk
 ) {
   private function isPool(ScriptPubKey script) {
-    require(script == new ConstantProductPool(quoteTxid, quoteGidx, lpTxid, lpGidx, lpLedgTxid, lpLedgGidx, ctrlTxid, ctrlGidx, feeBps), "pool");
+    require(script == new ConstantProductPool(quoteId, lpId, lpLedgId, ctrlId, feeBps), "pool");
   }
 
   @allow(unsigned-spend-path, "the pool at input 0 is the counterparty, and output 1 pays the exiting LP")
@@ -26,20 +26,20 @@ contract ConstantProductExit(
     require(this.activeInputIndex == 1, "order input");
     isPool(tx.inputs[0].script);
     int base0 = tx.inputs[0].value - CpMath.DUST;
-    int quote0 = tx.inputs[0].assets.lookup(quoteTxid, quoteGidx);
-    int supply = tx.inputs[0].assets.lookup(lpLedgTxid, lpLedgGidx);
+    int quote0 = tx.inputs[0].assets.lookup(quoteId);
+    int supply = tx.inputs[0].assets.lookup(lpLedgId);
     require(base0 > 0, "base");
     require(quote0 > 0, "quote");
     require(supply > 0, "supply");
     require(tx.inputs[1].value == CpMath.DUST, "carrier");
     require(tx.inputs[1].assets.length == 1, "token only");
-    int part = tx.inputs[1].assets.lookup(lpTxid, lpGidx);
+    int part = tx.inputs[1].assets.lookup(lpId);
     require(part > 0, "token");
     require(part <= supply, "supply");
     int partBase = (base0 * part) / supply;
     int partQuote = (quote0 * part) / supply;
     require(tx.outputs[1].script == payScript, "receiver");
-    CpMath.payout(quoteTxid, quoteGidx, partBase, partQuote);
+    CpMath.payout(quoteId, partBase, partQuote);
   }
 
   @allow(unsigned-spend-path, "anyone may return the unburned LP tokens, and output 0 pays the LP")
@@ -48,11 +48,11 @@ contract ConstantProductExit(
     require(this.activeInputIndex == 0, "order input");
     require(tx.numOutputs == 3, "outputs");
     require(tx.inputs[0].value == CpMath.DUST, "carrier");
-    int part = tx.inputs[0].assets.lookup(lpTxid, lpGidx);
+    int part = tx.inputs[0].assets.lookup(lpId);
     require(tx.inputs[0].assets.length == 1, "token only");
     require(tx.outputs[0].script == payScript, "receiver");
     require(tx.outputs[0].value == CpMath.DUST, "carrier");
-    require(tx.outputs[0].assets.lookup(lpTxid, lpGidx) == part, "token");
+    require(tx.outputs[0].assets.lookup(lpId) == part, "token");
     require(tx.outputs[0].assets.length == 1, "token only");
   }
 

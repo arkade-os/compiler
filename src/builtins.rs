@@ -568,32 +568,32 @@ const SPELLED: &[Spelled] = &[
     ),
     method(
         "tx.inputs[].assets.lookup",
-        &["bytes32 assetTxid", "int assetGidx"],
+        &["AssetId assetId"],
         "int",
         "Amount of the asset. Fails the spend when it or the asset packet is absent.",
     ),
     method(
         "tx.inputs[].assets.tryLookup",
-        &["bytes32 assetTxid", "int assetGidx"],
+        &["AssetId assetId"],
         "AssetLookup",
         "The asset's {amount, found} from one inspection; amount is 0 when it is absent. Fails \
          the spend only without an asset packet.",
     ),
     method(
         "tx.inputs[].assets.has",
-        &["bytes32 assetTxid", "int assetGidx"],
+        &["AssetId assetId"],
         "bool",
         "Whether the asset is present. Fails the spend without an asset packet.",
     ),
     method(
-        "tx.assetGroups.find",
-        &["bytes32 assetTxid", "int assetGidx"],
+        "tx.assetGroups.lookup",
+        &["AssetId assetId"],
         "AssetGroup",
         "The asset group of the asset. Fails the spend when it or the asset packet is absent.",
     ),
     method(
         "tx.assetGroups.has",
-        &["bytes32 assetTxid", "int assetGidx"],
+        &["AssetId assetId"],
         "bool",
         "Whether the packet has a group for the asset. Fails the spend without an asset packet.",
     ),
@@ -630,7 +630,7 @@ const SPELLED: &[Spelled] = &[
     ),
     method(
         "tx.assetGroups[].controlIs",
-        &["bytes32 assetTxid", "int assetGidx"],
+        &["AssetId assetId"],
         "bool",
         "Whether the group's control asset is the given asset.",
     ),

@@ -13,10 +13,8 @@ pragma arkade ^0.1.0;
 // N oracles, require M valid signatures over a message.
 
 contract ThresholdOracle(
-  bytes32 tokenAssetIdTxid,
-  int tokenAssetIdGidx,
-  bytes32 ctrlAssetIdTxid,
-  int ctrlAssetIdGidx,
+  AssetId tokenAssetId,
+  AssetId ctrlAssetId,
   pubkey[3] oracles,
   int threshold
 ) {
@@ -39,8 +37,8 @@ contract ThresholdOracle(
     }
     require(valid >= threshold, "quorum failed");
 
-    require(tx.inputs[0].assets.lookup(ctrlAssetIdTxid, ctrlAssetIdGidx) > 0, "no ctrl");
-    require(tx.outputs[1].assets.lookup(tokenAssetIdTxid, tokenAssetIdGidx) >= amount, "short");
+    require(tx.inputs[0].assets.lookup(ctrlAssetId) > 0, "no ctrl");
+    require(tx.outputs[1].assets.lookup(tokenAssetId) >= amount, "short");
     require(tx.outputs[1].script == recipientScriptPubKey, "wrong dest");
     require(tx.outputs[0].script == tx.input.current.script, "broken");
     require(tx.outputs[0].value >= tx.input.current.value, "value lost");

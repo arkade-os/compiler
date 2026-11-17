@@ -373,7 +373,7 @@ impl Generator {
             .position(|points| points.binding_path().is_none())
         {
             if matches!(&args[position].kind, ExprKind::ArrayLiteral(points)
-                if points.iter().any(|point| matches!(point.kind, ExprKind::StructLiteral(_))))
+                if points.iter().any(|point| matches!(point.kind, ExprKind::StructLiteral { name: None, .. })))
             {
                 return Err("struct literals may only initialize a typed struct declaration; composite values are not supported".into());
             }

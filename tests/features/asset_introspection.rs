@@ -76,7 +76,7 @@ fn test_asset_at_assetid_returns_struct() {
                 let assetId = tx.outputs[0].assets[0].assetId;
                 require(assetId.txid == expectedTxid);
                 require(assetId.gidx >= 0);
-                require(tx.outputs[0].assets.lookup(assetId.txid, assetId.gidx) >= 0);
+                require(tx.outputs[0].assets.lookup(assetId) >= 0);
             }
         }
     "#;

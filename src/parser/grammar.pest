@@ -205,6 +205,7 @@ primary_expr = {
     identifier_property_access |
     constructor |
     array_index_access |
+    typed_struct_literal |
     struct_literal |
     array_literal |
     byte_literal |
@@ -240,26 +241,25 @@ rem_op = { "%" }
 
 // ─── Asset Lookups ─────────────────────────────────────────────────────────────
 
-asset_id_txid_operand = _{ general_expression }
-asset_id_gidx_operand = _{ general_expression }
+// An AssetId expression; a constant gidx must be 0..65535.
+asset_id_operand = _{ general_expression }
 
-// Asset lookup on inputs/outputs: tx.inputs[i].assets.lookup(txid, gidx)
-// txid is a bytes32 expression; gidx is an int expression (constants must be 0..65535).
+// Asset lookup on inputs/outputs: tx.inputs[i].assets.lookup(id)
 asset_lookup = {
     "tx" ~ "." ~ asset_lookup_source ~ array_access ~ "." ~ "assets"
-        ~ "." ~ "lookup" ~ "(" ~ asset_id_txid_operand ~ "," ~ asset_id_gidx_operand ~ ")"
+        ~ "." ~ "lookup" ~ "(" ~ asset_id_operand ~ ")"
 }
 
-// Non-aborting lookup: tx.inputs[i].assets.tryLookup(txid, gidx) → AssetLookup
+// Non-aborting lookup: tx.inputs[i].assets.tryLookup(id) → AssetLookup
 asset_try_lookup = {
     "tx" ~ "." ~ asset_lookup_source ~ array_access ~ "." ~ "assets"
-        ~ "." ~ "tryLookup" ~ "(" ~ asset_id_txid_operand ~ "," ~ asset_id_gidx_operand ~ ")"
+        ~ "." ~ "tryLookup" ~ "(" ~ asset_id_operand ~ ")"
 }
 
-// Asset presence predicate: tx.inputs[i].assets.has(txid, gidx) → Bool
+// Asset presence predicate: tx.inputs[i].assets.has(id) → Bool
 asset_has = {
     "tx" ~ "." ~ asset_lookup_source ~ array_access ~ "." ~ "assets"
-        ~ "." ~ "has" ~ "(" ~ asset_id_txid_operand ~ "," ~ asset_id_gidx_operand ~ ")"
+        ~ "." ~ "has" ~ "(" ~ asset_id_operand ~ ")"
 }
 
 // Asset count: tx.inputs[i].assets.length or tx.outputs[o].assets.length
@@ -322,15 +322,15 @@ output_introspection_property = { "value" | "witnessVersion" | "script" }
 
 // ─── Asset Groups ──────────────────────────────────────────────────────────────
 
-// Group control predicates compare explicit AssetId components:
-//   group.controlIs(txid, gidx) → Bool (full canonical control Asset ID equality)
+// Group control predicates:
+//   group.controlIs(id)         → Bool (full canonical control Asset ID equality)
 //   group.hasControl            → Bool (handled as a plain group property)
 // Inline `tx.assetGroups...controlIs(...)` is an asset_group_member instead.
 group_control_is = {
     group_binding ~ "." ~ asset_group_control_is
 }
 group_binding = { !("tx" ~ ".") ~ identifier ~ (!("." ~ "controlIs" ~ "(") ~ binding_suffix)* }
-asset_group_control_is = { "controlIs" ~ "(" ~ asset_id_txid_operand ~ "," ~ asset_id_gidx_operand ~ ")" }
+asset_group_control_is = { "controlIs" ~ "(" ~ asset_id_operand ~ ")" }
 
 // Field and index suffixes may alternate for arrays of structs.
 binding_suffix = { ("." ~ identifier) | ("[" ~ general_expression ~ "]") }
@@ -395,7 +395,7 @@ tx_input_current = { "input" ~ "." ~ "current" ~ "." ~ input_introspection_prope
 tx_asset_groups = {
     "assetGroups" ~ (asset_groups_has | asset_groups_length | asset_group_ref ~ asset_group_member?)?
 }
-asset_groups_has = { "." ~ "has" ~ "(" ~ asset_id_txid_operand ~ "," ~ asset_id_gidx_operand ~ ")" }
+asset_groups_has = { "." ~ "has" ~ "(" ~ asset_id_operand ~ ")" }
 asset_groups_length = { "." ~ "length" }
 
 // Suffix for tx property access - explicitly requires [ or .
@@ -403,9 +403,9 @@ tx_property_suffix = {
     array_access | ("." ~ tx_property_part)
 }
 
-// An AssetGroup value: tx.assetGroups.find(txid, gidx) or tx.assetGroups[k]
+// An AssetGroup value: tx.assetGroups.lookup(id) or tx.assetGroups[k]
 asset_group_ref = {
-    "." ~ "find" ~ "(" ~ asset_id_txid_operand ~ "," ~ asset_id_gidx_operand ~ ")" | array_access
+    "." ~ "lookup" ~ "(" ~ asset_id_operand ~ ")" | array_access
 }
 
 // Member access on an AssetGroup value
@@ -469,6 +469,11 @@ struct_literal = {
 }
 
 struct_literal_field = { identifier ~ ":" ~ general_expression }
+
+// `Point { x: 1, y: 2 }`. A block after an expression, as in `for (i, x) in items { ... }`,
+// is no literal: a statement never starts with `name:`. The lookahead keeps a name followed by
+// anything else, such as a missing `;`, from reporting an expected literal.
+typed_struct_literal = { identifier ~ &"{" ~ struct_literal }
 
 // Function call
 qualified_name = @{ identifier ~ ("." ~ identifier)? }

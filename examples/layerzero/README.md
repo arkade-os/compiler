@@ -119,18 +119,7 @@ relying on it.
 
 ## Constructor decomposition
 
-Some `bytes32` constructor parameters (`endpointCtrlAssetId`,
-`endpointIDAssetId`, `oappIDAssetId`, `usdt0AssetId`) appear in the
-generated JSON as `_txid` + `_gidx` pairs, while others
-(`oappCtrlAssetId`, `endpointID`, `oappID`, `remoteOApp`) appear as
-single `bytes32` values. This is by design: the compiler decomposes
-only the asset IDs that are passed to `tx.{inputs,outputs}[i].assets.lookup(...)`
-or to `tx.assetGroups.find(...)` inside the function bodies — those
-need to be split into the `(txid32, gidx_u16)` pair the underlying
-`OP_INSPECT*ASSETLOOKUP` / `OP_FINDASSETGROUPBYASSETID` opcodes consume.
-`bytes32` params that only get passed through to a child constructor
-(`new ReceiveMarker(oappCtrlAssetId, …)`) stay as a single 32-byte value.
-The split shows up in the JSON but is invisible at the Arkade source level.
+The Asset ID constructor parameters (`endpointCtrlAssetId`, `endpointIDAssetId`, `oappCtrlAssetId`, `oappIDAssetId`, `usdt0AssetId`) are `AssetId` values. The artifact lists each as one parameter, and the assembly reads its `txid` and `gidx` fields, the `(txid32, gidx_u16)` pair the `OP_INSPECT*ASSETLOOKUP` / `OP_FINDASSETGROUPBYASSETID` opcodes consume, as placeholders such as `<endpointCtrlAssetId.txid>` and `<endpointCtrlAssetId.gidx>`. An `AssetId` passed to a child constructor (`new ReceiveMarker(…, oappCtrlAssetId)`) is passed field by field. The other identifiers (`endpointID`, `oappID`, `remoteOApp`) are single `bytes32` values.
 
 ## Nonce monotonicity
 

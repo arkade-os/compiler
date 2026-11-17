@@ -4,19 +4,18 @@ pragma arkade ^0.1.0;
 // Demonstrates fresh-issuance enforcement and collection control via asset
 // group introspection.
 //
-// An Asset ID is the canonical pair (asset_txid, asset_gidx):
+// An Asset ID is an AssetId {txid, gidx}:
 // - group.isFresh: asset issued in this tx (genesis)
 // - group.delta: net change across inputs/outputs
-// - group.controlIs(txid, gidx): collection control membership
+// - group.controlIs(id): collection control membership
 
 contract NFTMint(
-    bytes32 collectionCtrlIdTxid,
-    int collectionCtrlIdGidx,
+    AssetId collectionCtrlId,
     pubkey issuerPk
 ) {
     // Mint a new NFT: must be fresh with delta=1
-    function mint(bytes32 nftAssetIdTxid, int nftAssetIdGidx, ScriptPubKey recipientScriptPubKey, signature issuerSig) {
-        let nftGroup = tx.assetGroups.find(nftAssetIdTxid, nftAssetIdGidx);
+    function mint(AssetId nftAssetId, ScriptPubKey recipientScriptPubKey, signature issuerSig) {
+        let nftGroup = tx.assetGroups.lookup(nftAssetId);
 
         // Must be a brand new asset (genesis in this tx)
         require(nftGroup.isFresh == true, "must be fresh");
@@ -25,22 +24,22 @@ contract NFTMint(
         require(nftGroup.delta == 1, "must mint exactly 1");
 
         // Must be controlled by the collection
-        require(nftGroup.controlIs(collectionCtrlIdTxid, collectionCtrlIdGidx), "wrong collection");
+        require(nftGroup.controlIs(collectionCtrlId), "wrong collection");
 
         // Control asset must be retained (delta == 0)
-        let ctrlGroup = tx.assetGroups.find(collectionCtrlIdTxid, collectionCtrlIdGidx);
+        let ctrlGroup = tx.assetGroups.lookup(collectionCtrlId);
         require(ctrlGroup.delta == 0, "control must be retained");
 
         // NFT goes to recipient
-        require(tx.outputs[0].assets.lookup(nftAssetIdTxid, nftAssetIdGidx) == 1, "NFT not in output");
+        require(tx.outputs[0].assets.lookup(nftAssetId) == 1, "NFT not in output");
         require(tx.outputs[0].script == recipientScriptPubKey, "wrong recipient");
 
         require(checkSig(issuerSig, issuerPk), "bad issuer sig");
     }
 
     // Transfer existing NFT (not fresh)
-    function transfer(bytes32 nftAssetIdTxid, int nftAssetIdGidx, ScriptPubKey newOwnerScriptPubKey, signature issuerSig) {
-        let nftGroup = tx.assetGroups.find(nftAssetIdTxid, nftAssetIdGidx);
+    function transfer(AssetId nftAssetId, ScriptPubKey newOwnerScriptPubKey, signature issuerSig) {
+        let nftGroup = tx.assetGroups.lookup(nftAssetId);
 
         // Must NOT be fresh (existing asset)
         require(nftGroup.isFresh == false, "cannot be fresh");
@@ -49,18 +48,18 @@ contract NFTMint(
         require(nftGroup.delta == 0, "must be transfer");
 
         // Must be controlled by the collection
-        require(nftGroup.controlIs(collectionCtrlIdTxid, collectionCtrlIdGidx), "wrong collection");
+        require(nftGroup.controlIs(collectionCtrlId), "wrong collection");
 
         // NFT goes to new owner
-        require(tx.outputs[0].assets.lookup(nftAssetIdTxid, nftAssetIdGidx) == 1, "NFT not in output");
+        require(tx.outputs[0].assets.lookup(nftAssetId) == 1, "NFT not in output");
         require(tx.outputs[0].script == newOwnerScriptPubKey, "wrong dest");
 
         require(checkSig(issuerSig, issuerPk), "bad issuer sig");
     }
 
     // Burn an NFT (delta = -1)
-    function burn(bytes32 nftAssetIdTxid, int nftAssetIdGidx, signature issuerSig) {
-        let nftGroup = tx.assetGroups.find(nftAssetIdTxid, nftAssetIdGidx);
+    function burn(AssetId nftAssetId, signature issuerSig) {
+        let nftGroup = tx.assetGroups.lookup(nftAssetId);
 
         // Must be existing asset
         require(nftGroup.isFresh == false, "cannot burn fresh asset");

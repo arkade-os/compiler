@@ -134,14 +134,15 @@ fn validate_binding_statements(
                 // Composite initializers are validated through their scalar
                 // children; the declaration itself owns their result shape.
                 match &value.kind {
-                    ExprKind::StructLiteral(_) => {
-                        if !declared_type
-                            .as_ref()
-                            .is_some_and(|ty| matches!(ty.ark_type(), ArkType::Struct(_)))
+                    ExprKind::StructLiteral { name: literal, .. } => {
+                        if literal.is_none()
+                            && !declared_type
+                                .as_ref()
+                                .is_some_and(|ty| matches!(ty.ark_type(), ArkType::Struct(_)))
                         {
-                            issues.push(ValidationIssue::error(
-                                "struct literal needs a declared struct type",
-                            ));
+                            issues.push(ValidationIssue::error(format!(
+                                "struct literal needs a struct type; name it, as in 'let {name} = Name {{ field: value }};'"
+                            )));
                         }
                         validate_value_expression(value, scopes, issues);
                     }
@@ -186,7 +187,7 @@ fn validate_binding_statements(
                 }
                 if let ArkType::Struct(struct_type) = &binding_type {
                     let result_type = crate::models::expression_result_struct(value);
-                    if !matches!(&value.kind, ExprKind::StructLiteral(_))
+                    if !matches!(&value.kind, ExprKind::StructLiteral { .. })
                         && result_type != Some(struct_type.as_str())
                         && !matches!(
                             &value.kind,
@@ -249,8 +250,10 @@ fn validate_binding_statements(
                 let composite_target =
                     matches!(target_type, Some(ArkType::Struct(_) | ArkType::Array(..)));
                 validate_binding_expression(value, scopes, issues, !composite_target);
-                if let (Some(expected), ExprKind::StructLiteral(_) | ExprKind::ArrayLiteral(_)) =
-                    (&target_type, &value.kind)
+                if let (
+                    Some(expected),
+                    ExprKind::StructLiteral { name: None, .. } | ExprKind::ArrayLiteral(_),
+                ) = (&target_type, &value.kind)
                 {
                     super::functions::validate_value(
                         &TypeName::from(expected),

@@ -55,7 +55,7 @@ pub(crate) fn parse_tunnel(pair: Pair<Rule>) -> Result<Expression, String> {
     let output_index =
         parse_general_expression(inner.next().ok_or("Missing tunnel output index")?)?;
     let policy = if let Some(policy) = inner.next() {
-        let ExprKind::StructLiteral(fields) = parse_primary_expr(policy)?.kind else {
+        let ExprKind::StructLiteral { fields, .. } = parse_primary_expr(policy)?.kind else {
             return Err("tunnel policy must be a struct literal".to_string());
         };
         let mut values = [None, None, None];
@@ -263,16 +263,12 @@ pub(crate) fn parse_tx_property_to_expr(pair: Pair<Rule>) -> Result<Expression, 
             let mut access = first.into_inner();
             Ok(match access.next() {
                 None => Expression::new(ExprKind::Name(Path::from_key(&text)), span),
-                Some(has) if has.as_rule() == Rule::asset_groups_has => {
-                    let (asset_txid, asset_gidx) = parse_asset_group_id_operands(has)?;
-                    Expression::new(
-                        ExprKind::GroupHas {
-                            asset_txid: Box::new(asset_txid),
-                            asset_gidx: Box::new(asset_gidx),
-                        },
-                        span,
-                    )
-                }
+                Some(has) if has.as_rule() == Rule::asset_groups_has => Expression::new(
+                    ExprKind::GroupHas {
+                        asset_id: parse_asset_id(has)?,
+                    },
+                    span,
+                ),
                 Some(length) if length.as_rule() == Rule::asset_groups_length => {
                     Expression::new(ExprKind::AssetGroupsLength, span)
                 }
@@ -291,7 +287,6 @@ pub(crate) fn parse_tx_property_to_expr(pair: Pair<Rule>) -> Result<Expression, 
                     span,
                 ));
             }
-            reject_malformed_asset_call(&text)?;
             // `tx.input.current` without a property it accepts reads as a plain property path.
             let mut names = std::iter::once(first.as_str())
                 .chain(parts.map(|suffix| suffix.as_str().trim_start_matches('.').trim()));
@@ -320,19 +315,15 @@ fn parse_asset_group_access(
         start,
         end: group.as_span().end(),
     };
-    let mut operands = group.into_inner();
-    let first = operands.next().ok_or("Missing asset group")?;
+    let first = group.into_inner().next().ok_or("Missing asset group")?;
     let group = Box::new(Expression::new(
         if first.as_rule() == Rule::array_access {
             ExprKind::AssetGroupAt {
                 index: Box::new(parse_array_access_index(first)?),
             }
         } else {
-            ExprKind::GroupFind {
-                asset_txid: Box::new(parse_general_expression(first)?),
-                asset_gidx: Box::new(parse_general_expression(
-                    operands.next().ok_or("Missing asset group gidx")?,
-                )?),
+            ExprKind::GroupLookup {
+                asset_id: Box::new(parse_general_expression(first)?),
             }
         },
         span,
