@@ -64,19 +64,18 @@ pub(crate) fn reject_reserved_function_call(pair: &Pair<Rule>) -> Result<(), Str
         .as_str()
         .to_string();
 
-    if name == "negate" {
-        return Err(
-            "`negate(value)` was replaced by the unary minus operator; write `-value`".to_string(),
-        );
-    }
-
-    if matches!(name.as_str(), "neg64" | "le64ToScriptNum" | "le32ToLe64") {
-        return Err(format!(
-            "`{name}` was removed with fixed-width arithmetic; use BigNum arithmetic or bytes2int/int2bytes"
-        ));
-    }
-
     if let Some(signature) = reserved_function_signature(&name) {
+        let args = pair.clone().into_inner().count() - 1;
+        if crate::builtins::tapscript_params(&name).is_some_and(|params| params.len() == args) {
+            let hint = match name.as_str() {
+                "older" | "after" => "; covenant functions use `checkTime(timestamp)`",
+                "tweak" => ", as a key inside checkSig or checkMultisig",
+                _ => ", inside older(...) or after(...)",
+            };
+            return Err(format!(
+                "`{name}(...)` is only available in tapscript functions{hint}"
+            ));
+        }
         return Err(format!("wrong arguments to `{name}`: expected {signature}"));
     }
 
@@ -87,13 +86,10 @@ pub(crate) fn reserved_function_signature(name: &str) -> Option<String> {
     if let Some(builtin) = crate::builtins::find(name) {
         return Some(builtin.signature());
     }
-    let signature = match name {
-        "older" => Some("older(value)"),
-        "after" => Some("after(value)"),
-        "this.tunnel" => Some("this.tunnel(outputIndex, policy?, exceptions?)"),
-        _ => None,
-    };
-    signature.map(str::to_string)
+    if let Some(params) = crate::builtins::tapscript_params(name) {
+        return Some(format!("{name}({})", params.join(", ")));
+    }
+    (name == "this.tunnel").then(|| "this.tunnel(outputIndex, policy?, exceptions?)".to_string())
 }
 
 pub(crate) fn parse_string_literal(text: &str) -> Result<String, String> {
@@ -225,12 +221,6 @@ pub(crate) fn parse_primary_expr(pair: Pair<Rule>) -> Result<Expression, String>
         Rule::tx_property_access => parse_tx_property_to_expr(pair),
         Rule::this_property_access => {
             let property = pair.into_inner().next().ok_or("Missing this property")?;
-            if property.as_str() == "activeBytecode" {
-                return Ok(super::introspection::current_input(
-                    crate::properties::InputProperty::Script,
-                    span,
-                ));
-            }
             Ok(Expression::new(
                 ExprKind::This(super::introspection::named(
                     property,

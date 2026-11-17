@@ -14,11 +14,11 @@ contract HTLC(pubkey receiver, pubkey sender, bytes20 preimageHash, int refundTi
     }
     function claim(bytes preimage, signature serverSig, signature emulatorSig) tapscript {
         require(hash160(preimage) == preimageHash);
-        require(checkMultisig([server, emulator], [serverSig, emulatorSig], 2));
+        require(checkMultisig([server, emulator], [serverSig, emulatorSig]));
     }
     function refund(signature serverSig, signature emulatorSig) tapscript {
         require(after(refundTime));
-        require(checkMultisig([server, emulator], [serverSig, emulatorSig], 2));
+        require(checkMultisig([server, emulator], [serverSig, emulatorSig]));
     }
     function unilateral(signature senderSig) tapscript {
         require(older(exit));
@@ -88,7 +88,7 @@ contract Demo(pubkey owner) {
         require(tx.outputs[0].value >= 1);
     }
     function claim(signature serverSig, signature emulatorSig, signature ownerSig) tapscript {
-        require(checkMultisig([server, emulator, owner], [serverSig, emulatorSig, ownerSig], 3));
+        require(checkMultisig([server, emulator, owner], [serverSig, emulatorSig, ownerSig]));
     }
 }
 "#;
@@ -123,7 +123,7 @@ fn standalone_leaves_keep_declaration_order() {
 contract Escrowish(pubkey a, pubkey b, pubkey c, int exit) {
     function exitZulu(signature bSig, signature cSig) tapscript {
         require(older(exit));
-        require(checkMultisig([b, c], [bSig, cSig], 2));
+        require(checkMultisig([b, c], [bSig, cSig]));
     }
     function spend(signature aSig) {
         require(checkSig(aSig, a));
@@ -134,7 +134,7 @@ contract Escrowish(pubkey a, pubkey b, pubkey c, int exit) {
     }
     function exitAlpha(signature aSig, signature bSig) tapscript {
         require(older(exit));
-        require(checkMultisig([a, b], [aSig, bSig], 2));
+        require(checkMultisig([a, b], [aSig, bSig]));
     }
     function refund(signature cSig) {
         require(checkSig(cSig, c));
@@ -145,7 +145,7 @@ contract Escrowish(pubkey a, pubkey b, pubkey c, int exit) {
     }
     function exitMike(signature aSig, signature cSig) tapscript {
         require(older(exit));
-        require(checkMultisig([a, c], [aSig, cSig], 2));
+        require(checkMultisig([a, c], [aSig, cSig]));
     }
 }
 "#;

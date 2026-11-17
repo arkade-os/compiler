@@ -157,10 +157,11 @@ fn spending_paths<'a>(
             emulated.extend(bound.clone());
         }
         // Every key of a leaf signs. The server and emulator co-sign every offchain spend, and a
-        // tweaked key's enclave signs whatever its covenant passes, so only a constructor key
-        // authorizes the spend.
+        // tweaked key's enclave signs whatever its covenant passes, so only a constructor or
+        // constant key authorizes the spend.
         let signed = keys.iter().any(|key| {
-            matches!(key, KeyExpr::Ident(path) if contract.parameters.iter().any(|p| p.name == path.root))
+            matches!(key, KeyExpr::Literal(_))
+                || matches!(key, KeyExpr::Ident(path) if contract.parameters.iter().any(|p| p.name == path.root))
         });
         let covenant = bound.and_then(|name| covenants.iter().find(|(f, _)| f.name == name));
         paths.push((signed, covenant.copied()));

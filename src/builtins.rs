@@ -9,9 +9,7 @@ pub struct Builtin {
     pub name: &'static str,
     /// Parameter names and source types, in call order.
     pub params: &'static [(&'static str, &'static str)],
-    /// None when the opcode is itself the check and leaves nothing, so the
-    /// call is only valid directly inside `require`.
-    pub result: Option<&'static str>,
+    pub result: &'static str,
     pub lowering: Lowering,
     pub doc: &'static str,
 }
@@ -21,10 +19,13 @@ pub enum Lowering {
     /// Push the arguments in call order, struct arguments field by field,
     /// then emit these opcodes.
     Opcodes(&'static [Opcode]),
+    /// As Opcodes, for opcodes that fail the spend unless the check holds and
+    /// leave nothing; a use as a value then pushes the `true` the call returns.
+    Check(&'static [Opcode]),
     /// Push each (G1, G2) array element field by field, then the pair count
     /// and the curve.
     Pairing,
-    /// Count valid signatures with CHECKSIGADD and compare with the optional threshold.
+    /// Count valid signatures with CHECKSIGADD and require at least the optional threshold.
     Multisig,
 }
 
@@ -38,7 +39,7 @@ const fn builtin(
     Builtin {
         name,
         params,
-        result: Some(result),
+        result,
         lowering: Lowering::Opcodes(opcodes),
         doc,
     }
@@ -47,14 +48,14 @@ const fn builtin(
 const fn verify(
     name: &'static str,
     params: &'static [(&'static str, &'static str)],
-    opcode: &'static [Opcode],
+    opcodes: &'static [Opcode],
     doc: &'static str,
 ) -> Builtin {
     Builtin {
         name,
         params,
-        result: None,
-        lowering: Lowering::Opcodes(opcode),
+        result: "bool",
+        lowering: Lowering::Check(opcodes),
         doc,
     }
 }
@@ -127,7 +128,7 @@ pub(crate) const BUILTINS: &[Builtin] = &[
         &[("data", "bytes")],
         "int",
         &[Size, Nip],
-        "Length of data in bytes.",
+        "Length of data in bytes, also written data.length.",
     ),
     builtin(
         "digest",
@@ -201,8 +202,8 @@ pub(crate) const BUILTINS: &[Builtin] = &[
             ("message", "bytes"),
         ],
         &[Swap, CheckSigFromStack, Verify],
-        "Fails the spend unless signature is valid by pubkey over message, which must be 32 bytes. \
-         Produces no value; use it directly inside require.",
+        "True when signature is valid by pubkey over message, which must be 32 bytes; otherwise \
+         fails the spend.",
     ),
     Builtin {
         name: "checkMultisig",
@@ -211,9 +212,9 @@ pub(crate) const BUILTINS: &[Builtin] = &[
             ("sigs", "signature[]"),
             ("threshold", "int"),
         ],
-        result: Some("bool"),
+        result: "bool",
         lowering: Lowering::Multisig,
-        doc: "Whether exactly threshold signatures are non-empty, each valid for the key at its \
+        doc: "Whether at least threshold signatures are non-empty, each valid for the key at its \
               index; an invalid non-empty one fails the spend. Without a threshold, all must be \
               valid; a runtime threshold outside 1 to the key count fails the spend.",
     },
@@ -322,7 +323,7 @@ pub(crate) const BUILTINS: &[Builtin] = &[
             ("g2Points", "G2Point[]"),
             ("curveId", "int"),
         ],
-        result: Some("bool"),
+        result: "bool",
         lowering: Lowering::Pairing,
         doc: "Whether the product of the pairings of aligned G1 and G2 points is the identity, \
               for 1 to 16 pairs. Only alt_bn128 (curveId 2) pairs; another curve, or an off-curve \
@@ -332,14 +333,15 @@ pub(crate) const BUILTINS: &[Builtin] = &[
         "ecMulScalarVerify",
         &[("k", "bytes32"), ("P", "bytes"), ("Q", "bytes")],
         &[EcMulScalarVerify],
-        "Fails the spend unless Q = k·P. k is 32-byte big-endian; P and Q are compressed points.",
+        "True when Q = k·P, with k 32-byte big-endian and P and Q compressed points; otherwise \
+         fails the spend.",
     ),
     verify(
         "tweakVerify",
         &[("P", "bytes32"), ("k", "bytes32"), ("Q", "bytes")],
         &[TweakVerify],
-        "Fails the spend unless Q = P + k·G, with P a 32-byte x-only key, k 32-byte big-endian \
-         and Q a 33-byte compressed point.",
+        "True when Q = P + k·G, with P a 32-byte x-only key, k 32-byte big-endian and Q a 33-byte \
+         compressed point; otherwise fails the spend.",
     ),
 ];
 
@@ -361,6 +363,13 @@ impl Builtin {
 
 pub(crate) fn find(name: &str) -> Option<&'static Builtin> {
     BUILTINS.iter().find(|builtin| builtin.name == name)
+}
+
+/// Parameter names of the tapscript-only call `name`, such as `older`.
+pub(crate) fn tapscript_params(name: &str) -> Option<Vec<&'static str>> {
+    let spelled = SPELLED.iter().find(|s| s.tapscript && s.name == name)?;
+    let name = |param: &&'static str| param.split_once(' ').map_or(*param, |(_, name)| name);
+    Some(spelled.params?.iter().map(name).collect())
 }
 
 /// A call or member the grammar spells rule by rule, so neither BUILTINS nor
@@ -466,6 +475,16 @@ const SPELLED: &[Spelled] = &[
         tapscript: false,
         doc: "Transaction outputs.",
     },
+    property(
+        "tx.inputs.length",
+        "int",
+        "Number of transaction inputs, the same as tx.numInputs.",
+    ),
+    property(
+        "tx.outputs.length",
+        "int",
+        "Number of transaction outputs, the same as tx.numOutputs.",
+    ),
     Spelled {
         name: "tx.input",
         params: None,
@@ -599,16 +618,21 @@ const SPELLED: &[Spelled] = &[
         tapscript: false,
         doc: "The group's output records.",
     },
+    property(
+        "tx.assetGroups[].inputs.length",
+        "int",
+        "Number of the group's input records, the same as numInputs.",
+    ),
+    property(
+        "tx.assetGroups[].outputs.length",
+        "int",
+        "Number of the group's output records, the same as numOutputs.",
+    ),
     method(
         "tx.assetGroups[].controlIs",
         &["bytes32 assetTxid", "int assetGidx"],
         "bool",
         "Whether the group's control asset is the given asset.",
-    ),
-    property(
-        "this.activeBytecode",
-        "ScriptPubKey",
-        "Witness program and version of the input being spent, {program, version}.",
     ),
     method(
         "this.tunnel",
@@ -627,6 +651,27 @@ const SPELLED: &[Spelled] = &[
 /// Every builtin function and `tx`/`this` member as pretty JSON: calls under
 /// `functions`, dotted names under `members`.
 pub(crate) fn docs() -> String {
+    serde_json::to_string_pretty(&documented()).unwrap()
+}
+
+/// The names documented directly under `owner`, a member path with indexes written `[]`.
+pub(crate) fn members_of(owner: &str) -> Vec<String> {
+    // ponytail: output assets share the members documented on input assets; document them
+    // separately if the two ever differ.
+    let owner = owner.replace("tx.outputs[].assets", "tx.inputs[].assets");
+    let documented = documented();
+    let members = documented["members"]
+        .as_object()
+        .expect("members are a map");
+    members
+        .keys()
+        .filter_map(|key| key.strip_prefix(owner.as_str())?.strip_prefix('.'))
+        .filter(|name| !name.contains('.'))
+        .map(str::to_string)
+        .collect()
+}
+
+fn documented() -> serde_json::Value {
     use crate::properties::*;
     use serde_json::{json, Map};
 
@@ -698,7 +743,7 @@ pub(crate) fn docs() -> String {
             .unwrap()
             .retain(|_, value| !value.is_null());
     }
-    serde_json::to_string_pretty(&json!({ "functions": functions, "members": members })).unwrap()
+    json!({ "functions": functions, "members": members })
 }
 
 #[cfg(test)]
@@ -722,12 +767,22 @@ mod tests {
                 builtin.name
             );
             let types = builtin.params.iter().map(|(_, ty)| *ty);
-            for ty in types.chain(builtin.result) {
+            for ty in types.chain([builtin.result]) {
                 let element = ty.strip_suffix("[]").unwrap_or(ty);
                 assert!(known(element), "{}: unknown type '{ty}'", builtin.name);
             }
-            if let Lowering::Opcodes(opcodes) = builtin.lowering {
+            if let Lowering::Opcodes(opcodes) | Lowering::Check(opcodes) = builtin.lowering {
                 assert!(!opcodes.is_empty(), "{} emits nothing", builtin.name);
+            }
+            // `require` emits a check's arguments one stack item each.
+            if let Lowering::Check(_) = builtin.lowering {
+                for (_, ty) in builtin.params {
+                    assert!(
+                        !matches!(ArkType::named(ty), ArkType::Struct(_)),
+                        "{}: check parameter '{ty}' is not one item",
+                        builtin.name
+                    );
+                }
             }
         }
     }

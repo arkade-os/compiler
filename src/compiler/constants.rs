@@ -77,9 +77,12 @@ fn collect(contract: &Contract) -> Result<HashMap<String, String>, CompileError>
                 "constant '{name}' collides with function '{name}'"
             )));
         }
-        if !matches!(const_type.name(), Some("int" | "bool" | "bytes")) {
+        if !matches!(
+            const_type.name(),
+            Some("int" | "bool" | "bytes" | "bytes20" | "bytes32" | "pubkey")
+        ) {
             return Err(error(format!(
-                "constant '{name}' must be int, bool or bytes"
+                "constant '{name}' must be int, bool, bytes, bytes20, bytes32 or pubkey"
             )));
         }
         declarations.insert(name.clone(), constant);
@@ -140,7 +143,14 @@ fn resolve_value(
             false => format!("constant '{name}': {error}"),
         })?;
     active.pop();
-    if constant.const_type.name() != Some(kind(&value)) {
+    let width = value.strip_prefix("0x").map(|hex| hex.len() / 2);
+    let valid = match constant.const_type.name() {
+        Some("bytes20") => width == Some(20),
+        Some("bytes32") => width == Some(32),
+        Some("pubkey") => width.is_some_and(|width| width > 0),
+        declared => declared == Some(kind(&value)),
+    };
+    if !valid {
         return Err(format!(
             "constant '{name}' is not a valid '{}' literal",
             constant.const_type
@@ -431,6 +441,16 @@ fn fold_expression(
             uses.push((path.clone(), expression.span));
             expression.kind = ExprKind::Literal(value.clone());
             return;
+        }
+        // `KEY.length` is the length of the constant's value.
+        if let Some((constant, "length")) = path.split_last() {
+            if let Some(value) = values.get(&constant.key()) {
+                uses.push((constant.clone(), expression.span));
+                let value = Box::new(expression.with_kind(ExprKind::Literal(value.clone())));
+                let field = "length".to_string();
+                expression.kind = ExprKind::FieldAccess { value, field };
+                return;
+            }
         }
     }
     if let ExprKind::Tunnel { policy, .. } = &mut expression.kind {

@@ -10,13 +10,11 @@ pub(super) fn validate_binding_requirement(
 ) {
     match requirement {
         Requirement::Expression(expression) => {
-            let produces_value = !matches!(&expression.kind, ExprKind::Builtin { builtin, .. } if builtin.result.is_none());
             let before = issues.len();
-            validate_binding_expression(expression, scopes, issues, produces_value);
+            validate_binding_expression(expression, scopes, issues, true);
             let condition = expression.ty.clone();
             // A bare find verifies the asset group exists; its index is dropped.
             if issues.len() == before
-                && produces_value
                 && !matches!(&expression.kind, ExprKind::GroupFind { .. })
                 && !matches!(condition, ArkType::Bool | ArkType::Unknown)
             {
@@ -131,10 +129,10 @@ pub(super) fn validate_binding_expression(
         )));
     }
     if value_position
-        && (matches!(
+        && matches!(
             &expression.kind,
             ExprKind::GroupIOAccess { property: None, .. }
-        ) || matches!(&expression.kind, ExprKind::Builtin { builtin, .. } if builtin.result.is_none()))
+        )
     {
         issues.push(ValidationIssue::error(
             "expression does not produce one stack item",
@@ -539,6 +537,12 @@ pub(super) fn validate_binding_expression(
                 "struct literals may only initialize typed struct declarations",
             ));
         }
+        // `tx` and `this` are reserved, so no binding resolves a path under them.
+        ExprKind::Name(path) | ExprKind::ArrayIndex { array: path, .. }
+            if matches!(path.root.as_str(), "tx" | "this") =>
+        {
+            issues.push(ValidationIssue::error(unknown_member(path)));
+        }
         ExprKind::Name(path) if path.segments.is_empty() => {
             validate_named_binding(&path.root, None, "binding", scopes, issues);
         }
@@ -620,11 +624,7 @@ pub(super) fn validate_binding_expression(
             _ if find_binding(scopes, &path.root).is_some() => {
                 validate_named_binding(&path.key(), None, "field", scopes, issues);
             }
-            _ => {
-                if let Some(error) = unknown_property(path) {
-                    issues.push(ValidationIssue::error(error));
-                }
-            }
+            _ => validate_named_binding(&path.root, None, "binding", scopes, issues),
         },
         ExprKind::ContractInstance { args, .. } => {
             for argument in args {
@@ -802,50 +802,40 @@ fn literal_index(mut expression: &Expression) -> Option<(bool, &str)> {
     }
 }
 
-/// Why `path` names no transaction value, with the properties its owner has.
-fn unknown_property(path: &crate::models::Path) -> Option<String> {
-    use crate::models::Segment::Field;
-    use crate::properties::{InputProperty, OutputProperty, TxProperty};
-    if path.root != "tx" {
-        return None;
+/// Why `path`, under `tx` or `this`, names no value: its first member the builtin docs
+/// lack, with those they list at that level, or else that it needs an access or a call.
+fn unknown_member(path: &crate::models::Path) -> String {
+    // A path the grammar reads as a whole keeps its indexes and calls, as in `outputs[0]`.
+    let text = path.key();
+    // `text` without index and argument contents, and where each of its dots is in `text`.
+    let (mut flat, mut dots, mut depth) = (String::new(), Vec::new(), 0);
+    for (at, c) in text.char_indices() {
+        if matches!(c, ']' | ')') {
+            depth -= 1;
+        }
+        if depth == 0 {
+            flat.push(c);
+            if c == '.' {
+                dots.push(at);
+            }
+        }
+        if matches!(c, '[' | '(') {
+            depth += 1;
+        }
     }
-    // An indexed list arrives as one field, such as `outputs[0]`.
-    let list =
-        |field: &str, name: &str| field.strip_prefix(name).is_some_and(|i| i.starts_with('['));
-    let (owner, name, expected): (_, _, Vec<&str>) = match path.segments.as_slice() {
-        [Field(name)] => (
-            "transaction",
-            name,
-            TxProperty::ALL.iter().map(|p| p.name()).collect(),
-        ),
-        [Field(field), Field(name)] if list(field, "inputs") => (
-            "input",
-            name,
-            InputProperty::ALL.iter().map(|p| p.name()).collect(),
-        ),
-        [Field(field), Field(name)] if list(field, "outputs") => (
-            "output",
-            name,
-            OutputProperty::ALL.iter().map(|p| p.name()).collect(),
-        ),
-        _ => return None,
-    };
-    // These exist, but only followed by an access, as in `tx.assetGroups[0]`.
-    let accessed = [
-        "input",
-        "inputs",
-        "outputs",
-        "assetGroups",
-        "intent",
-        "packet",
-        "assets",
-    ];
-    let name = name.split('[').next().unwrap_or_default();
-    if accessed.contains(&name) {
-        return Some(format!("'{}' is not a value on its own", path.key()));
+    let mut owner = path.root.clone();
+    for (segment, dot) in flat.split('.').skip(1).zip(dots) {
+        let name = segment.split(['[', '(']).next().unwrap_or_default();
+        let members = crate::builtins::members_of(&owner);
+        if !members.iter().any(|member| member == name) {
+            let expected = if members.is_empty() {
+                String::new()
+            } else {
+                format!("; expected one of {}", members.join(", "))
+            };
+            return format!("unknown member '{name}' of '{}'{expected}", &text[..dot]);
+        }
+        owner = format!("{owner}.{}", segment.replace("()", ""));
     }
-    Some(format!(
-        "unknown {owner} property '{name}'; expected one of {}",
-        expected.join(", ")
-    ))
+    format!("'{text}' is not a value on its own")
 }

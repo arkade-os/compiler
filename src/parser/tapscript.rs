@@ -17,14 +17,8 @@ pub(crate) fn parse_named_tapscript(
 ) -> Result<crate::models::NamedTapscript, CompileError> {
     let declaration = pair.as_span().into();
     let mut inner = pair.into_inner().peekable();
-    if inner
-        .peek()
-        .is_some_and(|p| p.as_rule() == Rule::function_visibility)
-    {
-        let visibility = inner.next().expect("visibility").as_str();
-        if visibility != "public" {
-            return Err(format!("tapscript functions cannot be {visibility}").into());
-        }
+    if let Some(visibility) = inner.next_if(|p| p.as_rule() == Rule::function_visibility) {
+        return Err(format!("tapscript functions cannot be {}", visibility.as_str()).into());
     }
     let name = inner.next().ok_or("Missing tapscript name")?;
     let span = name.as_span().into();
@@ -37,18 +31,55 @@ pub(crate) fn parse_named_tapscript(
         if stmt.as_rule() == Rule::tap_require_stmt {
             let mut inner = stmt.into_inner();
             let expr = inner.next().ok_or("Empty require() in tapscript")?;
+            // Start and text of the older/after argument a blocks/seconds unit may fill.
+            let mut units = Vec::new();
             for part in std::iter::once(expr.clone()).chain(expr.clone().into_inner().flatten()) {
-                let callee = part.clone().into_inner().next();
                 let name = match part.as_rule() {
-                    Rule::function_call
-                        if callee.is_some_and(|name| name.as_str() == "checkTime") =>
-                    {
-                        "checkTime(...)"
+                    Rule::function_call => {
+                        let mut call = part.clone().into_inner();
+                        let callee = call.next().ok_or("Missing call name")?.as_str();
+                        let args: Vec<_> = call.collect();
+                        if crate::models::HashFn::parse(callee).is_some() {
+                            let message = format!(
+                                "a tapscript function can use `{callee}` only as \
+                                 `require({callee}(preimage) == hash)`"
+                            );
+                            return Err(CompileError::from(message).at(part.as_span().into()));
+                        }
+                        if let Some(params) = crate::builtins::tapscript_params(callee) {
+                            let whole = matches!(callee, "older" | "after")
+                                && part.as_str() == trim_trivia_end(expr.as_str());
+                            if whole {
+                                units.extend(args.first().map(|arg| {
+                                    (arg.as_span().start(), trim_trivia_end(arg.as_str()))
+                                }));
+                            }
+                            let unit = matches!(callee, "blocks" | "seconds")
+                                && units.contains(&(part.as_span().start(), part.as_str()));
+                            if whole || unit || params.len() != args.len() {
+                                continue;
+                            }
+                            let signature = format!("{callee}({})", params.join(", "));
+                            let place = match callee {
+                                "older" | "after" => format!("`require({signature})`"),
+                                "tweak" => "a key inside checkSig or checkMultisig".to_string(),
+                                _ => format!("`older({signature})` or `after({signature})`"),
+                            };
+                            let message =
+                                format!("a tapscript function can use `{callee}` only as {place}");
+                            return Err(CompileError::from(message).at(part.as_span().into()));
+                        }
+                        let tapscript_call = crate::builtins::find(callee)
+                            .is_none_or(|b| matches!(b.name, "checkSig" | "checkMultisig"));
+                        if tapscript_call && callee != "this.tunnel" {
+                            continue;
+                        }
+                        format!("{callee}(...)")
                     }
-                    Rule::tunnel => "this.tunnel(...)",
-                    Rule::intent_field => "tx.intent.field(...)",
-                    Rule::intent_has => "tx.intent.has(...)",
-                    Rule::this_property if part.as_str() == "expiry" => "this.expiry",
+                    Rule::tunnel => "this.tunnel(...)".into(),
+                    Rule::intent_field => "tx.intent.field(...)".into(),
+                    Rule::intent_has => "tx.intent.has(...)".into(),
+                    Rule::this_property if part.as_str() == "expiry" => "this.expiry".into(),
                     _ => continue,
                 };
                 let message = format!("`{name}` is only available in covenant functions");
@@ -131,17 +162,9 @@ pub(crate) fn parse_tap_item(
             Ok(TapItem::Sig {
                 keys: vec![key],
                 sigs: vec![sig],
-                threshold: Some(1),
             })
         }
-        Rule::check_multisig => {
-            // check_multisig wraps check_threshold_multisig.
-            let inner = pair
-                .into_inner()
-                .next()
-                .ok_or("Missing checkMultisig body")?;
-            parse_tap_multisig(inner, constants)
-        }
+        Rule::check_multisig => parse_tap_multisig(pair, constants),
         Rule::function_call => {
             // older(n) / after(n)
             let mut inner = pair.into_inner();
@@ -181,8 +204,7 @@ fn parse_time_operand(
     constants: &[Constant],
 ) -> Result<(crate::models::TapOperand, Option<crate::models::TimeUnit>), String> {
     use crate::models::TimeUnit;
-    let text = arg.as_str();
-    let text = &text[..code_end(text, text.len())];
+    let text = trim_trivia_end(arg.as_str());
     let Some(wrapper) = arg
         .clone()
         .into_inner()
@@ -279,7 +301,7 @@ fn parse_binding(pair: Pair<Rule>, constants: &[Constant]) -> Result<crate::mode
     })
 }
 
-/// Parse `check_threshold_multisig` inner pairs into a Sig item.
+/// Parse `check_multisig` inner pairs into a Sig item.
 pub(crate) fn parse_tap_multisig(
     pair: Pair<Rule>,
     constants: &[Constant],
@@ -287,7 +309,6 @@ pub(crate) fn parse_tap_multisig(
     use crate::models::TapItem;
     let mut keys = Vec::new();
     let mut sigs = Vec::new();
-    let mut threshold = None;
     for child in pair.into_inner() {
         match child.as_rule() {
             Rule::key_array => {
@@ -300,27 +321,36 @@ pub(crate) fn parse_tap_multisig(
                     sigs.push(parse_binding(s, constants)?);
                 }
             }
-            Rule::number_literal | Rule::qualified_name => {
-                threshold = Some(parse_multisig_threshold(child, constants)?);
-            }
             _ => {}
         }
     }
-    Ok(TapItem::Sig {
-        keys,
-        sigs,
-        threshold,
-    })
+    Ok(TapItem::Sig { keys, sigs })
 }
 
-/// Parse a `key_expr` (a pubkey binding or `tweak(emulator, func)`).
+/// Parse a `key_expr` (a pubkey binding, a pubkey constant or `tweak(emulator, func)`).
 pub(crate) fn parse_key_expr(
     pair: Pair<Rule>,
     constants: &[Constant],
 ) -> Result<crate::models::KeyExpr, String> {
     use crate::models::KeyExpr;
     match pair.as_rule() {
-        Rule::named_binding => parse_binding(pair, constants).map(KeyExpr::Ident),
+        Rule::named_binding => {
+            let path = parse_binding(pair, constants)?;
+            let pubkey = constants.iter().any(|c| {
+                c.name == path.key() && c.const_type.ark_type() == crate::types::ArkType::Bytes
+            });
+            if !pubkey {
+                return Ok(KeyExpr::Ident(path));
+            }
+            // BIP-342 checks accept any signature for a key of another non-zero length.
+            let value = constant_value(&path, constants)?;
+            match (value.len() - 2) / 2 {
+                32 => Ok(KeyExpr::Literal(value)),
+                width => Err(format!(
+                    "tapscript key '{path}' is {width} bytes; tapscript keys are 32-byte x-only public keys"
+                )),
+            }
+        }
         Rule::key_expr => {
             let inner = pair.into_inner().next().ok_or("Empty key expression")?;
             parse_key_expr(inner, constants)
@@ -362,7 +392,7 @@ contract Demo(pubkey owner) {
     }
     function claim(bytes preimage, signature serverSig, signature emulatorSig) tapscript {
         require(hash160(preimage) == preimageHash);
-        require(checkMultisig([server, emulator], [serverSig, emulatorSig], 2));
+        require(checkMultisig([server, emulator], [serverSig, emulatorSig]));
     }
 }
 "#;
@@ -387,13 +417,9 @@ contract Demo(pubkey owner) {
             }
             other => panic!("expected Hash item, got {other:?}"),
         }
-        // Second item: multisig with two keys, two sigs, threshold 2.
+        // Second item: multisig with two keys and two sigs.
         match &ts.items[1] {
-            TapItem::Sig {
-                keys,
-                sigs,
-                threshold,
-            } => {
+            TapItem::Sig { keys, sigs } => {
                 assert_eq!(
                     keys,
                     &vec![
@@ -405,7 +431,6 @@ contract Demo(pubkey owner) {
                     sigs,
                     &vec![Path::new("serverSig"), Path::new("emulatorSig")]
                 );
-                assert_eq!(*threshold, Some(2));
             }
             other => panic!("expected Sig item, got {other:?}"),
         }
@@ -449,11 +474,6 @@ contract Demo(pubkey owner) {
         assert!(
             matches!(&cancel.items[0], TapItem::After { value: TapOperand::Name(value), unit: None } if value == "cancelTime")
         );
-        // Omitted threshold → N-of-N (None).
-        match &cancel.items[1] {
-            TapItem::Sig { threshold, .. } => assert_eq!(*threshold, None),
-            other => panic!("expected Sig, got {other:?}"),
-        }
     }
 
     #[test]
@@ -465,7 +485,7 @@ contract Demo(pubkey[2] keys, Policy[2] ps) {
     function exit(bytes32 pre , signature s1 , signature s2 ) tapscript {
         require(sha256(pre ) == ps[ 0 ].h );
         require(older(ps[SECOND].delay ));
-        require(checkMultisig([keys[ SECOND ] , ps[0].owner ], [s1 , s2 ], 2));
+        require(checkMultisig([keys[ SECOND ] , ps[0].owner ], [s1 , s2 ]));
     }
 }
 "#;
@@ -507,8 +527,12 @@ contract Demo(pubkey[2] keys, Policy[2] ps) {
     }
 
     #[test]
-    fn rejects_extra_arguments_to_tapscript_time_locks() {
-        for call in ["older(exitDelay, extra)", "after(cancelTime, extra)"] {
+    fn rejects_extra_arguments_to_tapscript_time_locks_and_multisig() {
+        for call in [
+            "older(exitDelay, extra)",
+            "after(cancelTime, extra)",
+            "checkMultisig([owner], [ownerSig], 1)",
+        ] {
             let src = format!(
                 r#"
 contract Demo(pubkey owner) {{

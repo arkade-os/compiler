@@ -1,6 +1,7 @@
 use crate::common::compile_unoptimized as compile;
 use arkade_compiler::opcodes::{
-    OP_1, OP_2, OP_3, OP_5, OP_CHECKSIG, OP_CHECKSIGADD, OP_CHECKSIGVERIFY, OP_NUMEQUAL, OP_VERIFY,
+    OP_1, OP_2, OP_3, OP_5, OP_CHECKSIG, OP_CHECKSIGADD, OP_CHECKSIGVERIFY, OP_GREATERTHANOREQUAL,
+    OP_NUMEQUAL, OP_VERIFY,
 };
 use serde_json::Value;
 use std::fs;
@@ -155,7 +156,7 @@ fn test_threshold_multisig() {
     assert_eq!(three_inputs[3], "signer3Sig");
     assert_eq!(three_inputs[4], "signer4Sig");
 
-    // m-of-n uses CHECKSIGADD + OP_NUMEQUAL regardless of threshold value.
+    // m-of-n counts with CHECKSIGADD and passes on at least m valid signatures.
     let three_tokens = arkade_asm_tokens(&output, "threeOfFive");
     assert_eq!(
         three_tokens
@@ -164,9 +165,9 @@ fn test_threshold_multisig() {
             .count(),
         4
     );
-    assert!(three_tokens
-        .windows(3)
-        .any(|tokens| { tokens[0] == OP_3 && tokens[1] == OP_NUMEQUAL && tokens[2] == OP_VERIFY }));
+    assert!(three_tokens.windows(3).any(|tokens| {
+        tokens[0] == OP_3 && tokens[1] == OP_GREATERTHANOREQUAL && tokens[2] == OP_VERIFY
+    }));
     let success = three_tokens
         .iter()
         .rposition(|token| token == OP_1)

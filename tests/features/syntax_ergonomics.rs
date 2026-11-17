@@ -43,9 +43,9 @@ contract Vault(pubkey owner, pubkey backup, int[10] limits) {
 #[test]
 fn diagnostics_report_numbers_without_separators() {
     let error = compile(
-        "contract C(pubkey a, pubkey b) { function exit(signature s, signature t) tapscript { require(checkMultisig([a, b], [s, t], 1_0)); } }",
+        "contract C(pubkey a, pubkey b) { function spend(signature s, signature t) { require(checkMultisig([a, b], [s, t], 1_0)); } }",
     )
     .unwrap_err()
     .to_string();
-    assert!(error.contains("threshold 10 must equal"), "{error}");
+    assert!(error.contains("number of public keys, got 10"), "{error}");
 }

@@ -142,7 +142,6 @@ fn declared_scalar_types_compare_directly() {
         "bytes32",
         "int",
         "bool",
-        "asset",
     ] {
         let source = format!(
             "contract Compare() {{
@@ -692,6 +691,7 @@ contract C(pubkey owner, bytes32 hash) {
         valid = valid && (sha256(preimage) == hash || sufficient(amount));
         if (valid && sufficient(amount)) { require(valid); } else { require(!valid); }
         require(checkSigFromStack(sig, owner, hash) || !enabled);
+        @allow(offchain-locktime, "an inspection operand")
         require(tx.locktime >= 0 && (amount > 0 || enabled));
         require(sha256(preimage) == hash || checkSig(sig, owner));
         require(sufficient(amount) == (enabled || amount > 0));
@@ -745,16 +745,10 @@ fn logical_operands_require_booleans_even_when_skipped() {
             "{expression}: {error}"
         );
     }
-    for expression in [
-        "false && missing",
-        "true || absent()",
-        "false && checkSigFromStackVerify(sig, key, message)",
-    ] {
+    for expression in ["false && missing", "true || absent()"] {
         let error = compile(&format!("contract C(pubkey key, bytes32 message) {{ function compare(signature sig) {{ require({expression}); }} }}")).expect_err("invalid skipped expression").to_string();
         assert!(
-            error.contains("undefined")
-                || error.contains("unknown function")
-                || error.contains("does not produce one stack item"),
+            error.contains("undefined") || error.contains("unknown function"),
             "{expression}: {error}"
         );
     }

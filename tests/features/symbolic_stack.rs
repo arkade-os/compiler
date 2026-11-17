@@ -34,7 +34,7 @@ contract Shape(int limit) {
 }
 "#;
     let raw = compile(source).unwrap();
-    assert_eq!(raw.format_version, Some(1));
+    assert_eq!(raw.format_version, 1);
     assert_eq!(
         serde_json::to_value(&raw).unwrap()["compiler"]["options"]["optimize"],
         false
@@ -508,7 +508,7 @@ fn constructor_references_cover_nested_bodies_and_named_operands() {
          "if (checkSig(sig, key)) { require(true); } else { require(false); }",
          vec!["<key>"]),
         ("bytes32 digest, int deadline", "bytes preimage",
-         "require(sha256(preimage) == digest); require(tx.locktime >= deadline);",
+         "require(sha256(preimage) == digest); require(checkTime(deadline));",
          vec!["<digest>", "<deadline>"]),
         ("AssetGroup groupIndex, bytes32 txid, int gidx", "",
          "require(groupIndex.sumInputs >= 0); require(groupIndex.controlIs(txid, gidx));",
@@ -624,7 +624,7 @@ fn final_use_after_a_private_call_consumes_the_caller_binding() {
     let covenant = covenant(
         r#"
 contract Framed() {
-    public function spend(int x, int y) {
+    function spend(int x, int y) {
         require(double(x) > 0);
         require(double(x) == y);
         require(x >= 1);

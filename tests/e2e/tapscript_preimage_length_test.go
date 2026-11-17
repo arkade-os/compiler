@@ -21,7 +21,7 @@ func TestTapscriptHashlockPreimageLength(t *testing.T) {
 				source := fmt.Sprintf(`contract C(pubkey owner, bytes20 digest) {
     function claim(%s preimage, signature serverSig, signature ownerSig) tapscript {
         require(hash160(preimage) == digest);
-        require(checkMultisig([server, owner], [serverSig, ownerSig], 2));
+        require(checkMultisig([server, owner], [serverSig, ownerSig]));
     }
 }`, declaredType)
 				path := filepath.Join(t.TempDir(), "preimage.ark")

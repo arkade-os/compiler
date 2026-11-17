@@ -283,6 +283,63 @@ contract Scalar(int limit) {
     .to_string();
 
     assert!(error.contains(".length"), "unexpected error: {error}");
+
+    let error = compile(
+        r#"
+contract Group(bytes32 assetTxid) {
+    function spend() {
+        let g = tx.assetGroups.find(assetTxid, 0);
+        require(g.length == 1);
+    }
+}
+"#,
+    )
+    .expect_err("'.length' on an AssetGroup must be rejected")
+    .to_string();
+
+    assert!(error.contains(".length"), "unexpected error: {error}");
+}
+
+#[test]
+fn length_emits_the_same_assembly_as_its_equivalent() {
+    let source = |body: &str| {
+        format!(
+            "struct Policy {{ pubkey key; }} contract C(Policy policy, bytes data, bytes32 assetTxid) {{ \
+             const bytes TAG = 0x1234; \
+             private function tagged(bytes value) bytes {{ return value + TAG; }} \
+             function spend(signature sig) {{ {body} require(checkSig(sig, policy.key)); }} }}"
+        )
+    };
+    let asm = |body: &str| {
+        let output = compile(&source(body)).unwrap_or_else(|error| panic!("{body}: {error}"));
+        crate::common::arkade_asm_tokens(&output, "spend")
+    };
+    for (length, equivalent) in [
+        ("require(data.length == 3);", "require(size(data) == 3);"),
+        ("require(policy.key.length == 33);", "require(size(policy.key) == 33);"),
+        ("require(sig.length == 64);", "require(size(sig) == 64);"),
+        ("require(TAG.length == 0x00.length);", "require(size(TAG) == size(0x00));"),
+        ("require(sha256(data).length == 32);", "require(size(sha256(data)) == 32);"),
+        ("require(tagged(data).length == 5);", "require(size(tagged(data)) == 5);"),
+        (
+            "require(tx.outputs[0].script.program.length == 32);",
+            "require(size(tx.outputs[0].script.program) == 32);",
+        ),
+        (
+            "require(tx.inputs.length == tx.outputs.length);",
+            "require(tx.numInputs == tx.numOutputs);",
+        ),
+        (
+            "let g = tx.assetGroups.find(assetTxid, 0); require(g.inputs.length < g.outputs.length);",
+            "let g = tx.assetGroups.find(assetTxid, 0); require(g.numInputs < g.numOutputs);",
+        ),
+        (
+            "require(tx.assetGroups[1].inputs.length < tx.assetGroups[1].outputs.length);",
+            "require(tx.assetGroups[1].numInputs < tx.assetGroups[1].numOutputs);",
+        ),
+    ] {
+        assert_eq!(asm(length), asm(equivalent), "{length}");
+    }
 }
 
 #[test]

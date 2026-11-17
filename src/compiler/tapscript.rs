@@ -10,7 +10,7 @@ use crate::opcodes::{
     OP_CHECKLOCKTIMEVERIFY, OP_CHECKSEQUENCEVERIFY, OP_CHECKSIG, OP_CHECKSIGVERIFY, OP_DROP,
     OP_EQUAL, OP_EQUALVERIFY, OP_SIZE, OP_VERIFY,
 };
-use crate::types::{digest_accepts, ArkType};
+use crate::types::{bytes_of_width, digest_accepts, ArkType};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ClosureClass {
@@ -35,7 +35,6 @@ pub struct Closure {
     pub class: ClosureClass,
     pub preimage_width: Option<usize>,
     pub keys: Vec<KeyExpr>,
-    pub threshold: Option<u16>,
 }
 
 /// An operand the leaf script pushes. The script is fixed when the address is
@@ -44,7 +43,7 @@ pub struct Closure {
 /// any name; `LeafScript` is what keeps inputs out.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Pushed {
-    /// Assembled as written: a number, a hex string or `OP_0`.
+    /// Assembled as written: a number or a hex string.
     Literal(String),
     Constructor(String),
     /// A constructor pubkey tweaked by `func`'s covenant hash.
@@ -92,7 +91,7 @@ pub fn assemble_closure(ts: &NamedTapscript) -> Result<Closure, String> {
     let mut preimage_width = None;
     let mut timelock: Option<(String, Option<TimeUnit>)> = None;
     let mut is_csv = false; // older() → CSV; after() → CLTV
-    let mut multisig: Option<(Vec<KeyExpr>, Option<u16>)> = None;
+    let mut multisig: Option<Vec<KeyExpr>> = None;
 
     for item in &ts.items {
         match item {
@@ -146,23 +145,19 @@ pub fn assemble_closure(ts: &NamedTapscript) -> Result<Closure, String> {
                 timelock = Some((value.to_string(), *unit));
                 is_csv = matches!(item, TapItem::Older { .. });
             }
-            TapItem::Sig {
-                keys,
-                sigs: _,
-                threshold,
-            } => {
+            TapItem::Sig { keys, sigs: _ } => {
                 if multisig.is_some() {
                     return Err(format!(
                         "tapscript `{}`: only one checkSig/checkMultisig suffix per leaf",
                         ts.name
                     ));
                 }
-                multisig = Some((keys.clone(), *threshold));
+                multisig = Some(keys.clone());
             }
         }
     }
 
-    let (keys, threshold) = multisig.ok_or_else(|| {
+    let keys = multisig.ok_or_else(|| {
         format!(
             "tapscript `{}`: missing checkSig/checkMultisig suffix (no multisig)",
             ts.name
@@ -188,26 +183,13 @@ pub fn assemble_closure(ts: &NamedTapscript) -> Result<Closure, String> {
         class,
         preimage_width,
         keys,
-        threshold,
     })
 }
 
-/// Closure-shape acceptance beyond `assemble_closure`'s template check:
-/// arkd's MultisigClosure is **always N-of-N** (the decoder requires the pushed
-/// integer to equal the key count, `closure.go:172`). So a declared threshold
-/// must equal the key count; anything less cannot decode (§ Global Constraints).
+/// Closure-shape acceptance beyond `assemble_closure`'s template check.
 pub fn validate_closure_shape(c: &Closure, ts_name: &str) -> Result<(), String> {
     if c.keys.is_empty() {
         return Err(format!("tapscript `{ts_name}`: empty key set (F1)"));
-    }
-    if let Some(t) = c.threshold {
-        if t as usize != c.keys.len() {
-            return Err(format!(
-                "tapscript `{ts_name}`: arkd recognizes only N-of-N multisig closures; \
-                 threshold {t} must equal the {} key(s) in the set",
-                c.keys.len()
-            ));
-        }
     }
     Ok(())
 }
@@ -360,6 +342,7 @@ pub fn validate_arkd_rules(
             // `resolve_binding` admits a bare `emulator` only on a leaf named after its function.
             KeyExpr::Ident(id) if id == EMULATOR => Pushed::Emulator(ts.name.clone()),
             KeyExpr::Tweak { base, func } if base == EMULATOR => Pushed::Emulator(func.clone()),
+            KeyExpr::Literal(key) => Pushed::Literal(key.clone()),
             KeyExpr::Ident(id) => {
                 if fixed(&id.key(), "key")? != Some(ArkType::Bytes) {
                     return Err(format!("unknown key `{id}` in tapscript `{}`", ts.name));
@@ -463,11 +446,11 @@ pub fn validate_arkd_rules(
                         ts.name
                     ));
                 }
-                let hash_operand = match hash {
-                    TapOperand::Literal(bytes) if bytes == "0x" => {
-                        Pushed::Literal("OP_0".to_string())
-                    }
-                    TapOperand::Literal(bytes) => Pushed::Literal(bytes.clone()),
+                let (t, hash_operand) = match hash {
+                    TapOperand::Literal(bytes) => (
+                        bytes_of_width(Some((bytes.len() - 2) / 2)),
+                        Pushed::Literal(bytes.clone()),
+                    ),
                     TapOperand::Name(path) => {
                         let Some(t) = fixed(&path.key(), "hash value")? else {
                             return Err(format!(
@@ -475,18 +458,21 @@ pub fn validate_arkd_rules(
                                 ts.name
                             ));
                         };
-                        if !digest_accepts(hash_fn, &t) {
-                            return Err(format!(
-                                "tapscript `{}`: {} value `{hash}` has type '{}', expected {}",
-                                ts.name,
-                                hash_fn.name(),
-                                t.as_str(),
-                                hash_fn.digest_type()
-                            ));
-                        }
-                        Pushed::Constructor(path.key())
+                        (t, Pushed::Constructor(path.key()))
                     }
                 };
+                // A literal types as `bytes` only when it is neither 20 nor 32 bytes, so it
+                // never equals a digest.
+                let unsized_literal = matches!(hash, TapOperand::Literal(_)) && t == ArkType::Bytes;
+                if unsized_literal || !digest_accepts(hash_fn, &t) {
+                    return Err(format!(
+                        "tapscript `{}`: {} value `{hash}` has type '{}', expected {}",
+                        ts.name,
+                        hash_fn.name(),
+                        t.as_str(),
+                        hash_fn.digest_type()
+                    ));
+                }
                 condition = Some((hash_fn.clone(), c.preimage_width, hash_operand));
             }
             TapItem::Older { value, unit } | TapItem::After { value, unit } => {
@@ -822,7 +808,7 @@ fn leaf_signs_emulator(leaf: &AbiLeaf) -> bool {
         .any(|token| token.starts_with("<EMULATOR_KEY:"))
 }
 
-/// The §5.4 default collaborative leaf: checkMultisig([server, tweak(emulator, fn)], …, 2).
+/// The §5.4 default collaborative leaf: checkMultisig([server, tweak(emulator, fn)], […]).
 fn synthesize_default_leaf(func: &str) -> AbiLeaf {
     let script = LeafScript {
         condition: None,
@@ -874,7 +860,6 @@ mod tests {
         let c = assemble_closure(&ts(vec![TapItem::Sig {
             keys: vec![ident("server"), ident("emulator")],
             sigs: vec!["serverSig".into(), "emulatorSig".into()],
-            threshold: Some(2),
         }]))
         .unwrap();
         assert_eq!(c.class, ClosureClass::Multisig);
@@ -892,7 +877,6 @@ mod tests {
             TapItem::Sig {
                 keys: vec![ident("server"), ident("emulator")],
                 sigs: vec!["serverSig".into(), "emulatorSig".into()],
-                threshold: Some(2),
             },
         ]))
         .unwrap();
@@ -909,7 +893,6 @@ mod tests {
             TapItem::Sig {
                 keys: vec![ident("owner")],
                 sigs: vec!["ownerSig".into()],
-                threshold: Some(1),
             },
         ]))
         .unwrap();
@@ -926,7 +909,6 @@ mod tests {
             TapItem::Sig {
                 keys: vec![ident("backup"), ident("server")],
                 sigs: vec!["backupSig".into(), "serverSig".into()],
-                threshold: Some(2),
             },
         ]))
         .unwrap();
@@ -948,7 +930,6 @@ mod tests {
             TapItem::Sig {
                 keys: vec![ident("server")],
                 sigs: vec!["serverSig".into()],
-                threshold: Some(1),
             },
         ]))
         .unwrap_err();
@@ -974,7 +955,6 @@ mod tests {
             TapItem::Sig {
                 keys: vec![ident("server")],
                 sigs: vec!["serverSig".into()],
-                threshold: Some(1),
             },
             TapItem::Hash {
                 hash_fn: HashFn::Hash160,
@@ -987,34 +967,10 @@ mod tests {
     }
 
     #[test]
-    fn threshold_below_keycount_is_shape_error() {
-        let c = assemble_closure(&ts(vec![TapItem::Sig {
-            keys: vec![ident("a"), ident("b"), ident("server")],
-            sigs: vec!["aSig".into(), "bSig".into(), "serverSig".into()],
-            threshold: Some(2),
-        }]))
-        .unwrap();
-        let err = validate_closure_shape(&c, "t").unwrap_err();
-        assert!(err.contains("N-of-N"), "got: {err}");
-    }
-
-    #[test]
-    fn nofn_threshold_is_accepted() {
-        let c = assemble_closure(&ts(vec![TapItem::Sig {
-            keys: vec![ident("server"), ident("emulator")],
-            sigs: vec!["serverSig".into(), "emulatorSig".into()],
-            threshold: Some(2),
-        }]))
-        .unwrap();
-        assert!(validate_closure_shape(&c, "t").is_ok());
-    }
-
-    #[test]
     fn empty_key_set_is_rejected() {
         let c = assemble_closure(&ts(vec![TapItem::Sig {
             keys: vec![],
             sigs: vec![],
-            threshold: None,
         }]))
         .unwrap();
         assert!(validate_closure_shape(&c, "t").is_err());
@@ -1067,11 +1023,7 @@ mod tests {
             .enumerate()
             .map(|(i, _)| Path::new(format!("s{i}")))
             .collect();
-        TapItem::Sig {
-            keys,
-            sigs,
-            threshold: None,
-        }
+        TapItem::Sig { keys, sigs }
     }
 
     /// `signature` inputs `s0..sn` matching the names `sig()` generates.
@@ -1439,7 +1391,6 @@ mod tests {
             items: vec![TapItem::Sig {
                 keys: vec![ident("server"), ident("emulator")],
                 sigs: vec!["serverSig".into()],
-                threshold: Some(2),
             }],
         };
         let c = contract_with(&["x"], vec![leaf.clone()]);
@@ -1461,7 +1412,6 @@ mod tests {
             items: vec![TapItem::Sig {
                 keys: vec![ident("server")],
                 sigs: vec!["ghostSig".into()],
-                threshold: Some(1),
             }],
         };
         let c = contract_with(&[], vec![leaf.clone()]);
@@ -1527,7 +1477,6 @@ mod tests {
                 TapItem::Sig {
                     keys: vec![ident("server")],
                     sigs: vec!["serverSig".into()],
-                    threshold: Some(1),
                 },
             ],
         };
@@ -1577,7 +1526,6 @@ mod tests {
                 TapItem::Sig {
                     keys: vec![ident("server"), ident("emulator")],
                     sigs: vec!["serverSig".into(), "emulatorSig".into()],
-                    threshold: None,
                 },
             ],
         };
@@ -1653,7 +1601,6 @@ mod tests {
                 TapItem::Sig {
                     keys: vec![ident("sender")],
                     sigs: vec!["senderSig".into()],
-                    threshold: Some(1),
                 },
             ],
         };
@@ -1686,7 +1633,7 @@ contract Demo(pubkey insurer) {
     require(checkSig(insurerSig, tweak(insurer, claim)));
   }
   function race(signature serverSig, signature insurerSig) tapscript {
-    require(checkMultisig([server, tweak(insurer, claim)], [serverSig, insurerSig], 2));
+    require(checkMultisig([server, tweak(insurer, claim)], [serverSig, insurerSig]));
   }
 }
 "#;
@@ -1753,7 +1700,7 @@ contract Demo(pubkey insurer) {
     require(tx.input.current.value >= 1, "funded");
   }
   function claim(signature serverSig, signature emulatorSig) tapscript {
-    require(checkMultisig([server, emulator], [serverSig, emulatorSig], 2));
+    require(checkMultisig([server, emulator], [serverSig, emulatorSig]));
   }
   function late(signature insurerSig) tapscript {
     require(older(512));
@@ -1786,7 +1733,7 @@ pragma arkade ^0.1.0;
 contract Demo(pubkey insurer) {
   function claim() { require(tx.input.current.value >= 1, "funded"); }
   function race(signature ownerSig, signature insurerSig) tapscript {
-    require(checkMultisig([server, tweak(owner, claim)], [ownerSig, insurerSig], 2));
+    require(checkMultisig([server, tweak(owner, claim)], [ownerSig, insurerSig]));
   }
 }
 "#;
@@ -1795,7 +1742,7 @@ pragma arkade ^0.1.0;
 contract Demo(pubkey insurer) {
   function claim() { require(tx.input.current.value >= 1, "funded"); }
   function race(signature serverSig, signature insurerSig) tapscript {
-    require(checkMultisig([server, tweak(insurer, missing)], [serverSig, insurerSig], 2));
+    require(checkMultisig([server, tweak(insurer, missing)], [serverSig, insurerSig]));
   }
 }
 "#;
@@ -1816,7 +1763,7 @@ contract Demo(pubkey insurer) {
   function refund() { require(tx.input.current.value >= 1, "funded"); }
   function race(signature aSig, signature bSig) tapscript {
     require(older(512));
-    require(checkMultisig([tweak(insurer, claim), tweak(insurer, refund)], [aSig, bSig], 2));
+    require(checkMultisig([tweak(insurer, claim), tweak(insurer, refund)], [aSig, bSig]));
   }
 }
 "#;
@@ -1839,7 +1786,7 @@ contract Demo(pubkey insurer, pubkey backup) {
   function refund() { require(tx.input.current.value >= 1, "funded"); }
   function race(signature aSig, signature bSig) tapscript {
     require(older(512));
-    require(checkMultisig([tweak(insurer, claim), tweak(backup, refund)], [aSig, bSig], 2));
+    require(checkMultisig([tweak(insurer, claim), tweak(backup, refund)], [aSig, bSig]));
   }
 }
 "#;
@@ -1850,7 +1797,7 @@ contract Demo(pubkey insurer) {
   function refund() { require(tx.input.current.value >= 1, "funded"); }
   function race(signature emulatorSig, signature insurerSig) tapscript {
     require(older(512));
-    require(checkMultisig([tweak(emulator, claim), tweak(insurer, refund)], [emulatorSig, insurerSig], 2));
+    require(checkMultisig([tweak(emulator, claim), tweak(insurer, refund)], [emulatorSig, insurerSig]));
   }
 }
 "#;
@@ -1862,8 +1809,7 @@ contract Demo(pubkey insurer) {
   function claim(signature serverSig, signature emulatorSig, signature insurerSig) tapscript {
     require(checkMultisig(
       [server, emulator, tweak(insurer, refund)],
-      [serverSig, emulatorSig, insurerSig],
-      3
+      [serverSig, emulatorSig, insurerSig]
     ));
   }
 }

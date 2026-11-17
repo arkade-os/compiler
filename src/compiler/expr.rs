@@ -210,7 +210,8 @@ pub(crate) fn emit_expression_asm(expr: &Expression, asm: &mut Vec<Op>) {
             emit_contract_instance_asm(contract_name, args, asm);
         }
         ExprKind::Builtin { builtin, args } => {
-            let crate::builtins::Lowering::Opcodes(opcodes) = builtin.lowering else {
+            use crate::builtins::Lowering;
+            let (Lowering::Opcodes(opcodes) | Lowering::Check(opcodes)) = builtin.lowering else {
                 unreachable!("pairings are extracted before raw emission")
             };
             for (arg, (_, ty)) in args.iter().zip(builtin.params) {
@@ -220,6 +221,9 @@ pub(crate) fn emit_expression_asm(expr: &Expression, asm: &mut Vec<Op>) {
                 }
             }
             asm.extend(opcodes.iter().copied().map(Op::from));
+            if matches!(builtin.lowering, Lowering::Check(_)) {
+                asm.push(Int1.into());
+            }
         }
         ExprKind::Unary { op, value } => {
             emit_expression_asm(value, asm);

@@ -83,7 +83,7 @@ contract Vault(pubkey owner) {{
 fn covenant_time_comparisons_use_inspection() {
     for bound in ["500000", "DEADLINE", "deadline", "deadline + 1"] {
         let source = format!(
-            "contract Vault(int deadline) {{ const int DEADLINE = 500000; function spend() {{ require(tx.locktime >= {bound}); }} }}"
+            "contract Vault(int deadline) {{ const int DEADLINE = 500000; @allow(offchain-locktime, \"tests nLockTime inspection\") function spend() {{ require(tx.locktime >= {bound}); }} }}"
         );
         let output = compile(&source).expect("time comparison");
         let asm = arkade_asm_tokens(&output, "spend");
@@ -188,46 +188,27 @@ fn constant_indices_fold_in_named_operands() {
 #[test]
 fn multisig_threshold_constants_resolve_before_and_after_functions() {
     for declaration_first in [true, false] {
-        for modifier in ["", " tapscript"] {
-            let declaration = "const int QUORUM = 2;";
-            let timelock = if modifier.is_empty() {
-                ""
-            } else {
-                "require(older(10));"
-            };
-            let function = format!("function spend(signature firstSig, signature secondSig){modifier} {{ {timelock} require(checkMultisig([owner, backup], [firstSig, secondSig], QUORUM)); }}");
-            let members = if declaration_first {
-                format!("{declaration} {function}")
-            } else {
-                format!("{function} {declaration}")
-            };
-            let source = format!("contract Vault(pubkey owner, pubkey backup) {{ {members} }}");
-            let output = compile(&source).unwrap();
-            let literal = compile(&source.replace(", QUORUM)", ", 2)")).unwrap();
-            assert_eq!(output.functions.len(), 1);
-            assert_eq!(
-                leaf_asm(&output, "spend", "spend"),
-                leaf_asm(&literal, "spend", "spend")
-            );
-            assert_eq!(
-                witness_names(&output, "spend", "spend"),
-                witness_names(&literal, "spend", "spend")
-            );
-            if modifier.is_empty() {
-                assert_eq!(
-                    arkade_asm_tokens(&output, "spend"),
-                    arkade_asm_tokens(&literal, "spend")
-                );
-                assert_eq!(arkade_inputs(&output, "spend"), ["firstSig", "secondSig"]);
-            } else {
-                assert!(group(&output, "spend").arkade.is_none());
-            }
-        }
+        let declaration = "const int QUORUM = 2;";
+        let function = "function spend(signature firstSig, signature secondSig) { require(checkMultisig([owner, backup], [firstSig, secondSig], QUORUM)); }";
+        let members = if declaration_first {
+            format!("{declaration} {function}")
+        } else {
+            format!("{function} {declaration}")
+        };
+        let source = format!("contract Vault(pubkey owner, pubkey backup) {{ {members} }}");
+        let output = compile(&source).unwrap();
+        let literal = compile(&source.replace(", QUORUM)", ", 2)")).unwrap();
+        assert_eq!(output.functions.len(), 1);
+        assert_eq!(
+            arkade_asm_tokens(&output, "spend"),
+            arkade_asm_tokens(&literal, "spend")
+        );
+        assert_eq!(arkade_inputs(&output, "spend"), ["firstSig", "secondSig"]);
     }
 }
 
 #[test]
-fn multisig_threshold_checks_types_bounds_and_tapscript_constants() {
+fn multisig_threshold_checks_types_and_bounds() {
     for declaration in [
         "",
         "const bool QUORUM = true;",
@@ -235,22 +216,10 @@ fn multisig_threshold_checks_types_bounds_and_tapscript_constants() {
         "const int QUORUM = 0;",
         "const int QUORUM = 3;",
     ] {
-        for modifier in ["", " tapscript"] {
-            let timelock = if modifier.is_empty() {
-                ""
-            } else {
-                "require(older(10));"
-            };
-            let source = format!("contract Vault(pubkey owner, int QUORUM_INPUT) {{ {declaration} function spend(signature sig){modifier} {{ {timelock} require(checkMultisig([owner], [sig], QUORUM)); }} }}");
-            compile(&source.replace(", QUORUM)", ", 1)")).expect("literal threshold");
-            assert!(compile(&source).is_err(), "{declaration} {modifier}");
-            let runtime = compile(&source.replace(", QUORUM)", ", QUORUM_INPUT)"));
-            assert_eq!(
-                runtime.is_ok(),
-                modifier.is_empty(),
-                "{declaration} {modifier}: {runtime:?}"
-            );
-        }
+        let source = format!("contract Vault(pubkey owner, int QUORUM_INPUT) {{ {declaration} function spend(signature sig) {{ require(checkMultisig([owner], [sig], QUORUM)); }} }}");
+        compile(&source.replace(", QUORUM)", ", 1)")).expect("literal threshold");
+        assert!(compile(&source).is_err(), "{declaration}");
+        compile(&source.replace(", QUORUM)", ", QUORUM_INPUT)")).expect("runtime threshold");
     }
 }
 
@@ -308,16 +277,137 @@ contract Vault(pubkey owner, int[3] limits) {
 }
 
 #[test]
-fn constant_must_be_int_bool_or_bytes() {
+fn constant_must_have_a_scalar_value_type() {
     assert!(error(
         r#"
 contract Vault(pubkey owner) {
-    const pubkey KEY = 1;
+    const signature SIG = 0x00;
     function spend(int amount) { require(amount > 0); }
 }
 "#
     )
-    .contains("constant 'KEY' must be int, bool or bytes"));
+    .contains("constant 'SIG' must be int, bool, bytes, bytes20, bytes32 or pubkey"));
+}
+
+#[test]
+fn sized_and_pubkey_constants_fold_with_their_declared_types() {
+    let hash = format!("0x{}", "ab".repeat(32));
+    let digest = format!("0x{}", "cd".repeat(20));
+    let key = format!("0x02{}", "ef".repeat(32));
+    let keys = format!(
+        "library Keys {{ const bytes32 HASH = {hash}; const bytes20 DIGEST = {digest}; const pubkey ORACLE = {key}; }}"
+    );
+    let source = |hash: &str, digest: &str, key: &str| {
+        format!(
+            r#"import "keys.ark";
+contract Vault() {{
+    static function check(bytes32 value) {{ require(value == {hash}); }}
+    function spend(signature sig, bytes32 h, bytes preimage) {{
+        require(h == {hash});
+        check({hash});
+        require(hash160(preimage) == {digest});
+        require(checkSig(sig, {key}));
+    }}
+    function exit(signature sig, bytes preimage) tapscript {{
+        require(sha256(preimage) == {hash});
+        require(older(blocks(10)));
+        require(checkSig(sig, server));
+    }}
+    function refund(signature sig, bytes preimage) tapscript {{
+        require(hash160(preimage) == Keys.DIGEST);
+        require(older(blocks(10)));
+        require(checkSig(sig, server));
+    }}
+    const bytes32 TAG = Keys.HASH;
+    const bytes20 ID = Keys.DIGEST;
+    const pubkey ORACLE = Keys.ORACLE;
+}}"#
+        )
+    };
+    let build = |main: &str| project("main.ark", &[("main.ark", main), ("keys.ark", &keys)]);
+    let output = build(&source("TAG", "ID", "ORACLE")).expect("sized constants");
+    let literal = build(&source(&hash, &digest, &key)).expect("literals");
+    assert_eq!(
+        arkade_asm_tokens(&output, "spend"),
+        arkade_asm_tokens(&literal, "spend")
+    );
+    assert_eq!(arkade_inputs(&output, "spend"), ["sig", "h", "preimage"]);
+    for name in ["spend", "exit", "refund"] {
+        assert_eq!(
+            leaf_asm(&output, name, name),
+            leaf_asm(&literal, name, name)
+        );
+    }
+    assert!(leaf_asm(&output, "exit", "exit").contains(&format!("OP_SHA256 {hash}")));
+    assert!(leaf_asm(&output, "refund", "refund").contains(&format!("OP_HASH160 {digest}")));
+    assert_eq!(witness_names(&output, "exit", "exit"), ["sig", "preimage"]);
+
+    for (declaration, body, message) in [
+        ("const bytes32 H = 0xabcd;", "", "constant 'H' is not a valid 'bytes32' literal"),
+        ("const bytes20 H = TAG;", "", "constant 'H' is not a valid 'bytes20' literal"),
+        ("const pubkey H = 1;", "", "constant 'H' is not a valid 'pubkey' literal"),
+        ("const pubkey H = \"\";", "", "constant 'H' is not a valid 'pubkey' literal"),
+        ("", "function spend(bytes p) { require(sha256(p) == ID); }", "not defined between 'bytes32' and 'bytes20'"),
+        ("", "function spend(bytes20 v) { require(v == TAG); }", "not defined between 'bytes20' and 'bytes32'"),
+        ("", "function exit(signature sig, bytes p) tapscript { require(sha256(p) == ID); require(older(10)); require(checkSig(sig, server)); }", "sha256 value"),
+        ("", "function exit(signature sig, bytes p) tapscript { require(sha256(p) == 0xabcd); require(older(10)); require(checkSig(sig, server)); }", "sha256 value `0xabcd` has type 'bytes'"),
+        ("", "function exit(signature sig, bytes p) tapscript { require(hash160(p) == \"\"); require(older(10)); require(checkSig(sig, server)); }", "hash160 value `0x` has type 'bytes'"),
+    ] {
+        let error = error(&format!(
+            "contract Vault() {{ const bytes32 TAG = {hash}; const bytes20 ID = {digest}; {declaration} {body} }}"
+        ));
+        assert!(error.contains(message), "{declaration}{body}: {error}");
+    }
+}
+
+#[test]
+fn pubkey_constants_are_x_only_tapscript_keys() {
+    let key = format!("0x{}", "ef".repeat(32));
+    let keys = format!(
+        "library Keys {{ const pubkey ORACLE = {key}; const pubkey WIDE = 0x02{}; }}",
+        "ef".repeat(32)
+    );
+    let build = |members: &str| {
+        let main = format!("import \"keys.ark\"; contract Vault(pubkey owner) {{ const pubkey LOCAL = Keys.ORACLE; function spend(signature sig) {{ require(checkSig(sig, owner)); }} {members} }}");
+        project("main.ark", &[("main.ark", &main), ("keys.ark", &keys)])
+    };
+    let output = build(
+        "function exit(signature sig) tapscript { require(older(blocks(10))); require(checkSig(sig, LOCAL)); }
+         function settle(signature serverSig, signature oracleSig, signature ownerSig) tapscript { require(checkMultisig([server, Keys.ORACLE, owner], [serverSig, oracleSig, ownerSig])); }",
+    )
+    .unwrap();
+    assert_eq!(
+        leaf_asm(&output, "exit", "exit"),
+        format!("10 OP_CHECKSEQUENCEVERIFY OP_DROP {key} OP_CHECKSIG")
+    );
+    assert_eq!(
+        leaf_asm(&output, "settle", "settle"),
+        format!("<SERVER_KEY> OP_CHECKSIGVERIFY {key} OP_CHECKSIGVERIFY <owner> OP_CHECKSIG")
+    );
+    assert_eq!(witness_names(&output, "exit", "exit"), ["sig"]);
+    assert_eq!(
+        witness_names(&output, "settle", "settle"),
+        ["serverSig", "oracleSig", "ownerSig"]
+    );
+    assert_eq!(output.parameters.len(), 1);
+
+    for (members, message) in [
+        (
+            "function exit(signature sig) tapscript { require(older(10)); require(checkSig(sig, Keys.WIDE)); }",
+            "tapscript key 'Keys.WIDE' is 33 bytes; tapscript keys are 32-byte x-only public keys",
+        ),
+        (
+            "function exit(signature sig) tapscript { require(older(10)); require(checkSig(sig, tweak(LOCAL, spend))); }",
+            "`LOCAL` is not a constructor pubkey",
+        ),
+        (
+            "function exit(signature sig) tapscript { require(checkSig(sig, LOCAL)); }",
+            "must include `server`",
+        ),
+    ] {
+        let error = build(members).expect_err(members).to_string();
+        assert!(error.contains(message), "{members}: {error}");
+    }
 }
 
 #[test]
@@ -444,7 +534,7 @@ fn constant_expressions_reject_runtime_values_type_errors_and_invalid_arithmetic
 fn constant_expressions_resolve_in_multisig_and_timelocks() {
     let source = r#"contract Vault(pubkey first, pubkey second) {
         function spend(signature a, signature b) { require(checkMultisig([first, second], [a, b], QUORUM)); require(DELAY > 1); }
-        function exit(signature a, signature b) tapscript { require(older(DELAY)); require(checkMultisig([first, second], [a, b], QUORUM)); }
+        function exit(signature a, signature b) tapscript { require(older(DELAY)); require(checkMultisig([first, second], [a, b])); }
         const int QUORUM = KEYS / 2;
         const int DELAY = QUORUM * 72;
         const int KEYS = 4;

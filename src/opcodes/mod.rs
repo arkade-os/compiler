@@ -245,7 +245,7 @@ mod tests {
         let builtins = BUILTINS
             .iter()
             .filter_map(|builtin| match builtin.lowering {
-                Lowering::Opcodes(opcodes) => Some(opcodes),
+                Lowering::Opcodes(opcodes) | Lowering::Check(opcodes) => Some(opcodes),
                 _ => None,
             });
         let binary = BinaryOperator::ALL.map(BinaryOperator::opcodes);

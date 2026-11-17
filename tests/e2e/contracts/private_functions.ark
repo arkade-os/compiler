@@ -56,7 +56,7 @@ contract PrivateFunctions(Config config) {
     private function point(ECPoint p) ECPoint { return ecMul(p, 1, 0); }
     private function outpoint() Outpoint { return tx.input.current.outpoint; }
 
-    public function spend(int[3] values, int expected, bool pass, ECPoint p) {
+    function spend(int[3] values, int expected, bool pass, ECPoint p) {
         NativeResults wrapped = { point: point(p), previous: outpoint(), result: result(5) };
         require(wrapped.point.x == p.x);
         require(wrapped.point.y == p.y);

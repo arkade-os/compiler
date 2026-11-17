@@ -6,7 +6,7 @@ fn nested_private_calls_preserve_constructor_scope_and_public_abi() {
     let output = compile(r#"
 struct Policy { int minimum; int[2] limits; }
 contract Vault(Policy policy, pubkey owner) {
-    public function spend(signature sig, int amount) {
+    function spend(signature sig, int amount) {
         authorize(sig);
         require(sufficient(amount + 1));
     }
@@ -20,7 +20,7 @@ contract Vault(Policy policy, pubkey owner) {
     private function authorize(signature sig) {
         require(checkSig(sig, owner));
     }
-    public function exit(signature sig) tapscript { require(older(blocks(10))); require(checkSig(sig, owner)); }
+    function exit(signature sig) tapscript { require(older(blocks(10))); require(checkSig(sig, owner)); }
 }
 "#).expect("nested calls");
     assert!(output.warnings.is_empty(), "{:?}", output.warnings);
@@ -175,7 +175,7 @@ contract Guards() {{
 #[test]
 fn invalid_function_signatures_calls_and_returns_are_rejected() {
     let cases = [
-        ("function spend() bool { return true; }", "public function"),
+        ("function spend() bool { return true; }", "covenant function 'spend' cannot declare a return type"),
         ("function spend() { require(true); return; }", "only allowed in private"),
         ("function spend() { missing(); require(true); }", "unknown function"),
         ("function spend() { require(true); spend(); }", "entrypoint and cannot be called"),
@@ -194,9 +194,6 @@ fn invalid_function_signatures_calls_and_returns_are_rejected() {
         ("function spend() { require(true); } private function helper() { let x = 1; let x = 2; }", "shadows"),
         ("function spend() { require(true); } private function helper() int[2] { return [1]; }", "expected 2 array elements"),
         ("function spend() { require(true); } private function helper() int[2] { return [1, true]; }", "expected 'int', got 'bool'"),
-        ("function spend() { require(true); } private function bad(signature sig, pubkey pk, bytes32 msg) bool { return checkSigFromStackVerify(sig, pk, msg); }", "does not produce one stack item"),
-        ("function spend() { require(true); } private function helper(bool value) {} private function bad(signature sig, pubkey pk, bytes32 msg) { helper(checkSigFromStackVerify(sig, pk, msg)); }", "does not produce one stack item"),
-        ("function spend() { require(true); } private function bad(signature sig, pubkey pk, bytes32 msg) bool[1] { return [checkSigFromStackVerify(sig, pk, msg)]; }", "does not produce one stack item"),
         ("function spend() { require(true); } private function checkSig() {}", "reserved"),
         ("function spend() { require(true); } function helper() internal {}", "unknown type 'internal'"),
         ("privatefunction spend() { require(true); }", "Parse error"),
