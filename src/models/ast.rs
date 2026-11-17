@@ -384,6 +384,8 @@ pub enum KeyExpr {
     /// A pubkey binding: a reserved role (`server`, `emulator`) or any pubkey in
     /// scope (constructor pubkey, struct field, array element, etc.).
     Ident(Path),
+    /// A 32-byte x-only key from a `pubkey` constant, as `0x`-prefixed hex.
+    Literal(String),
     /// `tweak(base, func)`: `base` tweaked by `func`'s covenant hash.
     /// `base` is `emulator` or a constructor pubkey (a second enclave).
     Tweak { base: String, func: String },
@@ -441,12 +443,8 @@ pub enum TapItem {
         value: TapOperand,
         unit: Option<TimeUnit>,
     },
-    /// `checkSig`/`checkMultisig` → multisig suffix. `threshold == None` means N-of-N.
-    Sig {
-        keys: Vec<KeyExpr>,
-        sigs: Vec<Path>,
-        threshold: Option<u16>,
-    },
+    /// `checkSig`/`checkMultisig` → N-of-N multisig suffix.
+    Sig { keys: Vec<KeyExpr>, sigs: Vec<Path> },
 }
 
 /// A hash value or timelock operand: a literal, with constants already folded in, or the

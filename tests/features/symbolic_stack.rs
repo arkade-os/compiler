@@ -34,7 +34,7 @@ contract Shape(int limit) {
 }
 "#;
     let raw = compile(source).unwrap();
-    assert_eq!(raw.format_version, Some(1));
+    assert_eq!(raw.format_version, 1);
     assert_eq!(
         serde_json::to_value(&raw).unwrap()["compiler"]["options"]["optimize"],
         false
@@ -624,7 +624,7 @@ fn final_use_after_a_private_call_consumes_the_caller_binding() {
     let covenant = covenant(
         r#"
 contract Framed() {
-    public function spend(int x, int y) {
+    function spend(int x, int y) {
         require(double(x) > 0);
         require(double(x) == y);
         require(x >= 1);

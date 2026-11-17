@@ -24,7 +24,7 @@ pub enum Lowering {
     /// Push each (G1, G2) array element field by field, then the pair count
     /// and the curve.
     Pairing,
-    /// Count valid signatures with CHECKSIGADD and compare with the optional threshold.
+    /// Count valid signatures with CHECKSIGADD and require at least the optional threshold.
     Multisig,
 }
 
@@ -213,7 +213,7 @@ pub(crate) const BUILTINS: &[Builtin] = &[
         ],
         result: Some("bool"),
         lowering: Lowering::Multisig,
-        doc: "Whether exactly threshold signatures are non-empty, each valid for the key at its \
+        doc: "Whether at least threshold signatures are non-empty, each valid for the key at its \
               index; an invalid non-empty one fails the spend. Without a threshold, all must be \
               valid; a runtime threshold outside 1 to the key count fails the spend.",
     },
@@ -612,11 +612,6 @@ const SPELLED: &[Spelled] = &[
         "bool",
         "Whether the group's control asset is the given asset.",
     ),
-    property(
-        "this.activeBytecode",
-        "ScriptPubKey",
-        "Witness program and version of the input being spent, {program, version}.",
-    ),
     method(
         "this.tunnel",
         &[
@@ -634,6 +629,27 @@ const SPELLED: &[Spelled] = &[
 /// Every builtin function and `tx`/`this` member as pretty JSON: calls under
 /// `functions`, dotted names under `members`.
 pub(crate) fn docs() -> String {
+    serde_json::to_string_pretty(&documented()).unwrap()
+}
+
+/// The names documented directly under `owner`, a member path with indexes written `[]`.
+pub(crate) fn members_of(owner: &str) -> Vec<String> {
+    // ponytail: output assets share the members documented on input assets; document them
+    // separately if the two ever differ.
+    let owner = owner.replace("tx.outputs[].assets", "tx.inputs[].assets");
+    let documented = documented();
+    let members = documented["members"]
+        .as_object()
+        .expect("members are a map");
+    members
+        .keys()
+        .filter_map(|key| key.strip_prefix(owner.as_str())?.strip_prefix('.'))
+        .filter(|name| !name.contains('.'))
+        .map(str::to_string)
+        .collect()
+}
+
+fn documented() -> serde_json::Value {
     use crate::properties::*;
     use serde_json::{json, Map};
 
@@ -705,7 +721,7 @@ pub(crate) fn docs() -> String {
             .unwrap()
             .retain(|_, value| !value.is_null());
     }
-    serde_json::to_string_pretty(&json!({ "functions": functions, "members": members })).unwrap()
+    json!({ "functions": functions, "members": members })
 }
 
 #[cfg(test)]

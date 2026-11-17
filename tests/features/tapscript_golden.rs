@@ -20,11 +20,11 @@ contract HTLC(pubkey receiver, pubkey sender, bytes20 preimageHash, int refundTi
     }
     function claim(bytes preimage, signature serverSig, signature emulatorSig) tapscript {
         require(hash160(preimage) == preimageHash);
-        require(checkMultisig([server, emulator], [serverSig, emulatorSig], 2));
+        require(checkMultisig([server, emulator], [serverSig, emulatorSig]));
     }
     function refund(signature serverSig, signature emulatorSig) tapscript {
         require(after(refundTime));
-        require(checkMultisig([server, emulator], [serverSig, emulatorSig], 2));
+        require(checkMultisig([server, emulator], [serverSig, emulatorSig]));
     }
     function unilateral(signature senderSig) tapscript {
         require(older(exit));
@@ -93,7 +93,7 @@ fn server_exit_delay_is_not_an_absolute_locktime() {
 fn timelock_units_encode_literals_and_constants() {
     let leaf = |timelock: &str| {
         let source = format!(
-            "contract C(pubkey owner) {{ const int DELAY = 1024; function exit(signature serverSig, signature sig) tapscript {{ require({timelock}); require(checkMultisig([server, owner], [serverSig, sig], 2)); }} }}"
+            "contract C(pubkey owner) {{ const int DELAY = 1024; function exit(signature serverSig, signature sig) tapscript {{ require({timelock}); require(checkMultisig([server, owner], [serverSig, sig])); }} }}"
         );
         let out = compile(&source).unwrap();
         (crate::common::leaf_asm(&out, "exit", "exit"), out.warnings)
@@ -144,7 +144,7 @@ fn sized_hashlock_preimages_emit_runtime_width_checks() {
                 ),
             ] {
                 let source = format!(
-                    "contract C(pubkey owner, {digest_type} digest) {{ {covenant} function claim({preimage_type} preimage, signature serverSig, signature sig) tapscript {{ require({hash}(preimage) == digest); {timelock} require(checkMultisig([{keys}], [{signatures}], 2)); }} }}"
+                    "contract C(pubkey owner, {digest_type} digest) {{ {covenant} function claim({preimage_type} preimage, signature serverSig, signature sig) tapscript {{ require({hash}(preimage) == digest); {timelock} require(checkMultisig([{keys}], [{signatures}])); }} }}"
                 );
                 for optimize in [false, true] {
                     let output = arkade_compiler::compile_sources_with_options(

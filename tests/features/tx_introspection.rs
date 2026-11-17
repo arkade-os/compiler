@@ -62,7 +62,7 @@ fn test_tx_time_is_not_a_locktime_alias() {
         .unwrap_err()
         .to_string();
     assert!(
-        err.contains("unknown transaction property 'time'; expected one of version, locktime"),
+        err.contains("unknown member 'time' of 'tx'; expected one of") && err.contains("locktime"),
         "{err}"
     );
 }
@@ -153,7 +153,7 @@ fn unknown_tx_properties_reach_name_resolution() {
         );
         let err = compile(&code).unwrap_err().to_string();
         assert!(
-            err.contains(&format!("unknown transaction property '{property}'")),
+            err.contains(&format!("unknown member '{property}' of 'tx'")),
             "{err}"
         );
     }

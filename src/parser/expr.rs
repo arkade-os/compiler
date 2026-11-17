@@ -64,18 +64,6 @@ pub(crate) fn reject_reserved_function_call(pair: &Pair<Rule>) -> Result<(), Str
         .as_str()
         .to_string();
 
-    if name == "negate" {
-        return Err(
-            "`negate(value)` was replaced by the unary minus operator; write `-value`".to_string(),
-        );
-    }
-
-    if matches!(name.as_str(), "neg64" | "le64ToScriptNum" | "le32ToLe64") {
-        return Err(format!(
-            "`{name}` was removed with fixed-width arithmetic; use BigNum arithmetic or bytes2int/int2bytes"
-        ));
-    }
-
     if let Some(signature) = reserved_function_signature(&name) {
         let args = pair.clone().into_inner().count() - 1;
         if crate::builtins::tapscript_params(&name).is_some_and(|params| params.len() == args) {
@@ -232,12 +220,6 @@ pub(crate) fn parse_primary_expr(pair: Pair<Rule>) -> Result<Expression, String>
         Rule::tx_property_access => parse_tx_property_to_expr(pair),
         Rule::this_property_access => {
             let property = pair.into_inner().next().ok_or("Missing this property")?;
-            if property.as_str() == "activeBytecode" {
-                return Ok(super::introspection::current_input(
-                    crate::properties::InputProperty::Script,
-                    span,
-                ));
-            }
             Ok(Expression::new(
                 ExprKind::This(super::introspection::named(
                     property,

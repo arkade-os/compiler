@@ -245,10 +245,10 @@ contract DupLeaves(pubkey owner) {
         require(tx.outputs[0].value >= 1);
     }
     function spend(signature serverSig, signature emulatorSig) tapscript {
-        require(checkMultisig([server, emulator], [serverSig, emulatorSig], 2));
+        require(checkMultisig([server, emulator], [serverSig, emulatorSig]));
     }
     function spend(signature serverSig, signature emulatorSig) tapscript {
-        require(checkMultisig([server, emulator], [serverSig, emulatorSig], 2));
+        require(checkMultisig([server, emulator], [serverSig, emulatorSig]));
     }
 }"#;
     let result = compile(source);
@@ -522,7 +522,7 @@ fn skipped_builtin_literal_operands_are_validated_in_both_modes() {
 fn introspection_diagnostics_name_normalized_operands() {
     for (expression, expected) in [
         (
-            "tx.assetGroups.has(id, this.activeBytecode)",
+            "tx.assetGroups.has(id, tx.input.current.script)",
             "gidx operand 'tx.inputs[this.activeInputIndex].script' must be int",
         ),
         (
@@ -642,6 +642,50 @@ fn check_reports_emission_errors_at_their_statement() {
         message.starts_with("line 4, column 13: array index '2' is out of range"),
         "{message}"
     );
+}
+
+#[test]
+fn check_reports_unknown_tx_and_this_members_at_their_path() {
+    let source = |path: &str| {
+        format!("contract C(pubkey pk) {{ function f(signature s) {{ require({path} == 1); require(checkSig(s, pk)); }} }}")
+    };
+    // Lists that other member tables may still grow are checked up to their start.
+    for (path, message) in [
+        ("this.foo", "unknown member 'foo' of 'this'; expected one of "),
+        ("this.tunnel.x", "unknown member 'x' of 'this.tunnel'"),
+        ("this.foo[0]", "unknown member 'foo' of 'this'; expected one of "),
+        ("tx.inputs.lengthX", "unknown member 'lengthX' of 'tx.inputs'"),
+        ("tx.inputs[0].foo.bar", "unknown member 'foo' of 'tx.inputs[0]'; expected one of arkadeScriptHash, arkadeWitnessHash, assets, outpoint, packet, script, sequence, value, witnessVersion"),
+        ("tx.outputs[0].assets.frob(1, 2)", "unknown member 'frob' of 'tx.outputs[0].assets'; expected one of has, length, lookup, tryLookup"),
+        ("tx.inputs[0].packet.foo", "unknown member 'foo' of 'tx.inputs[0].packet'; expected one of has"),
+        ("tx.assetGroups.foo", "unknown member 'foo' of 'tx.assetGroups'; expected one of "),
+        ("tx.intent.foo", "unknown member 'foo' of 'tx.intent'; expected one of field, has"),
+        ("tx.input.foo", "unknown member 'foo' of 'tx.input'; expected one of current"),
+        ("tx.outputs[0].assets", "'tx.outputs[0].assets' is not a value on its own"),
+        ("foo.bar", "binding 'foo' is undefined"),
+    ] {
+        let code = source(path);
+        let files = std::collections::BTreeMap::from([("main.ark".to_string(), code.clone())]);
+        let errors: Vec<_> = arkade_compiler::check("main.ark", &files)
+            .into_iter()
+            .filter(|d| d.severity == arkade_compiler::Severity::Error)
+            .collect();
+        let [error] = errors.as_slice() else {
+            panic!("{path}: {errors:?}");
+        };
+        assert!(error.message.starts_with(message), "{path}: {}", error.message);
+        let span = error.span.expect("located");
+        assert_eq!(&code[span.start..span.end], path);
+    }
+    for path in [
+        "this.activeInputIndex",
+        "tx.inputs[0].value",
+        "tx.input.current.sequence",
+        "tx.outputs[0].assets.length",
+        "tx.assetGroups.length",
+    ] {
+        compile(&source(path)).unwrap_or_else(|error| panic!("{path}: {error}"));
+    }
 }
 
 #[test]

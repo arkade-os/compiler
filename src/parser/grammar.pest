@@ -5,13 +5,16 @@ COMMENT = _{ "//" ~ (!"\n" ~ ANY)* ~ ("\n" | EOI) }
 // Import statement: import "path/to/contract.ark";
 import_stmt = { "import" ~ string_literal ~ ";" }
 
-// Version constraints are syntax-only until compiler versioning is established.
+// Version constraints are checked against the compiler version when a file is loaded.
 pragma_keyword = @{ "pragma" ~ !(ASCII_ALPHANUMERIC | "_") }
 pragma_language = @{ "arkade" ~ !(ASCII_ALPHANUMERIC | "_") }
 pragma_version_part = _{ "0" | ASCII_NONZERO_DIGIT ~ ASCII_DIGIT* }
 pragma_version = @{ pragma_version_part ~ "." ~ pragma_version_part ~ "." ~ pragma_version_part ~ !(ASCII_ALPHANUMERIC | "_" | ".") }
 pragma_constraint = { (">=" | "<=" | ">" | "<" | "=" | "^" | "~")? ~ pragma_version }
-pragma_stmt = { pragma_keyword ~ pragma_language ~ pragma_constraint+ ~ ("||" ~ pragma_constraint+)* ~ ";" }
+pragma_range = { pragma_constraint+ }
+pragma_stmt = { pragma_keyword ~ pragma_language ~ pragma_range ~ ("||" ~ pragma_range)* ~ ";" }
+// A file's leading pragma alone, so it is checked even when the rest of the file does not parse.
+pragma_head = { SOI ~ pragma_stmt }
 
 // Main entry point - must consume the entire input
 main = { SOI ~ pragma_stmt? ~ import_stmt* ~ struct_definition* ~ (attribute* ~ (contract | library))? ~ EOI }
@@ -56,14 +59,14 @@ parameter = { data_type ~ identifier }
 array_size = @{ (ASCII_NONZERO_DIGIT ~ ASCII_DIGIT*) | qualified_name }
 data_type = { identifier ~ ("[" ~ array_size ~ "]")? }
 
-// Visibility defaults to public. Tapscript declarations have no return type.
+// A function without a modifier is public. Tapscript declarations have no return type.
 function = {
     function_visibility? ~ "function" ~ identifier ~
     "(" ~ param_list ~ ")" ~
     ( "tapscript" ~ tapscript_block
     | data_type? ~ "{" ~ statement* ~ "}" )
 }
-function_visibility = @{ ("private" | "public" | "static") ~ !(ASCII_ALPHANUMERIC | "_") }
+function_visibility = @{ ("private" | "static") ~ !(ASCII_ALPHANUMERIC | "_") }
 tapscript_block = { "{" ~ tap_require_stmt* ~ "}" }
 tap_require_stmt = { "require" ~ "(" ~ tap_require_expression ~ ("," ~ string_literal)? ~ ")" ~ ";" }
 tap_require_expression = _{
@@ -428,7 +431,7 @@ this_property_access = {
 
 // This properties
 this_property = {
-    "activeInputIndex" | "activeBytecode" | "expiry"
+    "activeInputIndex" | "expiry"
 }
 
 // Property part with various access types
@@ -491,13 +494,10 @@ check_sig = {
     "checkSig" ~ "(" ~ named_binding ~ "," ~ key_expr ~ ")"
 }
 
-// CheckMultisig expression
-check_multisig = { check_threshold_multisig }
-
-// checkMultisig([keys], [sigs], threshold?) — keys may be tweak()s; the second
-// array carries the aligned signature inputs and the final threshold is optional.
-check_threshold_multisig = {
-    "checkMultisig" ~ "(" ~ key_array ~ "," ~ array ~ ("," ~ (number_literal | qualified_name))? ~ ")"
+// checkMultisig([keys], [sigs]) — keys may be tweak()s; the second array carries the
+// aligned signature inputs. arkd recognizes only N-of-N closures, so it takes no threshold.
+check_multisig = {
+    "checkMultisig" ~ "(" ~ key_array ~ "," ~ array ~ ")"
 }
 
 // Array of identifiers

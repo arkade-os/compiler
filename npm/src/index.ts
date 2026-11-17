@@ -105,7 +105,7 @@ export interface CompilerInfo {
 }
 
 export interface CompilerArtifact {
-    formatVersion?: number;
+    formatVersion: number;
     contractName: string;
     structs?: StructDefinition[];
     constructorInputs: Parameter[];
