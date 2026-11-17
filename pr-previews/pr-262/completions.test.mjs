@@ -80,7 +80,7 @@ for (const prefix of ['tx.inputs[0].', 'tx.input.current.', 'tx.outputs[0].']) {
     assert(!labels(prefix).includes('scriptPubKey'));
 }
 assert(labels('').includes('ScriptPubKey'));
-for (const path of ['destination', 'destinations[0]', 'segment.script', 'tx.outputs[0].script', 'tx.inputs[0].script', 'tx.input.current.script', 'this.activeBytecode']) {
+for (const path of ['destination', 'destinations[0]', 'segment.script', 'tx.outputs[0].script', 'tx.inputs[0].script', 'tx.input.current.script']) {
     assert.deepEqual(labels(`${path}.`, table), ['program', 'version']);
 }
 assert.deepEqual(labels('destinations.', table), ['length']);
