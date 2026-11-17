@@ -366,7 +366,7 @@ fn short_circuit_skips_indexes_that_become_invalid_after_unrolling() {
         "true && (i < 2 || values[i + 2] == input)",
         "false || !(i >= 2 && values[i + 2] == input)",
     ] {
-        let source = format!("contract C() {{ function spend(bytes[2] values, bytes input) {{ for (i, unused) in values {{ require({condition}); }} }} }}");
+        let source = format!("contract C() {{ function spend(int[2] values, int input) {{ for (i, unused) in values {{ require({condition}); }} }} }}");
         compile_unoptimized(&source).unwrap();
         let tokens = asm(&source);
         assert!(
@@ -479,13 +479,12 @@ fn optimization_preserves_numeric_execution_across_scopes_and_returns() {
                         stack.push(value);
                     }
                 }
-                "OP_NOT" | "OP_0NOTEQUAL" | "OP_NEGATE" | "OP_1ADD" | "OP_BIN2NUM" => {
+                "OP_NOT" | "OP_0NOTEQUAL" | "OP_NEGATE" | "OP_1ADD" => {
                     let value = stack.pop().unwrap();
                     stack.push(match token.as_str() {
                         "OP_NOT" => i128::from(value == 0),
                         "OP_0NOTEQUAL" => i128::from(value != 0),
                         "OP_NEGATE" => -value,
-                        "OP_BIN2NUM" => value,
                         _ => value + 1,
                     });
                 }

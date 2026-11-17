@@ -164,7 +164,7 @@ impl Generator {
                 kind: BindingKind::Constructor,
             });
         }
-        // Witness inputs carry any bytes; pin fixed-width, bool and int ones before the body reads them.
+        // Witness inputs carry any bytes; pin fixed-width and bool ones before the body reads them.
         let prologue = asm.len();
         let mut prologue_peak = 0;
         for (index, (_, leaf_type)) in function_bindings.iter().enumerate() {
@@ -172,20 +172,14 @@ impl Generator {
             let width = match leaf_type.ark_type() {
                 types::ArkType::Bytes20 => "20",
                 types::ArkType::Bytes32 => "32",
-                // Only empty and 0x01 equal their own 0NOTEQUAL, so `require`, `if` and `==` agree;
-                // only a minimal int equals its own BIN2NUM, so each number has one encoding.
-                ty @ (types::ArkType::Bool | types::ArkType::Int) => {
+                types::ArkType::Bool => {
+                    // Only empty and 0x01 equal their own 0NOTEQUAL, so `require`, `if` and `==` agree.
                     prologue_peak = prologue_peak.max(2);
                     asm.extend(match depth {
                         0 => vec![Dup.into()],
                         _ => vec![integer_op(depth), Pick.into()],
                     });
-                    let canonical = if ty == types::ArkType::Bool {
-                        NotEqual0
-                    } else {
-                        Bin2Num
-                    };
-                    asm.extend([Dup.into(), canonical.into(), EqualVerify.into()]);
+                    asm.extend([Dup.into(), NotEqual0.into(), EqualVerify.into()]);
                     continue;
                 }
                 _ => continue,

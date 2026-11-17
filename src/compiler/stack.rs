@@ -453,7 +453,6 @@ mod symbolic_stack_tests {
             .collect::<Vec<_>>();
         let mut generator =
             Generator::new(&inputs, &[], &[], &Default::default()).expect("scalar test inputs");
-        let prologue = generator.asm.len();
 
         generator.push_temporary(Op::Push("9".into()));
         generator
@@ -461,12 +460,7 @@ mod symbolic_stack_tests {
             .expect("deep assignment");
 
         assert_eq!(
-            generator
-                .asm
-                .iter()
-                .skip(prologue)
-                .map(Op::spell)
-                .collect::<Vec<_>>(),
+            generator.asm.iter().map(Op::spell).collect::<Vec<_>>(),
             ["9", "OP_3", "OP_PUT"]
         );
         assert_eq!(
@@ -493,7 +487,6 @@ mod symbolic_stack_tests {
             .collect::<Vec<_>>();
         let mut generator =
             Generator::new(&inputs, &[], &[], &Default::default()).expect("scalar test inputs");
-        let prologue = generator.asm.len();
 
         generator.push_temporary(Op::Push("9".into()));
         generator
@@ -501,12 +494,7 @@ mod symbolic_stack_tests {
             .expect("shallow assignment");
 
         assert_eq!(
-            generator
-                .asm
-                .iter()
-                .skip(prologue)
-                .map(Op::spell)
-                .collect::<Vec<_>>(),
+            generator.asm.iter().map(Op::spell).collect::<Vec<_>>(),
             ["9", "OP_0", "OP_PUT"]
         );
         assert_eq!(
@@ -537,7 +525,6 @@ mod symbolic_stack_tests {
         ];
         let mut generator =
             Generator::new(&inputs, &[], &[], &Default::default()).expect("array test inputs");
-        let prologue = generator.asm.len();
         let bindings = generator.stack.clone();
         generator.push_temporary(Op::Push("9".into()));
         generator
@@ -547,12 +534,7 @@ mod symbolic_stack_tests {
             })
             .expect("indexed assignment");
         assert_eq!(
-            generator
-                .asm
-                .iter()
-                .skip(prologue)
-                .map(Op::spell)
-                .collect::<Vec<_>>(),
+            generator.asm.iter().map(Op::spell).collect::<Vec<_>>(),
             [
                 "9",
                 "OP_4",
@@ -587,7 +569,6 @@ mod symbolic_stack_tests {
         ];
         let mut generator =
             Generator::new(&inputs, &[], &[], &Default::default()).expect("array test inputs");
-        let prologue = generator.asm.len();
         generator.push_temporary(Op::Push("7".into()));
         generator
             .bind_local(Path::new("above"))
@@ -609,12 +590,7 @@ mod symbolic_stack_tests {
             .expect("expression index assignment");
 
         assert_eq!(
-            generator
-                .asm
-                .iter()
-                .skip(prologue)
-                .map(Op::spell)
-                .collect::<Vec<_>>(),
+            generator.asm.iter().map(Op::spell).collect::<Vec<_>>(),
             [
                 "7",
                 "9",

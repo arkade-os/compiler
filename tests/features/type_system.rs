@@ -467,8 +467,7 @@ contract BytesCasts(pubkey owner) {
 }"#,
     );
     let asm = crate::common::arkade_asm(&output, "spend");
-    // The n witness check and four int casts.
-    assert_eq!(asm.matches("OP_BIN2NUM").count(), 5, "{asm}");
+    assert_eq!(asm.matches("OP_BIN2NUM").count(), 4, "{asm}");
     // `bytes(n > 0)` needs no normalization: the comparison already leaves 0 or 1.
     assert_eq!(asm.matches("OP_0NOTEQUAL").count(), 5, "{asm}");
     assert!(!asm.contains("OP_NUM2BIN"), "{asm}");
@@ -537,7 +536,7 @@ fn sized_witness_inputs_check_width_at_entry() {
     );
     // Inputs sit below the constructor prologue, first input on top.
     assert!(
-        asm.starts_with("<d> OP_1 OP_PICK OP_SIZE 20 OP_EQUALVERIFY OP_DROP OP_2 OP_PICK OP_DUP OP_BIN2NUM OP_EQUALVERIFY OP_3 OP_PICK OP_SIZE 32 OP_EQUALVERIFY OP_DROP OP_4 OP_PICK OP_SIZE 32 OP_EQUALVERIFY OP_DROP "),
+        asm.starts_with("<d> OP_1 OP_PICK OP_SIZE 20 OP_EQUALVERIFY OP_DROP OP_3 OP_PICK OP_SIZE 32 OP_EQUALVERIFY OP_DROP OP_4 OP_PICK OP_SIZE 32 OP_EQUALVERIFY OP_DROP "),
         "{asm}"
     );
     assert_eq!(asm.matches("OP_SIZE").count(), 3, "{asm}");
@@ -556,25 +555,6 @@ fn bool_witness_inputs_must_be_canonical_at_entry() {
     assert!(
         asm.starts_with(&format!(
             "OP_DUP {check} OP_1 OP_PICK {check} OP_2 OP_PICK {check} OP_3 OP_PICK {check} "
-        )),
-        "{asm}"
-    );
-    let optimized = crate::common::arkade_asm(&compile_ok(source), "spend");
-    assert_eq!(optimized.matches(check).count(), 4, "{optimized}");
-}
-
-#[test]
-fn int_witness_inputs_must_be_minimal_at_entry() {
-    let source = "contract C() { function spend(int n, AssetId id, int[2] ns) { require(n > 0); require(!tx.assetGroups[0].controlIs(id)); require(ns[0] != ns[1]); } }";
-    let check = "OP_DUP OP_BIN2NUM OP_EQUALVERIFY";
-    let asm = crate::common::arkade_asm(
-        &crate::common::compile_unoptimized(source).unwrap(),
-        "spend",
-    );
-    // `controlIs` compares gidx byte for byte, so only a minimal gidx reaches it.
-    assert!(
-        asm.starts_with(&format!(
-            "OP_DUP {check} OP_1 OP_PICK OP_SIZE 32 OP_EQUALVERIFY OP_DROP OP_2 OP_PICK {check} OP_3 OP_PICK {check} OP_4 OP_PICK {check} "
         )),
         "{asm}"
     );

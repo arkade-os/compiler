@@ -73,12 +73,12 @@ contract ScalarBytes() {
 		wantErr         string
 	}{
 		{"zero", nil, nil, ""},
-		{"padded zero", []byte{0, 0}, nil, "OP_EQUALVERIFY failed"},
-		{"negative zero", []byte{0, 0x80}, nil, "OP_EQUALVERIFY failed"},
+		{"padded zero", []byte{0, 0}, nil, ""},
+		{"negative zero", []byte{0, 0x80}, nil, ""},
 		{"positive", []byte{1}, []byte{1}, ""},
-		{"padded positive", []byte{1, 0}, []byte{1}, "OP_EQUALVERIFY failed"},
+		{"padded positive", []byte{1, 0}, []byte{1}, ""},
 		{"negative", []byte{0x81}, []byte{0x81}, ""},
-		{"padded negative", []byte{1, 0x80}, []byte{0x81}, "OP_EQUALVERIFY failed"},
+		{"padded negative", []byte{1, 0x80}, []byte{0x81}, ""},
 		{"positive sign byte", []byte{0x80, 0}, []byte{0x80, 0}, ""},
 		{"negative sign byte", []byte{0x80, 0x80}, []byte{0x80, 0x80}, ""},
 		{"little endian", []byte{0, 1}, []byte{0, 1}, ""},

@@ -508,8 +508,8 @@ fn composite_comparison_expressions_fold_every_leaf_into_one_condition() {
             asm.iter()
                 .filter(|token| *token == OP_EQUALVERIFY || *token == OP_NUMEQUALVERIFY)
                 .count(),
-            3,
-            "{op}: only the int and bool witness checks verify, not a short-circuit operand: {asm:?}"
+            1,
+            "{op}: only the fallback witness check verifies, not a short-circuit operand: {asm:?}"
         );
     }
 }

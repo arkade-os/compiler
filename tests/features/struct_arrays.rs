@@ -322,7 +322,7 @@ contract C() {
     // The helper reads each element in place instead of copying it into an argument slot.
     assert_eq!(
         arkade_asm(&output, "spend"),
-        "OP_DUP OP_DUP OP_BIN2NUM OP_EQUALVERIFY OP_1 OP_PICK OP_DUP OP_BIN2NUM OP_EQUALVERIFY OP_0 OP_PICK 0 OP_GREATERTHAN OP_VERIFY OP_1 OP_PICK 0 OP_GREATERTHAN OP_VERIFY OP_1 OP_NIP OP_NIP"
+        "OP_0 OP_PICK 0 OP_GREATERTHAN OP_VERIFY OP_1 OP_PICK 0 OP_GREATERTHAN OP_VERIFY OP_1 OP_NIP OP_NIP"
     );
 }
 

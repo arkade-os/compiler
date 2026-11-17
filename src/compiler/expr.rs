@@ -237,8 +237,7 @@ pub(crate) fn emit_expression_asm(expr: &Expression, asm: &mut Vec<Op>) {
                 return;
             }
             match target.as_str() {
-                // Constructor ints are not checked like witness ints; normalize before exposing
-                // their encoding.
+                // Normalize spender-supplied integers before exposing their encoding.
                 "bytes" if data.ty == crate::types::ArkType::Int => asm.push(Bin2Num.into()),
                 // Constructor bools are not checked like witness bools; normalize to 0/1.
                 "bytes" if data.ty == crate::types::ArkType::Bool => asm.push(NotEqual0.into()),

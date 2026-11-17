@@ -600,7 +600,7 @@ fn an_allowed_unused_local_is_dropped_from_the_covenant_stack() {
     let output = arkade_compiler::compile(source).unwrap();
     assert_eq!(
         crate::common::arkade_asm(&output, "spend"),
-        "OP_OVER OP_DUP OP_BIN2NUM OP_EQUALVERIFY OP_OVER 2 OP_MUL OP_ROT 0 OP_GREATERTHAN OP_VERIFY OP_SWAP <owner> OP_CHECKSIG OP_NIP"
+        "OP_OVER 2 OP_MUL OP_ROT 0 OP_GREATERTHAN OP_VERIFY OP_SWAP <owner> OP_CHECKSIG OP_NIP"
     );
 }
 

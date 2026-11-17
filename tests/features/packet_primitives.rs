@@ -117,12 +117,7 @@ contract PacketHas() {
             .unwrap_or_else(|| panic!("{asm:?}"));
         assert_eq!(asm[at + 1], OP_NIP, "{asm:?}");
     }
-    // Only the two int witness checks verify.
-    assert_eq!(
-        asm.iter().filter(|s| *s == OP_EQUALVERIFY).count(),
-        2,
-        "{asm:?}"
-    );
+    assert!(!asm.iter().any(|s| s == OP_EQUALVERIFY), "{asm:?}");
 
     let error = compile(
         "contract C() { function probe() { bytes b = tx.packet.has(1); require(size(b) > 0); } }",
