@@ -134,6 +134,10 @@ pub fn builtin_struct_fields(
         "ScriptPubKey" => Some(&[("program", "bytes"), ("version", "int")]),
         "AssetEntry" => Some(&[("assetId", "AssetId"), ("amount", "int")]),
         "AssetLookup" => Some(&[("amount", "int"), ("found", "bool")]),
+        // Asset group records without the txid, which only an intent input has.
+        "AssetGroupInput" | "AssetGroupOutput" => {
+            Some(&[("type", "int"), ("index", "int"), ("amount", "int")])
+        }
         "ECPoint" => Some(&[("x", "int"), ("y", "int")]),
         // alt_bn128 G2 point; each coordinate is an Fp2 element `c1 * i + c0`.
         "G2Point" => Some(&[

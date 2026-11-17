@@ -126,11 +126,12 @@ pub(super) fn validate_binding_expression(
             "{kind} expressions are composite values and cannot be used here",
         )));
     }
-    if value_position && expression_type == ArkType::Void {
-        issues.push(ValidationIssue::error(match &expression.kind {
-            ExprKind::Call { name, .. } => format!("function '{name}' does not return a value"),
-            _ => "expression does not produce one stack item".to_string(),
-        }));
+    if let (true, ArkType::Void, ExprKind::Call { name, .. }) =
+        (value_position, &expression_type, &expression.kind)
+    {
+        issues.push(ValidationIssue::error(format!(
+            "function '{name}' does not return a value"
+        )));
     }
     // An input's kind is only known at runtime, so `txid` on a local input fails the
     // spend like `controlAssetId` without control; a type check before `||`/`&&` guards it.
@@ -145,6 +146,25 @@ pub(super) fn validate_binding_expression(
         issues.push(ValidationIssue::error(
             "asset group output records have no txid",
         ));
+    }
+    // A record value leaves out the txid, which only an intent input has.
+    let record = match &expression.kind {
+        ExprKind::FieldAccess { value, field } if field == "txid" => Some(value.ty.clone()),
+        ExprKind::Name(path) => path
+            .split_last()
+            .filter(|&(_, field)| field == "txid")
+            .and_then(|(record, _)| find_binding(scopes, &record.key()))
+            .map(|binding| binding.binding_type.clone()),
+        _ => None,
+    };
+    match record.as_ref().map(ArkType::as_str).as_deref() {
+        Some("AssetGroupInput") => issues.push(ValidationIssue::error(
+            "asset group input records have no txid; read it with g.inputs[j].txid, which fails the spend on a local input",
+        )),
+        Some("AssetGroupOutput") => issues.push(ValidationIssue::error(
+            "asset group output records have no txid",
+        )),
+        _ => {}
     }
 
     if let ExprKind::FieldAccess { value, .. } | ExprKind::IndexAccess { value, .. } =

@@ -989,15 +989,11 @@ contract Demo() {
         for (statement, message) in [
             (
                 format!("{group} require(sha256(pk) == g.inputs[0]);"),
-                "expression does not produce one stack item",
+                "not defined between 'bytes32' and 'AssetGroupInput'",
             ),
             (
-                format!("{group} let i = g.inputs[0]; require(i.amount > 0);"),
-                "expression does not produce one stack item",
-            ),
-            (
-                format!("{group} S s = {{ a: 1 }}; s = g.inputs[0];"),
-                "expression does not produce one stack item",
+                format!("{group} S s = {{ a: 1 }}; s = g.outputs[0];"),
+                "changes its type from 'S' to 'AssetGroupOutput'",
             ),
             (
                 "require({ a: 1 } == { a: 2 });".to_string(),

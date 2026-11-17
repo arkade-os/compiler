@@ -47,8 +47,7 @@ pub enum ArkType {
     /// Named user-defined struct.
     Struct(String),
 
-    /// No single stack value: a call to a function without a result, or an
-    /// asset group record read without a property.
+    /// No stack value: a call to a function without a result.
     Void,
 
     /// Type could not be resolved (variable not in scope, etc.)
@@ -741,9 +740,9 @@ fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
         ExprKind::GroupControlIs { .. } => ArkType::Bool,
         ExprKind::AssetGroupsLength => ArkType::Int,
         ExprKind::GroupProperty { property, .. } => ArkType::parse(property.value_type()),
-        ExprKind::GroupIOAccess { property, .. } => property
-            .map(|property| ArkType::parse(property.value_type()))
-            .unwrap_or(ArkType::Void),
+        ExprKind::GroupIOAccess {
+            source, property, ..
+        } => ArkType::parse(property.map_or(source.record_type(), |p| p.value_type())),
 
         ExprKind::Builtin { builtin, .. } => ArkType::parse(builtin.result),
 
