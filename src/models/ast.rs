@@ -384,6 +384,8 @@ pub enum KeyExpr {
     /// A pubkey binding: a reserved role (`server`, `emulator`) or any pubkey in
     /// scope (constructor pubkey, struct field, array element, etc.).
     Ident(Path),
+    /// A 32-byte x-only key from a `pubkey` constant, as `0x`-prefixed hex.
+    Literal(String),
     /// `tweak(base, func)`: `base` tweaked by `func`'s covenant hash.
     /// `base` is `emulator` or a constructor pubkey (a second enclave).
     Tweak { base: String, func: String },

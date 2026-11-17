@@ -190,6 +190,14 @@ fn covenant_lints_report_unauthorized_and_half_constrained_spends() {
             "function w(int x) { require(x > 0); } function w(signature a, signature b) tapscript { require(checkMultisig([server, emulator], [a, b], 2)); }",
             &["unsigned-spend-path"],
         ),
+        (
+            "const pubkey KEY = 0x79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798; function w(int x) { require(x > 0); } function w(signature a, signature b, signature c) tapscript { require(checkMultisig([KEY, server, emulator], [a, b, c], 3)); }",
+            &[],
+        ),
+        (
+            "const pubkey KEY = 0x79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798; function f(signature s, signature t, signature u) tapscript { require(checkMultisig([server, KEY, KEY], [s, t, u])); }",
+            &["duplicate-multisig-key"],
+        ),
     ] {
         assert_eq!(lints(function), expected, "{function}");
     }

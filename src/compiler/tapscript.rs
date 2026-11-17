@@ -10,7 +10,7 @@ use crate::opcodes::{
     OP_CHECKLOCKTIMEVERIFY, OP_CHECKSEQUENCEVERIFY, OP_CHECKSIG, OP_CHECKSIGVERIFY, OP_DROP,
     OP_EQUAL, OP_EQUALVERIFY, OP_SIZE, OP_VERIFY,
 };
-use crate::types::{digest_accepts, ArkType};
+use crate::types::{bytes_of_width, digest_accepts, ArkType};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ClosureClass {
@@ -44,7 +44,7 @@ pub struct Closure {
 /// any name; `LeafScript` is what keeps inputs out.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Pushed {
-    /// Assembled as written: a number, a hex string or `OP_0`.
+    /// Assembled as written: a number or a hex string.
     Literal(String),
     Constructor(String),
     /// A constructor pubkey tweaked by `func`'s covenant hash.
@@ -360,6 +360,7 @@ pub fn validate_arkd_rules(
             // `resolve_binding` admits a bare `emulator` only on a leaf named after its function.
             KeyExpr::Ident(id) if id == EMULATOR => Pushed::Emulator(ts.name.clone()),
             KeyExpr::Tweak { base, func } if base == EMULATOR => Pushed::Emulator(func.clone()),
+            KeyExpr::Literal(key) => Pushed::Literal(key.clone()),
             KeyExpr::Ident(id) => {
                 if fixed(&id.key(), "key")? != Some(ArkType::Bytes) {
                     return Err(format!("unknown key `{id}` in tapscript `{}`", ts.name));
@@ -463,11 +464,11 @@ pub fn validate_arkd_rules(
                         ts.name
                     ));
                 }
-                let hash_operand = match hash {
-                    TapOperand::Literal(bytes) if bytes == "0x" => {
-                        Pushed::Literal("OP_0".to_string())
-                    }
-                    TapOperand::Literal(bytes) => Pushed::Literal(bytes.clone()),
+                let (t, hash_operand) = match hash {
+                    TapOperand::Literal(bytes) => (
+                        bytes_of_width(Some((bytes.len() - 2) / 2)),
+                        Pushed::Literal(bytes.clone()),
+                    ),
                     TapOperand::Name(path) => {
                         let Some(t) = fixed(&path.key(), "hash value")? else {
                             return Err(format!(
@@ -475,18 +476,21 @@ pub fn validate_arkd_rules(
                                 ts.name
                             ));
                         };
-                        if !digest_accepts(hash_fn, &t) {
-                            return Err(format!(
-                                "tapscript `{}`: {} value `{hash}` has type '{}', expected {}",
-                                ts.name,
-                                hash_fn.name(),
-                                t.as_str(),
-                                hash_fn.digest_type()
-                            ));
-                        }
-                        Pushed::Constructor(path.key())
+                        (t, Pushed::Constructor(path.key()))
                     }
                 };
+                // A literal types as `bytes` only when it is neither 20 nor 32 bytes, so it
+                // never equals a digest.
+                let unsized_literal = matches!(hash, TapOperand::Literal(_)) && t == ArkType::Bytes;
+                if unsized_literal || !digest_accepts(hash_fn, &t) {
+                    return Err(format!(
+                        "tapscript `{}`: {} value `{hash}` has type '{}', expected {}",
+                        ts.name,
+                        hash_fn.name(),
+                        t.as_str(),
+                        hash_fn.digest_type()
+                    ));
+                }
                 condition = Some((hash_fn.clone(), c.preimage_width, hash_operand));
             }
             TapItem::Older { value, unit } | TapItem::After { value, unit } => {
