@@ -377,9 +377,12 @@ contract Vault() {{
         ("const bytes32 H = 0xabcd;", "", "constant 'H' is not a valid 'bytes32' literal"),
         ("const bytes20 H = TAG;", "", "constant 'H' is not a valid 'bytes20' literal"),
         ("const pubkey H = 1;", "", "constant 'H' is not a valid 'pubkey' literal"),
+        ("const pubkey H = \"\";", "", "constant 'H' is not a valid 'pubkey' literal"),
         ("", "function spend(bytes p) { require(sha256(p) == ID); }", "not defined between 'bytes32' and 'bytes20'"),
         ("", "function spend(bytes20 v) { require(v == TAG); }", "not defined between 'bytes20' and 'bytes32'"),
         ("", "function exit(signature sig, bytes p) tapscript { require(sha256(p) == ID); require(older(10)); require(checkSig(sig, server)); }", "sha256 value"),
+        ("", "function exit(signature sig, bytes p) tapscript { require(sha256(p) == 0xabcd); require(older(10)); require(checkSig(sig, server)); }", "sha256 value `0xabcd` has type 'bytes'"),
+        ("", "function exit(signature sig, bytes p) tapscript { require(hash160(p) == \"\"); require(older(10)); require(checkSig(sig, server)); }", "hash160 value `0x` has type 'bytes'"),
     ] {
         let error = error(&format!(
             "contract Vault() {{ const bytes32 TAG = {hash}; const bytes20 ID = {digest}; {declaration} {body} }}"

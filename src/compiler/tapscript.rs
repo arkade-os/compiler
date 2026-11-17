@@ -44,7 +44,7 @@ pub struct Closure {
 /// any name; `LeafScript` is what keeps inputs out.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Pushed {
-    /// Assembled as written: a number, a hex string or `OP_0`.
+    /// Assembled as written: a number or a hex string.
     Literal(String),
     Constructor(String),
     /// A constructor pubkey tweaked by `func`'s covenant hash.
@@ -465,9 +465,6 @@ pub fn validate_arkd_rules(
                     ));
                 }
                 let (t, hash_operand) = match hash {
-                    TapOperand::Literal(bytes) if bytes == "0x" => {
-                        (ArkType::Bytes, Pushed::Literal("OP_0".to_string()))
-                    }
                     TapOperand::Literal(bytes) => (
                         bytes_of_width(Some((bytes.len() - 2) / 2)),
                         Pushed::Literal(bytes.clone()),
@@ -482,7 +479,10 @@ pub fn validate_arkd_rules(
                         (t, Pushed::Constructor(path.key()))
                     }
                 };
-                if !digest_accepts(hash_fn, &t) {
+                // A literal types as `bytes` only when it is neither 20 nor 32 bytes, so it
+                // never equals a digest.
+                let unsized_literal = matches!(hash, TapOperand::Literal(_)) && t == ArkType::Bytes;
+                if unsized_literal || !digest_accepts(hash_fn, &t) {
                     return Err(format!(
                         "tapscript `{}`: {} value `{hash}` has type '{}', expected {}",
                         ts.name,

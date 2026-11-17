@@ -147,7 +147,7 @@ fn resolve_value(
     let valid = match constant.const_type.name() {
         Some("bytes20") => width == Some(20),
         Some("bytes32") => width == Some(32),
-        Some("pubkey") => width.is_some(),
+        Some("pubkey") => width.is_some_and(|width| width > 0),
         declared => declared == Some(kind(&value)),
     };
     if !valid {
