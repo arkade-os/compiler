@@ -4,6 +4,7 @@ contract Continuation() {
     private function identity(AssetId id) AssetId { return id; }
     private function points(ECPoint[2] g1) ECPoint[2] { return g1; }
     private function lines(G2Point[2] g2) G2Point[2] { return g2; }
+    private function at(int index) int { return index; }
 
     function expiry(int expected) {
         require(this.expiry == expected);
@@ -60,5 +61,9 @@ contract Continuation() {
 
     function pairingProof(PairingProof[2] proofs, int index) {
         require(ecPairing(proofs[index].g1, proofs[index].g2, 2));
+    }
+
+    function computedProof(PairingProof[2] proofs, int index) {
+        require(ecPairing(proofs[at(index)].g1, proofs[0].g2, 2));
     }
 }

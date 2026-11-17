@@ -839,14 +839,27 @@ impl Expression {
 
     /// Resolve the layout path, using element zero for runtime indexes.
     pub(crate) fn binding_path(&self) -> Option<Path> {
-        let layout_index = |index: &Expression| index.literal_index().unwrap_or(0);
+        self.layout_path(&|index| Some(index.literal_index().unwrap_or(0)))
+    }
+
+    /// Resolve the layout path of an access whose indexes are all literals, so repeated reads
+    /// evaluate nothing; `None` for a computed value or a runtime index.
+    pub(crate) fn static_path(&self) -> Option<Path> {
+        self.layout_path(&Self::literal_index)
+    }
+
+    fn layout_path(&self, layout_index: &dyn Fn(&Self) -> Option<usize>) -> Option<Path> {
         match &self.kind {
             ExprKind::Name(path) => Some(path.clone()),
-            ExprKind::ArrayIndex { array, index } => Some(array.clone().index(layout_index(index))),
-            ExprKind::IndexAccess { value, index } => {
-                Some(value.binding_path()?.index(layout_index(index)))
+            ExprKind::ArrayIndex { array, index } => {
+                Some(array.clone().index(layout_index(index)?))
             }
-            ExprKind::FieldAccess { value, field } => Some(value.binding_path()?.field(field)),
+            ExprKind::IndexAccess { value, index } => {
+                Some(value.layout_path(layout_index)?.index(layout_index(index)?))
+            }
+            ExprKind::FieldAccess { value, field } => {
+                Some(value.layout_path(layout_index)?.field(field))
+            }
             _ => None,
         }
     }

@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -87,6 +88,33 @@ contract KOfThree(pubkey a, pubkey b, pubkey c, int k) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			checkMultisigSpends(t, code, map[string][]byte{"k": scriptInt(t, tc.k)}, tc.cases)
+		})
+	}
+}
+
+func TestCovenantRuntimeIndexedMultisig(t *testing.T) {
+	const code = `pragma arkade ^0.1.0;
+struct Signers { pubkey[2] keys; }
+contract Select(Signers[2] sets, int k) {
+    private function at(int i) int { return i; }
+    function spend(signature aSig, signature bSig) {
+        require(checkMultisig(sets[at(k)].keys, [aSig, bSig], 1));
+    }
+}`
+	key := func(i byte) []byte { return schnorr.SerializePubKey(fixedPrivateKey(4 + i).PubKey()) }
+	// Set 0 is [a, c] and set 1 is [c, b]; c never signs, so a passes only under set 0 and
+	// b only under set 1.
+	for k, cases := range [][]multisigCase{
+		{{"a signs", []string{"a"}, ""}, {"b signs", []string{"b"}, "signature not empty on failed checksig"}},
+		{{"a signs", []string{"a"}, "signature not empty on failed checksig"}, {"b signs", []string{"b"}, ""}},
+		{{"out of range", []string{"a"}, "OP_VERIFY failed"}},
+	} {
+		t.Run(fmt.Sprintf("k=%d", k), func(t *testing.T) {
+			checkMultisigSpends(t, code, map[string][]byte{
+				"k":             scriptInt(t, int64(k)),
+				"sets.0.keys.0": key(0), "sets.0.keys.1": key(2),
+				"sets.1.keys.0": key(2), "sets.1.keys.1": key(1),
+			}, cases)
 		})
 	}
 }

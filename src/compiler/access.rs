@@ -252,8 +252,8 @@ impl Generator {
         // Validation and folding reject an out-of-range constant on a reachable path; one left
         // here is in a branch that folding removes, so it keeps the runtime check.
         let literal_threshold = multisig_threshold(threshold, count).ok().flatten();
-        // Keys need indexed reads, so computed arrays are bound once.
-        if !matches!(&keys.kind, ExprKind::ArrayLiteral(_)) && keys.binding_path().is_none() {
+        // Keys need indexed reads, so arrays without a static path are bound once.
+        if !matches!(&keys.kind, ExprKind::ArrayLiteral(_)) && keys.static_path().is_none() {
             return self.emit_with_bound_arg(expression, 0, Self::emit_multisig);
         }
         // Signatures need no binding: array emission leaves sig[0] on top for the checks.
@@ -377,10 +377,10 @@ impl Generator {
         let ArkType::Array(_, pairs) = g1.ty else {
             return Err("ecPairing G1 points must be an ECPoint array".into());
         };
-        // Pairs need indexed reads, so computed arrays are bound once, G1 first.
+        // Pairs need indexed reads, so arrays without a static path are bound once, G1 first.
         if let Some(position) = [g1, g2]
             .iter()
-            .position(|points| points.binding_path().is_none())
+            .position(|points| points.static_path().is_none())
         {
             if matches!(&args[position].kind, ExprKind::ArrayLiteral(points)
                 if points.iter().any(|point| matches!(point.kind, ExprKind::StructLiteral { name: None, .. })))

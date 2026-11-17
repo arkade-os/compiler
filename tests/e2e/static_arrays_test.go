@@ -158,12 +158,15 @@ contract Loops() {
     private function values(int v) int[2] { require(v != 7); return [v, v + 1]; }
     private function points(int v) Point[2] { return [{ x: v, y: v * 2 }, { x: v + 1, y: v * 3 }]; }
     private function shape(int v) Shape { return { points: points(v) }; }
-    function spend(int v, int expected) {
+    private function at(int k) int { return k; }
+    function spend(int v, int k, int expected) {
         int total = 0;
         for (i, item) in values(v) { total = total + item * (i + 1); }
         for (i, p) in points(v) { total = total + p.y - p.x * i; }
         for (i, w) in [v, 5] { total = total + w * i; }
         for (i, p) in shape(v).points { total = total + p.x * i; }
+        Shape[2] shapes = [shape(v), shape(v + 2)];
+        for (i, p) in shapes[at(k)].points { total = total + p.y * (i + 1) - p.x; }
         require(total == expected);
     }
 }`), 0600)
@@ -175,19 +178,24 @@ contract Loops() {
 	group := covenantGroup(t, contract, "spend")
 	instance := instantiateGroup(t, contract, "spend", nil, serverKey.PubKey(), emulatorKey.PubKey())
 	deployment := fundingTx(instance.pkScript, 10_000)
-	// Each loop's terms differ when its elements or fields are read out of order.
-	total := func(v int64) int64 { return (v + (v+1)*2) + (2*v + 3*v - (v + 1)) + 5 + (v + 1) }
+	// Each loop's terms differ when its elements or fields are read out of order, and the
+	// last loop's when it reads the shape k does not select.
+	total := func(v, k int64) int64 {
+		return (v + (v+1)*2) + (2*v + 3*v - (v + 1)) + 5 + (v + 1) + 6*(v+2*k) - 1
+	}
 	for _, tc := range []struct {
-		name     string
-		v, delta int64
-		wantErr  string
+		name        string
+		v, k, delta int64
+		wantErr     string
 	}{
-		{"elements in order", 4, 0, ""},
-		{"wrong total", 4, 1, "false stack entry"},
-		{"helper requirement fails", 7, 0, "OP_VERIFY failed"},
+		{"elements in order", 4, 0, 0, ""},
+		{"second shape", 4, 1, 0, ""},
+		{"wrong total", 4, 0, 1, "OP_NUMEQUALVERIFY failed"},
+		{"helper requirement fails", 7, 0, 0, "OP_VERIFY failed"},
+		{"shape index out of range", 4, 2, 0, "OP_VERIFY failed"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			values := map[string][]byte{"v": scriptInt(t, tc.v), "expected": scriptInt(t, total(tc.v)+tc.delta)}
+			values := map[string][]byte{"v": scriptInt(t, tc.v), "k": scriptInt(t, tc.k), "expected": scriptInt(t, total(tc.v, tc.k)+tc.delta)}
 			spend := spendingPSBTWithWitness(t, deployment, instance, 10_000, instance.pkScript, covenantWitness(t, contract, group, values))
 			requireVMResult(t, spend, emulatorKey.PubKey(), tc.wantErr)
 		})

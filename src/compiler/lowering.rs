@@ -157,7 +157,7 @@ fn lower_statement(
             let types::ArkType::Array(_, length) = iterable.ty else {
                 return Err("unsupported loop iterable".into());
             };
-            if iterable.binding_path().is_none() {
+            if iterable.static_path().is_none() {
                 // Nested loops start at distinct offsets, so their names never collide.
                 let name = format!("$iterable:{}", span.start);
                 let ty = TypeName::from(&iterable.ty);
