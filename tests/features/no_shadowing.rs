@@ -212,7 +212,7 @@ fn dotted_array_elements_do_not_collide_with_scalars() {
 contract Demo(pubkey[3] owners, pubkey owners_0, int exitDelay) {
   function unilateral(signature arraySig, signature scalarSig) tapscript {
     require(older(exitDelay));
-    require(checkMultisig([owners[0], owners_0], [arraySig, scalarSig], 2));
+    require(checkMultisig([owners[0], owners_0], [arraySig, scalarSig]));
   }
 }
 "#,

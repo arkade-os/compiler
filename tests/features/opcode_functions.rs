@@ -1406,7 +1406,7 @@ contract C(pubkey first, pubkey second) {
             "OP_2",
             "OP_LESSTHANOREQUAL",
             "OP_VERIFY",
-            "OP_NUMEQUAL"
+            "OP_GREATERTHANOREQUAL"
         ]
     ));
     assert!(asm.iter().all(|token| !token.contains('$')));

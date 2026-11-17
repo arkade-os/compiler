@@ -572,6 +572,8 @@ fn load(
     active.push(path.to_string());
     let result = (|| -> Result<(), LoadError> {
         let source = &source;
+        parser::check_pragma(source, env!("CARGO_PKG_VERSION"))
+            .map_err(|error| locate(path, source, error, None))?;
         let pairs = parser::try_parse(source).map_err(|error| {
             let diagnostic = parser::parse_error_diagnostic(&error, path, source);
             LoadError::Located(

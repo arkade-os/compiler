@@ -47,7 +47,6 @@ fn contract_instances_return_versioned_scripts() {
         "tx.outputs[0].script",
         "tx.inputs[0].script",
         "tx.input.current.script",
-        "this.activeBytecode",
     ] {
         for comparison in [
             format!("{inspection} == new D()"),
@@ -127,10 +126,10 @@ fn program_only_script_accessors_are_rejected() {
         let code = format!("contract C() {{ function spend() {{ let s = {inspection}; }} }}");
         assert!(compile(&code).is_err(), "accepted {inspection}");
     }
-    assert!(
-        compile("contract C() { function f(bytes p) { require(this.activeBytecode == p); } }")
-            .is_err()
-    );
+    assert!(compile(
+        "contract C() { function f(bytes p) { require(tx.input.current.script == p); } }"
+    )
+    .is_err());
     assert!(compile("contract C() { function f() { require(this.tunnel(0, {scriptPubKey: true, value: true, assets: true})); } }").is_err());
 }
 
@@ -216,7 +215,7 @@ fn repeated_multi_result_inspections_warn_with_the_whole_read() {
                     require(tx.outputs[0].assets.lookup(t, g) >= 1);
                 }
                 require(tx.input.current.witnessVersion == 1);
-                require(this.activeBytecode == script);
+                require(tx.input.current.script == script);
             }
         }
     "#;

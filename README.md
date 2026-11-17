@@ -70,11 +70,11 @@ contract HTLC(
 
   function claim(bytes preimage, signature serverSig, signature emulatorSig) tapscript {
     require(hash160(preimage) == preimageHash);
-    require(checkMultisig([server, emulator], [serverSig, emulatorSig], 2));
+    require(checkMultisig([server, emulator], [serverSig, emulatorSig]));
   }
   function refund(signature serverSig, signature emulatorSig) tapscript {
     require(after(refundTime));
-    require(checkMultisig([server, emulator], [serverSig, emulatorSig], 2));
+    require(checkMultisig([server, emulator], [serverSig, emulatorSig]));
   }
 
   function unilateral(signature senderSig) tapscript {
@@ -281,9 +281,9 @@ Comments use `//`. Identifiers start with a letter and contain letters, digits, 
 
 Each source file may start with one `pragma arkade <constraint>;` directive, including imported libraries and struct-only files. It is optional; existing files compile without one. Comments and whitespace may precede it.
 
-Use three-component versions such as `0.1.0`, with optional `=`, `^`, `~`, `>`, `>=`, `<`, or `<=` operators. Multiple constraints form a range (`>=0.1.0 <0.2.0`); `||` separates alternatives (`^0.1.0 || ^0.2.0`). Version components cannot have leading zeroes. Partial versions, wildcards, prerelease versions, and build metadata are not supported.
+Use three-component versions such as `0.1.0`. A bare version or `=` matches exactly; `>`, `>=`, `<`, and `<=` compare; `^` allows changes that keep the first nonzero component (`^1.2.3` is `>=1.2.3 <2.0.0`, `^0.1.2` is `>=0.1.2 <0.2.0`, `^0.0.3` is `>=0.0.3 <0.0.4`); `~` allows patch changes (`~1.2.3` is `>=1.2.3 <1.3.0`). Space-separated constraints must all hold (`>=0.1.0 <0.2.0`); `||` separates alternatives (`^0.1.0 || ^0.2.0`). Version components cannot have leading zeroes. Partial versions, wildcards, prerelease versions, and build metadata are not supported.
 
-Pragmas currently validate syntax only: even a constraint for a future compiler version compiles. Compatibility checks are deferred. Pragmas apply to their own file, remain verbatim in the artifact's source bundle, and do not affect generated scripts.
+The compiler checks the pragma of every file it loads, the entry and each import, against its own version, and rejects a file whose pragma it does not satisfy with an error at that pragma. The pragma is checked before the rest of the file is parsed, so a file written for a newer compiler reports the version mismatch rather than syntax this compiler does not know. Only the compiler's major.minor.patch counts, so `0.1.0-rc.1` satisfies `^0.1.0`. Pragmas apply to their own file, remain verbatim in the artifact's source bundle, and do not affect generated scripts.
 
 ### Imports
 
@@ -315,7 +315,7 @@ contract Vault(Policy policy) {
 }
 ```
 
-Structs use their declared names; constants and exported helpers use `Name.member`. Each file sees its own declarations and its direct imports. Dependencies load recursively, and imported code keeps its defining scope. Helpers inline into covenants; constants fold into literals, including in tapscript timelocks and multisig thresholds.
+Structs use their declared names; constants and exported helpers use `Name.member`. Each file sees its own declarations and its direct imports. Dependencies load recursively, and imported code keeps its defining scope. Helpers inline into covenants; constants fold into literals, including in tapscript timelocks.
 
 Struct, contract, and library names must be unique across loaded files. The compiler loads each normalized path once and reports missing files, unknown members, namespace collisions, and circular imports as errors. Import chains have a maximum depth of 128 files, including the entry file.
 
@@ -341,7 +341,7 @@ library Fees {
 }
 ```
 
-Plain `function` and `public function` are exported; `private function` is callable only within its defining library. `static function` is also accepted as an exported library helper. All library functions are stateless: they see their parameters, locals, and constants, and can inspect the transaction and enforce `require` checks. They cannot capture a calling contract's constructor state. Pass any required contract state as arguments.
+A plain `function` is exported; a `private function` is callable only within its defining library. Library functions take no `static` modifier, since all of them are stateless: they see their parameters, locals, and constants, and can inspect the transaction and enforce `require` checks. They cannot capture a calling contract's constructor state. Pass any required contract state as arguments.
 
 Libraries can import other libraries, contracts, and struct files using the same direct-import scope rules. Local helper calls can be unqualified or use the library's own name, including calls to private helpers. Calls inline using the existing helper return and recursion rules; library functions never create ABI entrypoints or witness inputs of their own. Library constants can also be used in tapscripts, but helper calls remain covenant-only.
 
@@ -354,7 +354,6 @@ Libraries can import other libraries, contracts, and struct files using the same
 | `bytes`, `bytes20`, `bytes32` | Byte arrays, unsized or fixed |
 | `int` | CScriptNum integer |
 | `bool` | Boolean; a covenant witness must be empty (false) or `0x01` (true), and any other encoding fails the spend |
-| `asset` | Asset identifier |
 | `AssetGroup` | An asset group of the transaction; a witness or constructor value is its packet position |
 | `T[n]` | Fixed-size array of a scalar or struct type, `n` a positive integer literal or `int` constant |
 | `struct` | User-declared, nested structs and fixed-size arrays allowed |
@@ -365,8 +364,7 @@ Arrays and structs can be constructor parameters, covenant parameters, or locals
 ### Functions
 
 ```solidity
-function name(<params>) { ... }                // Public Arkade transaction entrypoint
-public function name(<params>) { ... }         // Explicit public visibility
+function name(<params>) { ... }                // Covenant: an Arkade transaction entrypoint
 private function name(<params>) { ... }        // Void helper
 private function name(<params>) bool { ... }   // Helper with a typed result
 static function name(<params>) int { ... }     // Helper without access to constructor state
@@ -375,7 +373,7 @@ function name(<params>) tapscript { ... }      // L1 tapleaf, plain Bitcoin Scri
 
 A covenant and its tapscripts form one spend group: a tapscript whose name matches the covenant, and a tapscript that tweaks a key to that covenant. The group keeps a synthesized `server` + `tweak(emulator, name)` leaf unless one of those tapscripts already signs with `emulator`. A constructor-pubkey tweak is an extra leaf; it does not replace that emulator leaf. A tapscript that tweaks nothing is a standalone leaf, which is how unilateral exits are written.
 
-Private functions are helpers called from covenants and other private helpers in the same contract. Calls inline into the caller's script. Public functions define transaction entrypoints, and tapscript functions define L1 leaves. Functions can be declared in any order; call graphs must be acyclic.
+Private functions are helpers called from covenants and other private helpers in the same contract. Calls inline into the caller's script. Functions without a modifier are public: covenant functions define transaction entrypoints, and tapscript functions define L1 leaves. Functions can be declared in any order; call graphs must be acyclic.
 
 Arguments are evaluated once, left to right, and passed by value. Private helpers see their own parameters and locals plus immutable constructor state. Modifying a parameter changes the helper's local copy.
 
@@ -419,11 +417,12 @@ const int EXIT_DELAY = 144;
 const int HALF_DELAY = EXIT_DELAY / 2;
 const int KEY_COUNT = 2;
 const bool STRICT = HALF_DELAY > 0;
+const bytes32 LOCK_HASH = 0x2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824;
 ```
 
-Constants are `int`, `bool`, or `bytes` compile-time expressions declared anywhere in the contract body. Initializers support literals, references to local or imported constants (including forward references), parentheses, arithmetic (`+`, `-`, `*`, `/`, `%`, `<<`, `>>`, unary `-`), comparisons, and boolean logic (`!`, `&&`, `||`); `bytes` constants accept a literal or another `bytes` constant. Integer literals, negation, and equality are unbounded like BigNum literals; arithmetic and ordering use checked signed 128-bit values, division truncates toward zero, and `%` takes the sign of the dividend. Cycles, runtime values, and type mismatches are rejected even in skipped operands. Division or modulo by zero and arithmetic overflow are rejected when evaluated. The compiler substitutes their values before validation; they occupy no constructor or witness inputs.
+Constants are `int`, `bool`, `bytes`, `bytes20`, `bytes32`, or `pubkey` compile-time expressions declared anywhere in the contract body. Initializers support literals, references to local or imported constants (including forward references), parentheses, arithmetic (`+`, `-`, `*`, `/`, `%`, `<<`, `>>`, unary `-`), comparisons, and boolean logic (`!`, `&&`, `||`); byte constants accept a literal or another byte constant. A `bytes20` or `bytes32` initializer must be exactly 20 or 32 bytes, and `pubkey` is an alias of `bytes` that must not be empty. A reference has the type of its value, so a `bytes32` constant is accepted where `bytes32` is expected. Integer literals, negation, and equality are unbounded like BigNum literals; arithmetic and ordering use checked signed 128-bit values, division truncates toward zero, and `%` takes the sign of the dividend. Cycles, runtime values, and type mismatches are rejected even in skipped operands. Division or modulo by zero and arithmetic overflow are rejected when evaluated. The compiler substitutes their values before validation; they occupy no constructor or witness inputs.
 
-A constant is readable in covenant bodies, private and static helpers, array indices (including crypto operands), multisig thresholds, and a tapleaf's `older(...)` or `after(...)` operand. A delay shared by a covenant and its L1 exit is written once. Array sizes accept positive integer literals or `int` constants, such as `pubkey[KEY_COUNT]` or `int[Config.SIZE]`, in constructor parameters, function parameters, struct fields, and local declarations.
+A constant is readable in covenant bodies, private and static helpers, array indices (including crypto operands), multisig thresholds, and a tapleaf's `older(...)` or `after(...)` operand, hashlock value, or signature key. A delay shared by a covenant and its L1 exit is written once. Array sizes accept positive integer literals or `int` constants, such as `pubkey[KEY_COUNT]` or `int[Config.SIZE]`, in constructor parameters, function parameters, struct fields, and local declarations.
 
 Constants are immutable, and their names must be distinct from all other bindings and function names in the contract.
 
@@ -475,7 +474,7 @@ Arithmetic `+ - * /`, remainder `%` (with the sign of the dividend, so `-7 % 2 =
 
 ### Built-ins
 
-**Signatures.** In covenants, `checkSig(sig, key)`, `checkSigFromStack(sig, key, message)`, and `checkMultisig(keys, sigs, threshold?)` return `bool` and accept computed operands. Multisig takes equal-length fixed arrays, including array literals, bindings, and helper results, and uses `OP_CHECKSIGADD`. Omitting the threshold means N-of-N; explicit thresholds accept `int` expressions and must be between 1 and N, with runtime bounds checks for computed thresholds. `checkSigFromStackVerify(sig, key, message)` accepts computed operands and returns `true`, failing the spend unless the signature is valid; directly inside `require` it emits only the check. A non-empty signature that fails verification fails the spend instead of returning `false`, so a check that may fail, such as a quorum count in `if (checkSigFromStack(...))` or either side of `||`, needs an empty signature for every key that does not sign; the compiler warns where a check's result is used that way. The warning follows direct expressions and does not track results through boolean bindings or helper returns. The `checkSigFromStack` message must be 32 bytes, and a message of another known width is a compile error. Tapscript signature checks retain their closure syntax and constant thresholds. `tweak(base, fn)` is a tapscript-only key expression. `base` is `emulator` or a constructor pubkey, and the key is tweaked by `fn`'s covenant.
+**Signatures.** In covenants, `checkSig(sig, key)`, `checkSigFromStack(sig, key, message)`, and `checkMultisig(keys, sigs, threshold?)` return `bool` and accept computed operands. Multisig takes equal-length fixed arrays, including array literals, bindings, and helper results, and uses `OP_CHECKSIGADD`. A threshold k passes when at least k signatures are valid, and omitting it means N-of-N. Thresholds accept `int` expressions and must be between 1 and N, with runtime bounds checks for computed thresholds. `checkSigFromStackVerify(sig, key, message)` accepts computed operands and returns `true`, failing the spend unless the signature is valid; directly inside `require` it emits only the check. A non-empty signature that fails verification fails the spend instead of returning `false`, so a check that may fail, such as a quorum count in `if (checkSigFromStack(...))` or either side of `||`, needs an empty signature for every key that does not sign; the compiler warns where a check's result is used that way. The warning follows direct expressions and does not track results through boolean bindings or helper returns. The `checkSigFromStack` message must be 32 bytes, and a message of another known width is a compile error. Tapscript signature checks retain their closure syntax. `tweak(base, fn)` is a tapscript-only key expression. `base` is `emulator` or a constructor pubkey, and the key is tweaked by `fn`'s covenant.
 
 **Hashes.** In covenants, `sha256(expr)` and `hash256(expr)` return `bytes32`; `sha1(expr)`, `hash160(expr)` and `ripemd160(expr)` return `bytes20`. All five accept computed byte operands and work in bindings, helper returns, nested calls, and comparisons. Use `sha1` only for legacy interoperability: its [collision resistance is broken](https://www.nist.gov/news-events/news/2022/12/nist-retires-sha-1-cryptographic-algorithm), so do not use it for commitments, hashlocks, or other security-critical purposes; prefer `sha256` or `hash256`. Tapscript hashlocks use `require(hashFn(preimage) == hash)` with `sha256`, `hash256`, `hash160`, or `ripemd160`. Streaming: `sha256Initialize(data)` and `sha256Update(ctx, chunk)` return an opaque `bytes` context, which can also arrive as a `bytes` input, and `sha256Finalize(ctx, lastChunk)` returns the `bytes32` digest. Runtime-selected: `digest(data, hashType)`, `sighash(hashType)`.
 
@@ -485,7 +484,7 @@ Arithmetic `+ - * /`, remainder `%` (with the sign of the dividend, so `-7 % 2 =
 
 In covenants, `checkTime(timestamp)` returns whether the emulator's wall clock has reached a Unix timestamp in seconds, including equality. Use `require(checkTime(unlockAt))` to enforce it. A future timestamp returns false; a negative timestamp fails execution. This check is independent of transaction locktime and sequence.
 
-**Transaction.** `tx.version`, `tx.locktime`, `tx.numInputs`, `tx.numOutputs`, `tx.weight`, `tx.id`, `this.activeInputIndex`, `this.activeBytecode` (the same script struct as `tx.input.current.script`). In covenants, `this.expiry` returns the executing VTXO's Unix expiry timestamp in seconds through `OP_PUSHEXPIRY`; execution fails if expiry is unavailable.
+**Transaction.** `tx.version`, `tx.locktime`, `tx.numInputs`, `tx.numOutputs`, `tx.weight`, `tx.id`, `this.activeInputIndex`. In covenants, `this.expiry` returns the executing VTXO's Unix expiry timestamp in seconds through `OP_PUSHEXPIRY`; execution fails if expiry is unavailable.
 
 **Continuation.** `require(this.tunnel(outputIndex))` preserves the current input's script program and version, bitcoin value, and assets at the selected output. An explicit policy supplies all three compile-time boolean fields: `this.tunnel(outputIndex, {script: true, value: true, assets: false})`. With asset preservation enabled, an optional fixed list excludes specific `AssetId` values: `this.tunnel(outputIndex, {script: true, value: true, assets: true}, [feeAsset])`. At least one property must be selected. A mismatch fails execution; success returns true. Tunneling is covenant-only and does not establish intent type, timing, packet preservation, or a unique input-to-output mapping.
 
@@ -503,17 +502,15 @@ In covenants, `checkTime(timestamp)` returns whether the emulator's wall clock h
 
 **Arithmetic and curves.** In covenants, `abs(value)`, `min(a, b)`, and `max(a, b)` take and return `int`; `within(value, lower, upper)` takes `int` operands and returns `bool` for `lower <= value && value < upper`. Empty or reversed ranges return false. Also available: `modExp(base, exp, mod)`, `ecAdd(P, Q, curve)` and `ecMul(P, k, curve)` taking and returning `ECPoint`, `ecPairing(g1, g2, curve)` over aligned `ECPoint[n]` and `G2Point[n]` arrays (curve id 2, 1–16 pairs). `ecMulScalarVerify(k, P, Q)` and `tweakVerify(P, k, Q)` return `true` and fail the spend when the check does not hold, like `checkSigFromStackVerify`.
 
-**Instantiation.** `new Contract(args...)` returns a `ScriptPubKey` with witness version `1`, usable on either side of a `.script` comparison against `tx.outputs[o]`, `tx.inputs[i]`, or `tx.input.current`. Zero-argument constructors are allowed. Array and struct arguments flatten to scalar fields. Destination parameters use `ScriptPubKey`, for example `ScriptPubKey destination = {program: p, version: 1}; require(tx.outputs[0].script == destination);`. The `.scriptPubKey` accessor is removed; comparing script structs enforces their versions too.
-
-**Breaking script migration.** Replace `.scriptPubKey` with `.script` and change destination parameters from `bytes` or `bytes32` to `ScriptPubKey`. `this.activeBytecode` also returns `ScriptPubKey`; bind it and read `.program` only when a program-only comparison is intentional. Recompile contracts and regenerate bindings together. Artifact consumers must expand `ScriptPubKey` into `.program` (`bytes`), then `.version` (`int`), including constructor parameters and covenant witnesses. `arkade-bindgen` handles this for TypeScript and Go; SDK artifact loaders must support the native layout before consuming these artifacts. Existing deployed bytecode is unchanged, but source recompilation requires migration.
+**Instantiation.** `new Contract(args...)` returns a `ScriptPubKey` with witness version `1`, usable on either side of a `.script` comparison against `tx.outputs[o]`, `tx.inputs[i]`, or `tx.input.current`. Zero-argument constructors are allowed. Array and struct arguments flatten to scalar fields. Destination parameters use `ScriptPubKey`, for example `ScriptPubKey destination = {program: p, version: 1}; require(tx.outputs[0].script == destination);`. Comparing script structs enforces their versions too.
 
 ### Tapscript bodies
 
-A tapscript body is `require` statements only, and must follow the closure template in source order: an optional single hash condition, then an optional single timelock, then exactly one `checkSig` or `checkMultisig`. Hash plus CSV is a recognized shape; hash plus CLTV is not, so split it into two leaves. arkd accepts only N-of-N leaves, so a `checkMultisig` threshold, if written, must equal the key count, and each signature must be a declared `signature` input aligned 1:1 with its key.
+A tapscript body is `require` statements only, and must follow the closure template in source order: an optional single hash condition, then an optional single timelock, then exactly one `checkSig` or `checkMultisig`. Hash plus CSV is a recognized shape; hash plus CLTV is not, so split it into two leaves. arkd accepts only N-of-N leaves, so a tapscript `checkMultisig([keys], [sigs])` takes no threshold, and each signature must be a declared `signature` input aligned 1:1 with its key.
 
-The leaf script is fixed when the address is made, and the witness is supplied when it is spent. So a hash value is a byte literal or a scalar constructor parameter, a timelock is a number, a scalar constructor parameter or `serverExitDelay`, and a tapscript input used as a key, hash value or timelock is an error. The hash preimage and the signatures are tapscript inputs, which the leaf consumes from the witness.
+The leaf script is fixed when the address is made, and the witness is supplied when it is spent. So a hash value is a byte literal or constant of the digest's width or a scalar constructor parameter, a timelock is a number, a scalar constructor parameter or `serverExitDelay`, and a tapscript input used as a key, hash value or timelock is an error. The hash preimage and the signatures are tapscript inputs, which the leaf consumes from the witness.
 
-Keys resolve to constructor `pubkey` parameters or the roles `server` and `emulator`. Any leaf without a CSV delay is a forfeit path and must include `server`. A leaf whose name matches a covenant must include bare `emulator`, which the compiler tweaks with that covenant's hash. A leaf with no matching covenant may not use bare `emulator`; it either stays standalone or binds to one covenant with `tweak(emulator, fn)` or `tweak(constructorPubkey, fn)`. Every tweak in a tapscript must name that same covenant. `older(serverExitDelay)` uses arkd's unilateral exit delay and lowers to `<SERVER_EXIT_DELAY>`, which the SDK fills from the server's config. Inputs named `server`, `emulator`, or `serverExitDelay` are rejected.
+Keys resolve to constructor `pubkey` parameters, 32-byte `pubkey` constants, or the roles `server` and `emulator`. A constant key is pushed as its bytes and must be a 32-byte x-only key: a tapscript signature check accepts any signature for a key of another non-zero length, so other lengths are a compile error. A covenant `checkSig` accepts a constant key of any length. Any leaf without a CSV delay is a forfeit path and must include `server`. A leaf whose name matches a covenant must include bare `emulator`, which the compiler tweaks with that covenant's hash. A leaf with no matching covenant may not use bare `emulator`; it either stays standalone or binds to one covenant with `tweak(emulator, fn)` or `tweak(constructorPubkey, fn)`. Every tweak in a tapscript must name that same covenant. `older(serverExitDelay)` uses arkd's unilateral exit delay and lowers to `<SERVER_EXIT_DELAY>`, which the SDK fills from the server's config. Inputs named `server`, `emulator`, or `serverExitDelay` are rejected.
 
 ## Lints
 
@@ -596,7 +593,7 @@ The innermost attribute wins, and an attribute wins over the CLI, except that `-
 
 | Field | Meaning |
 |---|---|
-| `formatVersion` | Artifact schema version; absent on legacy artifacts |
+| `formatVersion` | Artifact schema version |
 | `structs` | User struct layouts, so clients can flatten parameters the way the compiler does |
 | `constructorInputs` | One entry per source parameter, declaration order; arrays keep their size in the type, structs keep their type name |
 | `functions[]` | Spend groups: `{ name, arkade?, leaves[] }` |

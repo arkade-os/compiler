@@ -186,7 +186,7 @@ pub(crate) fn named<P>(pair: Pair<Rule>, from_name: fn(&str) -> Option<P>) -> Re
 }
 
 /// `tx.inputs[this.activeInputIndex].<property>`, which `tx.input.current.*` spells.
-pub(crate) fn current_input(property: InputProperty, span: crate::diagnostics::Span) -> Expression {
+fn current_input(property: InputProperty, span: crate::diagnostics::Span) -> Expression {
     let index = Expression::new(ExprKind::This(ThisProperty::ActiveInputIndex), span);
     Expression::new(
         ExprKind::InputIntrospection {
