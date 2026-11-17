@@ -96,7 +96,7 @@ for (const path of [
 
 // A lint attribute's state opens only before `(`, and its ids take the grammar's characters.
 const { tokenizer } = context.window.arkadeMonarch;
-const opensLints = text => new RegExp(`^(?:${tokenizer.root.find(rule => rule[1].next === '@lints')[0].source})`).test(text);
+const opensLints = text => new RegExp(`^(?:${tokenizer.root.find(rule => rule[1]?.next === '@lints')[0].source})`).test(text);
 assert(opensLints('@allow (unused-variable)') && !opensLints('@allow let'));
 assert.equal('Unused_lint-2)'.match(tokenizer.lints[1][0])[0], 'Unused_lint-2');
 assert.equal(complete('', null).find(item => item.label === 'checkMultisig').insertText, 'checkMultisig([${1:pubkeys}], [${2:sigs}])');

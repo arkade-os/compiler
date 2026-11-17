@@ -288,8 +288,9 @@ pub(crate) fn parse_tx_property_to_expr(pair: Pair<Rule>) -> Result<Expression, 
                 ));
             }
             // `tx.input.current` without a property it accepts reads as a plain property path.
-            let mut names = std::iter::once(first.as_str())
-                .chain(parts.map(|suffix| suffix.as_str().trim_start_matches('.').trim()));
+            let mut names = std::iter::once(first.as_str()).chain(
+                parts.map(|suffix| suffix.into_inner().next().map_or("", |part| part.as_str())),
+            );
             if names.next() == Some("input") && names.next() == Some("current") {
                 return Err(format!(
                     "tx.input.current requires one of: {} (got '{text}')",
@@ -366,13 +367,20 @@ fn parse_asset_group_access(
 
 /// `text` without the whitespace and comments the grammar allows between terms.
 fn without_trivia(text: &str) -> String {
-    text.lines()
-        .flat_map(|line| {
-            line.split_once("//")
-                .map_or(line, |(code, _)| code)
-                .split_whitespace()
-        })
-        .collect()
+    let mut code = String::new();
+    let mut rest = text;
+    while let Some(c) = rest.chars().next() {
+        match comment_len(rest) {
+            Some(comment) => rest = &rest[comment..],
+            None => {
+                if !c.is_whitespace() {
+                    code.push(c);
+                }
+                rest = &rest[c.len_utf8()..];
+            }
+        }
+    }
+    code
 }
 
 /// The index inside an `array_access` pair, without surrounding trivia.

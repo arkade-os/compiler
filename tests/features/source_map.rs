@@ -9,8 +9,11 @@ const FEES: &str =
 const MAIN: &str = "import \"fees.ark\";
 contract Vault(pubkey owner) {
     function spend(signature sig, int amount, int[2] parts) {
+        /* The owner signs
+           every spend. */
         require(checkSig(sig, owner), \"not the owner\");
-        if (amount > 10) {
+        if (amount > 10 /* a large
+            amount */) {
             require(parts[0] == amount, \"first part\");
         } else {
             require(parts[1] == amount);

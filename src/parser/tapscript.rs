@@ -48,13 +48,11 @@ pub(crate) fn parse_named_tapscript(
                         }
                         if let Some(params) = crate::builtins::tapscript_params(callee) {
                             let whole = matches!(callee, "older" | "after")
-                                && part.as_str() == expr.as_str().trim_end();
+                                && part.as_str() == trim_trivia_end(expr.as_str());
                             if whole {
-                                units.extend(
-                                    args.first().map(|arg| {
-                                        (arg.as_span().start(), arg.as_str().trim_end())
-                                    }),
-                                );
+                                units.extend(args.first().map(|arg| {
+                                    (arg.as_span().start(), trim_trivia_end(arg.as_str()))
+                                }));
                             }
                             let unit = matches!(callee, "blocks" | "seconds")
                                 && units.contains(&(part.as_span().start(), part.as_str()));
@@ -206,7 +204,7 @@ fn parse_time_operand(
     constants: &[Constant],
 ) -> Result<(crate::models::TapOperand, Option<crate::models::TimeUnit>), String> {
     use crate::models::TimeUnit;
-    let text = arg.as_str().trim_end();
+    let text = trim_trivia_end(arg.as_str());
     let Some(wrapper) = arg
         .clone()
         .into_inner()
