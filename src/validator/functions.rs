@@ -217,11 +217,7 @@ fn validate_calls(
                         caller.name
                     )));
                 }
-                if value_position && function.return_type.is_none() {
-                    issues.push(ValidationIssue::error(format!(
-                        "function '{name}' does not return a value"
-                    )));
-                } else if !value_position && function.return_type.is_some() {
+                if !value_position && function.return_type.is_some() {
                     issues.push(ValidationIssue::error(format!(
                         "return value of '{name}' must be used"
                     )));

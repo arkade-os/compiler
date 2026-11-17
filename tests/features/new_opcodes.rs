@@ -138,18 +138,21 @@ fn tunnel_indexes_require_integer_helper_returns() {
     )
     .unwrap();
     assert!(arkade_asm(&output, "spend").contains("OP_TUNNEL"));
-    for helper in [
-        "private function index() { require(true); }",
-        "private function index() bool { return true; }",
+    for (helper, message) in [
+        (
+            "private function index() { require(true); }",
+            "function 'index' does not return a value",
+        ),
+        (
+            "private function index() bool { return true; }",
+            "tunnel output index must be int, got",
+        ),
     ] {
         let source = format!(
             "contract C() {{ {helper} function spend() {{ require(this.tunnel(index())); }} }}"
         );
         let error = compile(&source).unwrap_err().to_string();
-        assert!(
-            error.contains("tunnel output index must be int, got"),
-            "{error}"
-        );
+        assert!(error.contains(message), "{error}");
     }
 }
 
