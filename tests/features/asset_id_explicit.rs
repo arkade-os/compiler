@@ -443,7 +443,7 @@ fn control_is_accepts_computed_gidx() {
         "f",
     );
     assert!(
-        asm.contains("OP_INSPECTASSETGROUPCTRL OP_DROP") && asm.contains("1 OP_ADD OP_EQUAL"),
+        asm.contains("OP_INSPECTASSETGROUPCTRL OP_DROP") && asm.contains("1 OP_ADD OP_NUMEQUAL"),
         "{asm}"
     );
 }
@@ -459,7 +459,7 @@ fn control_is_compares_a_computed_asset_id_evaluated_once() {
         "f",
     );
     assert!(
-        asm.contains("OP_INSPECTASSETGROUPCTRL OP_DROP 0 1 OP_INSPECTINASSETAT OP_DROP OP_ROT OP_EQUAL OP_SWAP OP_ROT OP_EQUAL OP_BOOLAND"),
+        asm.contains("OP_INSPECTASSETGROUPCTRL OP_DROP 0 1 OP_INSPECTINASSETAT OP_DROP OP_ROT OP_NUMEQUAL OP_SWAP OP_ROT OP_EQUAL OP_BOOLAND"),
         "{asm}"
     );
 }

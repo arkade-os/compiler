@@ -63,8 +63,9 @@ pub(crate) fn emit_group_has_asm(asset_id: &Expression, asm: &mut Vec<Op>) {
 
 /// Emit `group.controlIs(id)`: boolean equality over the complete canonical
 /// control Asset ID. Stack after OP_INSPECTASSETGROUPCTRL is
-/// `[ctrl_txid, ctrl_gidx, flag]`; drop the flag, compare gidx then txid (no
-/// OP_EQUALVERIFY), and AND the two booleans. The absent tuple
+/// `[ctrl_txid, ctrl_gidx, flag]`; drop the flag, compare gidx as a number (a
+/// non-minimal gidx fails the spend) then txid as bytes (no OP_EQUALVERIFY),
+/// and AND the two booleans. The absent tuple
 /// `[empty_bytes, 0, 0]` cannot equal a valid bytes32 txid, so absence is false.
 pub(crate) fn emit_group_control_is_asm(
     group: &Expression,
@@ -78,14 +79,14 @@ pub(crate) fn emit_group_control_is_asm(
         // A binding's or literal's fields are pushed where each comparison needs them.
         Some([txid, gidx]) => {
             emit_expression_asm(gidx, asm);
-            asm.push(Equal.into()); // ctrl_gidx == gidx -> [ctrl_txid, bool]
+            asm.push(NumEqual.into()); // ctrl_gidx == gidx -> [ctrl_txid, bool]
             asm.push(Swap.into()); // -> [bool, ctrl_txid]
             emit_expression_asm(txid, asm);
         }
         _ => {
             emit_asset_id_asm(asset_id, asm); // -> [ctrl_txid, ctrl_gidx, txid, gidx]
             asm.push(Rot.into()); // -> [ctrl_txid, txid, gidx, ctrl_gidx]
-            asm.push(Equal.into()); // -> [ctrl_txid, txid, bool]
+            asm.push(NumEqual.into()); // -> [ctrl_txid, txid, bool]
             asm.push(Swap.into()); // -> [ctrl_txid, bool, txid]
             asm.push(Rot.into()); // -> [bool, txid, ctrl_txid]
         }

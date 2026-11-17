@@ -142,3 +142,52 @@ contract ComputedTxid() {
 		})
 	}
 }
+
+func TestControlIsSeesOneEncodingPerGidx(t *testing.T) {
+	source := filepath.Join(t.TempDir(), "control_gate.ark")
+	err := os.WriteFile(source, []byte(`
+contract ControlGate(AssetId banned) {
+    function byWitness(AssetId id) {
+        require(id.txid == 0x0900000000000000000000000000000000000000000000000000000000000000);
+        require(bytes(id.gidx) == 0x02);
+        require(!tx.assetGroups[0].controlIs(id));
+    }
+    function byConstructor() {
+        require(!tx.assetGroups[0].controlIs(banned));
+    }
+}`), 0600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	contract := compileArtifact(t, source)
+	serverKey, emulatorKey := fixedPrivateKey(1), fixedPrivateKey(2)
+	txid := chainhash.Hash{9}
+	control, err := asset.NewAssetRefFromId(asset.AssetId{Txid: txid, Index: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	issuance := asset.AssetGroup{
+		ControlAsset: control,
+		Outputs:      []asset.AssetOutput{{Type: asset.AssetOutputTypeLocal, Vout: 0, Amount: 5}},
+	}
+	// 0x0200 pads 2: bytes() accepts it, and byte equality with the control gidx would not.
+	for _, tc := range []struct {
+		name, function string
+		gidx           []byte
+		wantErr        string
+	}{
+		{"witness", "byWitness", []byte{0x02}, "false stack entry"},
+		{"padded witness", "byWitness", []byte{0x02, 0x00}, "minimally encoded"},
+		{"constructor", "byConstructor", []byte{0x02}, "false stack entry"},
+		{"padded constructor", "byConstructor", []byte{0x02, 0x00}, "minimally encoded"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			values := map[string][]byte{"banned.txid": txid[:], "banned.gidx": tc.gidx, "id.txid": txid[:], "id.gidx": tc.gidx}
+			group := covenantGroup(t, contract, tc.function)
+			instance := instantiateGroup(t, contract, tc.function, values, serverKey.PubKey(), emulatorKey.PubKey())
+			spend := spendingPSBTWithWitness(t, fundingTx(instance.pkScript, 10_000), instance, 10_000, instance.pkScript,
+				covenantWitness(t, contract, group, values), extension.Packet(asset.Packet{issuance}))
+			requireVMResult(t, spend, emulatorKey.PubKey(), tc.wantErr)
+		})
+	}
+}
