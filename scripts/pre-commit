@@ -8,12 +8,28 @@ echo "Formatted Rust code successfully. Commit again!"
 exit 1
 fi
 
+# Worktrees share one stash list, so hooks in different worktrees take turns.
+# ponytail: a lock directory serializes test runs across worktrees; a hook killed
+# with SIGKILL leaves it behind, and the waiting message names it for removal.
+LOCK="$(git rev-parse --git-common-dir)/pre-commit.lock"
+if ! mkdir "$LOCK" 2>/dev/null; then
+  echo "Waiting for another worktree's pre-commit hook (remove $LOCK if none is running)"
+  until mkdir "$LOCK" 2>/dev/null; do sleep 1; done
+fi
+STASHED=0
+cleanup() {
+  if [ "$STASHED" = 1 ]; then git stash pop --quiet; fi
+  rmdir "$LOCK"
+}
+trap cleanup EXIT
+trap 'exit 130' HUP INT TERM
+
 STASH_COUNT_BEFORE=$(git stash list 2>/dev/null | wc -l | tr -d '[:space:]')
 git stash --quiet --keep-index --include-untracked
 STASH_COUNT_AFTER=$(git stash list 2>/dev/null | wc -l | tr -d '[:space:]')
 
 if [ "$STASH_COUNT_AFTER" -gt "$STASH_COUNT_BEFORE" ]; then
-  trap "git stash pop --quiet" EXIT
+  STASHED=1
 fi
 
 if ! cargo test ; then

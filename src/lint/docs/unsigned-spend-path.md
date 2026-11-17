@@ -12,7 +12,7 @@ Fix: require a transaction signature from the party the coins belong to, or allo
 @allow(unsigned-spend-path, "the preimage holder claims, and the outputs are pinned")
 function claim(bytes preimage) {
   require(sha256(preimage) == hash);
-  require(tx.outputs[0].scriptPubKey == new SingleSig(receiver));
+  require(tx.outputs[0].script == new SingleSig(receiver));
   require(tx.outputs[0].value >= tx.input.current.value);
 }
 ```

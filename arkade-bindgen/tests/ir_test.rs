@@ -13,13 +13,17 @@ fn load_fixture(name: &str) -> String {
 
 #[test]
 fn artifact_format_version_is_checked() {
-    let legacy = load_fixture("single_sig");
-    assert!(load_artifact_str(&legacy).is_ok());
-    let mut future: serde_json::Value = serde_json::from_str(&legacy).unwrap();
+    let artifact = load_fixture("single_sig");
+    assert!(load_artifact_str(&artifact).is_ok());
+    let mut future: serde_json::Value = serde_json::from_str(&artifact).unwrap();
     future["formatVersion"] = 2.into();
     assert!(load_artifact_str(&future.to_string())
         .unwrap_err()
         .contains("Unsupported artifact format version: 2"));
+    future.as_object_mut().unwrap().remove("formatVersion");
+    assert!(load_artifact_str(&future.to_string())
+        .unwrap_err()
+        .contains("missing field `formatVersion`"));
 }
 
 #[test]
@@ -121,6 +125,7 @@ fn test_ir_expands_grouped_array_fields() {
     // The artifact carries one entry per source parameter; generated bindings
     // need the per-element fields the asm placeholders and witness stack use.
     let artifact = r#"{
+        "formatVersion": 1,
         "contractName": "Quorum",
         "constructorInputs": [{ "name": "oracles", "type": "pubkey[3]" }],
         "functions": [{
@@ -176,6 +181,7 @@ fn test_ir_expands_grouped_array_fields() {
 #[test]
 fn test_ir_expands_nested_struct_fields() {
     let artifact = r#"{
+        "formatVersion": 1,
         "contractName": "Vault",
         "structs": [
             {
