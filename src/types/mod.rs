@@ -407,8 +407,8 @@ fn type_compared_literal(left: &mut Expression, op: BinaryOperator, right: &mut 
     }
 }
 
-/// Group members apply to any non-struct value; the builtin table rejects
-/// operands that aren't `AssetGroup`, while struct fields keep their names.
+/// A member of an `AssetGroup` value is the group opcode that computes it;
+/// every other value keeps its own fields.
 fn resolve_group_member(expression: &mut Expression, scope: &Scope) {
     let resolved = match &expression.kind {
         // `g.delta`, `s.group.delta`
@@ -432,7 +432,7 @@ fn resolve_group_member(expression: &mut Expression, scope: &Scope) {
             ExprKind::FieldAccess {
                 value: group,
                 field,
-            } if !matches!(group.ty, ArkType::Struct(_)) => {
+            } if group.ty == ArkType::AssetGroup => {
                 group_io_source(field).map(|source| ExprKind::GroupIOAccess {
                     group: group.clone(),
                     io_index: index.clone(),
@@ -455,7 +455,7 @@ fn resolve_group_member(expression: &mut Expression, scope: &Scope) {
                 source: source.clone(),
                 property: GroupIoProperty::from_name(field),
             }),
-            _ if !matches!(value.ty, ArkType::Struct(_)) => {
+            _ if value.ty == ArkType::AssetGroup => {
                 GroupProperty::from_name(field).map(|property| ExprKind::GroupProperty {
                     group: value.clone(),
                     property,
@@ -506,7 +506,7 @@ fn resolve_length(expression: &mut Expression, scope: &Scope) {
         ExprKind::FieldAccess {
             value: group,
             field,
-        } if !matches!(group.ty, ArkType::Struct(_)) => {
+        } if group.ty == ArkType::AssetGroup => {
             count(&field).map(|property| ExprKind::GroupProperty { group, property })
         }
         _ => None,
@@ -516,14 +516,12 @@ fn resolve_length(expression: &mut Expression, scope: &Scope) {
     }
 }
 
-/// The binding named by `path`, when a group member can apply to it; it takes
-/// the span of the access `at`, which has none narrower for the binding alone.
+/// The binding named by `path`, when it is an `AssetGroup`; it takes the span
+/// of the access `at`, which has none narrower for the binding alone.
 fn group_binding(path: Path, at: &Expression, scope: &Scope) -> Option<Expression> {
-    (!matches!(scope.get(&path.key()), Some(ArkType::Struct(_)))).then(|| {
-        let mut binding = at.with_kind(ExprKind::Name(path));
-        binding.ty = infer_type(&binding, scope);
-        binding
-    })
+    let mut binding = at.with_kind(ExprKind::Name(path));
+    binding.ty = infer_type(&binding, scope);
+    (binding.ty == ArkType::AssetGroup).then_some(binding)
 }
 
 pub(crate) fn group_io_source(name: &str) -> Option<crate::models::GroupIOSource> {

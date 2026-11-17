@@ -590,11 +590,58 @@ fn asset_groups_are_typed() {
         ),
         (
             "int g = 0; require(g.delta == 0);",
-            "asset group property operand has type 'int', expected 'AssetGroup'",
+            "field 'g.delta' is undefined",
         ),
     ] {
         let code = format!("contract V(bytes32 t) {{ function spend() {{ {statement} }} }}");
         let error = compile(&code).expect_err(statement).to_string();
         assert!(error.contains(expected), "{statement}: {error}");
+    }
+}
+
+/// Group members are looked up by the base's type: struct fields named like
+/// them stay fields, and other values have none.
+#[test]
+fn group_members_resolve_only_on_asset_groups() {
+    let output = compile(
+        r#"
+        struct Tally { AssetGroup group; int delta; int[2] inputs; }
+        contract V(pubkey owner) {
+            function spend(signature sig, Tally s) {
+                require(checkSig(sig, owner));
+                require(s.delta + s.inputs[1] + s.inputs.length == s.group.delta);
+                require(s.group.inputs[0].amount >= s.group.inputs.length);
+            }
+        }
+    "#,
+    )
+    .unwrap_or_else(|error| panic!("{error}"));
+    let asm = arkade_asm(&output, "spend");
+    assert_eq!(
+        asm.matches("OP_INSPECTASSETGROUPSUM OP_SUB").count(),
+        1,
+        "{asm}"
+    );
+    assert_eq!(asm.matches("OP_INSPECTASSETGROUP ").count(), 1, "{asm}");
+    assert_eq!(asm.matches("OP_INSPECTASSETGROUPNUM").count(), 1, "{asm}");
+
+    for (statement, expected) in [
+        (
+            "require((t + t).delta == 0);",
+            "value of type 'bytes' has no field 'delta'",
+        ),
+        (
+            "int[2] xs = [1, 2]; require(xs.inputs.length == 0);",
+            "'xs.inputs' is not an array",
+        ),
+        (
+            "require(n.inputs[0].amount == 0);",
+            "array 'n.inputs' is undefined",
+        ),
+    ] {
+        let code = format!("contract V(bytes32 t, int n) {{ function spend() {{ {statement} }} }}");
+        let error = compile(&code).expect_err(statement).to_string();
+        assert!(error.contains(expected), "{statement}: {error}");
+        assert!(!error.contains("asset group"), "{statement}: {error}");
     }
 }
