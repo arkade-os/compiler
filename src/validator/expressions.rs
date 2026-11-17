@@ -812,7 +812,8 @@ fn literal_index(mut expression: &Expression) -> Option<(bool, &str)> {
 /// Why `path`, under `tx` or `this`, names no value: its first member the builtin docs
 /// lack, with those they list at that level, or else that it needs an access or a call.
 fn unknown_member(path: &crate::models::Path) -> String {
-    // A path the grammar reads as a whole keeps its indexes and calls, as in `outputs[0]`.
+    // A `tx` or `this` chain the parser resolves to no member keeps its indexes and calls,
+    // as in `outputs[0]`.
     let text = path.key();
     // `text` without index and argument contents, and where each of its dots is in `text`.
     let (mut flat, mut dots, mut depth) = (String::new(), Vec::new(), 0);
