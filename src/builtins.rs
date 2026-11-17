@@ -731,6 +731,16 @@ mod tests {
             if let Lowering::Opcodes(opcodes) | Lowering::Check(opcodes) = builtin.lowering {
                 assert!(!opcodes.is_empty(), "{} emits nothing", builtin.name);
             }
+            // `require` emits a check's arguments one stack item each.
+            if let Lowering::Check(_) = builtin.lowering {
+                for (_, ty) in builtin.params {
+                    assert!(
+                        !matches!(ArkType::named(ty), ArkType::Struct(_)),
+                        "{}: check parameter '{ty}' is not one item",
+                        builtin.name
+                    );
+                }
+            }
         }
     }
 
