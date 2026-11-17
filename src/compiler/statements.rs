@@ -1,6 +1,7 @@
 //! Emission of lowered statements onto the generator.
 
 use super::*;
+use crate::builtins::{Builtin, Lowering::Check};
 
 impl Generator {
     pub(super) fn emit_branches(
@@ -272,8 +273,21 @@ fn generate_requirement_asm(req: &Requirement, generator: &mut Generator) -> Res
                     generator.push_temporary(Int1);
                     generator.apply(Verify, 1, 0)?;
                 }
-                ExprKind::Builtin { builtin, .. } if builtin.result.is_none() => {
-                    generator.emit_expression_items(expr, 0)?;
+                // The check fails the spend itself, so `require` leaves out its `true`.
+                ExprKind::Builtin {
+                    builtin:
+                        Builtin {
+                            lowering: Check(opcodes),
+                            ..
+                        },
+                    args,
+                } => {
+                    for arg in args {
+                        generator.emit_expression(arg)?;
+                    }
+                    for &opcode in opcodes.iter() {
+                        generator.lower_raw_opcode(opcode)?;
+                    }
                 }
                 _ => {
                     generator.emit_expression(expr)?;

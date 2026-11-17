@@ -569,7 +569,7 @@ fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
             .map(|property| ArkType::parse(property.value_type()))
             .unwrap_or(ArkType::Unknown),
 
-        ExprKind::Builtin { builtin, .. } => builtin.result.map_or(ArkType::Bool, ArkType::parse),
+        ExprKind::Builtin { builtin, .. } => ArkType::parse(builtin.result),
 
         // Arithmetic
         ExprKind::Unary {

@@ -10,13 +10,11 @@ pub(super) fn validate_binding_requirement(
 ) {
     match requirement {
         Requirement::Expression(expression) => {
-            let produces_value = !matches!(&expression.kind, ExprKind::Builtin { builtin, .. } if builtin.result.is_none());
             let before = issues.len();
-            validate_binding_expression(expression, scopes, issues, produces_value);
+            validate_binding_expression(expression, scopes, issues, true);
             let condition = expression.ty.clone();
             // A bare group lookup verifies the asset group exists; its index is dropped.
             if issues.len() == before
-                && produces_value
                 && !matches!(&expression.kind, ExprKind::GroupLookup { .. })
                 && !matches!(condition, ArkType::Bool | ArkType::Unknown)
             {
@@ -131,10 +129,10 @@ pub(super) fn validate_binding_expression(
         )));
     }
     if value_position
-        && (matches!(
+        && matches!(
             &expression.kind,
             ExprKind::GroupIOAccess { property: None, .. }
-        ) || matches!(&expression.kind, ExprKind::Builtin { builtin, .. } if builtin.result.is_none()))
+        )
     {
         issues.push(ValidationIssue::error(
             "expression does not produce one stack item",
