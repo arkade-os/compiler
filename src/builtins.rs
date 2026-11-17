@@ -128,7 +128,7 @@ pub(crate) const BUILTINS: &[Builtin] = &[
         &[("data", "bytes")],
         "int",
         &[Size, Nip],
-        "Length of data in bytes.",
+        "Length of data in bytes, also written data.length.",
     ),
     builtin(
         "digest",
@@ -475,6 +475,16 @@ const SPELLED: &[Spelled] = &[
         tapscript: false,
         doc: "Transaction outputs.",
     },
+    property(
+        "tx.inputs.length",
+        "int",
+        "Number of transaction inputs, the same as tx.numInputs.",
+    ),
+    property(
+        "tx.outputs.length",
+        "int",
+        "Number of transaction outputs, the same as tx.numOutputs.",
+    ),
     Spelled {
         name: "tx.input",
         params: None,
@@ -608,6 +618,16 @@ const SPELLED: &[Spelled] = &[
         tapscript: false,
         doc: "The group's output records.",
     },
+    property(
+        "tx.assetGroups[].inputs.length",
+        "int",
+        "Number of the group's input records, the same as numInputs.",
+    ),
+    property(
+        "tx.assetGroups[].outputs.length",
+        "int",
+        "Number of the group's output records, the same as numOutputs.",
+    ),
     method(
         "tx.assetGroups[].controlIs",
         &["bytes32 assetTxid", "int assetGidx"],
