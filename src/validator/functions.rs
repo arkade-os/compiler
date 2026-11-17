@@ -76,9 +76,6 @@ fn validate_body(
             );
         }
         match statement {
-            Statement::Require(Requirement::Comparison { left, right, .. }) => {
-                validate_comparison_literals(left, right, function, contract, issues);
-            }
             Statement::Return(value) => {
                 if !function.is_private {
                     issues.push(ValidationIssue::error(format!(

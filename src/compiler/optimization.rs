@@ -1,4 +1,4 @@
-use crate::models::{AssignmentTarget, ExprKind, Expression, Requirement, Statement};
+use crate::models::{AssignmentTarget, ExprKind, Expression, Statement};
 use crate::opcodes::Opcode::{self, *};
 
 use crate::operators::{BinaryOperator, UnaryOperator};
@@ -12,33 +12,8 @@ pub(super) fn fold_statement(statement: &mut Statement, scope: &Scope) -> Result
     match statement {
         Statement::Call(value)
         | Statement::Return(Some(value))
+        | Statement::Require(value)
         | Statement::LetBinding { value, .. } => fold_expression(value, scope)?,
-        Statement::Require(requirement) => {
-            if let Requirement::Comparison { left, op, right } = requirement {
-                let mut expression = left.with_kind(ExprKind::BinaryOp {
-                    left: Box::new(left.clone()),
-                    op: *op,
-                    right: Box::new(right.clone()),
-                });
-                expression.ty = ArkType::Bool;
-                fold_expression(&mut expression, scope)?;
-                if matches!(expression.kind, ExprKind::Literal(_)) {
-                    *requirement = Requirement::Expression(expression);
-                } else if let ExprKind::BinaryOp {
-                    left: folded_left,
-                    right: folded_right,
-                    ..
-                } = expression.kind
-                {
-                    *left = *folded_left;
-                    *right = *folded_right;
-                }
-            } else {
-                for expression in requirement.expressions_mut() {
-                    fold_expression(expression, scope)?;
-                }
-            }
-        }
         Statement::VarAssign { target, value } => {
             match target {
                 AssignmentTarget::Access(access) => fold_expression(access, scope)?,

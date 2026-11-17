@@ -45,9 +45,9 @@ pub(crate) fn substitute_statement(
                 substitute_expression(expression, index_var, value_var, k, items)
             }))
         }
-        Statement::Require(req) => {
-            Statement::Require(substitute_requirement(req, index_var, value_var, k, items))
-        }
+        Statement::Require(condition) => Statement::Require(substitute_expression(
+            condition, index_var, value_var, k, items,
+        )),
         Statement::Declaration { .. } => stmt.clone(),
         Statement::LetBinding {
             name,
@@ -115,25 +115,6 @@ pub(crate) fn substitute_statement(
         Statement::ForCount { count, body } => Statement::ForCount {
             count: substitute_expression(count, index_var, value_var, k, items),
             body: substitute_loop_body(body, index_var, value_var, k, items),
-        },
-    }
-}
-
-pub(crate) fn substitute_requirement(
-    req: &Requirement,
-    index_var: &str,
-    value_var: &str,
-    k: usize,
-    items: &Expression,
-) -> Requirement {
-    match req {
-        Requirement::Expression(expr) => {
-            Requirement::Expression(substitute_expression(expr, index_var, value_var, k, items))
-        }
-        Requirement::Comparison { left, op, right } => Requirement::Comparison {
-            left: substitute_expression(left, index_var, value_var, k, items),
-            op: *op,
-            right: substitute_expression(right, index_var, value_var, k, items),
         },
     }
 }

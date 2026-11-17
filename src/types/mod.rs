@@ -8,8 +8,7 @@
 use std::collections::HashMap;
 
 use crate::models::{
-    AssignmentTarget, Contract, ExprKind, Expression, LocatedStatement, Path, Requirement,
-    Statement, TypeName,
+    AssignmentTarget, Contract, ExprKind, Expression, LocatedStatement, Path, Statement, TypeName,
 };
 use crate::operators::{BinaryOperator, OperatorClass, UnaryOperator};
 use crate::properties::{GroupIoProperty, GroupProperty};
@@ -267,18 +266,10 @@ impl Typing<'_> {
     fn statements(&self, statements: &mut [LocatedStatement], scope: &mut Scope) {
         for statement in statements {
             match &mut statement.statement {
-                Statement::Call(value) | Statement::Return(Some(value)) => {
-                    self.expression(value, scope)
-                }
+                Statement::Call(value)
+                | Statement::Return(Some(value))
+                | Statement::Require(value) => self.expression(value, scope),
                 Statement::Return(None) => {}
-                Statement::Require(requirement) => {
-                    for value in requirement.expressions_mut() {
-                        self.expression(value, scope);
-                    }
-                    if let Requirement::Comparison { left, op, right } = requirement {
-                        type_compared_literal(left, *op, right);
-                    }
-                }
                 Statement::Declaration {
                     name,
                     declared_type,

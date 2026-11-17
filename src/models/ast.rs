@@ -237,8 +237,8 @@ pub enum Statement {
     Call(Expression),
     /// Return from a private function.
     Return(Option<Expression>),
-    /// require(expr, "message");
-    Require(Requirement),
+    /// require(expr, "message"); aborts unless the bool `expr` holds.
+    Require(Expression),
     /// type name; — no value or stack slot until assignment.
     Declaration {
         name: String,
@@ -288,9 +288,9 @@ impl Statement {
     /// statements.
     pub(crate) fn expressions(&self) -> Vec<&Expression> {
         match self {
-            Statement::Call(expression) | Statement::Return(Some(expression)) => vec![expression],
-            Statement::Require(Requirement::Expression(expression)) => vec![expression],
-            Statement::Require(Requirement::Comparison { left, right, .. }) => vec![left, right],
+            Statement::Call(expression)
+            | Statement::Return(Some(expression))
+            | Statement::Require(expression) => vec![expression],
             Statement::LetBinding { value, .. } => vec![value],
             Statement::VarAssign {
                 target: AssignmentTarget::ArrayIndex { index, .. } | AssignmentTarget::Access(index),
@@ -303,28 +303,6 @@ impl Statement {
             Statement::Return(None) | Statement::Declaration { .. } => vec![],
         }
     }
-}
-
-impl Requirement {
-    pub(crate) fn expressions_mut(&mut self) -> Vec<&mut Expression> {
-        match self {
-            Requirement::Expression(expression) => vec![expression],
-            Requirement::Comparison { left, right, .. } => vec![left, right],
-        }
-    }
-}
-
-/// Requirement AST
-#[derive(Debug, Clone)]
-pub enum Requirement {
-    /// Expression that must evaluate to true
-    Expression(Expression),
-    /// Comparison requirement
-    Comparison {
-        left: Expression,
-        op: crate::operators::BinaryOperator,
-        right: Expression,
-    },
 }
 
 /// Hash function used in a tapscript condition prefix (`hashFn(x) == h`).

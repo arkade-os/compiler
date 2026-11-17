@@ -1014,14 +1014,8 @@ fn visit_statements(
         match &mut statement.statement {
             Statement::Call(expr)
             | Statement::Return(Some(expr))
+            | Statement::Require(expr)
             | Statement::LetBinding { value: expr, .. } => visit_expression(expr, visit)?,
-            Statement::Require(requirement) => match requirement {
-                models::Requirement::Expression(expr) => visit_expression(expr, visit)?,
-                models::Requirement::Comparison { left, right, .. } => {
-                    visit_expression(left, visit)?;
-                    visit_expression(right, visit)?;
-                }
-            },
             Statement::VarAssign { target, value } => {
                 if let models::AssignmentTarget::ArrayIndex { index, .. }
                 | models::AssignmentTarget::Access(index) = target
