@@ -17,14 +17,8 @@ pub(crate) fn parse_named_tapscript(
 ) -> Result<crate::models::NamedTapscript, CompileError> {
     let declaration = pair.as_span().into();
     let mut inner = pair.into_inner().peekable();
-    if inner
-        .peek()
-        .is_some_and(|p| p.as_rule() == Rule::function_visibility)
-    {
-        let visibility = inner.next().expect("visibility").as_str();
-        if visibility != "public" {
-            return Err(format!("tapscript functions cannot be {visibility}").into());
-        }
+    if let Some(visibility) = inner.next_if(|p| p.as_rule() == Rule::function_visibility) {
+        return Err(format!("tapscript functions cannot be {}", visibility.as_str()).into());
     }
     let name = inner.next().ok_or("Missing tapscript name")?;
     let span = name.as_span().into();

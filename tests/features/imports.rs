@@ -195,7 +195,7 @@ library A {
             "b.ark",
             r#"library B {
     const int VALUE = 7;
-    public function value(int x) int { return B.hidden(x); }
+    function value(int x) int { return B.hidden(x); }
     private function hidden(int x) int { return x + VALUE; }
 }"#,
         ),
@@ -252,6 +252,7 @@ fn libraries_reject_invalid_declarations_and_helpers() {
         ("library Helper() {}", "Parse error"),
         ("library Helper {} contract Other() {}", "Parse error"),
         ("library Helper { function exit() tapscript {} }", "libraries cannot declare tapscript"),
+        ("library Helper { static function value() int { return 1; } }", "helper.ark: line 1, column 18: `static` marks a contract's stateless helper; library functions need no modifier"),
         ("library Helper { function value() int { return secret; } }", "binding 'secret' is undefined"),
         ("library Helper { function value(int x) int { if (x > 0) { return x; } } }", "must return a value on every path"),
         ("library Helper { function sha256(int x) int { return x; } }", "reserved"),
@@ -551,7 +552,7 @@ fn instantiated_contracts_must_compile_as_entries() {
     for (other, expected) in [
         (
             "contract Other(pubkey owner) {}",
-            "other.ark: contract must declare at least one public function",
+            "other.ark: contract must declare at least one covenant or tapscript function",
         ),
         // The child's own attributes decide its lints, as when it is the entry.
         (

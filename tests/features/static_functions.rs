@@ -134,8 +134,8 @@ contract Vault(pubkey owner, int fee) {
 }
 
 #[test]
-fn static_visibility_cannot_be_combined_with_private_or_public() {
-    for visibility in ["public static", "private static", "static private"] {
+fn only_private_or_static_modifies_a_function() {
+    for visibility in ["public", "private static", "static private"] {
         let source = format!(
             r#"
 contract Vault(pubkey owner) {{

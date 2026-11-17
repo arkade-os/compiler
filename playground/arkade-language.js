@@ -72,7 +72,6 @@ const arkadeCompletions = [
     S('private', 'Keyword', 'private function ${1:name}(${2:params}) ${3:bool} {\n\treturn ${4:value};\n}'),
     S('static', 'Keyword', 'static function ${1:name}(${2:params}) ${3:int} {\n\treturn ${4:value};\n}'),
     S('const', 'Keyword', 'const ${1:int} ${2:NAME} = ${3:0};'),
-    S('public', 'Keyword', 'public'),
     S('return', 'Keyword', 'return ${1:value};'),
     S('new', 'Keyword', 'new ${1:Contract}(${2:args})'),
     S('import', 'Keyword', 'import "${1:./contract.ark}";', 'Import structs, a contract, or a library from a relative file'),

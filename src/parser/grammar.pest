@@ -59,14 +59,14 @@ parameter = { data_type ~ identifier }
 array_size = @{ (ASCII_NONZERO_DIGIT ~ ASCII_DIGIT*) | qualified_name }
 data_type = { identifier ~ ("[" ~ array_size ~ "]")? }
 
-// Visibility defaults to public. Tapscript declarations have no return type.
+// A function without a modifier is public. Tapscript declarations have no return type.
 function = {
     function_visibility? ~ "function" ~ identifier ~
     "(" ~ param_list ~ ")" ~
     ( "tapscript" ~ tapscript_block
     | data_type? ~ "{" ~ statement* ~ "}" )
 }
-function_visibility = @{ ("private" | "public" | "static") ~ !(ASCII_ALPHANUMERIC | "_") }
+function_visibility = @{ ("private" | "static") ~ !(ASCII_ALPHANUMERIC | "_") }
 tapscript_block = { "{" ~ tap_require_stmt* ~ "}" }
 tap_require_stmt = { "require" ~ "(" ~ tap_require_expression ~ ("," ~ string_literal)? ~ ")" ~ ";" }
 tap_require_expression = _{
