@@ -36,8 +36,6 @@ pub enum ArkType {
     Int,
     /// Boolean: empty is false and 0x01 is true, the only encodings a witness may use
     Bool,
-    /// Taproot Asset identifier
-    Asset,
     /// Position of an asset group in the transaction's asset packet
     AssetGroup,
 
@@ -68,7 +66,6 @@ impl ArkType {
             "bytes32" => ArkType::Bytes32,
             "int" => ArkType::Int,
             "bool" => ArkType::Bool,
-            "asset" => ArkType::Asset,
             "AssetGroup" => ArkType::AssetGroup,
             _ if !s.is_empty() => ArkType::Struct(s.to_string()),
             _ => ArkType::Unknown,
@@ -87,7 +84,6 @@ impl ArkType {
             ArkType::Bytes32 => "raw-32",
             ArkType::Int => "scriptnum",
             ArkType::Bool => "scriptnum",
-            ArkType::Asset => "raw-32",
             ArkType::AssetGroup => "scriptnum",
             ArkType::Array(..) => "array",
             ArkType::Struct(..) => "struct",
@@ -104,7 +100,6 @@ impl ArkType {
             ArkType::Bytes32 => "bytes32".to_string(),
             ArkType::Int => "int".to_string(),
             ArkType::Bool => "bool".to_string(),
-            ArkType::Asset => "asset".to_string(),
             ArkType::AssetGroup => "AssetGroup".to_string(),
             ArkType::Array(inner, length) => format!("{}[{length}]", inner.as_str()),
             ArkType::Struct(name) => name.clone(),

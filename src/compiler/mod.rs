@@ -723,7 +723,7 @@ fn covenant_for(
         for leaf in crate::models::flatten_parameter(parameter, structs)? {
             let width = match leaf.leaf_type.ark_type() {
                 types::ArkType::Signature => 64,
-                types::ArkType::Bytes32 | types::ArkType::Asset => 32,
+                types::ArkType::Bytes32 => 32,
                 types::ArkType::Bytes20 => 20,
                 _ => 0,
             };
