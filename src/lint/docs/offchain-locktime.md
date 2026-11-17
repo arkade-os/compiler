@@ -1,4 +1,4 @@
-`tx.locktime` read in a covenant.
+`tx.locktime` read in a covenant. Denied by default.
 
 arkd rebuilds offchain spends with an nLockTime of 0, so a condition on it does not mean what it says offchain.
 

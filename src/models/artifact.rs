@@ -114,8 +114,8 @@ pub struct AbiFunctionGroup {
 /// JSON output for a contract
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ContractJson {
-    #[serde(rename = "formatVersion", skip_serializing_if = "Option::is_none")]
-    pub format_version: Option<u32>,
+    #[serde(rename = "formatVersion")]
+    pub format_version: u32,
     #[serde(rename = "contractName")]
     pub name: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]

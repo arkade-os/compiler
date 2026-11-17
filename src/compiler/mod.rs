@@ -446,7 +446,7 @@ pub(crate) struct Prepared {
 /// warnings and checked leaves on success, every error (each its own diagnostic, not
 /// joined into one message) on failure. Diagnostic messages carry no location prefix —
 /// `Diagnostic::span` is the byte range; `diagnostics::render_errors` adds a
-/// `"line N, column M: "` prefix only when rendering the legacy joined string.
+/// `"line N, column M: "` prefix only when rendering the joined string.
 pub(crate) fn prepare(
     contract: &mut Contract,
     require_entrypoint: bool,
@@ -513,7 +513,7 @@ pub(crate) fn emit(
     }
 
     let mut json = ContractJson {
-        format_version: Some(crate::models::ARTIFACT_FORMAT_VERSION),
+        format_version: crate::models::ARTIFACT_FORMAT_VERSION,
         name: contract.name.clone(),
         structs: contract.structs.clone(),
         parameters,
@@ -723,7 +723,7 @@ fn covenant_for(
         for leaf in crate::models::flatten_parameter(parameter, structs)? {
             let width = match leaf.leaf_type.ark_type() {
                 types::ArkType::Signature => 64,
-                types::ArkType::Bytes32 | types::ArkType::Asset => 32,
+                types::ArkType::Bytes32 => 32,
                 types::ArkType::Bytes20 => 20,
                 _ => 0,
             };

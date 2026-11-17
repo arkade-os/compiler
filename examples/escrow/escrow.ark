@@ -53,6 +53,6 @@ contract Escrow(
 
   function unilateral(signature partyASig, signature partyBSig) tapscript {
     require(older(serverExitDelay));
-    require(checkMultisig([partyAPk, partyBPk], [partyASig, partyBSig], 2));
+    require(checkMultisig([partyAPk, partyBPk], [partyASig, partyBSig]));
   }
 }

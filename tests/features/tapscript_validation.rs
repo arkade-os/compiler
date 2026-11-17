@@ -5,7 +5,7 @@ fn forfeit_leaf_without_server_is_rejected() {
     let src = r#"
 contract Demo(pubkey owner, pubkey liquidator) {
     function liquidate(signature liquidatorSig, signature ownerSig) tapscript {
-        require(checkMultisig([liquidator, owner], [liquidatorSig, ownerSig], 2));
+        require(checkMultisig([liquidator, owner], [liquidatorSig, ownerSig]));
     }
 }
 "#;
@@ -20,7 +20,7 @@ fn standalone_emulator_is_rejected() {
     let src = r#"
 contract Demo(pubkey owner) {
     function weird(signature serverSig, signature emulatorSig) tapscript {
-        require(checkMultisig([server, emulator], [serverSig, emulatorSig], 2));
+        require(checkMultisig([server, emulator], [serverSig, emulatorSig]));
     }
 }
 "#;
@@ -52,23 +52,23 @@ fn a_tapscript_input_cannot_be_a_pushed_operand() {
     let cases = [
         (
             "pubkey k",
-            "require(checkMultisig([server, k], [serverSig, sig], 2));",
+            "require(checkMultisig([server, k], [serverSig, sig]));",
             "a key",
         ),
         (
             "pubkey k",
-            "require(checkMultisig([server, tweak(k, claim)], [serverSig, sig], 2));",
+            "require(checkMultisig([server, tweak(k, claim)], [serverSig, sig]));",
             "a key",
         ),
         (
             "bytes32 pre, bytes32 h",
             "require(sha256(pre) == h); \
-             require(checkMultisig([server, owner], [serverSig, sig], 2));",
+             require(checkMultisig([server, owner], [serverSig, sig]));",
             "a hash value",
         ),
         (
             "int t",
-            "require(older(t)); require(checkMultisig([server, owner], [serverSig, sig], 2));",
+            "require(older(t)); require(checkMultisig([server, owner], [serverSig, sig]));",
             "a timelock",
         ),
     ];
@@ -93,7 +93,7 @@ fn a_constructor_parameter_cannot_be_the_preimage() {
 contract P(pubkey owner, bytes32 pre, bytes32 h) {
     function claim(signature serverSig, signature sig) tapscript {
         require(sha256(pre) == h);
-        require(checkMultisig([server, owner], [serverSig, sig], 2));
+        require(checkMultisig([server, owner], [serverSig, sig]));
     }
 }
 "#;

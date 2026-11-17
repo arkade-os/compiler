@@ -47,7 +47,7 @@ Breeding is the core game mechanic. A player can select two Kitties they own (th
 The `BreedKitties` contract is the heart of the game. It ensures that new Kitties are only created from valid parents and that their genomes are mixed deterministically. The user provides the parents' `genome` and `generation`; the contract recomputes the two-leaf Merkle root and verifies it matches the on-chain `metadataHash`. Crucially, the contract spends and retains the Species Control asset in every successful breeding transaction, so mints are only possible through the contract.
 
 ```typescript
-pragma arkade ^1.0.0;
+pragma arkade ^0.1.0;
 
 // Merkle verification helper for 2-leaf Kitty metadata ("generation" < "genome")
 function verifyKittyMetadata(genLeaf: bytes32, genomeLeaf: bytes32, root: bytes32) internal returns (bool) {
@@ -157,8 +157,11 @@ contract BreedCommit(
         feeOutputIndex: int,
         // the script for the new Kitty owner
         newKittyOwner: ScriptPubKey,
+        // Unix time in seconds after which the parents can be refunded
+        expirationTime: int,
     ) {
-
+        require(!checkTime(expirationTime - timeout), "Reveal window shorter than timeout");
+        require(checkTime(expirationTime - 2 * timeout), "Reveal window longer than twice the timeout");
 
         // 1. Verify a fee is paid to the designated fee script
         require(tx.outputs[feeOutputIndex].script == feeScript, "Fee output script mismatch");
@@ -194,7 +197,7 @@ contract BreedCommit(
             saltHash,
             sireOwner, dameOwner,
             newKittyOwner,
-            tx.locktime + timeout,
+            expirationTime,
         );
 
         require(tx.outputs[revealOutputIndex].script == revealScript, "Reveal output script mismatch");
@@ -265,7 +268,7 @@ contract BreedReveal(
     // If the reveal doesn't happen, allow parents to be reclaimed.
     function refund(dameOutputIndex: int, sireOutputIndex: int, speciesControlOutputIndex: int) {
         // 1. Check that the timeout has passed
-        require(tx.locktime >= expirationTime, "Timeout not yet reached");
+        require(checkTime(expirationTime), "Timeout not yet reached");
 
         // 2. Verify parents are returned to their owners
         require(tx.outputs[sireOutputIndex].assets.lookup(sireId) == 1, "Sire not refunded");
