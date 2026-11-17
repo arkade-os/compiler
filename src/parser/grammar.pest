@@ -70,7 +70,7 @@ function_visibility = @{ ("private" | "static") ~ !(ASCII_ALPHANUMERIC | "_") }
 tapscript_block = { "{" ~ tap_require_stmt* ~ "}" }
 tap_require_stmt = { "require" ~ "(" ~ tap_require_expression ~ ("," ~ string_literal)? ~ ")" ~ ";" }
 tap_require_expression = _{
-    ((check_sig_from_stack_verify | check_sig_from_stack | check_sig | check_multisig | time_comparison | hash_comparison) ~ &("," | ")")) |
+    ((check_sig | check_multisig | time_comparison | hash_comparison) ~ &("," | ")")) |
     general_expression
 }
 return_keyword = @{ "return" ~ !(ASCII_ALPHANUMERIC | "_") }
@@ -494,15 +494,6 @@ check_sig = {
     "checkSig" ~ "(" ~ named_binding ~ "," ~ key_expr ~ ")"
 }
 
-// CheckSigFromStack expression
-// Arguments can be identifiers or array access (e.g., oracles[i])
-check_sig_from_stack = {
-    "checkSigFromStack" ~ "(" ~ sig_arg ~ "," ~ sig_arg ~ "," ~ sig_arg ~ ")"
-}
-
-// Signature-check operand: a binding or byte literal (type-checked by position).
-sig_arg = { byte_literal | named_binding }
-
 // checkMultisig([keys], [sigs]) — keys may be tweak()s; the second array carries the
 // aligned signature inputs. arkd recognizes only N-of-N closures, so it takes no threshold.
 check_multisig = {
@@ -516,11 +507,6 @@ array = {
 
 // Named operands used by crypto checks: a binding with field and index suffixes.
 named_binding = { identifier ~ binding_suffix* }
-
-// CheckSigFromStack with verify: checkSigFromStackVerify(sig, pubkey, msg) → OP_CHECKSIGFROMSTACK OP_VERIFY
-check_sig_from_stack_verify = {
-    "checkSigFromStackVerify" ~ "(" ~ sig_arg ~ "," ~ sig_arg ~ "," ~ sig_arg ~ ")"
-}
 
 // Narrowing cast from bytes: bytes20/bytes32 verify the length at runtime;
 // pubkey/signature are semantic because the VM validates them when consumed.
