@@ -9,9 +9,7 @@ pub struct Builtin {
     pub name: &'static str,
     /// Parameter names and source types, in call order.
     pub params: &'static [(&'static str, &'static str)],
-    /// None when the opcode is itself the check and leaves nothing, so the
-    /// call is only valid directly inside `require`.
-    pub result: Option<&'static str>,
+    pub result: &'static str,
     pub lowering: Lowering,
     pub doc: &'static str,
 }
@@ -21,6 +19,9 @@ pub enum Lowering {
     /// Push the arguments in call order, struct arguments field by field,
     /// then emit these opcodes.
     Opcodes(&'static [Opcode]),
+    /// As Opcodes, for opcodes that fail the spend unless the check holds and
+    /// leave nothing; a use as a value then pushes the `true` the call returns.
+    Check(&'static [Opcode]),
     /// Push each (G1, G2) array element field by field, then the pair count
     /// and the curve.
     Pairing,
@@ -38,7 +39,7 @@ const fn builtin(
     Builtin {
         name,
         params,
-        result: Some(result),
+        result,
         lowering: Lowering::Opcodes(opcodes),
         doc,
     }
@@ -47,14 +48,14 @@ const fn builtin(
 const fn verify(
     name: &'static str,
     params: &'static [(&'static str, &'static str)],
-    opcode: &'static [Opcode],
+    opcodes: &'static [Opcode],
     doc: &'static str,
 ) -> Builtin {
     Builtin {
         name,
         params,
-        result: None,
-        lowering: Lowering::Opcodes(opcode),
+        result: "bool",
+        lowering: Lowering::Check(opcodes),
         doc,
     }
 }
@@ -201,8 +202,8 @@ pub(crate) const BUILTINS: &[Builtin] = &[
             ("message", "bytes"),
         ],
         &[Swap, CheckSigFromStack, Verify],
-        "Fails the spend unless signature is valid by pubkey over message, which must be 32 bytes. \
-         Produces no value; use it directly inside require.",
+        "True when signature is valid by pubkey over message, which must be 32 bytes; otherwise \
+         fails the spend.",
     ),
     Builtin {
         name: "checkMultisig",
@@ -211,7 +212,7 @@ pub(crate) const BUILTINS: &[Builtin] = &[
             ("sigs", "signature[]"),
             ("threshold", "int"),
         ],
-        result: Some("bool"),
+        result: "bool",
         lowering: Lowering::Multisig,
         doc: "Whether at least threshold signatures are non-empty, each valid for the key at its \
               index; an invalid non-empty one fails the spend. Without a threshold, all must be \
@@ -322,7 +323,7 @@ pub(crate) const BUILTINS: &[Builtin] = &[
             ("g2Points", "G2Point[]"),
             ("curveId", "int"),
         ],
-        result: Some("bool"),
+        result: "bool",
         lowering: Lowering::Pairing,
         doc: "Whether the product of the pairings of aligned G1 and G2 points is the identity, \
               for 1 to 16 pairs. Only alt_bn128 (curveId 2) pairs; another curve, or an off-curve \
@@ -332,14 +333,15 @@ pub(crate) const BUILTINS: &[Builtin] = &[
         "ecMulScalarVerify",
         &[("k", "bytes32"), ("P", "bytes"), ("Q", "bytes")],
         &[EcMulScalarVerify],
-        "Fails the spend unless Q = k·P. k is 32-byte big-endian; P and Q are compressed points.",
+        "True when Q = k·P, with k 32-byte big-endian and P and Q compressed points; otherwise \
+         fails the spend.",
     ),
     verify(
         "tweakVerify",
         &[("P", "bytes32"), ("k", "bytes32"), ("Q", "bytes")],
         &[TweakVerify],
-        "Fails the spend unless Q = P + k·G, with P a 32-byte x-only key, k 32-byte big-endian \
-         and Q a 33-byte compressed point.",
+        "True when Q = P + k·G, with P a 32-byte x-only key, k 32-byte big-endian and Q a 33-byte \
+         compressed point; otherwise fails the spend.",
     ),
 ];
 
@@ -745,12 +747,22 @@ mod tests {
                 builtin.name
             );
             let types = builtin.params.iter().map(|(_, ty)| *ty);
-            for ty in types.chain(builtin.result) {
+            for ty in types.chain([builtin.result]) {
                 let element = ty.strip_suffix("[]").unwrap_or(ty);
                 assert!(known(element), "{}: unknown type '{ty}'", builtin.name);
             }
-            if let Lowering::Opcodes(opcodes) = builtin.lowering {
+            if let Lowering::Opcodes(opcodes) | Lowering::Check(opcodes) = builtin.lowering {
                 assert!(!opcodes.is_empty(), "{} emits nothing", builtin.name);
+            }
+            // `require` emits a check's arguments one stack item each.
+            if let Lowering::Check(_) = builtin.lowering {
+                for (_, ty) in builtin.params {
+                    assert!(
+                        !matches!(ArkType::named(ty), ArkType::Struct(_)),
+                        "{}: check parameter '{ty}' is not one item",
+                        builtin.name
+                    );
+                }
             }
         }
     }
