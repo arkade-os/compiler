@@ -154,7 +154,7 @@ pub fn is_builtin_struct(declared_type: &str) -> bool {
 pub struct Parameter {
     /// Parameter name
     pub name: String,
-    /// Parameter type (pubkey, signature, bytes32, int, bool, asset, value)
+    /// Parameter type: a builtin, struct, or fixed-size array type
     #[serde(rename = "type")]
     pub param_type: TypeName,
     /// Byte range of the name; empty for parameters the compiler builds.
