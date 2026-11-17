@@ -522,7 +522,7 @@ fn skipped_builtin_literal_operands_are_validated_in_both_modes() {
 fn introspection_diagnostics_name_normalized_operands() {
     for (expression, expected) in [
         (
-            "tx.assetGroups.has(id, this.activeBytecode)",
+            "tx.assetGroups.has(id, tx.input.current.script)",
             "gidx operand 'tx.inputs[this.activeInputIndex].script' must be int",
         ),
         (

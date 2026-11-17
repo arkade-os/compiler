@@ -485,7 +485,7 @@ Arithmetic `+ - * /`, remainder `%` (with the sign of the dividend, so `-7 % 2 =
 
 In covenants, `checkTime(timestamp)` returns whether the emulator's wall clock has reached a Unix timestamp in seconds, including equality. Use `require(checkTime(unlockAt))` to enforce it. A future timestamp returns false; a negative timestamp fails execution. This check is independent of transaction locktime and sequence.
 
-**Transaction.** `tx.version`, `tx.locktime`, `tx.numInputs`, `tx.numOutputs`, `tx.weight`, `tx.id`, `this.activeInputIndex`, `this.activeBytecode` (the same script struct as `tx.input.current.script`). In covenants, `this.expiry` returns the executing VTXO's Unix expiry timestamp in seconds through `OP_PUSHEXPIRY`; execution fails if expiry is unavailable.
+**Transaction.** `tx.version`, `tx.locktime`, `tx.numInputs`, `tx.numOutputs`, `tx.weight`, `tx.id`, `this.activeInputIndex`. In covenants, `this.expiry` returns the executing VTXO's Unix expiry timestamp in seconds through `OP_PUSHEXPIRY`; execution fails if expiry is unavailable.
 
 **Continuation.** `require(this.tunnel(outputIndex))` preserves the current input's script program and version, bitcoin value, and assets at the selected output. An explicit policy supplies all three compile-time boolean fields: `this.tunnel(outputIndex, {script: true, value: true, assets: false})`. With asset preservation enabled, an optional fixed list excludes specific `AssetId` values: `this.tunnel(outputIndex, {script: true, value: true, assets: true}, [feeAsset])`. At least one property must be selected. A mismatch fails execution; success returns true. Tunneling is covenant-only and does not establish intent type, timing, packet preservation, or a unique input-to-output mapping.
 

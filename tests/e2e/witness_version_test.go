@@ -72,7 +72,6 @@ contract C() {
     function supplied(ScriptPubKey expected) { require(tx.outputs[0].script == expected); }
     function different() { require(tx.outputs[0].script != new D()); }
     function continuation() { require(tx.input.current.script == tx.outputs[0].script); }
-    function activeBytecode() { require(tx.outputs[0].script == this.activeBytecode); }
 }`), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -80,14 +79,14 @@ contract C() {
 	serverKey, emulatorKey := fixedPrivateKey(1), fixedPrivateKey(2)
 	program := bytes.Repeat([]byte{7}, 32)
 	otherProgram := bytes.Repeat([]byte{8}, 32)
-	for _, name := range []string{"direct", "reversed", "bound", "supplied", "different", "continuation", "activeBytecode"} {
+	for _, name := range []string{"direct", "reversed", "bound", "supplied", "different", "continuation"} {
 		t.Run(name, func(t *testing.T) {
 			group := instantiateGroup(t, contract, name, map[string][]byte{
 				"CONTRACT:D()": program,
 			}, serverKey.PubKey(), emulatorKey.PubKey())
 			deployment := fundingTx(group.pkScript, 10_000)
 			expectedProgram := program
-			if name == "continuation" || name == "activeBytecode" {
+			if name == "continuation" {
 				expectedProgram = group.pkScript[2:]
 			}
 			witness := covenantWitness(t, contract, covenantGroup(t, contract, name), map[string][]byte{

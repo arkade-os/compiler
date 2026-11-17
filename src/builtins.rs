@@ -605,11 +605,6 @@ const SPELLED: &[Spelled] = &[
         "bool",
         "Whether the group's control asset is the given asset.",
     ),
-    property(
-        "this.activeBytecode",
-        "ScriptPubKey",
-        "Witness program and version of the input being spent, {program, version}.",
-    ),
     method(
         "this.tunnel",
         &[
