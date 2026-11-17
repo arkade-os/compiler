@@ -162,6 +162,7 @@ contract BreedCommit(
         expirationTime: int,
     ) {
         require(!checkTime(expirationTime - timeout), "Reveal window shorter than timeout");
+        require(checkTime(expirationTime - 2 * timeout), "Reveal window longer than twice the timeout");
 
         // 1. Verify a fee is paid to the designated fee script
         require(tx.outputs[feeOutputIndex].script == feeScript, "Fee output script mismatch");
