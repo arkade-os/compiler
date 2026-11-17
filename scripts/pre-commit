@@ -22,7 +22,7 @@ cleanup() {
   rmdir "$LOCK"
 }
 trap cleanup EXIT
-trap 'exit 130' INT TERM
+trap 'exit 130' HUP INT TERM
 
 STASH_COUNT_BEFORE=$(git stash list 2>/dev/null | wc -l | tr -d '[:space:]')
 git stash --quiet --keep-index --include-untracked
