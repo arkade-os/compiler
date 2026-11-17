@@ -360,6 +360,7 @@ impl Typing<'_> {
             {
                 *return_type = returns.get(name).cloned().flatten();
             }
+            resolve_length(expression, scope);
             resolve_group_member(expression, scope);
         }
         expression.ty = match &expression.kind {
@@ -462,6 +463,52 @@ fn resolve_group_member(expression: &mut Expression, scope: &Scope) {
             }
             _ => None,
         },
+        _ => None,
+    };
+    if let Some(resolved) = resolved {
+        expression.kind = resolved;
+    }
+}
+
+/// `.length` of a bytes-like value is `size(value)`, and of a group's `inputs` or
+/// `outputs` its `numInputs` or `numOutputs`; an array's stays its static length.
+fn resolve_length(expression: &mut Expression, scope: &Scope) {
+    let value = match &expression.kind {
+        ExprKind::Name(path) => match path.split_last() {
+            Some((base, "length")) => {
+                let mut value = expression.with_kind(ExprKind::Name(base));
+                value.ty = infer_type(&value, scope);
+                value
+            }
+            _ => return,
+        },
+        ExprKind::FieldAccess { value, field } if field == "length" => (**value).clone(),
+        _ => return,
+    };
+    let count = |source: &str| match source {
+        "inputs" => Some(GroupProperty::NumInputs),
+        "outputs" => Some(GroupProperty::NumOutputs),
+        _ => None,
+    };
+    let resolved = match value.kind {
+        _ if is_bytes_like(&value.ty) => Some(ExprKind::Builtin {
+            builtin: crate::builtins::find("size").expect("size is a builtin"),
+            args: vec![value],
+        }),
+        // `g.inputs.length`
+        ExprKind::Name(path) => path.split_last().and_then(|(base, source)| {
+            Some(ExprKind::GroupProperty {
+                group: Box::new(group_binding(base, expression, scope)?),
+                property: count(source)?,
+            })
+        }),
+        // `tx.assetGroups[k].inputs.length`
+        ExprKind::FieldAccess {
+            value: group,
+            field,
+        } if !matches!(group.ty, ArkType::Struct(_)) => {
+            count(&field).map(|property| ExprKind::GroupProperty { group, property })
+        }
         _ => None,
     };
     if let Some(resolved) = resolved {

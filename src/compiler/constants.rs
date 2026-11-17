@@ -442,6 +442,16 @@ fn fold_expression(
             expression.kind = ExprKind::Literal(value.clone());
             return;
         }
+        // `KEY.length` is the length of the constant's value.
+        if let Some((constant, "length")) = path.split_last() {
+            if let Some(value) = values.get(&constant.key()) {
+                uses.push((constant.clone(), expression.span));
+                let value = Box::new(expression.with_kind(ExprKind::Literal(value.clone())));
+                let field = "length".to_string();
+                expression.kind = ExprKind::FieldAccess { value, field };
+                return;
+            }
+        }
     }
     if let ExprKind::Tunnel { policy, .. } = &mut expression.kind {
         for value in policy.iter_mut() {
