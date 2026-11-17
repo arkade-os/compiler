@@ -644,4 +644,27 @@ fn group_members_resolve_only_on_asset_groups() {
         assert!(error.contains(expected), "{statement}: {error}");
         assert!(!error.contains("asset group"), "{statement}: {error}");
     }
+
+    // A member path reports only its root's fault.
+    for (statement, expected) in [
+        (
+            "require(gruop.inputs[0].amount == group.delta);",
+            "binding 'gruop' is undefined; did you mean 'group'?",
+        ),
+        (
+            "require(gruop.outputs.length == group.delta);",
+            "binding 'gruop' is undefined; did you mean 'group'?",
+        ),
+        (
+            "for (k, h) in n { require(h.inputs[0].amount + h.inputs.length == h.delta); }",
+            "loop iterable 'n' has type 'int', expected array",
+        ),
+    ] {
+        let code = format!(
+            "contract V(int n) {{ function spend() {{ let group = tx.assetGroups[0]; {statement} }} }}"
+        );
+        let error = compile(&code).expect_err(statement).to_string();
+        assert!(error.contains(expected), "{statement}: {error}");
+        assert_eq!(error.matches("error").count(), 1, "{statement}: {error}");
+    }
 }
