@@ -32,11 +32,7 @@ fn parse_errors_use_source_terms() {
             "1:79",
             "expected ')', ',' or an operator",
         ),
-        (
-            "require(tx.); }",
-            "1:62",
-            "expected a transaction property or a name",
-        ),
+        ("require(tx.); }", "1:62", "expected a name"),
         (
             "require(checkSig(s, pk), \"x\"); ",
             "1:84",

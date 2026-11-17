@@ -377,7 +377,7 @@ pub(crate) fn tapscript_params(name: &str) -> Option<Vec<&'static str>> {
     Some(spelled.params?.iter().map(name).collect())
 }
 
-/// A call or member the grammar spells rule by rule, so neither BUILTINS nor
+/// A call or member the parser resolves by its own rule, so neither BUILTINS nor
 /// the properties describe it.
 struct Spelled {
     name: &'static str,
@@ -796,7 +796,7 @@ mod tests {
         }
     }
 
-    /// Members the grammar spells rule by rule are described only in SPELLED, so each
+    /// Members the parser resolves by their own rules are described only in SPELLED, so each
     /// documented one is compiled as declared: called with its parameters, returning its type.
     #[test]
     fn every_documented_member_compiles_as_declared() {

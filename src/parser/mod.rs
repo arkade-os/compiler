@@ -14,13 +14,11 @@ pub struct ArkadeParser;
 
 // Parser split into domain submodules. Each declares its pub(crate)
 // parse_* helpers; siblings reach them via `use super::*`.
-mod asset;
 mod crypto;
 mod expr;
 mod introspection;
 mod tapscript;
 
-pub(crate) use asset::*;
 pub(crate) use crypto::*;
 pub(crate) use expr::*;
 pub(crate) use introspection::*;
@@ -211,26 +209,37 @@ pub(crate) fn trim_trivia_end(text: &str) -> &str {
 
 /// The end of the code before `at`, past whitespace and comments.
 fn code_end(source: &str, at: usize) -> usize {
-    let code = &source[..at];
-    let (mut i, mut end, mut quoted) = (0, 0, false);
-    while let Some(c) = code[i..].chars().next() {
-        if let Some(comment) = comment_len(&code[i..]).filter(|_| !quoted) {
+    code(&source[..at]).last().map_or(0, |code| code.end)
+}
+
+/// `text` without the whitespace and comments the grammar allows between terms.
+pub(crate) fn without_trivia(text: &str) -> String {
+    code(text).map(|code| &text[code]).collect()
+}
+
+/// The byte ranges of `source` that are code: each character outside comments, string literal
+/// contents and escapes included, other than whitespace outside string literals.
+fn code(source: &str) -> impl Iterator<Item = std::ops::Range<usize>> + '_ {
+    let (mut i, mut quoted) = (0, false);
+    std::iter::from_fn(move || loop {
+        let c = source[i..].chars().next()?;
+        if let Some(comment) = comment_len(&source[i..]).filter(|_| !quoted) {
             i += comment;
             continue;
         }
+        let start = i;
         i += c.len_utf8();
         match c {
-            '\\' if quoted => i += code[i..].chars().next().map_or(0, char::len_utf8),
+            '\\' if quoted => i += source[i..].chars().next().map_or(0, char::len_utf8),
             '"' => quoted = !quoted,
             // A string literal cannot span lines.
             '\n' => quoted = false,
             _ => {}
         }
         if quoted || !c.is_whitespace() {
-            end = i;
+            return Some(start..i);
         }
-    }
-    end
+    })
 }
 
 /// Where the block comment that `source` ends inside opens, if it ends inside one.
@@ -293,21 +302,10 @@ fn rule_term(rule: &Rule) -> Option<String> {
         | Rule::mul_op
         | Rule::div_op
         | Rule::rem_op
-        // Field and index suffixes are postfix operators.
-        | Rule::binding_suffix => "an operator",
-        Rule::asset_lookup_source
-        | Rule::tx_introspection_property
-        | Rule::tx_property_body
-        | Rule::tx_property_part
-        | Rule::tx_input_current
-        | Rule::tx_asset_groups => "a transaction property",
-        Rule::input_introspection_property => "an input property",
-        Rule::output_introspection_property => "an output property",
-        Rule::asset_group_property | Rule::asset_group_control_is | Rule::asset_group_io_source => {
-            "an asset group property"
-        }
-        Rule::asset_at_property => "an asset property",
-        Rule::this_property => "a contract property",
+        // Field, index and call suffixes are postfix operators.
+        | Rule::binding_suffix
+        | Rule::postfix
+        | Rule::call_args => "an operator",
         Rule::identifier => "a name",
         Rule::const_keyword => "a constant",
         Rule::function_visibility | Rule::function => "a function",
@@ -319,7 +317,8 @@ fn rule_term(rule: &Rule) -> Option<String> {
         Rule::unary_expr
         | Rule::primary_expr
         | Rule::parenthesized_expr
-        | Rule::general_expression => "an expression",
+        | Rule::general_expression
+        | Rule::empty_list => "an expression",
         Rule::number_literal => "a number",
         Rule::string_literal => "a string",
         // ponytail: unmapped rules fall back to their grammar name with spaces;
@@ -600,18 +599,8 @@ fn parse_function(
     let name = name.as_str().to_string();
     if is_private
         && (expr::reserved_function_signature(&name).is_some()
-            || matches!(
-                name.as_str(),
-                "require"
-                    | "return"
-                    | "pubkey"
-                    | "signature"
-                    | "bytes"
-                    | "bytes20"
-                    | "bytes32"
-                    | "int"
-                    | "bool"
-            ))
+            || matches!(name.as_str(), "require" | "return")
+            || is_cast(&name))
     {
         return Err(CompileError::from(format!("function name '{name}' is reserved")).at(span));
     }
@@ -814,15 +803,26 @@ fn parse_statement(
             }
         }
         Rule::function_call_stmt => {
-            let call = pair.into_inner().next().ok_or("Missing function call")?;
-            let name = call.clone().into_inner().next();
-            let name = name.ok_or("Missing function name")?.as_str();
-            if name == "this.tunnel" || crate::builtins::find(name).is_some() {
+            let mut inner = pair.into_inner();
+            let mut name = Vec::new();
+            let args = loop {
+                let part = inner.next().ok_or("Missing call arguments")?;
+                if part.as_rule() == Rule::call_args {
+                    break part;
+                }
+                name.push(part.as_str());
+            };
+            let name = name.join(".");
+            if name == "this.tunnel" || crate::builtins::find(&name).is_some() {
                 return Err(CompileError::from(format!(
                     "`{name}(...)` cannot be a statement; use it inside require()"
                 )));
             }
-            Statement::Call(parse_general_expression(call)?)
+            let span = crate::diagnostics::Span {
+                start: span.start,
+                end: args.as_span().end(),
+            };
+            Statement::Call(parse_call(name, args.into_inner().collect(), span)?)
         }
         Rule::return_stmt => {
             let value = pair
@@ -936,6 +936,7 @@ mod tests {
         AssignmentTarget, Attribute, AttributeArg, ExprKind, Expression, Statement,
     };
     use crate::operators::UnaryOperator;
+    use crate::properties::TxProperty;
 
     #[test]
     fn transaction_member_forms_parse_by_rule() {
@@ -983,6 +984,160 @@ mod tests {
                 "{misuse}: {error}"
             );
         }
+    }
+
+    #[test]
+    fn member_chains_resolve_after_parsing() {
+        let value = |expression: &str| {
+            let source = format!(
+                "contract C() {{ function spend(AssetGroup g) {{ let v = {expression}; }} }}"
+            );
+            let statement = parse(&source).map(|c| c.functions[0].statements[0].statement.clone());
+            let Ok(Statement::LetBinding { value, .. }) = statement else {
+                return Err(format!("{statement:?}"));
+            };
+            let start = source.find(expression).unwrap();
+            assert_eq!(
+                (value.span.start, value.span.end),
+                (start, start + expression.len())
+            );
+            Ok(value.kind)
+        };
+        // A member call resolves by its member: a group's `controlIs`, a `tx` or `this` member.
+        assert!(matches!(
+            value("g.controlIs(id)"),
+            Ok(ExprKind::GroupControlIs { .. })
+        ));
+        assert!(matches!(
+            value("g . controlIs(id)"),
+            Ok(ExprKind::GroupControlIs { .. })
+        ));
+        assert!(matches!(
+            value("tx.packet(1)"),
+            Ok(ExprKind::PacketInspect {
+                presence_only: false,
+                ..
+            })
+        ));
+        assert!(matches!(
+            value("tx.inputs[0].packet.has(1)"),
+            Ok(ExprKind::InputPacketInspect {
+                presence_only: true,
+                ..
+            })
+        ));
+        assert!(matches!(
+            value("tx . outputs [ i ] . assets . lookup ( id , )"),
+            Ok(ExprKind::AssetLookup { .. })
+        ));
+        assert!(matches!(
+            value("tx.inputs[0].assets[1]"),
+            Ok(ExprKind::AssetAt { property: None, .. })
+        ));
+        assert!(matches!(
+            value("tx.inputs[0].assets[1].amount"),
+            Ok(ExprKind::AssetAt {
+                property: Some(_),
+                ..
+            })
+        ));
+        assert!(matches!(
+            value("tx.assetGroups.lookup(id).inputs[0].amount"),
+            Ok(ExprKind::GroupIOAccess {
+                property: Some(_),
+                ..
+            })
+        ));
+        for (count, property) in [
+            ("inputs", TxProperty::NumInputs),
+            ("outputs", TxProperty::NumOutputs),
+        ] {
+            assert!(matches!(
+                value(&format!("tx.{count}.length")),
+                Ok(ExprKind::TxIntrospection { property: p }) if p == property
+            ));
+        }
+        assert!(matches!(
+            value("this.tunnel(0, {script: true, value: true, assets: true}, [])"),
+            Ok(ExprKind::Tunnel { exceptions, .. }) if exceptions.is_empty()
+        ));
+        let error = value("this.tunnel(0, ({script: true, value: true, assets: true}))");
+        assert!(error
+            .unwrap_err()
+            .contains("wrong arguments to `this.tunnel`"));
+        assert!(matches!(value("bytes32(x)"), Ok(ExprKind::Cast { .. })));
+        assert!(matches!(value("int(0x0100)"), Ok(ExprKind::Literal(value)) if value == "256"));
+        // Fields after a member apply to its value.
+        assert!(matches!(
+            value("tx.inputs[0].script.program"),
+            Ok(ExprKind::FieldAccess { value, .. }) if matches!(value.kind, ExprKind::InputIntrospection { .. })
+        ));
+        assert!(matches!(value("this.expiry"), Ok(ExprKind::This(_))));
+        assert!(
+            matches!(value("xs.length"), Ok(ExprKind::Name(path)) if path.key() == "xs.length")
+        );
+        assert!(matches!(value("Lib . f(x)"), Ok(ExprKind::Call { name, .. }) if name == "Lib.f"));
+        assert!(
+            matches!(value("Lib.length(x)"), Ok(ExprKind::Call { name, .. }) if name == "Lib.length")
+        );
+        // A chain no member spells keeps its spelling, strings included, for validation to report.
+        for (chain, path) in [
+            ("tx.inputs[0].valueX", "tx.inputs[0].valueX"),
+            (
+                "tx.assetGroups[0].inputs[0].amountX",
+                "tx.assetGroups[0].inputs[0].amountX",
+            ),
+            (r#"tx.packet("a b", "//x")"#, r#"tx.packet("a b","//x")"#),
+        ] {
+            assert!(
+                matches!(value(chain), Ok(ExprKind::Name(p)) if p.key() == path),
+                "{chain}"
+            );
+        }
+        for call in ["a.b.c(x)", "f(x).controlIs(id)", "(Lib).f(x)"] {
+            assert!(value(call).unwrap_err().contains("cannot call"), "{call}");
+        }
+        // A call statement names its function.
+        for (call, name) in [
+            ("g.controlIs(id)", "g.controlIs"),
+            ("Lib . check(x)", "Lib.check"),
+        ] {
+            let source = format!("contract C() {{ function spend(AssetGroup g) {{ {call}; }} }}");
+            let statement = &parse(&source).unwrap().functions[0].statements[0].statement;
+            assert!(
+                matches!(statement, Statement::Call(value) if matches!(&value.kind, ExprKind::Call { name: n, .. } if n == name)),
+                "{call}"
+            );
+        }
+    }
+
+    #[test]
+    fn nested_operands_parse_in_linear_time() {
+        // Each operand has one parse, so a failure deep inside one is never retried by another.
+        let (sender, receiver) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let nested = [
+                "Lib.f(",
+                "size(tx.packet(",
+                "this.tunnel(",
+                "bytes(",
+                "g.controlIs(",
+                "(Lib.f(",
+            ]
+            .map(|open| format!("{}0", open.repeat(24)));
+            let closed = format!("{}0{}", "tx.inputs[".repeat(24), "].value".repeat(24));
+            for operand in nested.iter().chain([&closed]) {
+                let source =
+                    format!("contract C() {{ function spend() {{ require({operand} > 0); }} }}");
+                let _ = parse(&source);
+            }
+            sender.send(()).unwrap();
+        });
+        let parsed = receiver.recv_timeout(std::time::Duration::from_secs(10));
+        assert!(
+            parsed.is_ok(),
+            "deeply nested operands did not parse in time"
+        );
     }
 
     #[test]
