@@ -283,6 +283,21 @@ contract Scalar(int limit) {
     .to_string();
 
     assert!(error.contains(".length"), "unexpected error: {error}");
+
+    let error = compile(
+        r#"
+contract Group(bytes32 assetTxid) {
+    function spend() {
+        let g = tx.assetGroups.find(assetTxid, 0);
+        require(g.length == 1);
+    }
+}
+"#,
+    )
+    .expect_err("'.length' on an AssetGroup must be rejected")
+    .to_string();
+
+    assert!(error.contains(".length"), "unexpected error: {error}");
 }
 
 #[test]
