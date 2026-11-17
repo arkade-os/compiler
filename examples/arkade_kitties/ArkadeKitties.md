@@ -47,7 +47,7 @@ Breeding is the core game mechanic. A player can select two Kitties they own (th
 The `BreedKitties` contract is the heart of the game. It ensures that new Kitties are only created from valid parents and that their genomes are mixed deterministically. The user provides the parents' `genome` and `generation`; the contract recomputes the two-leaf Merkle root and verifies it matches the on-chain `metadataHash`. Crucially, the contract spends and retains the Species Control asset in every successful breeding transaction, so mints are only possible through the contract.
 
 ```typescript
-pragma arkade ^1.0.0;
+pragma arkade ^0.1.0;
 
 // Merkle verification helper for 2-leaf Kitty metadata ("generation" < "genome")
 function verifyKittyMetadata(genLeaf: bytes32, genomeLeaf: bytes32, root: bytes32) internal returns (bool) {

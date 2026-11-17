@@ -9,7 +9,7 @@ pub enum Encoding {
     Raw,
     /// 20-byte fixed array (HASH160)
     Raw20,
-    /// 32-byte fixed array (SHA256, txid, asset)
+    /// 32-byte fixed array (SHA256, txid)
     Raw32,
     /// Bitcoin CScriptNum (variable-length LE integer)
     ScriptNum,
@@ -39,7 +39,6 @@ impl Encoding {
             "bytes20" => Encoding::Raw20,
             "bytes32" => Encoding::Raw32,
             "int" | "bool" | "AssetGroup" => Encoding::ScriptNum,
-            "asset" => Encoding::Raw32,
             _ => Encoding::Unknown(type_str.to_string()),
         }
     }

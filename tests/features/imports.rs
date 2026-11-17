@@ -15,7 +15,7 @@ fn pragmas_preserve_scripts_and_sources_across_compilation_entry_points() {
 
     let entry = format!("pragma arkade >=0.1.0 <0.2.0;\nimport \"helper.ark\";\n{contract}");
     let helper =
-        "pragma arkade 99.0.0; import \"types.ark\"; library Helper { const int VALUE = 1; }";
+        "pragma arkade ^0.1.0 || ^1.0.0; import \"types.ark\"; library Helper { const int VALUE = 1; }";
     let types = "pragma arkade ~0.1.0; struct Policy { int maximum; }";
     let output = project(
         "main.ark",
@@ -55,6 +55,58 @@ fn pragmas_preserve_scripts_and_sources_across_compilation_entry_points() {
     .to_string();
     assert!(error.contains("Parse error"), "{error}");
     assert!(error.contains("helper.ark"), "{error}");
+}
+
+#[test]
+fn an_unsatisfied_pragma_fails_in_the_file_that_declares_it() {
+    let pragma = "pragma arkade >=99.0.0 || <0.0.1;";
+    let helper = format!("// helper\n{pragma}\nlibrary Helper {{}}");
+    let files = BTreeMap::from([
+        (
+            "main.ark".to_string(),
+            "pragma arkade >=0.0.0; import \"helper.ark\"; contract C() { function f() { require(true); } }".to_string(),
+        ),
+        ("helper.ark".to_string(), helper.clone()),
+    ]);
+    let message = format!(
+        "pragma requires arkade >=99.0.0 || <0.0.1, but this compiler is version {}",
+        env!("CARGO_PKG_VERSION")
+    );
+    let error = compile_sources("main.ark", &files).unwrap_err().to_string();
+    assert_eq!(error, format!("helper.ark: line 2, column 1: {message}"));
+    let diagnostics = arkade_compiler::check("main.ark", &files);
+    assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+    let span = diagnostics[0].span.unwrap();
+    assert_eq!(diagnostics[0].file, "helper.ark");
+    assert_eq!(diagnostics[0].message, message);
+    assert_eq!(&helper[span.start..span.end], pragma);
+}
+
+#[test]
+fn an_unsatisfied_pragma_is_reported_before_unknown_syntax() {
+    let main = "import \"future.ark\"; contract M() { function f() { require(true); } }";
+    for (pragma, expected) in [
+        (
+            ">=99.0.0",
+            "line 1, column 1: pragma requires arkade >=99.0.0",
+        ),
+        (">=0.0.0", "Parse error"),
+    ] {
+        let future = format!("pragma arkade {pragma};\ncontract C() {{ future syntax; }}");
+        for (entry, files) in [
+            ("future.ark", vec![("future.ark", future.as_str())]),
+            (
+                "main.ark",
+                vec![("main.ark", main), ("future.ark", &future)],
+            ),
+        ] {
+            let error = project(entry, &files).unwrap_err().to_string();
+            assert!(
+                error.starts_with(&format!("future.ark: {expected}")),
+                "{error}"
+            );
+        }
+    }
 }
 
 #[test]
@@ -143,7 +195,7 @@ library A {
             "b.ark",
             r#"library B {
     const int VALUE = 7;
-    public function value(int x) int { return B.hidden(x); }
+    function value(int x) int { return B.hidden(x); }
     private function hidden(int x) int { return x + VALUE; }
 }"#,
         ),
@@ -200,6 +252,7 @@ fn libraries_reject_invalid_declarations_and_helpers() {
         ("library Helper() {}", "Parse error"),
         ("library Helper {} contract Other() {}", "Parse error"),
         ("library Helper { function exit() tapscript {} }", "libraries cannot declare tapscript"),
+        ("library Helper { static function value() int { return 1; } }", "helper.ark: line 1, column 18: `static` marks a contract's stateless helper; library functions need no modifier"),
         ("library Helper { function value() int { return secret; } }", "binding 'secret' is undefined"),
         ("library Helper { function value(int x) int { if (x > 0) { return x; } } }", "must return a value on every path"),
         ("library Helper { function sha256(int x) int { return x; } }", "reserved"),
@@ -499,7 +552,7 @@ fn instantiated_contracts_must_compile_as_entries() {
     for (other, expected) in [
         (
             "contract Other(pubkey owner) {}",
-            "other.ark: contract must declare at least one public function",
+            "other.ark: contract must declare at least one covenant or tapscript function",
         ),
         // The child's own attributes decide its lints, as when it is the entry.
         (

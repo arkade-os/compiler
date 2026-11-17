@@ -51,6 +51,77 @@ pub(crate) fn imports(
         .collect()
 }
 
+/// Fail at the leading pragma of `source` when compiler `version` satisfies none of its
+/// alternatives. Only `version`'s major.minor.patch counts, so a prerelease satisfies what its
+/// release does. The pragma is parsed on its own, so a file written for another compiler fails
+/// here rather than on syntax this one does not know; an absent or malformed pragma passes, and
+/// the full parse reports a malformed one.
+pub(crate) fn check_pragma(source: &str, version: &str) -> Result<(), CompileError> {
+    let Ok(mut head) = ArkadeParser::parse(Rule::pragma_head, source) else {
+        return Ok(());
+    };
+    let head = head.next().expect("pragma head");
+    let pragma = head.into_inner().next().expect("pragma");
+    let current = version_numbers(version);
+    let mut satisfied = false;
+    let mut alternatives = Vec::new();
+    for range in pragma
+        .clone()
+        .into_inner()
+        .filter(|p| p.as_rule() == Rule::pragma_range)
+    {
+        let mut all = true;
+        let mut constraints = Vec::new();
+        for constraint in range.into_inner() {
+            let operator = [">=", "<=", ">", "<", "=", "^", "~"]
+                .into_iter()
+                .find(|operator| constraint.as_str().starts_with(operator))
+                .unwrap_or("");
+            let wanted = constraint
+                .into_inner()
+                .next()
+                .expect("pragma version")
+                .as_str();
+            all &= satisfies(operator, version_numbers(wanted), current);
+            constraints.push(format!("{operator}{wanted}"));
+        }
+        satisfied |= all;
+        alternatives.push(constraints.join(" "));
+    }
+    if satisfied {
+        return Ok(());
+    }
+    Err(CompileError::from(format!(
+        "pragma requires arkade {}, but this compiler is version {version}",
+        alternatives.join(" || ")
+    ))
+    .at(pragma.as_span().into()))
+}
+
+/// The major, minor and patch numbers that start `version`.
+fn version_numbers(version: &str) -> [u64; 3] {
+    // A component beyond u64 saturates; the compiler's own never does, so comparisons stay exact.
+    let mut parts = version
+        .split(['.', '-', '+'])
+        .map(|part| part.parse().unwrap_or(u64::MAX));
+    std::array::from_fn(|_| parts.next().expect("three version components"))
+}
+
+/// Whether `version` satisfies `operator` `wanted`, with npm's caret and tilde ranges.
+fn satisfies(operator: &str, wanted: [u64; 3], version: [u64; 3]) -> bool {
+    match operator {
+        ">" => version > wanted,
+        ">=" => version >= wanted,
+        "<" => version < wanted,
+        "<=" => version <= wanted,
+        // `^` keeps the first nonzero component, so `^0.0.x` is exact; `~` keeps major.minor.
+        "^" if wanted[0] > 0 => version >= wanted && version[0] == wanted[0],
+        "^" if wanted[1] > 0 => version >= wanted && version[..2] == wanted[..2],
+        "~" => version >= wanted && version[..2] == wanted[..2],
+        _ => version == wanted,
+    }
+}
+
 /// Parse a source file, naming expected tokens in source terms instead of grammar rules.
 #[cfg(test)]
 pub(crate) fn parse_main(source: &str) -> Result<Pairs<'_, Rule>, String> {
@@ -483,16 +554,16 @@ fn parse_function(
 ) -> Result<Function, CompileError> {
     let declaration = pair.as_span().into();
     let mut inner = pair.into_inner().peekable();
-    let visibility = if inner
-        .peek()
-        .is_some_and(|p| p.as_rule() == Rule::function_visibility)
-    {
-        inner.next().expect("visibility").as_str()
-    } else {
-        "public"
-    };
+    let modifier = inner.next_if(|p| p.as_rule() == Rule::function_visibility);
+    let visibility = modifier.as_ref().map_or("", |p| p.as_str());
+    if is_library && visibility == "static" {
+        let message =
+            "`static` marks a contract's stateless helper; library functions need no modifier";
+        let span = modifier.expect("static modifier").as_span().into();
+        return Err(CompileError::from(message).at(span));
+    }
     let is_static = is_library || visibility == "static";
-    let is_private = is_library || visibility != "public";
+    let is_private = is_library || !visibility.is_empty();
     let is_exported = is_static && visibility != "private";
     let name = inner.next().ok_or("Missing function name")?;
     let span = crate::diagnostics::Span {
@@ -506,10 +577,6 @@ fn parse_function(
                 name.as_str(),
                 "require"
                     | "return"
-                    | "negate"
-                    | "neg64"
-                    | "le64ToScriptNum"
-                    | "le32ToLe64"
                     | "pubkey"
                     | "signature"
                     | "bytes"
@@ -1108,6 +1175,60 @@ contract C(pubkey k, int unused) {
     }
 
     #[test]
+    fn checks_version_pragmas_against_the_compiler_version() {
+        let check = |constraint: &str, version: &str| {
+            let source = format!("pragma arkade {constraint}; contract C() {{}}");
+            super::check_pragma(&source, version)
+        };
+        for (constraint, version, accepted) in [
+            ("1.2.3", "1.2.3", true),
+            ("1.2.3", "1.2.4", false),
+            ("=1.2.3", "1.2.3", true),
+            ("=1.2.3", "1.2.2", false),
+            (">1.2.3", "1.2.4", true),
+            (">1.2.3", "1.2.3", false),
+            (">=1.2.3", "1.2.3", true),
+            (">=1.2.3", "1.2.2", false),
+            ("<1.2.3", "1.2.2", true),
+            ("<1.2.3", "1.2.3", false),
+            ("<=1.2.3", "1.2.3", true),
+            ("<=1.2.3", "1.2.4", false),
+            ("^1.2.3", "1.9.0", true),
+            ("^1.2.3", "2.0.0", false),
+            ("^1.2.3", "1.2.2", false),
+            ("^0.1.2", "0.1.9", true),
+            ("^0.1.2", "0.2.0", false),
+            ("^0.1.2", "0.1.1", false),
+            ("^0.0.3", "0.0.3", true),
+            ("^0.0.3", "0.0.4", false),
+            ("~1.2.3", "1.2.9", true),
+            ("~1.2.3", "1.3.0", false),
+            ("~1.2.3", "1.2.2", false),
+            ("~0.0.3", "0.0.9", true),
+            (">=0.1.0 <0.2.0", "0.1.5", true),
+            (">=0.1.0 <0.2.0", "0.2.0", false),
+            ("^0.1.0 || ^1.0.0", "0.1.3", true),
+            ("^0.1.0 || ^1.0.0", "1.4.0", true),
+            ("^0.1.0 || ^1.0.0", "0.2.0", false),
+            ("^0.1.0", "0.1.0-rc.1", true),
+            (">0.1.0", "0.1.0-rc.1", false),
+            ("^ // constraint\n 1.2.3", "1.3.0", true),
+            ("<99999999999999999999.0.0", "0.1.0", true),
+        ] {
+            assert_eq!(
+                check(constraint, version).is_ok(),
+                accepted,
+                "{constraint} with {version}"
+            );
+        }
+        let error = check("^1.0.0 || >=2.0.0 // range\n <3.0.0", "0.1.0-rc.1").unwrap_err();
+        assert_eq!(
+            error.message,
+            "pragma requires arkade ^1.0.0 || >=2.0.0 <3.0.0, but this compiler is version 0.1.0-rc.1"
+        );
+    }
+
+    #[test]
     fn parses_constant_array_sizes_without_changing_index_expressions() {
         let contract = parse(
             "struct State { int[N] values; } contract C(pubkey[C.N] keys) { const int N = 2; function spend(int[N] values) { int[N] local = [1, 2]; local[N - 1] = values[0]; require(true); } }",
@@ -1177,7 +1298,7 @@ contract C(pubkey k, int unused) {
         use crate::models::{ExprKind, Expression};
         let contract = parse(
             r#"contract C() {
-            public function spend(int amount) { check(amount + 1 * 2); }
+            function spend(int amount) { check(amount + 1 * 2); }
             private function check(int value) { let returnValue = value; return; }
             private function sufficient(int value) bool { return value >= 1; }
             function other() { require(true); }

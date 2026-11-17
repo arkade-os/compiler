@@ -5,7 +5,7 @@ The value is then paid to whatever script the spender chooses. With a transactio
 Fix: pin the script as well as the value.
 
 ```solidity
-require(tx.outputs[this.activeInputIndex].scriptPubKey == new SingleSig(receiver));
+require(tx.outputs[this.activeInputIndex].script == new SingleSig(receiver));
 require(tx.outputs[this.activeInputIndex].value >= tx.input.current.value);
 ```
 

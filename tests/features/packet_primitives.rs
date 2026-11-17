@@ -36,11 +36,11 @@ fn compile_first_function_asm(src: &str) -> Vec<String> {
 const PROLOGUE: &str = "";
 
 #[test]
-fn test_active_bytecode_inspects_current_input_script_pubkey() {
+fn test_current_input_script_inspects_its_script_pubkey() {
     let src = r#"
-contract ActiveBytecode(ScriptPubKey expected) {
+contract CurrentScript(ScriptPubKey expected) {
   function probe() {
-    require(this.activeBytecode == expected);
+    require(tx.input.current.script == expected);
   }
 }"#;
 

@@ -281,9 +281,9 @@ Comments use `//`. Identifiers start with a letter and contain letters, digits, 
 
 Each source file may start with one `pragma arkade <constraint>;` directive, including imported libraries and struct-only files. It is optional; existing files compile without one. Comments and whitespace may precede it.
 
-Use three-component versions such as `0.1.0`, with optional `=`, `^`, `~`, `>`, `>=`, `<`, or `<=` operators. Multiple constraints form a range (`>=0.1.0 <0.2.0`); `||` separates alternatives (`^0.1.0 || ^0.2.0`). Version components cannot have leading zeroes. Partial versions, wildcards, prerelease versions, and build metadata are not supported.
+Use three-component versions such as `0.1.0`. A bare version or `=` matches exactly; `>`, `>=`, `<`, and `<=` compare; `^` allows changes that keep the first nonzero component (`^1.2.3` is `>=1.2.3 <2.0.0`, `^0.1.2` is `>=0.1.2 <0.2.0`, `^0.0.3` is `>=0.0.3 <0.0.4`); `~` allows patch changes (`~1.2.3` is `>=1.2.3 <1.3.0`). Space-separated constraints must all hold (`>=0.1.0 <0.2.0`); `||` separates alternatives (`^0.1.0 || ^0.2.0`). Version components cannot have leading zeroes. Partial versions, wildcards, prerelease versions, and build metadata are not supported.
 
-Pragmas currently validate syntax only: even a constraint for a future compiler version compiles. Compatibility checks are deferred. Pragmas apply to their own file, remain verbatim in the artifact's source bundle, and do not affect generated scripts.
+The compiler checks the pragma of every file it loads, the entry and each import, against its own version, and rejects a file whose pragma it does not satisfy with an error at that pragma. The pragma is checked before the rest of the file is parsed, so a file written for a newer compiler reports the version mismatch rather than syntax this compiler does not know. Only the compiler's major.minor.patch counts, so `0.1.0-rc.1` satisfies `^0.1.0`. Pragmas apply to their own file, remain verbatim in the artifact's source bundle, and do not affect generated scripts.
 
 ### Imports
 
@@ -341,7 +341,7 @@ library Fees {
 }
 ```
 
-Plain `function` and `public function` are exported; `private function` is callable only within its defining library. `static function` is also accepted as an exported library helper. All library functions are stateless: they see their parameters, locals, and constants, and can inspect the transaction and enforce `require` checks. They cannot capture a calling contract's constructor state. Pass any required contract state as arguments.
+A plain `function` is exported; a `private function` is callable only within its defining library. Library functions take no `static` modifier, since all of them are stateless: they see their parameters, locals, and constants, and can inspect the transaction and enforce `require` checks. They cannot capture a calling contract's constructor state. Pass any required contract state as arguments.
 
 Libraries can import other libraries, contracts, and struct files using the same direct-import scope rules. Local helper calls can be unqualified or use the library's own name, including calls to private helpers. Calls inline using the existing helper return and recursion rules; library functions never create ABI entrypoints or witness inputs of their own. Library constants can also be used in tapscripts, but helper calls remain covenant-only.
 
@@ -354,7 +354,6 @@ Libraries can import other libraries, contracts, and struct files using the same
 | `bytes`, `bytes20`, `bytes32` | Byte arrays, unsized or fixed |
 | `int` | CScriptNum integer |
 | `bool` | Boolean; a covenant witness must be empty (false) or `0x01` (true), and any other encoding fails the spend |
-| `asset` | Asset identifier |
 | `AssetGroup` | An asset group of the transaction; a witness or constructor value is its packet position |
 | `T[n]` | Fixed-size array of a scalar or struct type, `n` a positive integer literal or `int` constant |
 | `struct` | User-declared, nested structs and fixed-size arrays allowed |
@@ -365,8 +364,7 @@ Arrays and structs can be constructor parameters, covenant parameters, or locals
 ### Functions
 
 ```solidity
-function name(<params>) { ... }                // Public Arkade transaction entrypoint
-public function name(<params>) { ... }         // Explicit public visibility
+function name(<params>) { ... }                // Covenant: an Arkade transaction entrypoint
 private function name(<params>) { ... }        // Void helper
 private function name(<params>) bool { ... }   // Helper with a typed result
 static function name(<params>) int { ... }     // Helper without access to constructor state
@@ -375,7 +373,7 @@ function name(<params>) tapscript { ... }      // L1 tapleaf, plain Bitcoin Scri
 
 A covenant and its tapscripts form one spend group: a tapscript whose name matches the covenant, and a tapscript that tweaks a key to that covenant. The group keeps a synthesized `server` + `tweak(emulator, name)` leaf unless one of those tapscripts already signs with `emulator`. A constructor-pubkey tweak is an extra leaf; it does not replace that emulator leaf. A tapscript that tweaks nothing is a standalone leaf, which is how unilateral exits are written.
 
-Private functions are helpers called from covenants and other private helpers in the same contract. Calls inline into the caller's script. Public functions define transaction entrypoints, and tapscript functions define L1 leaves. Functions can be declared in any order; call graphs must be acyclic.
+Private functions are helpers called from covenants and other private helpers in the same contract. Calls inline into the caller's script. Functions without a modifier are public: covenant functions define transaction entrypoints, and tapscript functions define L1 leaves. Functions can be declared in any order; call graphs must be acyclic.
 
 Arguments are evaluated once, left to right, and passed by value. Private helpers see their own parameters and locals plus immutable constructor state. Modifying a parameter changes the helper's local copy.
 
@@ -485,7 +483,7 @@ Arithmetic `+ - * /`, remainder `%` (with the sign of the dividend, so `-7 % 2 =
 
 In covenants, `checkTime(timestamp)` returns whether the emulator's wall clock has reached a Unix timestamp in seconds, including equality. Use `require(checkTime(unlockAt))` to enforce it. A future timestamp returns false; a negative timestamp fails execution. This check is independent of transaction locktime and sequence.
 
-**Transaction.** `tx.version`, `tx.locktime`, `tx.numInputs`, `tx.numOutputs`, `tx.weight`, `tx.id`, `this.activeInputIndex`, `this.activeBytecode` (the same script struct as `tx.input.current.script`). In covenants, `this.expiry` returns the executing VTXO's Unix expiry timestamp in seconds through `OP_PUSHEXPIRY`; execution fails if expiry is unavailable.
+**Transaction.** `tx.version`, `tx.locktime`, `tx.numInputs`, `tx.numOutputs`, `tx.weight`, `tx.id`, `this.activeInputIndex`. In covenants, `this.expiry` returns the executing VTXO's Unix expiry timestamp in seconds through `OP_PUSHEXPIRY`; execution fails if expiry is unavailable.
 
 **Continuation.** `require(this.tunnel(outputIndex))` preserves the current input's script program and version, bitcoin value, and assets at the selected output. An explicit policy supplies all three compile-time boolean fields: `this.tunnel(outputIndex, {script: true, value: true, assets: false})`. With asset preservation enabled, an optional fixed list excludes specific `AssetId` values: `this.tunnel(outputIndex, {script: true, value: true, assets: true}, [feeAsset])`. At least one property must be selected. A mismatch fails execution; success returns true. Tunneling is covenant-only and does not establish intent type, timing, packet preservation, or a unique input-to-output mapping.
 
@@ -503,9 +501,7 @@ In covenants, `checkTime(timestamp)` returns whether the emulator's wall clock h
 
 **Arithmetic and curves.** In covenants, `abs(value)`, `min(a, b)`, and `max(a, b)` take and return `int`; `within(value, lower, upper)` takes `int` operands and returns `bool` for `lower <= value && value < upper`. Empty or reversed ranges return false. Also available: `modExp(base, exp, mod)`, `ecAdd(P, Q, curve)` and `ecMul(P, k, curve)` taking and returning `ECPoint`, `ecPairing(g1, g2, curve)` over aligned `ECPoint[n]` and `G2Point[n]` arrays (curve id 2, 1–16 pairs), `ecMulScalarVerify(k, P, Q)`, `tweakVerify(P, k, Q)`.
 
-**Instantiation.** `new Contract(args...)` returns a `ScriptPubKey` with witness version `1`, usable on either side of a `.script` comparison against `tx.outputs[o]`, `tx.inputs[i]`, or `tx.input.current`. Zero-argument constructors are allowed. Array and struct arguments flatten to scalar fields. Destination parameters use `ScriptPubKey`, for example `ScriptPubKey destination = {program: p, version: 1}; require(tx.outputs[0].script == destination);`. The `.scriptPubKey` accessor is removed; comparing script structs enforces their versions too.
-
-**Breaking script migration.** Replace `.scriptPubKey` with `.script` and change destination parameters from `bytes` or `bytes32` to `ScriptPubKey`. `this.activeBytecode` also returns `ScriptPubKey`; bind it and read `.program` only when a program-only comparison is intentional. Recompile contracts and regenerate bindings together. Artifact consumers must expand `ScriptPubKey` into `.program` (`bytes`), then `.version` (`int`), including constructor parameters and covenant witnesses. `arkade-bindgen` handles this for TypeScript and Go; SDK artifact loaders must support the native layout before consuming these artifacts. Existing deployed bytecode is unchanged, but source recompilation requires migration.
+**Instantiation.** `new Contract(args...)` returns a `ScriptPubKey` with witness version `1`, usable on either side of a `.script` comparison against `tx.outputs[o]`, `tx.inputs[i]`, or `tx.input.current`. Zero-argument constructors are allowed. Array and struct arguments flatten to scalar fields. Destination parameters use `ScriptPubKey`, for example `ScriptPubKey destination = {program: p, version: 1}; require(tx.outputs[0].script == destination);`. Comparing script structs enforces their versions too.
 
 ### Tapscript bodies
 
@@ -596,7 +592,7 @@ The innermost attribute wins, and an attribute wins over the CLI, except that `-
 
 | Field | Meaning |
 |---|---|
-| `formatVersion` | Artifact schema version; absent on legacy artifacts |
+| `formatVersion` | Artifact schema version |
 | `structs` | User struct layouts, so clients can flatten parameters the way the compiler does |
 | `constructorInputs` | One entry per source parameter, declaration order; arrays keep their size in the type, structs keep their type name |
 | `functions[]` | Spend groups: `{ name, arkade?, leaves[] }` |
