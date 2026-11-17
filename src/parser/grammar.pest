@@ -132,9 +132,9 @@ require_expression = _{
     general_expression
 }
 
-// Function call statement
+// Function call statement: `f(args);` or `Lib.f(args);`
 function_call_stmt = {
-    function_call ~ ";"
+    identifier ~ ("." ~ identifier)? ~ call_args ~ ";"
 }
 
 // Variable declaration (typed)
@@ -175,12 +175,11 @@ unary_expr = { (sub_op | not_op | invert_op)* ~ primary_expr }
 
 parenthesized_expr = { "(" ~ general_expression ~ ")" }
 
-// An operand and its suffixes, applied left to right. The parser resolves the members of `tx`
-// and `this`, such as `tx.inputs[i].assets.lookup(id)`, and `group.controlIs(id)` from the chain.
+// An operand and its suffixes, applied left to right. The parser resolves casts and builtins by
+// name, and the members of `tx` and `this` (such as `tx.inputs[i].assets.lookup(id)` and
+// `this.tunnel(...)`), library calls and `group.controlIs(id)` from the chain.
 primary_expr = {
     (parenthesized_expr |
-    tunnel |
-    cast_func |
     function_call |
     constructor |
     typed_struct_literal |
@@ -194,7 +193,10 @@ primary_expr = {
 
 // A field, a member call or an index: `.name`, `.name(args)`, `[index]`.
 postfix = { "." ~ identifier ~ call_args? | "[" ~ general_expression ~ "]" }
-call_args = { "(" ~ (general_expression ~ ("," ~ general_expression)* ~ ","?)? ~ ")" }
+// `[]` is an empty list, which only `this.tunnel` takes, for its exceptions.
+call_args = { "(" ~ (call_arg ~ ("," ~ call_arg)* ~ ","?)? ~ ")" }
+call_arg = _{ general_expression | empty_list }
+empty_list = { "[" ~ "]" }
 
 // Field and index suffixes may alternate for arrays of structs.
 binding_suffix = { ("." ~ identifier) | ("[" ~ general_expression ~ "]") }
@@ -217,12 +219,6 @@ div_op = { "/" }
 rem_op = { "%" }
 
 // ─── Standard Comparisons ──────────────────────────────────────────────────────
-
-tunnel = {
-    "this" ~ "." ~ "tunnel" ~ "(" ~ general_expression
-    ~ ("," ~ struct_literal ~ ("," ~ tunnel_exceptions)?)? ~ ","? ~ ")"
-}
-tunnel_exceptions = { "[" ~ (general_expression ~ ("," ~ general_expression)* ~ ","?)? ~ "]" }
 
 // Locktime comparison (tx.locktime >= timelock), rejected in tapscript
 time_comparison = {
@@ -268,11 +264,12 @@ struct_literal_field = { identifier ~ ":" ~ general_expression }
 // anything else, such as a missing `;`, from reporting an expected literal.
 typed_struct_literal = { identifier ~ &"{" ~ struct_literal }
 
-// Function call
+// A constant's name: `NAME` or `Lib.NAME`
 qualified_name = @{ identifier ~ ("." ~ identifier)? }
 
+// A call by name: a function, a builtin or a cast such as `bytes32(x)`.
 function_call = {
-    qualified_name ~ "(" ~ (general_expression ~ ("," ~ general_expression)* ~ ","?)? ~ ")"
+    identifier ~ "(" ~ (general_expression ~ ("," ~ general_expression)* ~ ","?)? ~ ")"
 }
 
 // ─── Cryptographic Primitives ──────────────────────────────────────────────────
@@ -305,14 +302,6 @@ array = {
 
 // Named operands used by crypto checks: a binding with field and index suffixes.
 named_binding = { identifier ~ binding_suffix* }
-
-// Narrowing cast from bytes: bytes20/bytes32 verify the length at runtime;
-// pubkey/signature are semantic because the VM validates them when consumed.
-// int(0x..) folds a hex literal big-endian; int(bool) and bool(int) convert scalars.
-// bytes(int) produces minimal Script-number bytes; bytes-like casts widen unchanged.
-// bytes(bool) normalizes false to empty bytes and true to 0x01.
-cast_type = @{ ("pubkey" | "signature" | "bytes20" | "bytes32" | "bytes" | "int" | "bool") ~ !(ASCII_ALPHANUMERIC | "_") }
-cast_func = { cast_type ~ "(" ~ general_expression ~ ","? ~ ")" }
 
 // ─── Terminals ─────────────────────────────────────────────────────────────────
 

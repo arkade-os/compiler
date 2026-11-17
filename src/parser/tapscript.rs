@@ -71,12 +71,11 @@ pub(crate) fn parse_named_tapscript(
                         }
                         let tapscript_call = crate::builtins::find(callee)
                             .is_none_or(|b| matches!(b.name, "checkSig" | "checkMultisig"));
-                        if tapscript_call && callee != "this.tunnel" {
+                        if tapscript_call {
                             continue;
                         }
                         format!("{callee}(...)")
                     }
-                    Rule::tunnel => "this.tunnel(...)".into(),
                     Rule::primary_expr => match covenant_member(&part) {
                         Some(name) => name,
                         None => continue,

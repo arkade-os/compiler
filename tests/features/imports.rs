@@ -110,6 +110,21 @@ fn an_unsatisfied_pragma_is_reported_before_unknown_syntax() {
 }
 
 #[test]
+fn library_calls_compile_alike_however_spelled() {
+    // A library function may share a member's name, such as `length`.
+    let library = "library Lib { function length(int x) int { return x + 1; } function check(int x) { require(x > 0); } }";
+    let compiled = |body: &str| {
+        let entry = format!("import \"lib.ark\";\ncontract C(pubkey owner) {{ function spend(signature sig, int i) {{ {body} require(checkSig(sig, owner)); }} }}");
+        let output = project("main.ark", &[("main.ark", &entry), ("lib.ark", library)]).unwrap();
+        serde_json::to_value(output.functions).unwrap()
+    };
+    assert_eq!(
+        compiled("Lib . check(i); require(Lib /* l */ . length (i) == 2);"),
+        compiled("Lib.check(i); require(Lib.length(i) == 2);")
+    );
+}
+
+#[test]
 fn libraries_inline_private_helpers_and_preserve_artifacts() {
     let source = r#"import "fees.ark";
 contract Vault(Policy policy, int amount, pubkey owner) {

@@ -197,9 +197,9 @@ pub(crate) fn parse_primary_expr(pair: Pair<Rule>) -> Result<Expression, String>
             },
             span,
         )),
-        Rule::tunnel => parse_tunnel(pair),
-        // Byte-string manipulation
-        Rule::cast_func => parse_cast(pair),
+        Rule::empty_list => {
+            Err("`[]` is an empty list, which only `this.tunnel` takes, for its exceptions".into())
+        }
         Rule::constructor => parse_constructor_to_expression(pair),
         _ => {
             // Default to treating as a property string
@@ -280,38 +280,44 @@ fn suffixes<'a>(pairs: impl Iterator<Item = Pair<'a, Rule>>) -> Result<Vec<Suffi
 
 /// Resolve an operand and its suffixes: a member of `tx` or `this`, a group's
 /// `.controlIs(id)`, a library call, or fields and indexes of any value.
-fn parse_chain<'a>(
-    head: Pair<'a, Rule>,
-    mut suffixes: Vec<Suffix<'a>>,
-    text: &str,
-) -> Result<Expression, String> {
+fn parse_chain(head: Pair<Rule>, suffixes: Vec<Suffix>, text: &str) -> Result<Expression, String> {
     let span: crate::diagnostics::Span = head.as_span().into();
     let root = match head.as_rule() {
         Rule::identifier => head.as_str(),
-        // `name.member(args)` is the member call `.member(args)` on `name`.
         Rule::function_call => {
             let mut inner = head.into_inner();
             let name = inner.next().ok_or("Missing function name")?.as_str();
             let args: Vec<_> = inner.collect();
-            let Some((root, member)) = name.split_once('.') else {
-                let call = parse_call(name.to_string(), args, span)?;
-                return apply_suffixes(call, false, &suffixes);
+            let value = match args.as_slice() {
+                [data] if is_cast(name) => parse_cast(name, data.clone(), span)?,
+                _ => parse_call(name.to_string(), args, span)?,
             };
-            suffixes.insert(0, Suffix::Call(member, args, span.end));
-            root
+            return apply_suffixes(value, false, &suffixes);
         }
         _ => return apply_suffixes(parse_primary_expr(head)?, false, &suffixes),
-    };
-    let span = crate::diagnostics::Span {
-        start: span.start,
-        end: span.start + root.len(),
     };
     let name = Expression::new(ExprKind::Name(Path::new(root)), span);
     match root {
         "tx" => parse_tx_chain(name, &suffixes, text),
-        "this" => parse_this_chain(name, &suffixes),
+        "this" => parse_this_chain(name, &suffixes, text),
         _ => apply_suffixes(name, true, &suffixes),
     }
+}
+
+/// The one operand an expression pair consists of, below its operator levels and prefixes, or
+/// the pair where it has more than one.
+pub(crate) fn lone<'a>(pair: &Pair<'a, Rule>) -> Pair<'a, Rule> {
+    let mut lone = pair.clone();
+    while is_operator_level(lone.as_rule())
+        || matches!(lone.as_rule(), Rule::unary_expr | Rule::primary_expr)
+    {
+        let mut inner = lone.clone().into_inner();
+        match (inner.next(), inner.next()) {
+            (Some(only), None) => lone = only,
+            _ => break,
+        }
+    }
+    lone
 }
 
 /// Apply `suffixes` to `value`, extending a binding path while it is one. A call is a library
@@ -361,6 +367,7 @@ pub(crate) fn apply_suffixes(
                 (ExprKind::IndexAccess { value, index }, end)
             }
         };
+        // A call's value is no binding.
         plain &= !matches!(suffix, Suffix::Call(..));
         value = Expression::new(kind, crate::diagnostics::Span { start, end: *end });
     }
@@ -368,7 +375,7 @@ pub(crate) fn apply_suffixes(
 }
 
 /// A call of the function or builtin `name`.
-fn parse_call(
+pub(crate) fn parse_call(
     name: String,
     args: Vec<Pair<Rule>>,
     span: crate::diagnostics::Span,
@@ -401,18 +408,6 @@ fn parse_call(
         ));
     }
     Ok(Expression::new(ExprKind::Builtin { builtin, args }, span))
-}
-
-/// A `function_call` pair, called by name.
-pub(crate) fn parse_function_call(pair: Pair<Rule>) -> Result<Expression, String> {
-    let span = pair.as_span().into();
-    let mut inner = pair.into_inner();
-    let name = inner
-        .next()
-        .ok_or("Missing function name")?
-        .as_str()
-        .to_string();
-    parse_call(name, inner.collect(), span)
 }
 
 // ─── Constructor Parsing ───────────────────────────────────────────────────────
