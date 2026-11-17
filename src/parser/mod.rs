@@ -14,13 +14,11 @@ pub struct ArkadeParser;
 
 // Parser split into domain submodules. Each declares its pub(crate)
 // parse_* helpers; siblings reach them via `use super::*`.
-mod asset;
 mod crypto;
 mod expr;
 mod introspection;
 mod tapscript;
 
-pub(crate) use asset::*;
 pub(crate) use crypto::*;
 pub(crate) use expr::*;
 pub(crate) use introspection::*;
@@ -293,21 +291,10 @@ fn rule_term(rule: &Rule) -> Option<String> {
         | Rule::mul_op
         | Rule::div_op
         | Rule::rem_op
-        // Field and index suffixes are postfix operators.
-        | Rule::binding_suffix => "an operator",
-        Rule::asset_lookup_source
-        | Rule::tx_introspection_property
-        | Rule::tx_property_body
-        | Rule::tx_property_part
-        | Rule::tx_input_current
-        | Rule::tx_asset_groups => "a transaction property",
-        Rule::input_introspection_property => "an input property",
-        Rule::output_introspection_property => "an output property",
-        Rule::asset_group_property | Rule::asset_group_control_is | Rule::asset_group_io_source => {
-            "an asset group property"
-        }
-        Rule::asset_at_property => "an asset property",
-        Rule::this_property => "a contract property",
+        // Field, index and call suffixes are postfix operators.
+        | Rule::binding_suffix
+        | Rule::postfix
+        | Rule::call_args => "an operator",
         Rule::identifier => "a name",
         Rule::const_keyword => "a constant",
         Rule::function_visibility | Rule::function => "a function",
@@ -822,7 +809,7 @@ fn parse_statement(
                     "`{name}(...)` cannot be a statement; use it inside require()"
                 )));
             }
-            Statement::Call(parse_general_expression(call)?)
+            Statement::Call(parse_function_call(call)?)
         }
         Rule::return_stmt => {
             let value = pair
@@ -983,6 +970,97 @@ mod tests {
                 "{misuse}: {error}"
             );
         }
+    }
+
+    #[test]
+    fn member_chains_resolve_after_parsing() {
+        let value = |expression: &str| {
+            let source = format!(
+                "contract C() {{ function spend(AssetGroup g) {{ let v = {expression}; }} }}"
+            );
+            let statement = parse(&source).map(|c| c.functions[0].statements[0].statement.clone());
+            let Ok(Statement::LetBinding { value, .. }) = statement else {
+                return Err(format!("{statement:?}"));
+            };
+            let start = source.find(expression).unwrap();
+            assert_eq!(
+                (value.span.start, value.span.end),
+                (start, start + expression.len())
+            );
+            Ok(value.kind)
+        };
+        // `g.controlIs(id)` and `tx.packet(t)` also spell a library call; each still resolves.
+        assert!(matches!(
+            value("g.controlIs(id)"),
+            Ok(ExprKind::GroupControlIs { .. })
+        ));
+        assert!(matches!(
+            value("g . controlIs(id)"),
+            Ok(ExprKind::GroupControlIs { .. })
+        ));
+        assert!(matches!(
+            value("tx.packet(1)"),
+            Ok(ExprKind::PacketInspect {
+                presence_only: false,
+                ..
+            })
+        ));
+        assert!(matches!(
+            value("tx.inputs[0].packet.has(1)"),
+            Ok(ExprKind::InputPacketInspect {
+                presence_only: true,
+                ..
+            })
+        ));
+        assert!(matches!(
+            value("tx . outputs [ i ] . assets . lookup ( id , )"),
+            Ok(ExprKind::AssetLookup { .. })
+        ));
+        assert!(matches!(
+            value("tx.inputs[0].assets[1]"),
+            Ok(ExprKind::AssetAt { property: None, .. })
+        ));
+        assert!(matches!(
+            value("tx.inputs[0].assets[1].amount"),
+            Ok(ExprKind::AssetAt {
+                property: Some(_),
+                ..
+            })
+        ));
+        assert!(matches!(
+            value("tx.assetGroups.lookup(id).inputs[0].amount"),
+            Ok(ExprKind::GroupIOAccess {
+                property: Some(_),
+                ..
+            })
+        ));
+        assert!(matches!(
+            value("tx.inputs.length"),
+            Ok(ExprKind::TxIntrospection { .. })
+        ));
+        // Fields after a member apply to its value.
+        assert!(matches!(
+            value("tx.inputs[0].script.program"),
+            Ok(ExprKind::FieldAccess { value, .. }) if matches!(value.kind, ExprKind::InputIntrospection { .. })
+        ));
+        assert!(matches!(value("this.expiry"), Ok(ExprKind::This(_))));
+        assert!(
+            matches!(value("xs.length"), Ok(ExprKind::Name(path)) if path.key() == "xs.length")
+        );
+        assert!(matches!(value("Lib . f(x)"), Ok(ExprKind::Call { name, .. }) if name == "Lib.f"));
+        // A chain no member spells keeps its spelling for validation to report.
+        assert!(
+            matches!(value("tx.inputs[0].valueX"), Ok(ExprKind::Name(path)) if path.key() == "tx.inputs[0].valueX")
+        );
+        for call in ["a.b.c(x)", "f(x).controlIs(id)", "(Lib).f(x)"] {
+            assert!(value(call).unwrap_err().contains("cannot call"), "{call}");
+        }
+        // A call statement names its function.
+        let contract = parse("contract C() { function spend(AssetGroup g) { g.controlIs(id); } }");
+        let statement = &contract.unwrap().functions[0].statements[0].statement;
+        assert!(
+            matches!(statement, Statement::Call(call) if matches!(&call.kind, ExprKind::Call { name, .. } if name == "g.controlIs"))
+        );
     }
 
     #[test]

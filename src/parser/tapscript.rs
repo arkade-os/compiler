@@ -77,9 +77,10 @@ pub(crate) fn parse_named_tapscript(
                         format!("{callee}(...)")
                     }
                     Rule::tunnel => "this.tunnel(...)".into(),
-                    Rule::intent_field => "tx.intent.field(...)".into(),
-                    Rule::intent_has => "tx.intent.has(...)".into(),
-                    Rule::this_property if part.as_str() == "expiry" => "this.expiry".into(),
+                    Rule::primary_expr => match covenant_member(&part) {
+                        Some(name) => name,
+                        None => continue,
+                    },
                     _ => continue,
                 };
                 let message = format!("`{name}` is only available in covenant functions");
@@ -102,6 +103,31 @@ pub(crate) fn parse_named_tapscript(
     })
 }
 
+/// The covenant-only member a `primary_expr` starts with: `this.expiry`, `this.tunnel(...)`,
+/// `tx.intent.field(...)` or `tx.intent.has(...)`.
+fn covenant_member(pair: &Pair<Rule>) -> Option<String> {
+    let mut inner = pair.clone().into_inner();
+    let mut name = inner
+        .next()
+        .filter(|head| head.as_rule() == Rule::identifier)?
+        .as_str()
+        .to_string();
+    for postfix in inner {
+        let mut parts = postfix.into_inner();
+        let member = parts.next().filter(|p| p.as_rule() == Rule::identifier)?;
+        name = format!("{name}.{}", member.as_str());
+        match (name.as_str(), parts.next().is_some()) {
+            ("tx.intent", false) => continue,
+            ("this.expiry", false) => return Some(name),
+            ("this.tunnel" | "tx.intent.field" | "tx.intent.has", true) => {
+                return Some(format!("{name}(...)"))
+            }
+            _ => return None,
+        }
+    }
+    None
+}
+
 /// Interpret one `require(...)` inner expression as a tapscript item.
 pub(crate) fn parse_tap_item(
     pair: Pair<Rule>,
@@ -109,6 +135,10 @@ pub(crate) fn parse_tap_item(
 ) -> Result<crate::models::TapItem, String> {
     use crate::models::{HashFn, TapItem, TapOperand};
     match pair.as_rule() {
+        Rule::primary_expr if pair.clone().into_inner().nth(1).is_some() => Err(format!(
+            "a tapscript require can check only signatures, hashes and timelocks, not `{}`",
+            trim_trivia_end(pair.as_str())
+        )),
         rule if is_operator_level(rule)
             || matches!(rule, Rule::unary_expr | Rule::primary_expr) =>
         {
