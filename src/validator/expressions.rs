@@ -4,36 +4,25 @@ use super::bindings::{
 use super::*;
 
 pub(super) fn validate_binding_requirement(
-    requirement: &Requirement,
+    expression: &Expression,
     scopes: &BindingScopes,
     issues: &mut Vec<ValidationIssue>,
 ) {
-    match requirement {
-        Requirement::Expression(expression) => {
-            let before = issues.len();
-            validate_binding_expression(expression, scopes, issues, true);
-            let condition = expression.ty.clone();
-            // A bare group lookup verifies the asset group exists; its index is dropped.
-            if issues.len() == before
-                && !matches!(&expression.kind, ExprKind::GroupLookup { .. })
-                && condition != ArkType::Bool
-            {
-                issues.push(
-                    ValidationIssue::type_error(format!(
-                        "require condition has type '{}', expected bool",
-                        condition.as_str()
-                    ))
-                    .at(expression.span),
-                );
-            }
-        }
-        Requirement::Comparison { left, op, right } => {
-            let span = crate::diagnostics::Span {
-                start: left.span.start,
-                end: right.span.end,
-            };
-            validate_comparison(left, *op, right, span, scopes, issues);
-        }
+    let before = issues.len();
+    validate_binding_expression(expression, scopes, issues, true);
+    let condition = expression.ty.clone();
+    // A bare group lookup verifies the asset group exists; its index is dropped.
+    if issues.len() == before
+        && !matches!(&expression.kind, ExprKind::GroupLookup { .. })
+        && condition != ArkType::Bool
+    {
+        issues.push(
+            ValidationIssue::type_error(format!(
+                "require condition has type '{}', expected bool",
+                condition.as_str()
+            ))
+            .at(expression.span),
+        );
     }
 }
 
@@ -565,6 +554,17 @@ pub(super) fn validate_binding_expression(
         ExprKind::Name(path) if path.segments.is_empty() => {
             validate_named_binding(&path.root, None, "binding", scopes, issues);
         }
+        // A path under an unbound root reports the root.
+        ExprKind::Name(path) | ExprKind::ArrayIndex { array: path, .. }
+            if find_binding(scopes, &path.root).is_none() =>
+        {
+            validate_named_binding(&path.root, None, "binding", scopes, issues);
+        }
+        // A root of unknown type was reported where its type was lost.
+        _ if expression.binding_path().is_some_and(|path| {
+            find_binding(scopes, &path.root)
+                .is_some_and(|root| root.binding_type == ArkType::Unknown)
+        }) => {}
         // Inner accesses are validated first so a bad path reports only its first fault.
         ExprKind::FieldAccess { value, field } => {
             if let Some(array) = expression.binding_path().and_then(|path| {
@@ -637,10 +637,7 @@ pub(super) fn validate_binding_expression(
             Some((array, "length")) if find_binding(scopes, &path.key()).is_none() => {
                 validate_array_length(&array.key(), scopes, issues);
             }
-            _ if find_binding(scopes, &path.root).is_some() => {
-                validate_named_binding(&path.key(), None, "field", scopes, issues);
-            }
-            _ => validate_named_binding(&path.root, None, "binding", scopes, issues),
+            _ => validate_named_binding(&path.key(), None, "field", scopes, issues),
         },
         ExprKind::ContractInstance { args, .. } => {
             for argument in args {
@@ -840,7 +837,8 @@ fn literal_index(mut expression: &Expression) -> Option<(bool, &str)> {
 /// Why `path`, under `tx` or `this`, names no value: its first member the builtin docs
 /// lack, with those they list at that level, or else that it needs an access or a call.
 fn unknown_member(path: &crate::models::Path) -> String {
-    // A path the grammar reads as a whole keeps its indexes and calls, as in `outputs[0]`.
+    // A `tx` or `this` chain the parser resolves to no member keeps its indexes and calls,
+    // as in `outputs[0]`.
     let text = path.key();
     // `text` without index and argument contents, and where each of its dots is in `text`.
     let (mut flat, mut dots, mut depth) = (String::new(), Vec::new(), 0);

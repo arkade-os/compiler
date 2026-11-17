@@ -1,7 +1,7 @@
 use crate::diagnostics::{CompileError, Span};
 use crate::models::{
     ArraySize, AssignmentTarget, Constant, Contract, ExprKind, Expression, LocatedStatement, Path,
-    Requirement, Statement, TypeName,
+    Statement, TypeName,
 };
 use crate::operators::{BinaryOperator, OperatorClass, UnaryOperator};
 use std::collections::HashMap;
@@ -364,9 +364,9 @@ fn fold_statements(
     for statement in statements {
         let at = at(statement.span);
         match &mut statement.statement {
-            Statement::Call(expression) | Statement::Return(Some(expression)) => {
-                fold_expression(expression, values, uses)
-            }
+            Statement::Call(expression)
+            | Statement::Return(Some(expression))
+            | Statement::Require(expression) => fold_expression(expression, values, uses),
             Statement::Declaration { declared_type, .. } => {
                 fold_type(declared_type, values).map_err(at)?
             }
@@ -388,7 +388,6 @@ fn fold_statements(
                 }
                 fold_expression(value, values, uses);
             }
-            Statement::Require(requirement) => fold_requirement(requirement, values, uses),
             Statement::IfElse {
                 condition,
                 then_body,
@@ -415,20 +414,6 @@ fn fold_statements(
         }
     }
     Ok(())
-}
-
-fn fold_requirement(
-    requirement: &mut Requirement,
-    values: &HashMap<String, String>,
-    uses: &mut Vec<(Path, Span)>,
-) {
-    match requirement {
-        Requirement::Expression(expression) => fold_expression(expression, values, uses),
-        Requirement::Comparison { left, right, .. } => {
-            fold_expression(left, values, uses);
-            fold_expression(right, values, uses);
-        }
-    }
 }
 
 fn fold_expression(

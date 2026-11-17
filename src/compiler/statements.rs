@@ -175,9 +175,7 @@ fn emit_statement(stmt: &LocatedStatement, generator: &mut Generator) -> Result<
             generator.emit_return(value.as_ref())?;
             return Ok(false);
         }
-        Statement::Require(req) => {
-            generate_requirement_asm(req, generator)?;
-        }
+        Statement::Require(condition) => generate_requirement_asm(condition, generator)?,
         Statement::IfElse { .. } | Statement::ForIn { .. } | Statement::ForCount { .. } => {
             return Err(CompileError::internal(
                 "control flow reached emission unlowered",
@@ -262,54 +260,44 @@ fn emit_statement(stmt: &LocatedStatement, generator: &mut Generator) -> Result<
     Ok(true)
 }
 
-/// Generate assembly for a single requirement
-fn generate_requirement_asm(req: &Requirement, generator: &mut Generator) -> Result<()> {
-    match req {
-        Requirement::Expression(expr) => {
-            match &expr.kind {
-                ExprKind::GroupLookup { .. } => {
-                    generator.emit_expression(expr)?;
-                    generator.apply(Drop, 1, 0)?;
-                    generator.push_temporary(Int1);
-                    generator.apply(Verify, 1, 0)?;
-                }
-                // The check fails the spend itself, so `require` leaves out its `true`.
-                ExprKind::Builtin {
-                    builtin:
-                        Builtin {
-                            lowering: Check(opcodes),
-                            ..
-                        },
-                    args,
-                } => {
-                    for arg in args {
-                        generator.emit_expression(arg)?;
-                    }
-                    for &opcode in opcodes.iter() {
-                        generator.lower_raw_opcode(opcode)?;
-                    }
-                }
-                _ => {
-                    generator.emit_expression(expr)?;
-                    generator.apply(Verify, 1, 0)?;
-                }
-            }
-            Ok(())
-        }
-        Requirement::Comparison { left, op, right } => {
-            if let Some(ty) = generator
-                .composite_type(left)
-                .or_else(|| generator.composite_type(right))
-            {
-                return generator.emit_composite_comparison(left, *op, right, &ty, true);
-            }
-            generator.emit_expression(left)?;
-            generator.emit_expression(right)?;
-            for &opcode in super::expr::operator_opcodes(*op, left, right) {
-                generator.lower_raw_opcode(opcode)?;
-            }
-            generator.apply(Verify, 1, 0)?;
-            Ok(())
+/// Generate assembly that aborts unless `condition` holds.
+fn generate_requirement_asm(condition: &Expression, generator: &mut Generator) -> Result<()> {
+    // Composite operands verify leaf by leaf.
+    if let ExprKind::BinaryOp { left, op, right } = &condition.kind {
+        let composite = generator
+            .composite_type(left)
+            .or_else(|| generator.composite_type(right));
+        if let Some(ty) = composite.filter(|_| op.compares()) {
+            return generator.emit_composite_comparison(left, *op, right, &ty, true);
         }
     }
+    match &condition.kind {
+        ExprKind::GroupLookup { .. } => {
+            generator.emit_expression(condition)?;
+            generator.apply(Drop, 1, 0)?;
+            generator.push_temporary(Int1);
+            generator.apply(Verify, 1, 0)?;
+        }
+        // The check fails the spend itself, so `require` leaves out its `true`.
+        ExprKind::Builtin {
+            builtin:
+                Builtin {
+                    lowering: Check(opcodes),
+                    ..
+                },
+            args,
+        } => {
+            for arg in args {
+                generator.emit_expression(arg)?;
+            }
+            for &opcode in opcodes.iter() {
+                generator.lower_raw_opcode(opcode)?;
+            }
+        }
+        _ => {
+            generator.emit_expression(condition)?;
+            generator.apply(Verify, 1, 0)?;
+        }
+    }
+    Ok(())
 }

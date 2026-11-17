@@ -2,7 +2,7 @@ use std::collections::HashSet;
 
 use crate::models::child_exprs;
 use crate::models::{
-    AssignmentTarget, ExprKind, Expression, Function, LocatedStatement, Requirement, Statement,
+    AssignmentTarget, ExprKind, Expression, Function, LocatedStatement, Statement,
 };
 
 // Parameters are retained whole; pruning individual composite fields needs a sparse stack layout.
@@ -142,23 +142,6 @@ fn collect_expression<'a>(
     }
 }
 
-fn collect_requirement<'a>(
-    requirement: &'a Requirement,
-    names: &mut HashSet<&'a str>,
-    functions: &'a [Function],
-    visited: &mut HashSet<&'a str>,
-) {
-    match requirement {
-        Requirement::Expression(expression) => {
-            collect_expression(expression, names, functions, visited)
-        }
-        Requirement::Comparison { left, right, .. } => {
-            collect_expression(left, names, functions, visited);
-            collect_expression(right, names, functions, visited);
-        }
-    }
-}
-
 fn collect_statements<'a>(
     statements: &'a [LocatedStatement],
     names: &mut HashSet<&'a str>,
@@ -167,13 +150,12 @@ fn collect_statements<'a>(
 ) {
     for statement in statements {
         match &statement.statement {
-            Statement::Call(expression) | Statement::Return(Some(expression)) => {
+            Statement::Call(expression)
+            | Statement::Return(Some(expression))
+            | Statement::Require(expression) => {
                 collect_expression(expression, names, functions, visited);
             }
             Statement::Return(None) | Statement::Declaration { .. } => {}
-            Statement::Require(requirement) => {
-                collect_requirement(requirement, names, functions, visited)
-            }
             Statement::LetBinding { value, .. } => {
                 collect_expression(value, names, functions, visited)
             }

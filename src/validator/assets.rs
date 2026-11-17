@@ -23,13 +23,7 @@ fn walk_asset_id_stmts(
             | Statement::LetBinding {
                 value: expression, ..
             }
-            | Statement::Require(Requirement::Expression(expression)) => {
-                check_asset_id_expr(expression, structs, issues)
-            }
-            Statement::Require(Requirement::Comparison { left, right, .. }) => {
-                check_asset_id_expr(left, structs, issues);
-                check_asset_id_expr(right, structs, issues);
-            }
+            | Statement::Require(expression) => check_asset_id_expr(expression, structs, issues),
             Statement::Return(None) | Statement::Declaration { .. } => {}
             Statement::VarAssign { target, value } => {
                 if let AssignmentTarget::ArrayIndex { index, .. }

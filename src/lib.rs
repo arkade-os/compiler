@@ -21,8 +21,7 @@ pub mod wasm;
 pub use diagnostics::{Diagnostic, Severity, Span};
 pub use imports::Analysis;
 pub use models::{
-    Contract, ContractJson, Expression, Function, Parameter, Requirement, StructDefinition,
-    WitnessElement,
+    Contract, ContractJson, Expression, Function, Parameter, StructDefinition, WitnessElement,
 };
 pub use types::ArkType;
 

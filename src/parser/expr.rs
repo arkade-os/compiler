@@ -50,24 +50,10 @@ pub(crate) fn parse_general_expression(pair: Pair<Rule>) -> Result<Expression, S
     }
 }
 
-// Parse primary expression (atoms)
-pub(crate) fn reject_reserved_function_call(pair: &Pair<Rule>) -> Result<(), String> {
-    if pair.as_rule() != Rule::function_call {
-        return Ok(());
-    }
-
-    let name = pair
-        .clone()
-        .into_inner()
-        .next()
-        .ok_or("Missing call name")?
-        .as_str()
-        .to_string();
-
-    if let Some(signature) = reserved_function_signature(&name) {
-        let args = pair.clone().into_inner().count() - 1;
-        if crate::builtins::tapscript_params(&name).is_some_and(|params| params.len() == args) {
-            let hint = match name.as_str() {
+fn reject_reserved_call(name: &str, args: usize) -> Result<(), String> {
+    if let Some(signature) = reserved_function_signature(name) {
+        if crate::builtins::tapscript_params(name).is_some_and(|params| params.len() == args) {
+            let hint = match name {
                 "older" | "after" => "; covenant functions use `checkTime(timestamp)`",
                 "tweak" => ", as a key inside checkSig or checkMultisig",
                 _ => ", inside older(...) or after(...)",
@@ -114,9 +100,10 @@ pub(crate) fn parse_primary_expr(pair: Pair<Rule>) -> Result<Expression, String>
     let span: crate::diagnostics::Span = pair.as_span().into();
     match pair.as_rule() {
         Rule::primary_expr => {
+            let text = pair.as_str();
             let mut inner = pair.into_inner();
-            let value = parse_primary_expr(inner.next().ok_or("Empty primary expression")?)?;
-            parse_suffixes(value, inner)
+            let head = inner.next().ok_or("Empty primary expression")?;
+            parse_chain(head, suffixes(inner)?, text)
         }
         Rule::parenthesized_expr => {
             let inner = pair.into_inner().next().ok_or("Empty grouped expression")?;
@@ -124,7 +111,7 @@ pub(crate) fn parse_primary_expr(pair: Pair<Rule>) -> Result<Expression, String>
             value.span = span;
             Ok(value)
         }
-        Rule::unary_expr | Rule::unary_atom => {
+        Rule::unary_expr => {
             let mut inner = pair.into_inner();
             let operand = inner.next_back().ok_or("Empty unary expression")?;
             let mut value = parse_primary_expr(operand)?;
@@ -154,7 +141,7 @@ pub(crate) fn parse_primary_expr(pair: Pair<Rule>) -> Result<Expression, String>
             // Parenthesized expression
             parse_general_expression(pair)
         }
-        Rule::identifier | Rule::qualified_name => Ok(Expression::new(
+        Rule::identifier => Ok(Expression::new(
             ExprKind::Name(Path::from_key(pair.as_str())),
             span,
         )),
@@ -167,18 +154,6 @@ pub(crate) fn parse_primary_expr(pair: Pair<Rule>) -> Result<Expression, String>
             ExprKind::Literal(parse_named_operand(pair)?),
             span,
         )),
-        Rule::array_index_access => {
-            let mut inner = pair.into_inner();
-            let array = Path::from_key(inner.next().ok_or("Missing array name")?.as_str());
-            let index = inner.next().ok_or("Missing array index")?;
-            Ok(Expression::new(
-                ExprKind::ArrayIndex {
-                    array,
-                    index: Box::new(parse_general_expression(index)?),
-                },
-                span,
-            ))
-        }
         Rule::array_literal => Ok(Expression::new(
             ExprKind::ArrayLiteral(
                 pair.into_inner()
@@ -222,75 +197,10 @@ pub(crate) fn parse_primary_expr(pair: Pair<Rule>) -> Result<Expression, String>
             },
             span,
         )),
-        Rule::array_length_access => {
-            let array = pair
-                .into_inner()
-                .next()
-                .ok_or("Missing array name")?
-                .as_str()
-                .to_string();
-            Ok(Expression::new(
-                ExprKind::Name(Path::from_key(&array).field("length")),
-                span,
-            ))
+        Rule::empty_list => {
+            Err("`[]` is an empty list, which only `this.tunnel` takes, for its exceptions".into())
         }
-        Rule::tx_property_access => parse_tx_property_to_expr(pair),
-        Rule::this_property_access => {
-            let property = pair.into_inner().next().ok_or("Missing this property")?;
-            Ok(Expression::new(
-                ExprKind::This(super::introspection::named(
-                    property,
-                    crate::properties::ThisProperty::from_name,
-                )?),
-                span,
-            ))
-        }
-        Rule::tunnel => parse_tunnel(pair),
-        Rule::intent_field | Rule::intent_has => parse_intent_inspect(pair),
-        // Byte-string manipulation
-        Rule::cast_func => parse_cast(pair),
-        // Packet introspection
-        Rule::packet_inspect | Rule::packet_has => parse_packet_inspect(pair),
-        Rule::input_packet_inspect | Rule::input_packet_has => parse_input_packet_inspect(pair),
-        Rule::asset_lookup | Rule::asset_has | Rule::asset_try_lookup => {
-            parse_asset_lookup_to_expression(pair)
-        }
-        Rule::asset_count => parse_asset_count_to_expression(pair),
-        Rule::asset_at => parse_asset_at_to_expression(pair),
-        Rule::group_control_is => parse_group_control_is_to_expression(pair),
-        Rule::identifier_property_access => parse_property_access(pair),
-        Rule::input_introspection => parse_input_introspection_to_expression(pair),
-        Rule::output_introspection => parse_output_introspection_to_expression(pair),
-        Rule::tx_introspection => parse_tx_introspection_to_expression(pair),
         Rule::constructor => parse_constructor_to_expression(pair),
-        Rule::function_call => {
-            let name = pair
-                .clone()
-                .into_inner()
-                .next()
-                .ok_or("Missing function name")?;
-            if let Some(builtin) = crate::builtins::find(name.as_str()) {
-                return parse_builtin_call(builtin, pair);
-            }
-            reject_reserved_function_call(&pair)?;
-            let mut inner = pair.into_inner();
-            let name = inner
-                .next()
-                .ok_or("Missing function name")?
-                .as_str()
-                .to_string();
-            let args = inner
-                .map(parse_general_expression)
-                .collect::<Result<_, _>>()?;
-            Ok(Expression::new(
-                ExprKind::Call {
-                    name,
-                    args,
-                    return_type: None,
-                },
-                span,
-            ))
-        }
         _ => {
             // Default to treating as a property string
             Ok(Expression::new(
@@ -298,34 +208,6 @@ pub(crate) fn parse_primary_expr(pair: Pair<Rule>) -> Result<Expression, String>
                 span,
             ))
         }
-    }
-}
-
-/// Parse a complex expression into a Requirement AST node
-pub(crate) fn parse_complex_expression(pair: Pair<Rule>) -> Result<Requirement, String> {
-    match pair.as_rule() {
-        Rule::general_expression => {
-            let expression = parse_general_expression(pair)?;
-            let span = expression.span;
-            if let ExprKind::BinaryOp { left, op, right } = expression.kind {
-                if op.compares() {
-                    return Ok(Requirement::Comparison {
-                        left: *left,
-                        op,
-                        right: *right,
-                    });
-                }
-                return Ok(Requirement::Expression(Expression::new(
-                    ExprKind::BinaryOp { left, op, right },
-                    span,
-                )));
-            }
-            Ok(Requirement::Expression(expression))
-        }
-        _ => Err(format!(
-            "Unexpected rule in complex expression: {:?}",
-            pair.as_rule()
-        )),
     }
 }
 
@@ -338,66 +220,157 @@ pub(crate) fn parse_property_access(pair: Pair<Rule>) -> Result<Expression, Stri
         ExprKind::Name(Path::new(name.as_str())),
         name.as_span().into(),
     );
-    parse_suffixes(value, inner)
+    apply_suffixes(value, false, &suffixes(inner)?)
 }
 
-/// Apply `binding_suffix` pairs to `value`, extending a binding path while it is one.
-fn parse_suffixes<'a>(
+/// A field, member-call or index suffix, and the offset where it ends.
+pub(crate) enum Suffix<'a> {
+    Field(&'a str, usize),
+    Call(&'a str, Vec<Pair<'a, Rule>>, usize),
+    Index(Pair<'a, Rule>, usize),
+}
+
+/// The suffixes `postfix` or `binding_suffix` pairs spell.
+fn suffixes<'a>(pairs: impl Iterator<Item = Pair<'a, Rule>>) -> Result<Vec<Suffix<'a>>, String> {
+    pairs
+        .map(|pair| {
+            // A pair's span can run past its last term over trailing whitespace.
+            let end = pair.as_span().end();
+            let mut parts = pair.into_inner();
+            let part = parts.next().ok_or("Missing suffix")?;
+            Ok(match (part.as_rule(), parts.next()) {
+                (Rule::identifier, None) => Suffix::Field(part.as_str(), part.as_span().end()),
+                (Rule::identifier, Some(args)) => {
+                    let end = args.as_span().end();
+                    Suffix::Call(part.as_str(), args.into_inner().collect(), end)
+                }
+                _ => Suffix::Index(part, end),
+            })
+        })
+        .collect()
+}
+
+/// Resolve an operand and its suffixes: a member of `tx` or `this`, a group's
+/// `.controlIs(id)`, a library call, or fields and indexes of any value.
+fn parse_chain(head: Pair<Rule>, suffixes: Vec<Suffix>, text: &str) -> Result<Expression, String> {
+    let span: crate::diagnostics::Span = head.as_span().into();
+    let root = match head.as_rule() {
+        Rule::identifier => head.as_str(),
+        Rule::function_call => {
+            let mut inner = head.into_inner();
+            let name = inner.next().ok_or("Missing function name")?.as_str();
+            let args: Vec<_> = inner.collect();
+            let value = match args.as_slice() {
+                [data] if is_cast(name) => parse_cast(name, data.clone(), span)?,
+                _ => parse_call(name.to_string(), args, span)?,
+            };
+            return apply_suffixes(value, false, &suffixes);
+        }
+        _ => return apply_suffixes(parse_primary_expr(head)?, false, &suffixes),
+    };
+    let name = Expression::new(ExprKind::Name(Path::new(root)), span);
+    match root {
+        "tx" => parse_tx_chain(name, &suffixes, text),
+        "this" => parse_this_chain(name, &suffixes, text),
+        _ => apply_suffixes(name, true, &suffixes),
+    }
+}
+
+/// The one operand an expression pair consists of, below its operator levels and prefixes, or
+/// the pair where it has more than one.
+pub(crate) fn lone<'a>(pair: &Pair<'a, Rule>) -> Pair<'a, Rule> {
+    let mut lone = pair.clone();
+    while is_operator_level(lone.as_rule())
+        || matches!(lone.as_rule(), Rule::unary_expr | Rule::primary_expr)
+    {
+        let mut inner = lone.clone().into_inner();
+        match (inner.next(), inner.next()) {
+            (Some(only), None) => lone = only,
+            _ => break,
+        }
+    }
+    lone
+}
+
+/// Apply `suffixes` to `value`, extending a binding path while it is one. A call is a library
+/// call on a bare name, or `.controlIs(id)` on a `group` binding: a `plain` value, one read
+/// through fields and indexes only.
+pub(crate) fn apply_suffixes(
     mut value: Expression,
-    suffixes: impl Iterator<Item = Pair<'a, Rule>>,
+    mut plain: bool,
+    suffixes: &[Suffix],
 ) -> Result<Expression, String> {
     let start = value.span.start;
     for suffix in suffixes {
-        let span = crate::diagnostics::Span {
-            start,
-            end: suffix.as_span().end(),
-        };
-        let part = suffix.into_inner().next().ok_or("Missing binding suffix")?;
-        let kind = match part.as_rule() {
-            Rule::identifier => {
-                let field = part.as_str().to_string();
-                match value {
-                    Expression {
-                        kind: ExprKind::Name(path),
-                        ..
-                    } => ExprKind::Name(path.field(field)),
-                    value => ExprKind::FieldAccess {
-                        value: Box::new(value),
-                        field,
-                    },
-                }
+        let (kind, end) = match (suffix, value.kind) {
+            (Suffix::Field(field, end), ExprKind::Name(path)) => {
+                (ExprKind::Name(path.field(*field)), end)
             }
-            Rule::general_expression => {
-                let index = Box::new(parse_general_expression(part)?);
-                match value {
-                    Expression {
-                        kind: ExprKind::Name(path),
-                        ..
-                    } => ExprKind::ArrayIndex { array: path, index },
-                    value => ExprKind::IndexAccess {
-                        value: Box::new(value),
-                        index,
-                    },
-                }
+            (Suffix::Index(index, end), ExprKind::Name(array)) => {
+                let index = Box::new(parse_general_expression(index.clone())?);
+                (ExprKind::ArrayIndex { array, index }, end)
             }
-            rule => return Err(format!("Unexpected binding suffix: {rule:?}")),
+            (Suffix::Call("controlIs", args, end), kind) if plain && args.len() == 1 => {
+                let group = Box::new(Expression { kind, ..value });
+                let asset_id = Box::new(parse_general_expression(args[0].clone())?);
+                (ExprKind::GroupControlIs { group, asset_id }, end)
+            }
+            (Suffix::Call(name, args, end), ExprKind::Name(path))
+                if plain && path.segments.is_empty() =>
+            {
+                let span = crate::diagnostics::Span { start, end: *end };
+                let name = format!("{}.{name}", path.root);
+                (parse_call(name, args.clone(), span)?.kind, end)
+            }
+            (Suffix::Call(name, ..), _) => {
+                return Err(format!(
+                    "cannot call `.{name}(...)` here; only library functions, `tx` and `this` \
+                     members and `controlIs` on a group binding take arguments"
+                ));
+            }
+            (Suffix::Field(field, end), kind) => {
+                let value = Box::new(Expression { kind, ..value });
+                let field = field.to_string();
+                (ExprKind::FieldAccess { value, field }, end)
+            }
+            (Suffix::Index(index, end), kind) => {
+                let value = Box::new(Expression { kind, ..value });
+                let index = Box::new(parse_general_expression(index.clone())?);
+                (ExprKind::IndexAccess { value, index }, end)
+            }
         };
-        value = Expression::new(kind, span);
+        // A call's value is no binding.
+        plain &= !matches!(suffix, Suffix::Call(..));
+        value = Expression::new(kind, crate::diagnostics::Span { start, end: *end });
     }
     Ok(value)
 }
 
-/// Parse a `function_call` whose name is a builtin into a `Builtin` node.
-fn parse_builtin_call(
-    builtin: &'static crate::builtins::Builtin,
-    pair: Pair<Rule>,
+/// A call of the function or builtin `name`.
+pub(crate) fn parse_call(
+    name: String,
+    args: Vec<Pair<Rule>>,
+    span: crate::diagnostics::Span,
 ) -> Result<Expression, String> {
-    let span: crate::diagnostics::Span = pair.as_span().into();
-    let args: Vec<Expression> = pair
-        .into_inner()
-        .skip(1)
+    let builtin = crate::builtins::find(&name);
+    if builtin.is_none() {
+        reject_reserved_call(&name, args.len())?;
+    }
+    let args: Vec<Expression> = args
+        .into_iter()
         .map(parse_general_expression)
         .collect::<Result<_, _>>()?;
+    let Some(builtin) = builtin else {
+        let return_type = None;
+        return Ok(Expression::new(
+            ExprKind::Call {
+                name,
+                args,
+                return_type,
+            },
+            span,
+        ));
+    };
     if !builtin.accepts_arity(args.len()) {
         return Err(format!(
             "wrong number of arguments to `{}`: expected {}, got {}",

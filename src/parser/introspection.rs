@@ -1,31 +1,322 @@
 use super::Rule;
 #[allow(unused_imports)]
 use super::*;
+use crate::diagnostics::Span;
 use crate::models::*;
 use crate::properties::{
-    GroupIoProperty, GroupProperty, InputProperty, OutputProperty, ThisProperty, TxProperty,
+    AssetProperty, GroupIoProperty, GroupProperty, InputProperty, OutputProperty, ThisProperty,
+    TxProperty,
 };
 use pest::iterators::Pair;
+use Suffix::{Call, Field, Index};
 
-pub(crate) fn parse_intent_inspect(pair: Pair<Rule>) -> Result<Expression, String> {
-    let span: crate::diagnostics::Span = pair.as_span().into();
-    let presence_only = pair.as_rule() == Rule::intent_has;
-    let operand = pair.into_inner().next().ok_or("Missing intent path")?;
-    let path = if operand.as_rule() == Rule::string_literal {
-        let text = parse_string_literal(operand.as_str())?;
-        if !is_intent_path(&text) {
-            return Err(format!("invalid intent message path '{text}'"));
+/// A resolved member, where it ends, and the suffixes after it.
+type Member<'s, 'a> = (ExprKind, usize, &'s [Suffix<'a>]);
+
+/// Resolve the member chain of `this`: `this.tunnel(...)`, `this.activeInputIndex` or
+/// `this.expiry`, then the suffixes after it. A chain that spells no member reads as the path
+/// it spells, which validation reports.
+pub(crate) fn parse_this_chain(
+    this: Expression,
+    suffixes: &[Suffix],
+    text: &str,
+) -> Result<Expression, String> {
+    let start = this.span.start;
+    let member = match suffixes {
+        [Index(..), ..] => return apply_suffixes(this, false, suffixes),
+        [Call("tunnel", args, end), rest @ ..] => {
+            let span = Span { start, end: *end };
+            Some((parse_tunnel(args, span)?, *end, rest))
         }
-        let span = operand.as_span().into();
-        Expression::new(ExprKind::Literal(parse_named_operand(operand)?), span)
-    } else {
-        parse_general_expression(operand)?
+        [Field(name, end), rest @ ..] => {
+            ThisProperty::from_name(name).map(|property| (ExprKind::This(property), *end, rest))
+        }
+        _ => None,
     };
-    Ok(Expression::new(
-        ExprKind::IntentInspect {
-            path: Box::new(path),
-            presence_only,
+    let (kind, end, rest) = member.unwrap_or((this.kind, this.span.end, suffixes));
+    member_value(kind, start, end, rest, text)
+}
+
+/// Resolve the member chain of `tx` left to right, then the suffixes after the member. A chain
+/// that spells no member reads as the path it spells, which validation reports.
+pub(crate) fn parse_tx_chain(
+    tx: Expression,
+    suffixes: &[Suffix],
+    text: &str,
+) -> Result<Expression, String> {
+    let start = tx.span.start;
+    let (kind, end, rest) = match suffixes {
+        [] | [Index(..), ..] => return apply_suffixes(tx, false, suffixes),
+        [Field("intent", _), Call(member @ ("field" | "has"), args, end), rest @ ..]
+            if args.len() == 1 =>
+        {
+            let path = Box::new(parse_intent_path(&args[0])?);
+            let presence_only = *member == "has";
+            (
+                ExprKind::IntentInspect {
+                    path,
+                    presence_only,
+                },
+                *end,
+                rest,
+            )
+        }
+        // `.packet.has(type)` reads the presence flag instead of the bytes.
+        [Field("packet", _), Call(method @ "has", args, end), rest @ ..]
+        | [Call(method @ "packet", args, end), rest @ ..]
+            if args.len() == 1 =>
+        {
+            let packet_type = operand(&args[0])?;
+            let presence_only = *method == "has";
+            (
+                ExprKind::PacketInspect {
+                    packet_type,
+                    presence_only,
+                },
+                *end,
+                rest,
+            )
+        }
+        [Field("inputs", _), Index(index, _), Field("packet", _), Call(method @ "has", args, end), rest @ ..]
+        | [Field("inputs", _), Index(index, _), Call(method @ "packet", args, end), rest @ ..]
+            if args.len() == 1 =>
+        {
+            let (index, packet_type) = (operand(index)?, operand(&args[0])?);
+            let presence_only = *method == "has";
+            (
+                ExprKind::InputPacketInspect {
+                    index,
+                    packet_type,
+                    presence_only,
+                },
+                *end,
+                rest,
+            )
+        }
+        [Field(io @ ("inputs" | "outputs"), _), Field("length", end), rest @ ..] => {
+            let property = match *io {
+                "inputs" => TxProperty::NumInputs,
+                _ => TxProperty::NumOutputs,
+            };
+            (ExprKind::TxIntrospection { property }, *end, rest)
+        }
+        [Field(io @ ("inputs" | "outputs"), _), Index(index, _), Field("assets", _), assets @ ..] =>
+        {
+            let source = match *io {
+                "inputs" => AssetLookupSource::Input,
+                _ => AssetLookupSource::Output,
+            };
+            match asset_member(source, index, assets)? {
+                Some(member) => member,
+                None => return Ok(member_path(text, start)),
+            }
+        }
+        [Field(io @ ("inputs" | "outputs"), _), Index(index, _), Field(property, end), rest @ ..] =>
+        {
+            let index = operand(index)?;
+            let kind = match *io {
+                "inputs" => InputProperty::from_name(property)
+                    .map(|property| ExprKind::InputIntrospection { index, property }),
+                _ => OutputProperty::from_name(property)
+                    .map(|property| ExprKind::OutputIntrospection { index, property }),
+            };
+            match kind {
+                Some(kind) => (kind, *end, rest),
+                None => return Ok(member_path(text, start)),
+            }
+        }
+        [Field("input", _), Field("current", _), rest @ ..] => {
+            let current = match rest {
+                [Field(name, end), rest @ ..] => {
+                    InputProperty::from_name(name).map(|property| (property, *end, rest))
+                }
+                _ => None,
+            };
+            let Some((property, end, rest)) = current else {
+                return Err(format!(
+                    "tx.input.current requires one of: {} (got '{}')",
+                    InputProperty::ALL
+                        .iter()
+                        .map(|property| property.name())
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                    without_trivia(trim_trivia_end(text))
+                ));
+            };
+            (current_input(property, Span { start, end }).kind, end, rest)
+        }
+        [Field("assetGroups", end), rest @ ..] => match rest {
+            [Call("has", args, end), rest @ ..] if args.len() == 1 => {
+                let asset_id = operand(&args[0])?;
+                (ExprKind::GroupHas { asset_id }, *end, rest)
+            }
+            [Field("length", end), rest @ ..] => (ExprKind::AssetGroupsLength, *end, rest),
+            [Call("lookup", args, end), members @ ..] if args.len() == 1 => {
+                let kind = ExprKind::GroupLookup {
+                    asset_id: operand(&args[0])?,
+                };
+                let group = Expression::new(kind, Span { start, end: *end });
+                match group_member(group, members)? {
+                    Some(member) => member,
+                    None => return Ok(member_path(text, start)),
+                }
+            }
+            [Index(index, end), members @ ..] => {
+                let kind = ExprKind::AssetGroupAt {
+                    index: operand(index)?,
+                };
+                let group = Expression::new(kind, Span { start, end: *end });
+                match group_member(group, members)? {
+                    Some(member) => member,
+                    None => return Ok(member_path(text, start)),
+                }
+            }
+            rest => (ExprKind::Name(Path::from_key("tx.assetGroups")), *end, rest),
         },
+        [Field(name, end), rest @ ..] => match TxProperty::from_name(name) {
+            Some(property) => (ExprKind::TxIntrospection { property }, *end, rest),
+            None => return Ok(member_path(text, start)),
+        },
+        _ => return Ok(member_path(text, start)),
+    };
+    member_value(kind, start, end, rest, text)
+}
+
+/// A member's value with the field and index suffixes after it applied. A member's value has no
+/// members to call, so a call after it reads the whole chain as the path `text` spells.
+fn member_value(
+    kind: ExprKind,
+    start: usize,
+    end: usize,
+    rest: &[Suffix],
+    text: &str,
+) -> Result<Expression, String> {
+    if rest.iter().any(|suffix| matches!(suffix, Call(..))) {
+        return Ok(member_path(text, start));
+    }
+    apply_suffixes(Expression::new(kind, Span { start, end }), false, rest)
+}
+
+/// The member read on the assets of input or output `index`, if `assets` spells one.
+fn asset_member<'s, 'a>(
+    source: AssetLookupSource,
+    index: &Pair<Rule>,
+    assets: &'s [Suffix<'a>],
+) -> Result<Option<Member<'s, 'a>>, String> {
+    let index = operand(index)?;
+    Ok(Some(match assets {
+        [Index(asset, end), rest @ ..] => {
+            let read = match rest {
+                [Field(name, end), rest @ ..] => {
+                    AssetProperty::from_name(name).map(|property| (Some(property), *end, rest))
+                }
+                _ => None,
+            };
+            let (property, end, rest) = read.unwrap_or((None, *end, rest));
+            let kind = ExprKind::AssetAt {
+                source,
+                io_index: index,
+                asset_index: operand(asset)?,
+                property,
+            };
+            (kind, end, rest)
+        }
+        [Field("length", end), rest @ ..] => (ExprKind::AssetCount { source, index }, *end, rest),
+        [Call(method @ ("has" | "lookup" | "tryLookup"), args, end), rest @ ..]
+            if args.len() == 1 =>
+        {
+            let asset_id = operand(&args[0])?;
+            let kind = match *method {
+                "has" => ExprKind::AssetHas {
+                    source,
+                    index,
+                    asset_id,
+                },
+                "lookup" => ExprKind::AssetLookup {
+                    source,
+                    index,
+                    asset_id,
+                },
+                _ => ExprKind::AssetTryLookup {
+                    source,
+                    index,
+                    asset_id,
+                },
+            };
+            (kind, *end, rest)
+        }
+        _ => return Ok(None),
+    }))
+}
+
+/// The member read on an asset group of a `tx` chain, or the group itself when `members`
+/// starts with none; `None` when a field read on a group record is not one of its own.
+fn group_member<'s, 'a>(
+    group: Expression,
+    members: &'s [Suffix<'a>],
+) -> Result<Option<Member<'s, 'a>>, String> {
+    Ok(Some(match members {
+        [Call("controlIs", args, end), rest @ ..] if args.len() == 1 => {
+            let asset_id = operand(&args[0])?;
+            let group = Box::new(group);
+            (ExprKind::GroupControlIs { group, asset_id }, *end, rest)
+        }
+        [Field(source @ ("inputs" | "outputs"), _), Index(index, end), rest @ ..] => {
+            let (property, end, rest) = match rest {
+                [Field(name, end), rest @ ..] => match GroupIoProperty::from_name(name) {
+                    Some(property) => (Some(property), *end, rest),
+                    None => return Ok(None),
+                },
+                _ => (None, *end, rest),
+            };
+            let kind = ExprKind::GroupIOAccess {
+                group: Box::new(group),
+                io_index: operand(index)?,
+                source: crate::types::group_io_source(source)
+                    .ok_or("Invalid asset group io source")?,
+                property,
+            };
+            (kind, end, rest)
+        }
+        [Field(name, end), rest @ ..] => match GroupProperty::from_name(name) {
+            Some(property) => {
+                let group = Box::new(group);
+                (ExprKind::GroupProperty { group, property }, *end, rest)
+            }
+            None => (group.kind, group.span.end, members),
+        },
+        _ => (group.kind, group.span.end, members),
+    }))
+}
+
+/// A member chain that spells no member, as the path its `text` spells.
+fn member_path(text: &str, start: usize) -> Expression {
+    let text = trim_trivia_end(text);
+    let span = Span {
+        start,
+        end: start + text.len(),
+    };
+    Expression::new(ExprKind::Name(Path::from_key(&without_trivia(text))), span)
+}
+
+fn operand(pair: &Pair<Rule>) -> Result<Box<Expression>, String> {
+    parse_general_expression(pair.clone()).map(Box::new)
+}
+
+/// An intent path operand; a lone string literal is checked at compile time, any other bytes
+/// expression by the VM.
+fn parse_intent_path(operand: &Pair<Rule>) -> Result<Expression, String> {
+    let literal = lone(operand);
+    if literal.as_rule() != Rule::string_literal {
+        return parse_general_expression(operand.clone());
+    }
+    let text = parse_string_literal(literal.as_str())?;
+    if !is_intent_path(&text) {
+        return Err(format!("invalid intent message path '{text}'"));
+    }
+    let span = literal.as_span().into();
+    Ok(Expression::new(
+        ExprKind::Literal(parse_named_operand(literal)?),
         span,
     ))
 }
@@ -49,12 +340,24 @@ fn is_intent_path(path: &str) -> bool {
             })
 }
 
-pub(crate) fn parse_tunnel(pair: Pair<Rule>) -> Result<Expression, String> {
-    let span: crate::diagnostics::Span = pair.as_span().into();
-    let mut inner = pair.into_inner();
-    let output_index =
-        parse_general_expression(inner.next().ok_or("Missing tunnel output index")?)?;
-    let policy = if let Some(policy) = inner.next() {
+/// `this.tunnel(outputIndex, policy?, exceptions?)`, its policy a struct literal and its
+/// exceptions a list literal.
+fn parse_tunnel(args: &[Pair<Rule>], span: Span) -> Result<ExprKind, String> {
+    let literal = |at: usize, rules: &[Rule]| match args.get(at).map(lone) {
+        Some(arg) if rules.contains(&arg.as_rule()) => Ok(Some(arg)),
+        Some(_) => Err(()),
+        None => Ok(None),
+    };
+    let (Some(index), Ok(policy), Ok(exceptions)) = (
+        args.first().filter(|_| args.len() <= 3),
+        literal(1, &[Rule::struct_literal]),
+        literal(2, &[Rule::array_literal, Rule::empty_list]),
+    ) else {
+        // Arguments no tunnel takes read as a call, which reports the signature.
+        return parse_call("this.tunnel".to_string(), args.to_vec(), span).map(|call| call.kind);
+    };
+    let output_index = parse_general_expression(index.clone())?;
+    let policy = if let Some(policy) = policy {
         let ExprKind::StructLiteral { fields, .. } = parse_primary_expr(policy)?.kind else {
             return Err("tunnel policy must be a struct literal".to_string());
         };
@@ -79,8 +382,7 @@ pub(crate) fn parse_tunnel(pair: Pair<Rule>) -> Result<Expression, String> {
     } else {
         std::array::from_fn(|_| Expression::new(ExprKind::Literal("true".to_string()), span))
     };
-    let exceptions = inner
-        .next()
+    let exceptions = exceptions
         .map(|list| {
             list.into_inner()
                 .map(parse_general_expression)
@@ -88,101 +390,11 @@ pub(crate) fn parse_tunnel(pair: Pair<Rule>) -> Result<Expression, String> {
         })
         .transpose()?
         .unwrap_or_default();
-    Ok(Expression::new(
-        ExprKind::Tunnel {
-            output_index: Box::new(output_index),
-            policy: Box::new(policy),
-            exceptions,
-        },
-        span,
-    ))
-}
-
-// ─── Transaction Introspection Parsing ─────────────────────────────────────────
-
-/// Parse tx_introspection pair into an ExprKind::TxIntrospection
-pub(crate) fn parse_tx_introspection_to_expression(pair: Pair<Rule>) -> Result<Expression, String> {
-    let span: crate::diagnostics::Span = pair.as_span().into();
-    let mut inner = pair.into_inner();
-
-    let property = named(
-        inner.next().ok_or("Missing tx introspection property")?,
-        TxProperty::from_name,
-    )?;
-
-    Ok(Expression::new(
-        ExprKind::TxIntrospection { property },
-        span,
-    ))
-}
-
-// ─── Input/Output Introspection Parsing ─────────────────────────────────────────
-
-/// Parse input_introspection pair into an ExprKind::InputIntrospection
-/// tx.inputs[i].value, tx.inputs[i].script, etc.
-pub(crate) fn parse_input_introspection_to_expression(
-    pair: Pair<Rule>,
-) -> Result<Expression, String> {
-    let span: crate::diagnostics::Span = pair.as_span().into();
-    let mut inner = pair.into_inner();
-
-    // Parse array access (the index)
-    let array_access = inner.next().ok_or("Missing input index")?;
-    let index_pair = array_access
-        .into_inner()
-        .next()
-        .ok_or("Missing index value")?;
-    let index = parse_general_expression(index_pair)?;
-
-    let property = named(
-        inner.next().ok_or("Missing input introspection property")?,
-        InputProperty::from_name,
-    )?;
-
-    Ok(Expression::new(
-        ExprKind::InputIntrospection {
-            index: Box::new(index),
-            property,
-        },
-        span,
-    ))
-}
-
-/// Parse output_introspection pair into an ExprKind::OutputIntrospection
-/// tx.outputs[o].value, tx.outputs[o].script
-pub(crate) fn parse_output_introspection_to_expression(
-    pair: Pair<Rule>,
-) -> Result<Expression, String> {
-    let span: crate::diagnostics::Span = pair.as_span().into();
-    let mut inner = pair.into_inner();
-
-    // Parse array access (the index)
-    let array_access = inner.next().ok_or("Missing output index")?;
-    let index_pair = array_access
-        .into_inner()
-        .next()
-        .ok_or("Missing index value")?;
-    let index = parse_general_expression(index_pair)?;
-
-    let property = named(
-        inner
-            .next()
-            .ok_or("Missing output introspection property")?,
-        OutputProperty::from_name,
-    )?;
-
-    Ok(Expression::new(
-        ExprKind::OutputIntrospection {
-            index: Box::new(index),
-            property,
-        },
-        span,
-    ))
-}
-
-/// The property a grammar name pair spells.
-pub(crate) fn named<P>(pair: Pair<Rule>, from_name: fn(&str) -> Option<P>) -> Result<P, String> {
-    from_name(pair.as_str()).ok_or_else(|| format!("unknown property '{}'", pair.as_str()))
+    Ok(ExprKind::Tunnel {
+        output_index: Box::new(output_index),
+        policy: Box::new(policy),
+        exceptions,
+    })
 }
 
 /// `tx.inputs[this.activeInputIndex].<property>`, which `tx.input.current.*` spells.
@@ -194,201 +406,5 @@ fn current_input(property: InputProperty, span: crate::diagnostics::Span) -> Exp
             property,
         },
         span,
-    )
-}
-
-/// Parse tx.packet(packetType) → ExprKind::PacketInspect
-pub(crate) fn parse_packet_inspect(pair: Pair<Rule>) -> Result<Expression, String> {
-    let span: crate::diagnostics::Span = pair.as_span().into();
-    let presence_only = pair.as_rule() == Rule::packet_has;
-    let mut inner = pair.into_inner();
-    let packet_type =
-        parse_general_expression(inner.next().ok_or("Missing packet type in tx.packet()")?)?;
-    Ok(Expression::new(
-        ExprKind::PacketInspect {
-            packet_type: Box::new(packet_type),
-            presence_only,
-        },
-        span,
-    ))
-}
-
-/// Parse tx.inputs[i].packet(packetType) → ExprKind::InputPacketInspect
-pub(crate) fn parse_input_packet_inspect(pair: Pair<Rule>) -> Result<Expression, String> {
-    let span: crate::diagnostics::Span = pair.as_span().into();
-    let presence_only = pair.as_rule() == Rule::input_packet_has;
-    let mut inner = pair.into_inner();
-
-    // First child: array_access — extract the index expression
-    let array_access = inner
-        .next()
-        .ok_or("Missing input index in tx.inputs[i].packet()")?;
-    let index_pair = array_access
-        .into_inner()
-        .next()
-        .ok_or("Empty array access in tx.inputs[i].packet()")?;
-    let index = parse_general_expression(index_pair)?;
-
-    let packet_type = parse_general_expression(
-        inner
-            .next()
-            .ok_or("Missing packet type in tx.inputs[i].packet()")?,
-    )?;
-
-    Ok(Expression::new(
-        ExprKind::InputPacketInspect {
-            index: Box::new(index),
-            packet_type: Box::new(packet_type),
-            presence_only,
-        },
-        span,
-    ))
-}
-
-pub(crate) fn parse_tx_property_to_expr(pair: Pair<Rule>) -> Result<Expression, String> {
-    let span: crate::diagnostics::Span = pair.as_span().into();
-    let text = without_trivia(pair.as_str());
-
-    let body = pair.into_inner().next().ok_or("Missing tx property")?;
-    let mut parts = body.into_inner();
-    let first = parts.next().ok_or("Missing tx property")?;
-    match first.as_rule() {
-        Rule::tx_input_current => {
-            let property = first.into_inner().next().ok_or("Missing input property")?;
-            let property = InputProperty::from_name(property.as_str())
-                .ok_or_else(|| format!("unknown input property '{}'", property.as_str()))?;
-            Ok(current_input(property, span))
-        }
-        Rule::tx_asset_groups => {
-            let mut access = first.into_inner();
-            Ok(match access.next() {
-                None => Expression::new(ExprKind::Name(Path::from_key(&text)), span),
-                Some(has) if has.as_rule() == Rule::asset_groups_has => Expression::new(
-                    ExprKind::GroupHas {
-                        asset_id: parse_asset_id(has)?,
-                    },
-                    span,
-                ),
-                Some(length) if length.as_rule() == Rule::asset_groups_length => {
-                    Expression::new(ExprKind::AssetGroupsLength, span)
-                }
-                Some(group) => return parse_asset_group_access(span.start, group, access.next()),
-            })
-        }
-        _ => {
-            let count = match text.as_str() {
-                "tx.inputs.length" => Some(TxProperty::NumInputs),
-                "tx.outputs.length" => Some(TxProperty::NumOutputs),
-                _ => None,
-            };
-            if let Some(property) = count {
-                return Ok(Expression::new(
-                    ExprKind::TxIntrospection { property },
-                    span,
-                ));
-            }
-            // `tx.input.current` without a property it accepts reads as a plain property path.
-            let mut names = std::iter::once(first.as_str()).chain(
-                parts.map(|suffix| suffix.into_inner().next().map_or("", |part| part.as_str())),
-            );
-            if names.next() == Some("input") && names.next() == Some("current") {
-                return Err(format!(
-                    "tx.input.current requires one of: {} (got '{text}')",
-                    InputProperty::ALL
-                        .iter()
-                        .map(|property| property.name())
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                ));
-            }
-            Ok(Expression::new(ExprKind::Name(Path::from_key(&text)), span))
-        }
-    }
-}
-
-/// An `AssetGroup` reference and the member accessed on it, if any.
-fn parse_asset_group_access(
-    start: usize,
-    group: Pair<Rule>,
-    member: Option<Pair<Rule>>,
-) -> Result<Expression, String> {
-    let span = crate::diagnostics::Span {
-        start,
-        end: group.as_span().end(),
-    };
-    let first = group.into_inner().next().ok_or("Missing asset group")?;
-    let group = Box::new(Expression::new(
-        if first.as_rule() == Rule::array_access {
-            ExprKind::AssetGroupAt {
-                index: Box::new(parse_array_access_index(first)?),
-            }
-        } else {
-            ExprKind::GroupLookup {
-                asset_id: Box::new(parse_general_expression(first)?),
-            }
-        },
-        span,
-    ));
-    let Some(member) = member else {
-        return Ok(*group);
-    };
-    let span = crate::diagnostics::Span {
-        start: span.start,
-        end: member.as_span().end(),
-    };
-    let mut parts = member.into_inner();
-    let part = parts.next().ok_or("Missing asset group member")?;
-    Ok(match part.as_rule() {
-        Rule::asset_group_control_is => parse_group_control_is(group, part, span)?,
-        Rule::asset_group_io_source => Expression::new(
-            ExprKind::GroupIOAccess {
-                group,
-                source: crate::types::group_io_source(part.as_str())
-                    .ok_or("Invalid asset group io source")?,
-                io_index: Box::new(parse_array_access_index(
-                    parts.next().ok_or("Missing asset group io index")?,
-                )?),
-                property: parts
-                    .next()
-                    .map(|p| named(p, GroupIoProperty::from_name))
-                    .transpose()?,
-            },
-            span,
-        ),
-        _ => Expression::new(
-            ExprKind::GroupProperty {
-                group,
-                property: named(part, GroupProperty::from_name)?,
-            },
-            span,
-        ),
-    })
-}
-
-/// `text` without the whitespace and comments the grammar allows between terms.
-fn without_trivia(text: &str) -> String {
-    let mut code = String::new();
-    let mut rest = text;
-    while let Some(c) = rest.chars().next() {
-        match comment_len(rest) {
-            Some(comment) => rest = &rest[comment..],
-            None => {
-                if !c.is_whitespace() {
-                    code.push(c);
-                }
-                rest = &rest[c.len_utf8()..];
-            }
-        }
-    }
-    code
-}
-
-/// The index inside an `array_access` pair, without surrounding trivia.
-fn parse_array_access_index(array_access: Pair<Rule>) -> Result<Expression, String> {
-    parse_general_expression(
-        array_access
-            .into_inner()
-            .next()
-            .ok_or("Missing index value")?,
     )
 }

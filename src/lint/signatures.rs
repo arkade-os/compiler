@@ -3,7 +3,7 @@
 
 use super::walk::{Visitor, Walk};
 use super::{Finding, Lint};
-use crate::models::{Contract, ExprKind, Expression, LocatedStatement, Requirement, Statement};
+use crate::models::{Contract, ExprKind, Expression, LocatedStatement, Statement};
 use crate::operators::{BinaryOperator, UnaryOperator};
 
 pub(super) fn check(contract: &Contract, findings: &mut Vec<Finding>) {
@@ -28,10 +28,7 @@ struct Results {
 
 impl<'a> Visitor<'a> for Results {
     fn statement(&mut self, statement: &'a LocatedStatement) {
-        self.root = matches!(
-            statement.statement,
-            Statement::IfElse { .. } | Statement::Require(Requirement::Comparison { .. })
-        );
+        self.root = matches!(statement.statement, Statement::IfElse { .. });
     }
 
     fn expression(&mut self, expression: &'a Expression) {

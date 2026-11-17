@@ -4,17 +4,28 @@ use super::*;
 use crate::models::*;
 use pest::iterators::Pair;
 
+/// Whether a call by `name` with one argument is a cast. Function names cannot be cast types.
+///
+/// Narrowing cast from bytes: bytes20/bytes32 verify the length at runtime;
+/// pubkey/signature are semantic because the VM validates them when consumed.
+/// int(0x..) folds a hex literal big-endian; int(bool) and bool(int) convert scalars.
+/// bytes(int) produces minimal Script-number bytes; bytes-like casts widen unchanged.
+/// bytes(bool) normalizes false to empty bytes and true to 0x01.
+pub(crate) fn is_cast(name: &str) -> bool {
+    matches!(
+        name,
+        "pubkey" | "signature" | "bytes20" | "bytes32" | "bytes" | "int" | "bool"
+    )
+}
+
 /// Parse type(x) → ExprKind::Cast,
 /// folding int(0x..) into a decimal literal.
-pub(crate) fn parse_cast(pair: Pair<Rule>) -> Result<Expression, String> {
-    let span: crate::diagnostics::Span = pair.as_span().into();
-    let mut inner = pair.into_inner();
-    let target = inner
-        .next()
-        .ok_or("Missing cast type")?
-        .as_str()
-        .to_string();
-    let data_pair = inner.next().ok_or("Missing data in cast")?;
+pub(crate) fn parse_cast(
+    target: &str,
+    data_pair: Pair<Rule>,
+    span: crate::diagnostics::Span,
+) -> Result<Expression, String> {
+    let target = target.to_string();
     let text = trim_trivia_end(data_pair.as_str());
     let data = parse_general_expression(data_pair)?;
     if target == "int"
