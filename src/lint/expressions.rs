@@ -3,10 +3,7 @@
 use super::walk::{Visitor, Walk};
 use super::{Finding, Lint};
 use crate::diagnostics::Span;
-use crate::models::{
-    Contract, ExprKind, Expression, Function, KeyExpr, LocatedStatement, Requirement, Statement,
-    TapItem, TypeName,
-};
+use crate::models::{Contract, ExprKind, Expression, Function, KeyExpr, TapItem, TypeName};
 use crate::operators::BinaryOperator;
 
 pub(super) fn check(contract: &Contract, findings: &mut Vec<Finding>) {
@@ -30,6 +27,7 @@ pub(super) fn check(contract: &Contract, findings: &mut Vec<Finding>) {
             if let Some(key) = repeated {
                 let key = match key {
                     KeyExpr::Ident(name) => format!("'{name}'"),
+                    KeyExpr::Literal(key) => key.clone(),
                     KeyExpr::Tweak { base, func } => format!("tweak({base}, {func})"),
                 };
                 findings.push(duplicate_key(&key, tapscript.span));
@@ -45,16 +43,6 @@ struct Expressions<'f, 'c> {
 }
 
 impl<'a> Visitor<'a> for Expressions<'_, '_> {
-    fn statement(&mut self, statement: &'a LocatedStatement) {
-        if let Statement::Require(Requirement::Comparison { left, right, .. }) =
-            &statement.statement
-        {
-            if same(left, right) {
-                self.findings.push(self_comparison(statement.span));
-            }
-        }
-    }
-
     fn expression(&mut self, expression: &'a Expression) {
         match &expression.kind {
             ExprKind::BinaryOp { left, op, right } => {

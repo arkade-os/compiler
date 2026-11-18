@@ -1,19 +1,20 @@
 use super::*;
 
 /// Reject malformed canonical Asset ID operands at compile time instead of
-/// relying on the emulator's runtime `popAssetID` check. For every
-/// `lookup`/`find`/`has`/`controlIs` operand:
-/// - `asset_txid` must resolve to `Bytes32` (rejects `Unknown`/swapped types),
-/// - `asset_gidx` must resolve to `Int` (rejects `Unknown`); a numeric literal
-///   must additionally be in `0..=65535`.
-///
+/// relying on the emulator's runtime `popAssetID` check: every
+/// `lookup`/`has`/`tryLookup`/`controlIs` operand must be an `AssetId`; checking
+/// it as one also range-checks a literal's constant gidx (see `validate_gidx`).
 pub(super) fn check_asset_id_operands(contract: &Contract, issues: &mut Vec<ValidationIssue>) {
     for func in contract.functions.iter().filter(|f| !f.is_imported()) {
-        walk_asset_id_stmts(&func.statements, issues);
+        walk_asset_id_stmts(&func.statements, &contract.structs, issues);
     }
 }
 
-fn walk_asset_id_stmts(stmts: &[LocatedStatement], issues: &mut Vec<ValidationIssue>) {
+fn walk_asset_id_stmts(
+    stmts: &[LocatedStatement],
+    structs: &[crate::models::StructDefinition],
+    issues: &mut Vec<ValidationIssue>,
+) {
     for stmt in stmts {
         let first = issues.len();
         match &stmt.statement {
@@ -22,40 +23,34 @@ fn walk_asset_id_stmts(stmts: &[LocatedStatement], issues: &mut Vec<ValidationIs
             | Statement::LetBinding {
                 value: expression, ..
             }
-            | Statement::Require(Requirement::Expression(expression)) => {
-                check_asset_id_expr(expression, issues)
-            }
-            Statement::Require(Requirement::Comparison { left, right, .. }) => {
-                check_asset_id_expr(left, issues);
-                check_asset_id_expr(right, issues);
-            }
+            | Statement::Require(expression) => check_asset_id_expr(expression, structs, issues),
             Statement::Return(None) | Statement::Declaration { .. } => {}
             Statement::VarAssign { target, value } => {
                 if let AssignmentTarget::ArrayIndex { index, .. }
                 | AssignmentTarget::Access(index) = target
                 {
-                    check_asset_id_expr(index, issues);
+                    check_asset_id_expr(index, structs, issues);
                 }
-                check_asset_id_expr(value, issues);
+                check_asset_id_expr(value, structs, issues);
             }
             Statement::IfElse {
                 condition,
                 then_body,
                 else_body,
             } => {
-                check_asset_id_expr(condition, issues);
-                walk_asset_id_stmts(then_body, issues);
+                check_asset_id_expr(condition, structs, issues);
+                walk_asset_id_stmts(then_body, structs, issues);
                 if let Some(eb) = else_body {
-                    walk_asset_id_stmts(eb, issues);
+                    walk_asset_id_stmts(eb, structs, issues);
                 }
             }
             Statement::ForIn { iterable, body, .. } => {
-                check_asset_id_expr(iterable, issues);
-                walk_asset_id_stmts(body, issues);
+                check_asset_id_expr(iterable, structs, issues);
+                walk_asset_id_stmts(body, structs, issues);
             }
             Statement::ForCount { count, body } => {
-                check_asset_id_expr(count, issues);
-                walk_asset_id_stmts(body, issues);
+                check_asset_id_expr(count, structs, issues);
+                walk_asset_id_stmts(body, structs, issues);
             }
         }
         locate(&mut issues[first..], stmt.span);
@@ -71,83 +66,47 @@ fn walk_asset_id_stmts(stmts: &[LocatedStatement], issues: &mut Vec<ValidationIs
 /// exhaustive match with no wildcard, any future `Expression` variant forces a
 /// decision there and can never silently bypass this validation by falling
 /// through a catch-all.
-fn check_asset_id_expr(expr: &Expression, issues: &mut Vec<ValidationIssue>) {
-    // Variant-specific Asset ID operand validation.
+fn check_asset_id_expr(
+    expr: &Expression,
+    structs: &[crate::models::StructDefinition],
+    issues: &mut Vec<ValidationIssue>,
+) {
     match &expr.kind {
-        ExprKind::AssetLookup {
-            asset_txid,
-            asset_gidx,
-            ..
-        }
-        | ExprKind::AssetHas {
-            asset_txid,
-            asset_gidx,
-            ..
-        }
-        | ExprKind::AssetTryLookup {
-            asset_txid,
-            asset_gidx,
-            ..
-        }
-        | ExprKind::GroupFind {
-            asset_txid,
-            asset_gidx,
-        }
-        | ExprKind::GroupHas {
-            asset_txid,
-            asset_gidx,
-        }
-        | ExprKind::GroupControlIs {
-            asset_txid,
-            asset_gidx,
-            ..
-        } => {
-            validate_asset_id(asset_txid, asset_gidx, issues);
+        ExprKind::AssetLookup { asset_id, .. }
+        | ExprKind::AssetHas { asset_id, .. }
+        | ExprKind::AssetTryLookup { asset_id, .. }
+        | ExprKind::GroupLookup { asset_id }
+        | ExprKind::GroupHas { asset_id }
+        | ExprKind::GroupControlIs { asset_id, .. } => {
+            let asset = crate::models::TypeName::Named("AssetId".to_string());
+            super::functions::validate_value(&asset, asset_id, structs, "asset id", issues);
         }
         _ => {}
     }
 
-    // Generic recursion through every sub-expression.
     for child in child_exprs(expr) {
-        check_asset_id_expr(child, issues);
+        check_asset_id_expr(child, structs, issues);
     }
 }
 
-/// Validate one `(asset_txid, asset_gidx)` pair.
-fn validate_asset_id(
-    asset_txid: &Expression,
-    asset_gidx: &Expression,
-    issues: &mut Vec<ValidationIssue>,
-) {
-    let txid_type = &asset_txid.ty;
-    if *txid_type != ArkType::Bytes32 {
-        issues.push(ValidationIssue::error(format!(
-            "asset id txid operand '{}' must be bytes32, got {}",
-            asset_txid.source_text(),
-            txid_type.as_str()
-        )));
+/// A constant gidx field of an `AssetId` literal must be in range.
+pub(super) fn validate_gidx(fields: &[(String, Expression)], issues: &mut Vec<ValidationIssue>) {
+    let Some((_, gidx)) = fields.iter().find(|(name, _)| name == "gidx") else {
+        return;
+    };
+    if gidx.ty != ArkType::Int || !is_constant(gidx) {
+        return;
     }
-
-    // gidx must resolve to Int; a constant one must also be in range.
-    let gidx_type = &asset_gidx.ty;
-    if *gidx_type != ArkType::Int {
-        issues.push(ValidationIssue::error(format!(
-            "asset id gidx operand '{}' must be int (0..65535), got {}",
-            asset_gidx.source_text(),
-            gidx_type.as_str()
-        )));
-    } else if is_constant(asset_gidx) {
-        match crate::compiler::constants::evaluate(asset_gidx, &mut |path| Err(path.key())) {
-            Ok(v) if v.parse::<u16>().is_ok() => {}
-            Ok(v) => issues.push(ValidationIssue::error(format!(
-                "asset id gidx {v} is out of range 0..65535"
-            ))),
-            Err(error) => issues.push(ValidationIssue::error(format!(
-                "asset id gidx '{}': {}",
-                asset_gidx.source_text(),
-                error
-            ))),
-        }
+    match crate::compiler::constants::evaluate(gidx, &mut |path| Err(path.key())) {
+        Ok(v) if v.parse::<u16>().is_ok() => {}
+        Ok(v) => issues.push(
+            ValidationIssue::error(format!("asset id gidx {v} is out of range 0..65535"))
+                .at(gidx.span),
+        ),
+        Err(error) => issues.push(
+            ValidationIssue::error(format!("asset id gidx '{}': {}", gidx.source_text(), error))
+                .at(gidx.span),
+        ),
     }
 }
 

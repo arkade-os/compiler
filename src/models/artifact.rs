@@ -114,8 +114,8 @@ pub struct AbiFunctionGroup {
 /// JSON output for a contract
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ContractJson {
-    #[serde(rename = "formatVersion", skip_serializing_if = "Option::is_none")]
-    pub format_version: Option<u32>,
+    #[serde(rename = "formatVersion")]
+    pub format_version: u32,
     #[serde(rename = "contractName")]
     pub name: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -123,6 +123,13 @@ pub struct ContractJson {
     #[serde(rename = "constructorInputs")]
     pub parameters: Vec<Parameter>,
     pub functions: Vec<AbiFunctionGroup>,
+    /// The `codeHash` of each contract a `<CONTRACT:Name(...)>` placeholder names, by name.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub contracts: std::collections::BTreeMap<String, String>,
+    /// `sha256:` and the SHA-256 of the compact JSON of the fields above, which determine the
+    /// scripts.
+    #[serde(rename = "codeHash", skip_serializing_if = "Option::is_none")]
+    pub code_hash: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source: Option<SourceBundle>,
     #[serde(skip_serializing_if = "Option::is_none")]

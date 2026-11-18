@@ -1,23 +1,26 @@
-// Whitespace and comments are silently consumed
+// Whitespace and comments are silently consumed; block comments do not nest.
 WHITESPACE = _{ " " | "\t" | "\r" | "\n" }
-COMMENT = _{ "//" ~ (!"\n" ~ ANY)* ~ ("\n" | EOI) }
+COMMENT = _{ "//" ~ (!"\n" ~ ANY)* ~ ("\n" | EOI) | "/*" ~ (!"*/" ~ ANY)* ~ "*/" }
 
 // Import statement: import "path/to/contract.ark";
 import_stmt = { "import" ~ string_literal ~ ";" }
 
-// Version constraints are syntax-only until compiler versioning is established.
+// Version constraints are checked against the compiler version when a file is loaded.
 pragma_keyword = @{ "pragma" ~ !(ASCII_ALPHANUMERIC | "_") }
 pragma_language = @{ "arkade" ~ !(ASCII_ALPHANUMERIC | "_") }
 pragma_version_part = _{ "0" | ASCII_NONZERO_DIGIT ~ ASCII_DIGIT* }
 pragma_version = @{ pragma_version_part ~ "." ~ pragma_version_part ~ "." ~ pragma_version_part ~ !(ASCII_ALPHANUMERIC | "_" | ".") }
 pragma_constraint = { (">=" | "<=" | ">" | "<" | "=" | "^" | "~")? ~ pragma_version }
-pragma_stmt = { pragma_keyword ~ pragma_language ~ pragma_constraint+ ~ ("||" ~ pragma_constraint+)* ~ ";" }
+pragma_range = { pragma_constraint+ }
+pragma_stmt = { pragma_keyword ~ pragma_language ~ pragma_range ~ ("||" ~ pragma_range)* ~ ";" }
+// A file's leading pragma alone, so it is checked even when the rest of the file does not parse.
+pragma_head = { SOI ~ pragma_stmt }
 
 // Main entry point - must consume the entire input
 main = { SOI ~ pragma_stmt? ~ import_stmt* ~ struct_definition* ~ (attribute* ~ (contract | library))? ~ EOI }
 
 // Outer attribute of the contract, function or statement after it: @name(arg, ...)
-attribute = { "@" ~ identifier ~ "(" ~ attribute_arg ~ ("," ~ attribute_arg)* ~ ")" }
+attribute = { "@" ~ identifier ~ "(" ~ attribute_arg ~ ("," ~ attribute_arg)* ~ ","? ~ ")" }
 attribute_arg = _{ string_literal | attribute_name }
 attribute_name = @{ ASCII_ALPHA ~ (ASCII_ALPHANUMERIC | "-" | "_")* }
 
@@ -42,9 +45,9 @@ library = {
 const_keyword = @{ "const" ~ !(ASCII_ALPHANUMERIC | "_") }
 const_decl = { const_keyword ~ data_type ~ identifier ~ "=" ~ general_expression ~ ";" }
 
-// Parameter list with proper comma separation
+// Parameter list; every comma-separated list accepts a trailing comma after its last element.
 param_list = {
-    (parameter ~ ("," ~ parameter)*)?
+    (parameter ~ ("," ~ parameter)* ~ ","?)?
 }
 
 // Parameter definition
@@ -53,21 +56,21 @@ parameter = { data_type ~ identifier }
 // Supported data types - atomic rule to prevent partial matches
 // Note: longer types must come before shorter prefixes (bytes32/bytes20 before bytes)
 // Array types carry a positive literal or constant size (e.g., pubkey[3], int[Config.SIZE])
-array_size = @{ (ASCII_NONZERO_DIGIT ~ ASCII_DIGIT*) | qualified_name }
+array_size = @{ !"0" ~ number_literal | qualified_name }
 data_type = { identifier ~ ("[" ~ array_size ~ "]")? }
 
-// Visibility defaults to public. Tapscript declarations have no return type.
+// A function without a modifier is public. Tapscript declarations have no return type.
 function = {
     function_visibility? ~ "function" ~ identifier ~
     "(" ~ param_list ~ ")" ~
     ( "tapscript" ~ tapscript_block
     | data_type? ~ "{" ~ statement* ~ "}" )
 }
-function_visibility = @{ ("private" | "public" | "static") ~ !(ASCII_ALPHANUMERIC | "_") }
+function_visibility = @{ ("private" | "static") ~ !(ASCII_ALPHANUMERIC | "_") }
 tapscript_block = { "{" ~ tap_require_stmt* ~ "}" }
-tap_require_stmt = { "require" ~ "(" ~ tap_require_expression ~ ("," ~ string_literal)? ~ ")" ~ ";" }
+tap_require_stmt = { "require" ~ "(" ~ tap_require_expression ~ ("," ~ string_literal)? ~ ","? ~ ")" ~ ";" }
 tap_require_expression = _{
-    ((check_sig_from_stack_verify | check_sig_from_stack | check_sig | check_multisig | time_comparison | hash_comparison) ~ &("," | ")")) |
+    ((check_sig | check_multisig | time_comparison | hash_comparison) ~ &("," | ")")) |
     general_expression
 }
 return_keyword = @{ "return" ~ !(ASCII_ALPHANUMERIC | "_") }
@@ -122,16 +125,16 @@ assignment_target = {
 
 // Require statement
 require_stmt = {
-    "require" ~ "(" ~ require_expression ~ ("," ~ string_literal)? ~ ")" ~ ";"
+    "require" ~ "(" ~ require_expression ~ ("," ~ string_literal)? ~ ","? ~ ")" ~ ";"
 }
 
 require_expression = _{
     general_expression
 }
 
-// Function call statement
+// Function call statement: `f(args);` or `Lib.f(args);`
 function_call_stmt = {
-    function_call ~ ";"
+    identifier ~ ("." ~ identifier)? ~ call_args ~ ";"
 }
 
 // Variable declaration (typed)
@@ -170,53 +173,33 @@ multiplicative_expr = {
 // Prefix operators bind tighter than multiplication and apply right to left.
 unary_expr = { (sub_op | not_op | invert_op)* ~ primary_expr }
 
-// Built-in operands accept prefixes on literals, bindings, and grouped expressions.
-unary_atom = { (sub_op | not_op)* ~ (parenthesized_expr | byte_literal | bool_literal | identifier_property_access | qualified_name | number_literal) }
-
 parenthesized_expr = { "(" ~ general_expression ~ ")" }
 
-// Primary expressions (atoms); field and index suffixes apply to any typed result.
+// An operand and its suffixes, applied left to right. The parser resolves casts and builtins by
+// name, and the members of `tx` and `this` (such as `tx.inputs[i].assets.lookup(id)` and
+// `this.tunnel(...)`), library calls and `group.controlIs(id)` from the chain.
 primary_expr = {
     (parenthesized_expr |
-    tunnel |
-    intent_field |
-    intent_has |
-    cast_func |
-    input_packet_has |
-    packet_has |
-    input_packet_inspect |
-    packet_inspect |
-    asset_at |
-    asset_count |
-    asset_has |
-    asset_lookup |
-    asset_try_lookup |
-    input_introspection |
-    output_introspection |
-    tx_introspection |
-    group_control_is |
-    array_length_access |
-    tx_property_access |
-    this_property_access |
     function_call |
-    identifier_property_access |
     constructor |
-    array_index_access |
+    typed_struct_literal |
     struct_literal |
     array_literal |
     byte_literal |
     bool_literal |
     number_literal |
-    identifier) ~ binding_suffix*
+    identifier) ~ postfix*
 }
 
-// Static array length: arr.length — folded to a literal at compile time
-array_length_access = { identifier ~ "." ~ "length" ~ !(ASCII_ALPHANUMERIC | "_" | "[" | ".") }
+// A field, a member call or an index: `.name`, `.name(args)`, `[index]`.
+postfix = { "." ~ identifier ~ call_args? | "[" ~ general_expression ~ "]" }
+// `[]` is an empty list, which only `this.tunnel` takes, for its exceptions.
+call_args = { "(" ~ (call_arg ~ ("," ~ call_arg)* ~ ","?)? ~ ")" }
+call_arg = _{ general_expression | empty_list }
+empty_list = { "[" ~ "]" }
 
-// Array indexing: identifier[integer expression]
-array_index_access = {
-    identifier ~ "[" ~ general_expression ~ "]"
-}
+// Field and index suffixes may alternate for arrays of structs.
+binding_suffix = { ("." ~ identifier) | ("[" ~ general_expression ~ "]") }
 
 // Operators
 comparison_operator = { ">=" | "<=" | "==" | "!=" | ">" | "<" }
@@ -235,111 +218,7 @@ mul_op = { "*" }
 div_op = { "/" }
 rem_op = { "%" }
 
-// ─── Asset Lookups ─────────────────────────────────────────────────────────────
-
-asset_id_txid_operand = _{ general_expression }
-asset_id_gidx_operand = _{ general_expression }
-
-// Asset lookup on inputs/outputs: tx.inputs[i].assets.lookup(txid, gidx)
-// txid is a bytes32 expression; gidx is an int expression (constants must be 0..65535).
-asset_lookup = {
-    "tx" ~ "." ~ asset_lookup_source ~ array_access ~ "." ~ "assets"
-        ~ "." ~ "lookup" ~ "(" ~ asset_id_txid_operand ~ "," ~ asset_id_gidx_operand ~ ")"
-}
-
-// Non-aborting lookup: tx.inputs[i].assets.tryLookup(txid, gidx) → AssetLookup
-asset_try_lookup = {
-    "tx" ~ "." ~ asset_lookup_source ~ array_access ~ "." ~ "assets"
-        ~ "." ~ "tryLookup" ~ "(" ~ asset_id_txid_operand ~ "," ~ asset_id_gidx_operand ~ ")"
-}
-
-// Asset presence predicate: tx.inputs[i].assets.has(txid, gidx) → Bool
-asset_has = {
-    "tx" ~ "." ~ asset_lookup_source ~ array_access ~ "." ~ "assets"
-        ~ "." ~ "has" ~ "(" ~ asset_id_txid_operand ~ "," ~ asset_id_gidx_operand ~ ")"
-}
-
-// Asset count: tx.inputs[i].assets.length or tx.outputs[o].assets.length
-asset_count = {
-    "tx" ~ "." ~ asset_lookup_source ~ array_access ~ "." ~ "assets" ~ "." ~ "length"
-}
-
-// Indexed asset access: tx.outputs[o].assets[t].property, or the whole AssetEntry
-// without a property. Returns assetId (txid32, gidx_u16) or amount (u64)
-asset_at = {
-    "tx" ~ "." ~ asset_lookup_source ~ array_access ~ "." ~ "assets" ~ array_access ~ ("." ~ asset_at_property)?
-}
-
-// Properties for asset_at
-asset_at_property = { "assetId" | "amount" }
-
-// Source of asset lookup (inputs or outputs)
-asset_lookup_source = { "inputs" | "outputs" }
-
-// ─── Transaction Introspection ─────────────────────────────────────────────────
-
-// Transaction-level introspection: tx.version, tx.locktime, tx.numInputs, tx.numOutputs, tx.weight
-tx_introspection = {
-    "tx" ~ "." ~ tx_introspection_property
-}
-
-// Transaction introspection properties.
-// Note: "id" is the introspector OP_TXID; do not rename to "txid" (matches
-// the SDK convention used in docs/arkade-script-with-assets.md).
-tx_introspection_property = { "version" | "locktime" | "numInputs" | "numOutputs" | "weight" | "id" }
-
-// A lone quoted path is checked at compile time; any other bytes expression is checked by the VM.
-intent_field = { "tx" ~ "." ~ "intent" ~ "." ~ "field" ~ "(" ~ intent_path ~ ")" }
-intent_has = { "tx" ~ "." ~ "intent" ~ "." ~ "has" ~ "(" ~ intent_path ~ ")" }
-intent_path = _{ string_literal ~ &")" | general_expression }
-
-// ─── Indexed Input/Output Introspection ─────────────────────────────────────────
-
-// Input introspection: tx.inputs[i].property
-input_introspection = {
-    "tx" ~ "." ~ "inputs" ~ array_access ~ "." ~ input_introspection_property
-}
-
-// Input introspection properties (excluding asset - use .assets.* API instead).
-// arkadeScriptHash / arkadeWitnessHash compile to the introspector hash
-// opcodes and are used by invocation-marker contracts to pin themselves to
-// a specific consuming Arkade closure.
-input_introspection_property = {
-    "value" | "witnessVersion" | "sequence" | "outpoint" |
-    "arkadeScriptHash" | "arkadeWitnessHash" | "script"
-}
-
-// Output introspection: tx.outputs[o].property
-output_introspection = {
-    "tx" ~ "." ~ "outputs" ~ array_access ~ "." ~ output_introspection_property
-}
-
-// Output introspection properties (excluding asset - use .assets.* API instead)
-output_introspection_property = { "value" | "witnessVersion" | "script" }
-
-// ─── Asset Groups ──────────────────────────────────────────────────────────────
-
-// Group control predicates compare explicit AssetId components:
-//   group.controlIs(txid, gidx) → Bool (full canonical control Asset ID equality)
-//   group.hasControl            → Bool (handled as a plain group property)
-// Inline `tx.assetGroups...controlIs(...)` is an asset_group_member instead.
-group_control_is = {
-    group_binding ~ "." ~ asset_group_control_is
-}
-group_binding = { !("tx" ~ ".") ~ identifier ~ (!("." ~ "controlIs" ~ "(") ~ binding_suffix)* }
-asset_group_control_is = { "controlIs" ~ "(" ~ asset_id_txid_operand ~ "," ~ asset_id_gidx_operand ~ ")" }
-
-// Field and index suffixes may alternate for arrays of structs.
-binding_suffix = { ("." ~ identifier) | ("[" ~ general_expression ~ "]") }
-identifier_property_access = { identifier ~ binding_suffix+ }
-
 // ─── Standard Comparisons ──────────────────────────────────────────────────────
-
-tunnel = {
-    "this" ~ "." ~ "tunnel" ~ "(" ~ general_expression
-    ~ ("," ~ struct_literal ~ ("," ~ tunnel_exceptions)?)? ~ ")"
-}
-tunnel_exceptions = { "[" ~ (general_expression ~ ("," ~ general_expression)*)? ~ "]" }
 
 // Locktime comparison (tx.locktime >= timelock), rejected in tapscript
 time_comparison = {
@@ -350,7 +229,7 @@ time_comparison = {
 hash_fn_name = { "sha256" | "hash256" | "hash160" | "ripemd160" }
 
 // Generalized hash function: hashFn(expr)
-hash_func = { hash_fn_name ~ "(" ~ additive_expr ~ ")" }
+hash_func = { hash_fn_name ~ "(" ~ additive_expr ~ ","? ~ ")" }
 
 // Hash comparison fast path: hashFn(preimage) == hash with a simple RHS.
 // Other RHS forms parse as a general comparison.
@@ -366,112 +245,31 @@ constructor = {
 
 // Arguments for constructor (optional - allows zero-arg constructors)
 constructor_args = {
-    (general_expression ~ ("," ~ general_expression)*)?
-}
-
-// ─── Transaction Property Access ───────────────────────────────────────────────
-
-// Transaction property access with special handling
-tx_property_access = {
-    "tx" ~ "." ~ tx_property_body
-}
-
-// Body of tx property access - separated to control greediness
-tx_property_body = {
-    tx_input_current |
-    tx_asset_groups |
-    // Standard property access
-    (tx_property_part ~ tx_property_suffix*)
-}
-
-// Same property set as tx.inputs[i].property (this *is* tx.inputs[i] for
-// the current i); a property is required, there is no bare form.
-tx_input_current = { "input" ~ "." ~ "current" ~ "." ~ input_introspection_property }
-
-// Asset groups access: has, length, or an AssetGroup with an optional member
-tx_asset_groups = {
-    "assetGroups" ~ (asset_groups_has | asset_groups_length | asset_group_ref ~ asset_group_member?)?
-}
-asset_groups_has = { "." ~ "has" ~ "(" ~ asset_id_txid_operand ~ "," ~ asset_id_gidx_operand ~ ")" }
-asset_groups_length = { "." ~ "length" }
-
-// Suffix for tx property access - explicitly requires [ or .
-tx_property_suffix = {
-    array_access | ("." ~ tx_property_part)
-}
-
-// An AssetGroup value: tx.assetGroups.find(txid, gidx) or tx.assetGroups[k]
-asset_group_ref = {
-    "." ~ "find" ~ "(" ~ asset_id_txid_operand ~ "," ~ asset_id_gidx_operand ~ ")" | array_access
-}
-
-// Member access on an AssetGroup value
-asset_group_member = {
-    "." ~ (
-        asset_group_control_is |
-        asset_group_io_source ~ array_access ~ ("." ~ asset_group_io_property)? |
-        asset_group_property
-    )
-}
-asset_group_io_source = { "inputs" | "outputs" }
-asset_group_io_property = { "amount" | "type" | "index" | "txid" }
-
-// Asset group properties
-asset_group_property = {
-    "numInputs" | "numOutputs" | "sumInputs" | "sumOutputs" | "delta" | "hasControl" | "controlAssetId" | "metadataHash" | "assetId" | "isFresh"
-}
-
-// This property access
-this_property_access = {
-    "this" ~ "." ~ this_property
-}
-
-// This properties
-this_property = {
-    "activeInputIndex" | "activeBytecode" | "expiry"
-}
-
-// Property part with various access types
-tx_property_part = {
-    tx_method_call | identifier
-}
-
-// Array access with an integer index expression
-array_access = {
-    "[" ~ general_expression ~ "]"
-}
-
-// Method call with optional arguments
-tx_method_call = {
-    identifier ~ "(" ~ method_args? ~ ")"
-}
-
-// Method arguments - simplified to avoid left recursion
-method_args = {
-    method_arg ~ ("," ~ method_arg)*
-}
-
-// Single method argument
-method_arg = {
-    number_literal | identifier
+    (general_expression ~ ("," ~ general_expression)* ~ ","?)?
 }
 
 // Array literal — initializes a local array declaration
 array_literal = {
-    "[" ~ general_expression ~ ("," ~ general_expression)* ~ "]"
+    "[" ~ general_expression ~ ("," ~ general_expression)* ~ ","? ~ "]"
 }
 
 struct_literal = {
-    "{" ~ struct_literal_field ~ ("," ~ struct_literal_field)* ~ "}"
+    "{" ~ struct_literal_field ~ ("," ~ struct_literal_field)* ~ ","? ~ "}"
 }
 
 struct_literal_field = { identifier ~ ":" ~ general_expression }
 
-// Function call
+// `Point { x: 1, y: 2 }`. A block after an expression, as in `for (i, x) in items { ... }`,
+// is no literal: a statement never starts with `name:`. The lookahead keeps a name followed by
+// anything else, such as a missing `;`, from reporting an expected literal.
+typed_struct_literal = { identifier ~ &"{" ~ struct_literal }
+
+// A constant's name: `NAME` or `Lib.NAME`
 qualified_name = @{ identifier ~ ("." ~ identifier)? }
 
+// A call by name: a function, a builtin or a cast such as `bytes32(x)`.
 function_call = {
-    qualified_name ~ "(" ~ (general_expression ~ ("," ~ general_expression)*)? ~ ")"
+    identifier ~ "(" ~ (general_expression ~ ("," ~ general_expression)* ~ ","?)? ~ ")"
 }
 
 // ─── Cryptographic Primitives ──────────────────────────────────────────────────
@@ -481,79 +279,29 @@ function_call = {
 key_expr = { tweak_key | named_binding }
 
 // tweak(base, funcName): base is `emulator` or a constructor pubkey.
-tweak_key = { "tweak" ~ "(" ~ identifier ~ "," ~ identifier ~ ")" }
+tweak_key = { "tweak" ~ "(" ~ identifier ~ "," ~ identifier ~ ","? ~ ")" }
 
 // Array of key expressions (widens `array`, which is identifier-only).
-key_array = { "[" ~ key_expr ~ ("," ~ key_expr)* ~ "]" }
+key_array = { "[" ~ key_expr ~ ("," ~ key_expr)* ~ ","? ~ "]" }
 
 // CheckSig expression — key position accepts a key expression (incl. tweak()).
 check_sig = {
-    "checkSig" ~ "(" ~ named_binding ~ "," ~ key_expr ~ ")"
+    "checkSig" ~ "(" ~ named_binding ~ "," ~ key_expr ~ ","? ~ ")"
 }
 
-// CheckSigFromStack expression
-// Arguments can be identifiers or array access (e.g., oracles[i])
-check_sig_from_stack = {
-    "checkSigFromStack" ~ "(" ~ sig_arg ~ "," ~ sig_arg ~ "," ~ sig_arg ~ ")"
-}
-
-// Signature-check operand: a binding or byte literal (type-checked by position).
-sig_arg = { byte_literal | named_binding }
-
-// CheckMultisig expression
-check_multisig = { check_threshold_multisig }
-
-// checkMultisig([keys], [sigs], threshold?) — keys may be tweak()s; the second
-// array carries the aligned signature inputs and the final threshold is optional.
-check_threshold_multisig = {
-    "checkMultisig" ~ "(" ~ key_array ~ "," ~ array ~ ("," ~ (number_literal | qualified_name))? ~ ")"
+// checkMultisig([keys], [sigs]) — keys may be tweak()s; the second array carries the
+// aligned signature inputs. arkd recognizes only N-of-N closures, so it takes no threshold.
+check_multisig = {
+    "checkMultisig" ~ "(" ~ key_array ~ "," ~ array ~ ","? ~ ")"
 }
 
 // Array of identifiers
 array = {
-    "[" ~ named_binding ~ ("," ~ named_binding)* ~ "]"
+    "[" ~ named_binding ~ ("," ~ named_binding)* ~ ","? ~ "]"
 }
 
 // Named operands used by crypto checks: a binding with field and index suffixes.
 named_binding = { identifier ~ binding_suffix* }
-
-// CheckSigFromStack with verify: checkSigFromStackVerify(sig, pubkey, msg) → OP_CHECKSIGFROMSTACK OP_VERIFY
-check_sig_from_stack_verify = {
-    "checkSigFromStackVerify" ~ "(" ~ sig_arg ~ "," ~ sig_arg ~ "," ~ sig_arg ~ ")"
-}
-
-// Narrowing cast from bytes: bytes20/bytes32 verify the length at runtime;
-// pubkey/signature are semantic because the VM validates them when consumed.
-// int(0x..) folds a hex literal big-endian; int(bool) and bool(int) convert scalars.
-// bytes(int) produces minimal Script-number bytes; bytes-like casts widen unchanged.
-// bytes(bool) normalizes false to empty bytes and true to 0x01.
-cast_type = @{ ("pubkey" | "signature" | "bytes20" | "bytes32" | "bytes" | "int" | "bool") ~ !(ASCII_ALPHANUMERIC | "_") }
-cast_func = { cast_type ~ "(" ~ general_expression ~ ")" }
-
-// ─── Packet Introspection ──────────────────────────────────────────────
-// Extension-packet introspection over the current transaction or a previous
-// Arkade transaction referenced by an input. Returns the raw packet bytes;
-// presence is enforced by OP_INSPECTPACKET's bool flag — emission verifies
-// it. Use substr / bin2num / sha256 to parse fields.
-
-// Current-tx packet: tx.packet(packetType) → <packetType> OP_INSPECTPACKET OP_1 OP_EQUALVERIFY
-packet_inspect = {
-    "tx" ~ "." ~ "packet" ~ "(" ~ general_expression ~ ")"
-}
-
-// Previous Ark-tx packet via input i: tx.inputs[i].packet(packetType)
-// → <packetType> <i> OP_INSPECTINPUTPACKET OP_1 OP_EQUALVERIFY
-input_packet_inspect = {
-    "tx" ~ "." ~ "inputs" ~ array_access ~ "." ~ "packet" ~ "(" ~ general_expression ~ ")"
-}
-
-// Presence only: keep the flag and drop the bytes, so an absent packet is false.
-packet_has = {
-    "tx" ~ "." ~ "packet" ~ "." ~ "has" ~ "(" ~ general_expression ~ ")"
-}
-input_packet_has = {
-    "tx" ~ "." ~ "inputs" ~ array_access ~ "." ~ "packet" ~ "." ~ "has" ~ "(" ~ general_expression ~ ")"
-}
 
 // ─── Terminals ─────────────────────────────────────────────────────────────────
 
@@ -562,9 +310,9 @@ identifier = @{
     ASCII_ALPHA ~ (ASCII_ALPHANUMERIC | "_")*
 }
 
-// Number literals use canonical decimal notation
+// Number literals use canonical decimal notation; a `_` may separate two digits.
 number_literal = @{
-    "0" | ('1'..'9') ~ ASCII_DIGIT*
+    "0" | ASCII_NONZERO_DIGIT ~ ("_"? ~ ASCII_DIGIT)*
 }
 
 // Byte literals contain whole byte pairs; both hex digit cases are accepted.

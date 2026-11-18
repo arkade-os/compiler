@@ -70,11 +70,11 @@ contract HTLC(
 
   function claim(bytes preimage, signature serverSig, signature emulatorSig) tapscript {
     require(hash160(preimage) == preimageHash);
-    require(checkMultisig([server, emulator], [serverSig, emulatorSig], 2));
+    require(checkMultisig([server, emulator], [serverSig, emulatorSig]));
   }
   function refund(signature serverSig, signature emulatorSig) tapscript {
     require(after(refundTime));
-    require(checkMultisig([server, emulator], [serverSig, emulatorSig], 2));
+    require(checkMultisig([server, emulator], [serverSig, emulatorSig]));
   }
 
   function unilateral(signature senderSig) tapscript {
@@ -99,24 +99,22 @@ contract Splitter(pubkey alicePk, pubkey bobPk) {
 }
 ```
 
-`new SingleSig(alicePk)` returns a `ScriptPubKey` with the child's 32-byte Taproot witness program and version `1`. The program uses the opaque placeholder `<CONTRACT:SingleSig(<alicePk>)>`, which the Arkade runtime resolves at instantiation. Whole-script equality checks both the program and version. Arguments are constructor parameters or literals, resolved when the contract is instantiated. A contract can instantiate itself without an import to enforce state continuation (see `examples/fuji_safe`).
+`new SingleSig(alicePk)` returns a `ScriptPubKey` with the child's 32-byte Taproot witness program and version `1`. The program uses the opaque placeholder `<CONTRACT:SingleSig(<alicePk>)>`, which the Arkade runtime resolves at instantiation. Whole-script equality checks both the program and version. Arguments are constructor parameters or literals, resolved when the contract is instantiated. The artifact pins the build of each instantiated contract in its `contracts` field. A contract cannot instantiate itself, directly or through other contracts, since its address would depend on itself; to keep funds in the same contract, compare against the input's own script with `tx.outputs[0].script == tx.input.current.script` (see `examples/fuji_safe`). The check goes by name, so it also rejects a `static` helper in `B` that returns `new B(...)`, which forms no loop.
 
 ### Assets
 
 ```solidity
 contract TokenVault(
   pubkey ownerPk,
-  bytes32 tokenAssetIdTxid,
-  int tokenAssetIdGidx,
-  bytes32 ctrlAssetIdTxid,
-  int ctrlAssetIdGidx
+  AssetId tokenAssetId,
+  AssetId ctrlAssetId
 ) {
   function deposit(signature ownerSig) {
-    require(tx.inputs[0].assets.lookup(ctrlAssetIdTxid, ctrlAssetIdGidx) > 0, "no ctrl in input");
-    require(tx.outputs[0].assets.lookup(ctrlAssetIdTxid, ctrlAssetIdGidx) > 0, "no ctrl in output");
+    require(tx.inputs[0].assets.lookup(ctrlAssetId) > 0, "no ctrl in input");
+    require(tx.outputs[0].assets.lookup(ctrlAssetId) > 0, "no ctrl in output");
     require(
-      tx.outputs[0].assets.lookup(tokenAssetIdTxid, tokenAssetIdGidx) >=
-        tx.inputs[0].assets.lookup(tokenAssetIdTxid, tokenAssetIdGidx),
+      tx.outputs[0].assets.lookup(tokenAssetId) >=
+        tx.inputs[0].assets.lookup(tokenAssetId),
       "token balance decreased"
     );
     require(checkSig(ownerSig, ownerPk), "invalid owner signature");
@@ -129,7 +127,7 @@ contract TokenVault(
 }
 ```
 
-An Asset ID is a `(bytes32 txid, int gidx)` pair. `assets.lookup` asserts the asset is present on that input or output and yields its amount; `assets.has` is the boolean form. For supply accounting across the whole transaction, `tx.assetGroups.find(txid, gidx)` returns an `AssetGroup` with `sumInputs`, `sumOutputs`, `delta`, `controlIs(txid, gidx)`, and friends (see `examples/controlled_mint`).
+An Asset ID is an `AssetId` struct `{txid, gidx}`; write one as `AssetId { txid: t, gidx: 0 }`. `assets.lookup` asserts the asset is present on that input or output and yields its amount; `assets.has` is the boolean form. For supply accounting across the whole transaction, `tx.assetGroups.lookup(id)` returns an `AssetGroup` with `sumInputs`, `sumOutputs`, `delta`, `controlIs(id)`, and friends (see `examples/controlled_mint`).
 
 ### Arrays, structs, loops
 
@@ -156,7 +154,7 @@ contract StructVault(Policy policy) {
     require(total >= policy.primary.weight);
 
     Policy local = {
-      primary: { key: next.primary.key, weight: total },
+      primary: Signer { key: next.primary.key, weight: total },
       limits: [next.limits[0], next.limits[1]],
       exitDelay: policy.exitDelay
     };
@@ -170,7 +168,7 @@ contract StructVault(Policy policy) {
 }
 ```
 
-Arrays are fixed-size and part of the type. Loops unroll at compile time, one copy per element, so script size grows with the declared size. Structs flatten to their scalar leaves; the artifact keeps the declaration so clients can flatten the same way. `examples/threshold_oracle` shows the same machinery counting `checkSigFromStack` successes over `pubkey[3] oracles` to enforce a quorum.
+Arrays are fixed-size and part of the type. Loops unroll at compile time, one copy per element, so script size grows with the declared size. Structs flatten to their scalar leaves; the artifact keeps the declaration so clients can flatten the same way. A struct literal names its type, as in `Signer { key: k, weight: 1 }`, or leaves it to its position, as `local` and its `limits` do. `examples/threshold_oracle` shows the same machinery counting `checkSigFromStack` successes over `pubkey[3] oracles` to enforce a quorum.
 
 ### More in `examples/`
 
@@ -183,9 +181,9 @@ Arrays are fixed-size and part of the type. Loops unroll at compile time, one co
 | `payment_auth` | Introspection-driven payout splits with `if`/`else` and `tx.input.current.value` |
 | `token_vault`, `controlled_mint`, `nft_mint` | Asset lookups, asset groups, control assets |
 | `struct_vault`, `threshold_oracle` | Structs, arrays, loops, oracle quorum |
-| `fuji_safe`, `stability`, `bonds` | Stateful contracts that recreate themselves with `new` |
+| `fuji_safe`, `stability`, `bonds` | Stateful contracts |
 | `option` | Cash-settled covered call and limited put with an on-stack oracle TWAP |
-| `layerzero` | Packet introspection, `substr`/`cat`/`bin2num`, cross-input binding via `arkadeScriptHash` |
+| `layerzero` | Packet introspection, `substr`/`cat`/`bytes2uint`, cross-input binding via `arkadeScriptHash` |
 | `arkade_kitties` | NFT breeding with asset-group introspection |
 
 The `.md` files next to those contracts explain the economics and transaction layouts.
@@ -275,15 +273,15 @@ contract Name(<params>) {    // entry files require a contract
 // library Name { ... }
 ```
 
-Comments use `//`. Identifiers start with a letter and contain letters, digits, and underscores. Number literals are decimal integers. Double-quoted strings are `bytes` literals in expressions and declarations (see [Byte literals](#byte-literals)), and also serve as `import` paths and `require` messages.
+Comments run from `//` to the end of the line, or from `/*` to the next `*/`; block comments do not nest. Identifiers start with a letter and contain letters, digits, and underscores. Number literals are decimal integers, and `_` may separate two digits, as in `1_000_000`, which is the value `1000000`. Every comma-separated list, such as parameters, call arguments, array and struct literals, and attribute arguments, accepts one trailing comma after its last element. Double-quoted strings are `bytes` literals in expressions and declarations (see [Byte literals](#byte-literals)), and also serve as `import` paths and `require` messages.
 
 ### Version pragma
 
 Each source file may start with one `pragma arkade <constraint>;` directive, including imported libraries and struct-only files. It is optional; existing files compile without one. Comments and whitespace may precede it.
 
-Use three-component versions such as `0.1.0`, with optional `=`, `^`, `~`, `>`, `>=`, `<`, or `<=` operators. Multiple constraints form a range (`>=0.1.0 <0.2.0`); `||` separates alternatives (`^0.1.0 || ^0.2.0`). Version components cannot have leading zeroes. Partial versions, wildcards, prerelease versions, and build metadata are not supported.
+Use three-component versions such as `0.1.0`. A bare version or `=` matches exactly; `>`, `>=`, `<`, and `<=` compare; `^` allows changes that keep the first nonzero component (`^1.2.3` is `>=1.2.3 <2.0.0`, `^0.1.2` is `>=0.1.2 <0.2.0`, `^0.0.3` is `>=0.0.3 <0.0.4`); `~` allows patch changes (`~1.2.3` is `>=1.2.3 <1.3.0`). Space-separated constraints must all hold (`>=0.1.0 <0.2.0`); `||` separates alternatives (`^0.1.0 || ^0.2.0`). Version components cannot have leading zeroes. Partial versions, wildcards, prerelease versions, and build metadata are not supported.
 
-Pragmas currently validate syntax only: even a constraint for a future compiler version compiles. Compatibility checks are deferred. Pragmas apply to their own file, remain verbatim in the artifact's source bundle, and do not affect generated scripts.
+The compiler checks the pragma of every file it loads, the entry and each import, against its own version, and rejects a file whose pragma it does not satisfy with an error at that pragma. The pragma is checked before the rest of the file is parsed, so a file written for a newer compiler reports the version mismatch rather than syntax this compiler does not know. Only the compiler's major.minor.patch counts, so `0.1.0-rc.1` satisfies `^0.1.0`. Pragmas apply to their own file, remain verbatim in the artifact's source bundle, and do not affect generated scripts.
 
 ### Imports
 
@@ -315,11 +313,11 @@ contract Vault(Policy policy) {
 }
 ```
 
-Structs use their declared names; constants and exported helpers use `Name.member`. Each file sees its own declarations and its direct imports. Dependencies load recursively, and imported code keeps its defining scope. Helpers inline into covenants; constants fold into literals, including in tapscript timelocks and multisig thresholds.
+Structs use their declared names; constants and exported helpers use `Name.member`. Each file sees its own declarations and its direct imports. Dependencies load recursively, and imported code keeps its defining scope. Helpers inline into covenants; constants fold into literals, including in tapscript timelocks.
 
 Struct, contract, and library names must be unique across loaded files. The compiler loads each normalized path once and reports missing files, unknown members, namespace collisions, and circular imports as errors. Import chains have a maximum depth of 128 files, including the entry file.
 
-`new Contract(args...)` refers to the current contract or a directly imported contract. The compiler checks constructor argument counts and types and emits a contract placeholder for the runtime to resolve.
+`new Contract(args...)` refers to a directly imported contract, which must compile as an entry file would, its own lint attributes included. The compiler checks constructor argument counts and types and emits a contract placeholder for the runtime to resolve.
 
 ### Libraries
 
@@ -341,7 +339,7 @@ library Fees {
 }
 ```
 
-Plain `function` and `public function` are exported; `private function` is callable only within its defining library. `static function` is also accepted as an exported library helper. All library functions are stateless: they see their parameters, locals, and constants, and can inspect the transaction and enforce `require` checks. They cannot capture a calling contract's constructor state. Pass any required contract state as arguments.
+A plain `function` is exported; a `private function` is callable only within its defining library. Library functions take no `static` modifier, since all of them are stateless: they see their parameters, locals, and constants, and can inspect the transaction and enforce `require` checks. They cannot capture a calling contract's constructor state. Pass any required contract state as arguments.
 
 Libraries can import other libraries, contracts, and struct files using the same direct-import scope rules. Local helper calls can be unqualified or use the library's own name, including calls to private helpers. Calls inline using the existing helper return and recursion rules; library functions never create ABI entrypoints or witness inputs of their own. Library constants can also be used in tapscripts, but helper calls remain covenant-only.
 
@@ -354,19 +352,17 @@ Libraries can import other libraries, contracts, and struct files using the same
 | `bytes`, `bytes20`, `bytes32` | Byte arrays, unsized or fixed |
 | `int` | CScriptNum integer |
 | `bool` | Boolean; a covenant witness must be empty (false) or `0x01` (true), and any other encoding fails the spend |
-| `asset` | Asset identifier |
 | `AssetGroup` | An asset group of the transaction; a witness or constructor value is its packet position |
 | `T[n]` | Fixed-size array of a scalar or struct type, `n` a positive integer literal or `int` constant |
 | `struct` | User-declared, nested structs and fixed-size arrays allowed |
-| `AssetId`, `Outpoint`, `ECPoint`, `G2Point`, `ScriptPubKey`, `AssetEntry`, `AssetLookup` | Native structs: `{txid, gidx}`, `{txid, vout}`, `{x, y}`, `{xC1, xC0, yC1, yC0}`, `{program, version}`, `{assetId, amount}`, `{amount, found}` |
+| `AssetId`, `Outpoint`, `ECPoint`, `G2Point`, `ScriptPubKey`, `AssetEntry`, `AssetLookup`, `AssetGroupInput`, `AssetGroupOutput` | Native structs: `{txid, gidx}`, `{txid, vout}`, `{x, y}`, `{xC1, xC0, yC1, yC0}`, `{program, version}`, `{assetId, amount}`, `{amount, found}`, `{type, index, amount}`, `{type, index, amount}` |
 
-Arrays and structs can be constructor parameters, covenant parameters, or locals. Arrays contain scalars or structs; structs contain scalars, arrays, and nested structs. Indexed fields support literal and runtime indexes, such as `items[0].value` and `items[index].value`. Helper results and native structs take the same suffixes, such as `make().value`, `getArray()[i]` and `tx.outputs[0].script.version`, evaluating each base and index once. Local arrays, structs, and covenant parameters support whole-value reassignment from matching values, helper results, and literals, such as `values = [1, 2, 3];` or `sc = ecAdd(sc, point, 0);`. Array element types and lengths must match the destination. Nested fields and indexed composite elements support the same assignments. The full right-hand side is evaluated before replacing any fields; constructor parameters remain immutable. Whole arrays and structs support `==` and `!=` when both sides have the same declared type. These comparisons return `bool` and work in bindings, conditions, helper returns, and short-circuit expressions such as `require(left == right || fallback);`. Tapscript inputs are scalars.
+Struct literals work wherever an expression does, for any user-declared or native struct: `let id = AssetId { txid: t, gidx: 0 };`, as a call argument, nested in another literal, or compared with `==`. An unnamed `{ txid: t, gidx: 0 }` takes the type its position expects: a typed declaration or assignment, a helper parameter or return type, a builtin operand, an enclosing literal's field, or the other side of `==`. Arrays and structs can be constructor parameters, covenant parameters, or locals. Arrays contain scalars or structs; structs contain scalars, arrays, and nested structs. Indexed fields support literal and runtime indexes, such as `items[0].value` and `items[index].value`. Helper results and native structs take the same suffixes, such as `make().value`, `getArray()[i]` and `tx.outputs[0].script.version`, evaluating each base and index once. Local arrays, structs, and covenant parameters support whole-value reassignment from matching values, helper results, and literals, such as `values = [1, 2, 3];` or `sc = ecAdd(sc, point, 0);`. Array element types and lengths must match the destination. Nested fields and indexed composite elements support the same assignments. The full right-hand side is evaluated before replacing any fields; constructor parameters remain immutable. Whole arrays and structs support `==` and `!=` when both sides have the same declared type. These comparisons return `bool` and work in bindings, conditions, helper returns, and short-circuit expressions such as `require(left == right || fallback);`. Tapscript inputs are scalars.
 
 ### Functions
 
 ```solidity
-function name(<params>) { ... }                // Public Arkade transaction entrypoint
-public function name(<params>) { ... }         // Explicit public visibility
+function name(<params>) { ... }                // Covenant: an Arkade transaction entrypoint
 private function name(<params>) { ... }        // Void helper
 private function name(<params>) bool { ... }   // Helper with a typed result
 static function name(<params>) int { ... }     // Helper without access to constructor state
@@ -375,7 +371,7 @@ function name(<params>) tapscript { ... }      // L1 tapleaf, plain Bitcoin Scri
 
 A covenant and its tapscripts form one spend group: a tapscript whose name matches the covenant, and a tapscript that tweaks a key to that covenant. The group keeps a synthesized `server` + `tweak(emulator, name)` leaf unless one of those tapscripts already signs with `emulator`. A constructor-pubkey tweak is an extra leaf; it does not replace that emulator leaf. A tapscript that tweaks nothing is a standalone leaf, which is how unilateral exits are written.
 
-Private functions are helpers called from covenants and other private helpers in the same contract. Calls inline into the caller's script. Public functions define transaction entrypoints, and tapscript functions define L1 leaves. Functions can be declared in any order; call graphs must be acyclic.
+Private functions are helpers called from covenants and other private helpers in the same contract. Calls inline into the caller's script. Functions without a modifier are public: covenant functions define transaction entrypoints, and tapscript functions define L1 leaves. Functions can be declared in any order; call graphs must be acyclic.
 
 Arguments are evaluated once, left to right, and passed by value. Private helpers see their own parameters and locals plus immutable constructor state. Modifying a parameter changes the helper's local copy.
 
@@ -419,11 +415,12 @@ const int EXIT_DELAY = 144;
 const int HALF_DELAY = EXIT_DELAY / 2;
 const int KEY_COUNT = 2;
 const bool STRICT = HALF_DELAY > 0;
+const bytes32 LOCK_HASH = 0x2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824;
 ```
 
-Constants are `int`, `bool`, or `bytes` compile-time expressions declared anywhere in the contract body. Initializers support literals, references to local or imported constants (including forward references), parentheses, arithmetic (`+`, `-`, `*`, `/`, `%`, `<<`, `>>`, unary `-`), comparisons, and boolean logic (`!`, `&&`, `||`); `bytes` constants accept a literal or another `bytes` constant. Integer literals, negation, and equality are unbounded like BigNum literals; arithmetic and ordering use checked signed 128-bit values, division truncates toward zero, and `%` takes the sign of the dividend. Cycles, runtime values, and type mismatches are rejected even in skipped operands. Division or modulo by zero and arithmetic overflow are rejected when evaluated. The compiler substitutes their values before validation; they occupy no constructor or witness inputs.
+Constants are `int`, `bool`, `bytes`, `bytes20`, `bytes32`, or `pubkey` compile-time expressions declared anywhere in the contract body. Initializers support literals, references to local or imported constants (including forward references), parentheses, arithmetic (`+`, `-`, `*`, `/`, `%`, `<<`, `>>`, unary `-`), comparisons, and boolean logic (`!`, `&&`, `||`); byte constants accept a literal or another byte constant. A `bytes20` or `bytes32` initializer must be exactly 20 or 32 bytes, and `pubkey` is an alias of `bytes` that must not be empty. A reference has the type of its value, so a `bytes32` constant is accepted where `bytes32` is expected. Integer literals, negation, and equality are unbounded like BigNum literals; arithmetic and ordering use checked signed 128-bit values, division truncates toward zero, and `%` takes the sign of the dividend. Cycles, runtime values, and type mismatches are rejected even in skipped operands. Division or modulo by zero and arithmetic overflow are rejected when evaluated. The compiler substitutes their values before validation; they occupy no constructor or witness inputs.
 
-A constant is readable in covenant bodies, private and static helpers, array indices (including crypto operands), multisig thresholds, and a tapleaf's `older(...)` or `after(...)` operand. A delay shared by a covenant and its L1 exit is written once. Array sizes accept positive integer literals or `int` constants, such as `pubkey[KEY_COUNT]` or `int[Config.SIZE]`, in constructor parameters, function parameters, struct fields, and local declarations.
+A constant is readable in covenant bodies, private and static helpers, array indices (including crypto operands), multisig thresholds, and a tapleaf's `older(...)` or `after(...)` operand, hashlock value, or signature key. A delay shared by a covenant and its L1 exit is written once. Array sizes accept positive integer literals or `int` constants, such as `pubkey[KEY_COUNT]` or `int[Config.SIZE]`, in constructor parameters, function parameters, struct fields, and local declarations.
 
 Constants are immutable, and their names must be distinct from all other bindings and function names in the contract.
 
@@ -456,6 +453,7 @@ let x = <expr>;                    // inferred type
 int fee = amount / 100;            // declared type
 int result;                       // no value or stack slot until assignment
 Policy p = { primary: {...}, limits: [1, 2], exitDelay: 10 };
+let q = Point { x: 1, y: 2 };      // named struct literal
 int[3] scale = [1, 2, 3];
 x = <expr>;                        // reassignment keeps the declared type
 scale[x + 1] = 10;                 // runtime index with bounds checking
@@ -471,11 +469,13 @@ Typed locals may omit the initializer: `int result;`, `Policy policy;`, or `int[
 
 ### Expressions
 
-Arithmetic `+ - * /`, remainder `%` (with the sign of the dividend, so `-7 % 2 == -1`) and unary `-` on `int`. Shifts `<<` and `>>` on `int`: the count must not be negative, and `>>` is arithmetic, rounding toward negative infinity. Bytewise `&`, `|`, `^` and unary `~` on bytes; the two-operand forms need operands of equal length, checked at compile time when both lengths are known and by the VM otherwise. Comparison `== != < <= > >=`; `==` and `!=` compare `int`, `bool`, and `AssetGroup` values as numbers (`OP_NUMEQUAL`, `OP_NUMNOTEQUAL`), so a spender-supplied number that is not minimally encoded fails the spend, while bytes-like values compare byte for byte. Structs and arrays compare corresponding scalar leaves using the same rule. Boolean `!`, `&&`, and `||` on `bool` in covenant functions. Precedence from highest to lowest is unary operators, multiplication/division/remainder, addition/subtraction, shifts, `&`, `^`, `|`, comparisons, `&&`, then `||`; parentheses override it, and `a & mask == b` means `(a & mask) == b`. Logical operators evaluate left to right and short-circuit: `&&` skips the right operand when the left is false, and `||` skips it when the left is true. Both operands must be valid boolean expressions even when one is skipped. `+` on byte operands is concatenation; mixing an `int` into a byte concatenation is an error until you convert it explicitly with `bytes(value)` for minimal Script-number encoding or `num2bin(value, width)` for fixed-width encoding, because the encoding is consensus-visible. `arr.length` folds to the declared size. Array reads and writes accept `int` index expressions; runtime indices emit bounds checks.
+Arithmetic `+ - * /`, remainder `%` (with the sign of the dividend, so `-7 % 2 == -1`) and unary `-` on `int`. Shifts `<<` and `>>` on `int`: the count must not be negative, and `>>` is arithmetic, rounding toward negative infinity. Bytewise `&`, `|`, `^` and unary `~` on bytes; the two-operand forms need operands of equal length, checked at compile time when both lengths are known and by the VM otherwise. Comparison `== != < <= > >=`; `==` and `!=` compare `int`, `bool`, and `AssetGroup` values as numbers (`OP_NUMEQUAL`, `OP_NUMNOTEQUAL`), so a spender-supplied number that is not minimally encoded fails the spend, while bytes-like values compare byte for byte. Structs and arrays compare corresponding scalar leaves using the same rule. Boolean `!`, `&&`, and `||` on `bool` in covenant functions. Precedence from highest to lowest is unary operators, multiplication/division/remainder, addition/subtraction, shifts, `&`, `^`, `|`, comparisons, `&&`, then `||`; parentheses override it, and `a & mask == b` means `(a & mask) == b`. Logical operators evaluate left to right and short-circuit: `&&` skips the right operand when the left is false, and `||` skips it when the left is true. Both operands must be valid boolean expressions even when one is skipped. `+` on byte operands is concatenation; mixing an `int` into a byte concatenation is an error until you convert it explicitly with `bytes(value)` for minimal Script-number encoding or `int2bytes(value, width)` for fixed-width encoding, because the encoding is consensus-visible. `arr.length` folds to the declared size, and `.length` on a bytes-like value is its byte length, the same as `size(value)`. Array reads and writes accept `int` index expressions; runtime indices emit bounds checks.
+
+Evaluation yields a value or fails the spend, and nothing catches a failure; `&&`, `||` and `if` avoid one only by not evaluating the skipped operand or branch. Each builtin function and `tx`/`this` member states in its doc when it fails the spend, and `arkadec --builtins` prints them all. Among them, `checkSig` and `checkMultisig` fail the spend on an empty pubkey and otherwise return `false` for an empty signature, `checkSigFromStack` returns `false` for an empty signature whatever the pubkey, and all three fail the spend on an invalid non-empty signature. Each value read fails the spend when the value is absent, where its presence test reports absence instead: `.assets.lookup(id)` against `.assets.has(id)` and `.assets.tryLookup(id).found`, `tx.assetGroups.lookup(id)` against `tx.assetGroups.has(id)`, `controlAssetId` against `hasControl`, `tx.packet(type)` against `tx.packet.has(type)`, `tx.inputs[i].packet(type)` against `tx.inputs[i].packet.has(type)`, and `tx.intent.field(path)` against `tx.intent.has(path)`. Outside the builtins, these fail the spend: `require` of a false condition, `/` or `%` by zero, a negative shift count, bytewise operands of unequal length, a byte concatenation over 520 bytes, a runtime index out of range, `bytes20(x)` or `bytes32(x)` of another length, and a covenant witness value, including a struct field or array element, that is a `bytes20` or `bytes32` of another length or a `bool` other than empty or `0x01`. Neither the docs nor this list cover integer encoding or every VM size and compute limit. A literal zero divisor, a negative literal shift count, or bytewise operands of known unequal lengths are a compile error instead.
 
 ### Built-ins
 
-**Signatures.** In covenants, `checkSig(sig, key)`, `checkSigFromStack(sig, key, message)`, and `checkMultisig(keys, sigs, threshold?)` return `bool` and accept computed operands. Multisig takes equal-length fixed arrays, including array literals, bindings, and helper results, and uses `OP_CHECKSIGADD`. Omitting the threshold means N-of-N; explicit thresholds accept `int` expressions and must be between 1 and N, with runtime bounds checks for computed thresholds. `checkSigFromStackVerify(sig, key, message)` accepts computed operands but produces no value and must appear directly inside `require`. A non-empty signature that fails verification fails the spend instead of returning `false`, so a check that may fail, such as a quorum count in `if (checkSigFromStack(...))` or either side of `||`, needs an empty signature for every key that does not sign; the compiler warns where a check's result is used that way. The warning follows direct expressions and does not track results through boolean bindings or helper returns. The `checkSigFromStack` message must be 32 bytes, and a message of another known width is a compile error. Tapscript signature checks retain their closure syntax and constant thresholds. `tweak(base, fn)` is a tapscript-only key expression. `base` is `emulator` or a constructor pubkey, and the key is tweaked by `fn`'s covenant.
+**Signatures.** In covenants, `checkSig(sig, key)`, `checkSigFromStack(sig, key, message)`, and `checkMultisig(keys, sigs, threshold?)` return `bool` and accept computed operands. Multisig takes equal-length fixed arrays, including array literals, bindings, and helper results, and uses `OP_CHECKSIGADD`. A threshold k passes when at least k signatures are valid, and omitting it means N-of-N. Thresholds accept `int` expressions and must be between 1 and N, with runtime bounds checks for computed thresholds. `checkSigFromStackVerify(sig, key, message)` accepts computed operands and returns `true`, failing the spend unless the signature is valid; directly inside `require` it emits only the check. A non-empty signature that fails verification fails the spend instead of returning `false`, so a check that may fail, such as a quorum count in `if (checkSigFromStack(...))` or either side of `||`, needs an empty signature for every key that does not sign; the compiler warns where a check's result is used that way. The warning follows direct expressions and does not track results through boolean bindings or helper returns. The `checkSigFromStack` message must be 32 bytes, and a message of another known width is a compile error. Tapscript signature checks retain their closure syntax. `tweak(base, fn)` is a tapscript-only key expression. `base` is `emulator` or a constructor pubkey, and the key is tweaked by `fn`'s covenant.
 
 **Hashes.** In covenants, `sha256(expr)` and `hash256(expr)` return `bytes32`; `sha1(expr)`, `hash160(expr)` and `ripemd160(expr)` return `bytes20`. All five accept computed byte operands and work in bindings, helper returns, nested calls, and comparisons. Use `sha1` only for legacy interoperability: its [collision resistance is broken](https://www.nist.gov/news-events/news/2022/12/nist-retires-sha-1-cryptographic-algorithm), so do not use it for commitments, hashlocks, or other security-critical purposes; prefer `sha256` or `hash256`. Tapscript hashlocks use `require(hashFn(preimage) == hash)` with `sha256`, `hash256`, `hash160`, or `ripemd160`. Streaming: `sha256Initialize(data)` and `sha256Update(ctx, chunk)` return an opaque `bytes` context, which can also arrive as a `bytes` input, and `sha256Finalize(ctx, lastChunk)` returns the `bytes32` digest. Runtime-selected: `digest(data, hashType)`, `sighash(hashType)`.
 
@@ -483,37 +483,35 @@ Arithmetic `+ - * /`, remainder `%` (with the sign of the dividend, so `-7 % 2 =
 
 **Time.** In covenants, use `checkTime(timestamp)` for time constraints. `tx.locktime` reads the transaction nLockTime using `OP_INSPECTLOCKTIME` as a plain `int`; it is not a clock. In tapscripts, `older(n)` emits CSV and `after(n)` emits CLTV. Both are tapscript-only; `tx.locktime` is not available in tapscripts. Wrap a literal or constant in `blocks(n)` or `seconds(n)` to state its unit. `older(blocks(144))` pushes `144`, and `older(seconds(1024))` pushes the BIP68 time-based sequence `4194306` (a multiple of 512 seconds, at most 33553920). `after(blocks(n))` takes a block height below 500000000, and `after(seconds(n))` takes a Unix timestamp at or above it. A parameter, or a literal without a unit, is pushed as the raw BIP68 sequence or nLockTime; the compiler warns on a literal or constant without a unit. arkd rejects block-based timelocks unless the server allows them, so arkd exit leaves should use `older(serverExitDelay)`.
 
-In covenants, `checkTime(timestamp)` returns whether the emulator's wall clock has reached a Unix timestamp in seconds, including equality. Use `require(checkTime(unlockAt))` to enforce it. A future timestamp returns false; a negative timestamp fails execution. This check is independent of transaction locktime and sequence.
+In covenants, `checkTime(timestamp)` returns whether the emulator's wall clock has reached a Unix timestamp in seconds, including equality. Use `require(checkTime(unlockAt))` to enforce it. A future timestamp returns false; a negative timestamp fails the spend. This check is independent of transaction locktime and sequence.
 
-**Transaction.** `tx.version`, `tx.locktime`, `tx.numInputs`, `tx.numOutputs`, `tx.weight`, `tx.id`, `this.activeInputIndex`, `this.activeBytecode` (the same script struct as `tx.input.current.script`). In covenants, `this.expiry` returns the executing VTXO's Unix expiry timestamp in seconds through `OP_PUSHEXPIRY`; execution fails if expiry is unavailable.
+**Transaction.** `tx.version`, `tx.locktime`, `tx.numInputs` (or `tx.inputs.length`), `tx.numOutputs` (or `tx.outputs.length`), `tx.weight`, `tx.id`, `this.activeInputIndex`. In covenants, `this.expiry` returns the executing VTXO's Unix expiry timestamp in seconds through `OP_PUSHEXPIRY` and fails the spend when expiry is unavailable.
 
-**Continuation.** `require(this.tunnel(outputIndex))` preserves the current input's script program and version, bitcoin value, and assets at the selected output. An explicit policy supplies all three compile-time boolean fields: `this.tunnel(outputIndex, {script: true, value: true, assets: false})`. With asset preservation enabled, an optional fixed list excludes specific `AssetId` values: `this.tunnel(outputIndex, {script: true, value: true, assets: true}, [feeAsset])`. At least one property must be selected. A mismatch fails execution; success returns true. Tunneling is covenant-only and does not establish intent type, timing, packet preservation, or a unique input-to-output mapping.
+**Continuation.** `require(this.tunnel(outputIndex))` preserves the current input's script program and version, bitcoin value, and assets at the selected output. An explicit policy supplies all three compile-time boolean fields: `this.tunnel(outputIndex, {script: true, value: true, assets: false})`. With asset preservation enabled, an optional fixed list excludes specific `AssetId` values: `this.tunnel(outputIndex, {script: true, value: true, assets: true}, [feeAsset])`. At least one property must be selected. A mismatch fails the spend; success returns true. Tunneling is covenant-only and does not establish intent type, timing, packet preservation, or a unique input-to-output mapping.
 
-**Intent messages.** In covenants, `tx.intent.field("type")` returns the encoded field bytes and asserts presence; `tx.intent.has("type")` returns presence without keeping the value. Paths use dot-separated lowercase keys or canonical decimal indexes, such as `"cosigners.0"`; queries, wildcards, leading-zero indexes, and indexes at or above 1048576 are rejected, at compile time for a quoted literal and by the VM for any other `bytes` expression, such as `tx.intent.field(path)` with a witness `path`. Present false, zero, and empty strings still count as present. Integer fields use Script-number encoding: `bin2num(tx.intent.field("expire_at"))`. Require `tx.intent.field("type") == "register"` before relying on register-specific fields. Missing context, null, missing fields, and non-integer numbers are misses; `field` fails on a miss and `has` returns false. Both use the emulator's result-size and compute limits.
+**Intent messages.** In covenants, `tx.intent.field("type")` returns the encoded field bytes and fails the spend when it is absent; `tx.intent.has("type")` returns presence without keeping the value. Paths use dot-separated lowercase keys or canonical decimal indexes, such as `"cosigners.0"`; queries, wildcards, leading-zero indexes, and indexes at or above 1048576 are rejected at compile time for a quoted literal; inside an intent proof, `field` and `has` fail the spend on such a path from any other `bytes` expression, such as a witness `path`. Present false, zero, and empty strings still count as present. Integer fields use Script-number encoding: `bytes2int(tx.intent.field("expire_at"))`. Require `tx.intent.field("type") == "register"` before relying on register-specific fields. Missing context, null, missing fields, and non-integer numbers are misses; `field` fails the spend on a miss and `has` returns false. Both use the emulator's result-size and compute limits.
 
 **Inputs and outputs.** `tx.inputs[i].value | witnessVersion | sequence | outpoint | arkadeScriptHash | arkadeWitnessHash | script`, `tx.outputs[o].value | witnessVersion | script`, and `tx.input.current.value | witnessVersion | sequence | outpoint | arkadeScriptHash | arkadeWitnessHash | script` for the input being spent. `script` is a `ScriptPubKey {program, version}` holding both values from one inspection. Native witness versions are 0–16; non-witness scripts return their SHA256 hash as `program` and `-1` as `version`. `witnessVersion` reads the version alone. Bind a script to inspect its fields: `let s = tx.outputs[0].script; require(s.program == p); require(s.version == 1);`. The compiler warns when a function inspects the same script, indexed asset, or asset lookup more than once, and names the whole read to bind instead.
 
-**Assets.** On any input or output: `.assets.lookup(txid, gidx)` (asserts presence, yields amount), `.assets.has(txid, gidx)`, `.assets.tryLookup(txid, gidx)` (an `AssetLookup` with `amount` and `found` from one inspection), `.assets.length`, `.assets[t].assetId`, `.assets[t].amount`, and `.assets[t]` (an `AssetEntry` with `assetId` and `amount` from one inspection). Groups: `tx.assetGroups.find(txid, gidx)` (asserts presence) and `tx.assetGroups[k]` (the group at packet position `k`) yield an `AssetGroup`; `tx.assetGroups.has(txid, gidx)` and `.length` inspect the packet. Every `AssetGroup` value, whether bound, a parameter, an array element, or inline such as `tx.assetGroups[k].delta`, has `numInputs`, `numOutputs`, `sumInputs`, `sumOutputs`, `delta`, `hasControl`, `controlIs(txid, gidx)`, `controlAssetId` (fails the spend when the group has no control asset), `metadataHash`, `assetId`, `isFresh`. An `int` has no group members; turn a position into a group with `tx.assetGroups[k]`. A group's `inputs[j]` and `outputs[j]` records have `amount`, `type` and `index`: an output's `type` is 1 and its `index` is its vout; an input's `type` is 1 for a local input, whose `index` is its vin, and 2 for an intent input, whose `index` is the output it references in the intent transaction and whose `txid` is that transaction; `txid` fails the spend on a local input, so read it behind a type check, such as `g.inputs[j].type == 1 || g.inputs[j].txid == t`, when the kind is not fixed, and does not exist on outputs. An index outside the group's records fails the spend.
+**Assets.** Every Asset ID operand is one `AssetId` expression: a parameter, a binding or field, a literal such as `AssetId { txid: t, gidx: 0 }` or `{ txid: t, gidx: 0 }`, `.assets[t].assetId`, `controlAssetId`, or a helper result. A constant `gidx` outside 0 to 65535 is rejected in any `AssetId` literal. On any input or output: `.assets.lookup(id)` (yields the amount, failing the spend when absent), `.assets.has(id)`, `.assets.tryLookup(id)` (an `AssetLookup` with `amount` and `found` from one inspection), `.assets.length`, `.assets[t].assetId`, `.assets[t].amount`, and `.assets[t]` (an `AssetEntry` with `assetId` and `amount` from one inspection). Groups: `tx.assetGroups.lookup(id)` (failing the spend when absent) and `tx.assetGroups[k]` (the group at packet position `k`) yield an `AssetGroup`; `tx.assetGroups.has(id)` and `.length` inspect the packet. Every `AssetGroup` value, whether bound, a parameter, an array element, or inline such as `tx.assetGroups[k].delta`, has `numInputs` (or `inputs.length`), `numOutputs` (or `outputs.length`), `sumInputs`, `sumOutputs`, `delta`, `hasControl`, `controlIs(id)`, `controlAssetId` (fails the spend when the group has no control asset), `metadataHash`, `assetId`, `isFresh`. An `int` has no group members; turn a position into a group with `tx.assetGroups[k]`. A group's `inputs[j]` and `outputs[j]` records have `amount`, `type` and `index`: an output's `type` is 1 and its `index` is its vout; an input's `type` is 1 for a local input, whose `index` is its vin, and 2 for an intent input, whose `index` is the output it references in the intent transaction and whose `txid` is that transaction; `txid` fails the spend on a local input, so read it behind a type check, such as `g.inputs[j].type == 1 || g.inputs[j].txid == t`, when the kind is not fixed, and does not exist on outputs. A whole record, `g.inputs[j]` or `g.outputs[j]`, is an `AssetGroupInput` or `AssetGroupOutput` with `type`, `index` and `amount` from one inspection, so it can be bound, compared with `==`, passed to a helper or returned: `let r = g.inputs[0]; require(r.amount >= 100);`. Records leave out the txid, so read it directly with `g.inputs[j].txid`. An index outside the group's records fails the spend.
 
-**Bytes.** `substr(data, offset, size)`, `left(data, count)`, `right(data, count)`, `cat(a, b)`, `bin2num(bytes)`, `num2bin(value, size)`, `reverseBytes(bytes)`, `size(bytes)`. In covenants, `left` and `right` return the first or last `count` bytes. Zero returns empty bytes; negative counts and counts exceeding the data length fail execution.
+**Bytes.** `substr(data, offset, size)`, `left(data, count)`, `right(data, count)`, `cat(a, b)`, `bytes2int(bytes)`, `bytes2uint(bytes)`, `int2bytes(value, size)`, `reverseBytes(bytes)`, `size(bytes)` (or `bytes.length`). `bytes2int` reads Script-number bytes, where the top bit of the last byte is the sign, so `bytes2int(0xff)` is `-127` and `bytes2int(0x80)` is `0`; `bytes2uint` reads unsigned little-endian bytes, so `bytes2uint(0xff)` is `255`. Use `bytes2uint` for unsigned fixed-width fields, after `reverseBytes` when they are big-endian. In covenants, `left` and `right` return the first or last `count` bytes. Zero returns empty bytes; negative counts and counts exceeding the data length fail the spend.
 
-**Types and casts.** Type errors are fatal. Equality needs matching types, except that `bytes20`, `bytes32`, `pubkey`, and `signature` widen implicitly to `bytes`, including in bindings, arguments, and `+` concatenation. `bytes20(x)`, `bytes32(x)`, `pubkey(x)`, and `signature(x)` narrow a `bytes` value; the sized casts verify the length at runtime with `OP_SIZE <n> OP_EQUALVERIFY`, while `pubkey` and `signature` add no opcodes because the VM validates keys and signatures when they are consumed. `int(0x...)` reads a hex literal big-endian and folds it to a decimal constant, so `int(0x0100)` is `256`; `int(flag)` and `bool(n)` emit `OP_0NOTEQUAL`, so the result is always `0` or `1`, even for a spender-supplied witness value. Casting a value to its own type, such as `int(42)` or `bytes20(hash)`, is a no-op. `bytes(n)` converts an `int` to minimal little-endian signed-magnitude Script-number bytes, normalizing spender-supplied encodings: `bytes(0)` is empty, `bytes(128)` is `0x8000`, and `bytes(-128)` is `0x8080`. `bytes(flag)` converts a `bool` to empty bytes for false or `0x01` for true, emitting `OP_0NOTEQUAL` to normalize numeric truth values; inputs must be minimally encoded, as for `int(flag)`. Casts to `bytes` or its `pubkey` alias also widen bytes-like values, including signatures, unchanged and without additional opcodes. Use `bin2num` to convert bytes to an integer and `num2bin(n, width)` for fixed-width output, and compare `bool` values with `true` or `false`. Byte builtins (`substr`, `cat`, `bin2num`, `reverseBytes`, `size`, `digest`, and the `checkSigFromStack` message) take bytes-like operands; sizes, offsets, indexes, packet types, hash types, and tapscript timelocks take `int`. A constant operand outside what the VM accepts is a compile error: `digest` hash types 1 to 5, `sighash` types 0 to 3 and 129 to 131, `ecAdd`/`ecMul` curve ids 0 to 2, `ecPairing` curve id 2, packet types 0 to 255, `num2bin` sizes 0 to 520, a `checkTime` timestamp or `modExp` exponent below 0, a `modExp` modulus below 1, any constant `modExp` operand exceeding 64 Script-number bytes, and a constant `merkleRoot` proof that is not a multiple of 32 bytes. The compiler rejects emitted constant pushes over 520 bytes; constructor and witness values still need validation when the artifact is instantiated or executed. A hash comparison's expected value matches the digest width: `bytes32` for `sha256` and `hash256`, `bytes20` for `hash160` and `ripemd160`, or unbounded `bytes`.
+**Types and casts.** Type errors are fatal. Equality needs matching types, except that `bytes20`, `bytes32`, `pubkey`, and `signature` widen implicitly to `bytes`, including in bindings, arguments, and `+` concatenation. `bytes20(x)`, `bytes32(x)`, `pubkey(x)`, and `signature(x)` narrow a `bytes` value; the sized casts verify the length at runtime with `OP_SIZE <n> OP_EQUALVERIFY`, while `pubkey` and `signature` add no opcodes because the VM validates keys and signatures when they are consumed. `int(0x...)` reads a hex literal big-endian and folds it to a decimal constant, so `int(0x0100)` is `256`; `int(flag)` and `bool(n)` emit `OP_0NOTEQUAL`, so the result is always `0` or `1`, even for a spender-supplied witness value. Casting a value to its own type, such as `int(42)` or `bytes20(hash)`, is a no-op. `bytes(n)` converts an `int` to minimal little-endian signed-magnitude Script-number bytes, normalizing spender-supplied encodings: `bytes(0)` is empty, `bytes(128)` is `0x8000`, and `bytes(-128)` is `0x8080`. `bytes(flag)` converts a `bool` to empty bytes for false or `0x01` for true, emitting `OP_0NOTEQUAL` to normalize numeric truth values; inputs must be minimally encoded, as for `int(flag)`. Casts to `bytes` or its `pubkey` alias also widen bytes-like values, including signatures, unchanged and without additional opcodes. Use `bytes2int` or `bytes2uint` to convert bytes to an integer and `int2bytes(n, width)` for fixed-width output, and compare `bool` values with `true` or `false`. Byte builtins (`substr`, `cat`, `bytes2int`, `bytes2uint`, `reverseBytes`, `size`, `digest`, and the `checkSigFromStack` message) take bytes-like operands; sizes, offsets, indexes, packet types, hash types, and tapscript timelocks take `int`. A constant operand outside what the VM accepts is a compile error: `digest` hash types 1 to 5, `sighash` types 0 to 3 and 129 to 131, `ecAdd`/`ecMul` curve ids 0 to 2, `ecPairing` curve id 2, packet types 0 to 255, `int2bytes` sizes 0 to 520, a `checkTime` timestamp or `modExp` exponent below 0, a `modExp` modulus below 1, any constant `modExp` operand exceeding 64 Script-number bytes, and a constant `merkleRoot` proof that is not a multiple of 32 bytes. The compiler rejects emitted constant pushes over 520 bytes; constructor and witness values still need validation when the artifact is instantiated or executed. A hash comparison's expected value matches the digest width: `bytes32` for `sha256` and `hash256`, `bytes20` for `hash160` and `ripemd160`, or unbounded `bytes`.
 
-**Packets.** `tx.packet(type)` and `tx.inputs[i].packet(type)` return the raw extension packet bytes and assert presence. `tx.packet.has(type)` and `tx.inputs[i].packet.has(type)` return whether the packet is present instead; both still fail the spend for a type outside `0..255`, an input index out of range, or a packet over 520 bytes.
+**Packets.** `tx.packet(type)` and `tx.inputs[i].packet(type)` return the raw extension packet bytes and fail the spend when it is absent. `tx.packet.has(type)` and `tx.inputs[i].packet.has(type)` return whether the packet is present instead; both still fail the spend for a type outside `0..255`, an input index out of range, or a packet over 520 bytes.
 
-**Arithmetic and curves.** In covenants, `abs(value)`, `min(a, b)`, and `max(a, b)` take and return `int`; `within(value, lower, upper)` takes `int` operands and returns `bool` for `lower <= value && value < upper`. Empty or reversed ranges return false. Also available: `modExp(base, exp, mod)`, `ecAdd(P, Q, curve)` and `ecMul(P, k, curve)` taking and returning `ECPoint`, `ecPairing(g1, g2, curve)` over aligned `ECPoint[n]` and `G2Point[n]` arrays (curve id 2, 1–16 pairs), `ecMulScalarVerify(k, P, Q)`, `tweakVerify(P, k, Q)`.
+**Arithmetic and curves.** In covenants, `abs(value)`, `min(a, b)`, and `max(a, b)` take and return `int`; `within(value, lower, upper)` takes `int` operands and returns `bool` for `lower <= value && value < upper`. Empty or reversed ranges return false. Also available: `modExp(base, exp, mod)`, `ecAdd(P, Q, curve)` and `ecMul(P, k, curve)` taking and returning `ECPoint`, `ecPairing(g1, g2, curve)` over aligned `ECPoint[n]` and `G2Point[n]` arrays (curve id 2, 1–16 pairs). `ecMulScalarVerify(k, P, Q)` and `tweakVerify(P, k, Q)` return `true` and fail the spend when the check does not hold, like `checkSigFromStackVerify`.
 
-**Instantiation.** `new Contract(args...)` returns a `ScriptPubKey` with witness version `1`, usable on either side of a `.script` comparison against `tx.outputs[o]`, `tx.inputs[i]`, or `tx.input.current`. Zero-argument constructors are allowed. Array and struct arguments flatten to scalar fields. Destination parameters use `ScriptPubKey`, for example `ScriptPubKey destination = {program: p, version: 1}; require(tx.outputs[0].script == destination);`. The `.scriptPubKey` accessor is removed; comparing script structs enforces their versions too.
-
-**Breaking script migration.** Replace `.scriptPubKey` with `.script` and change destination parameters from `bytes` or `bytes32` to `ScriptPubKey`. `this.activeBytecode` also returns `ScriptPubKey`; bind it and read `.program` only when a program-only comparison is intentional. Recompile contracts and regenerate bindings together. Artifact consumers must expand `ScriptPubKey` into `.program` (`bytes`), then `.version` (`int`), including constructor parameters and covenant witnesses. `arkade-bindgen` handles this for TypeScript and Go; SDK artifact loaders must support the native layout before consuming these artifacts. Existing deployed bytecode is unchanged, but source recompilation requires migration.
+**Instantiation.** `new Contract(args...)` returns a `ScriptPubKey` with witness version `1`, usable on either side of a `.script` comparison against `tx.outputs[o]`, `tx.inputs[i]`, or `tx.input.current`. Zero-argument constructors are allowed. Array and struct arguments flatten to scalar fields. Destination parameters use `ScriptPubKey`, for example `ScriptPubKey destination = {program: p, version: 1}; require(tx.outputs[0].script == destination);`. Comparing script structs enforces their versions too.
 
 ### Tapscript bodies
 
-A tapscript body is `require` statements only, and must follow the closure template in source order: an optional single hash condition, then an optional single timelock, then exactly one `checkSig` or `checkMultisig`. Hash plus CSV is a recognized shape; hash plus CLTV is not, so split it into two leaves. arkd accepts only N-of-N leaves, so a `checkMultisig` threshold, if written, must equal the key count, and each signature must be a declared `signature` input aligned 1:1 with its key.
+A tapscript body is `require` statements only, and must follow the closure template in source order: an optional single hash condition, then an optional single timelock, then exactly one `checkSig` or `checkMultisig`. Hash plus CSV is a recognized shape; hash plus CLTV is not, so split it into two leaves. arkd accepts only N-of-N leaves, so a tapscript `checkMultisig([keys], [sigs])` takes no threshold, and each signature must be a declared `signature` input aligned 1:1 with its key.
 
-The leaf script is fixed when the address is made, and the witness is supplied when it is spent. So a hash value is a byte literal or a scalar constructor parameter, a timelock is a number, a scalar constructor parameter or `serverExitDelay`, and a tapscript input used as a key, hash value or timelock is an error. The hash preimage and the signatures are tapscript inputs, which the leaf consumes from the witness.
+The leaf script is fixed when the address is made, and the witness is supplied when it is spent. So a hash value is a byte literal or constant of the digest's width or a scalar constructor parameter, a timelock is a number, a scalar constructor parameter or `serverExitDelay`, and a tapscript input used as a key, hash value or timelock is an error. The hash preimage and the signatures are tapscript inputs, which the leaf consumes from the witness.
 
-Keys resolve to constructor `pubkey` parameters or the roles `server` and `emulator`. Any leaf without a CSV delay is a forfeit path and must include `server`. A leaf whose name matches a covenant must include bare `emulator`, which the compiler tweaks with that covenant's hash. A leaf with no matching covenant may not use bare `emulator`; it either stays standalone or binds to one covenant with `tweak(emulator, fn)` or `tweak(constructorPubkey, fn)`. Every tweak in a tapscript must name that same covenant. `older(serverExitDelay)` uses arkd's unilateral exit delay and lowers to `<SERVER_EXIT_DELAY>`, which the SDK fills from the server's config. Inputs named `server`, `emulator`, or `serverExitDelay` are rejected.
+Keys resolve to constructor `pubkey` parameters, 32-byte `pubkey` constants, or the roles `server` and `emulator`. A constant key is pushed as its bytes and must be a 32-byte x-only key: a tapscript signature check accepts any signature for a key of another non-zero length, so other lengths are a compile error. A covenant `checkSig` accepts a constant key of any length. Any leaf without a CSV delay is a forfeit path and must include `server`. A leaf whose name matches a covenant must include bare `emulator`, which the compiler tweaks with that covenant's hash. A leaf with no matching covenant may not use bare `emulator`; it either stays standalone or binds to one covenant with `tweak(emulator, fn)` or `tweak(constructorPubkey, fn)`. Every tweak in a tapscript must name that same covenant. `older(serverExitDelay)` uses arkd's unilateral exit delay and lowers to `<SERVER_EXIT_DELAY>`, which the SDK fills from the server's config. Inputs named `server`, `emulator`, or `serverExitDelay` are rejected.
 
 ## Lints
 
@@ -523,12 +521,12 @@ Lints report code that compiles but is likely unsafe or wrong. Each has an id, w
 |---|---|---|---|
 | `unsigned-spend-path` | security | warn | A covenant function with a spending path that checks no transaction signature (`checkSig`, `checkMultisig`). Such a path can still be sound, as a hash lock or a stateful covenant is, but its other conditions alone authorize the spend; introspection, a hash preimage and a `checkSigFromStack` message do not count as a signature. |
 | `output-script-unchecked` | security | warn | An unsigned function that checks the value of `tx.outputs[N]` but not its `scriptPubKey`, so the value can be paid to any script |
-| `output-value-unchecked` | security | warn | An unsigned function that checks the `scriptPubKey` of `tx.outputs[N]`, including `new Self(...)`, but not its value or assets |
+| `output-value-unchecked` | security | warn | An unsigned function that checks the `scriptPubKey` of `tx.outputs[N]`, including one kept as `tx.input.current.script`, but not its value or assets |
 | `oracle-message-unbound` | security | warn | A `checkSigFromStack` message that is a witness parameter used nowhere else, so one signed message authorizes any spend |
 | `signer-from-witness` | security | warn | A `checkSig`, `checkSigFromStack` or `checkMultisig` key, or a multisig threshold, that is a witness parameter used nowhere else, so the spender chooses who must sign |
 | `duplicate-multisig-key` | security | warn | A key listed twice in `checkMultisig`, so one signature counts for each |
 | `ambiguous-hash-concat` | security | warn | A hash of two or more `bytes` parameters joined with `+`: their lengths vary, so other values can join to the same bytes |
-| `offchain-locktime` | correctness | warn | `tx.locktime` in a covenant: arkd rebuilds offchain spends with nLockTime 0, so use `checkTime(t)` |
+| `offchain-locktime` | correctness | deny | `tx.locktime` in a covenant: arkd rebuilds offchain spends with nLockTime 0, so use `checkTime(t)` |
 | `outputs-shared-across-inputs` | security | warn | An unsigned function whose outputs are constrained at fixed indexes without bounding `tx.numInputs`, comparing `this.activeInputIndex`, or reading an outpoint, so two inputs locked by the contract can be satisfied by the same outputs |
 | `divide-before-multiply` | correctness | warn | `(a / b) * c`, which drops the remainder before it scales |
 | `self-comparison` | correctness | warn | A comparison, `&&` or `\|\|` with the same operand on both sides |
@@ -565,8 +563,8 @@ The innermost attribute wins, and an attribute wins over the CLI, except that `-
 {
   "formatVersion": 1,
   "contractName": "HTLC",
-  "constructorInputs": [{ "name": "sender", "type": "pubkey" }, "..."],
   "structs": [],
+  "constructorInputs": [{ "name": "sender", "type": "pubkey" }, "..."],
   "functions": [
     {
       "name": "claim",
@@ -585,26 +583,32 @@ The innermost attribute wins, and an attribute wins over the CLI, except that `-
     },
     { "name": "unilateral", "leaves": [ "..." ] }
   ],
+  "contracts": { "SingleSig": "sha256:..." },
+  "codeHash": "sha256:...",
   "source": { "entry": "htlc.ark", "files": { "htlc.ark": "..." } },
   "compiler": { "name": "arkadec", "version": "0.1.0", "options": { "optimize": true } },
-  "fingerprint": "sha256:...",
-  "updatedAt": "2026-01-01T00:00:00Z"
+  "updatedAt": "2026-01-01T00:00:00Z",
+  "fingerprint": "sha256:..."
 }
 ```
 
 | Field | Meaning |
 |---|---|
-| `formatVersion` | Artifact schema version; absent on legacy artifacts |
-| `constructorInputs` | One entry per source parameter, declaration order; arrays keep their size in the type, structs keep their type name |
+| `formatVersion` | Artifact schema version |
 | `structs` | User struct layouts, so clients can flatten parameters the way the compiler does |
+| `constructorInputs` | One entry per source parameter, declaration order; arrays keep their size in the type, structs keep their type name |
 | `functions[]` | Spend groups: `{ name, arkade?, leaves[] }` |
 | `arkade` | `{ inputs, asm }`; absent for groups made only of standalone leaves |
 | `leaves[]` | `{ name, witness, asm }`; `witness` lists spend-time values in source order, `injected: true` marks infrastructure signatures |
+| `contracts` | The `codeHash` of each contract a `<CONTRACT:Name(...)>` placeholder names, keyed by name; absent when there is none |
+| `codeHash` | SHA-256 of compact artifact JSON with only the fields before it, `formatVersion` through `contracts`, which determine the scripts; `source`, `compiler`, `updatedAt` and `fingerprint` are left out |
 | `source` | `{ entry, files }`: original entry source and every recursively imported file, including comments |
 | `compiler.options` | Effective compilation settings; `optimize` enables constant folding, static branch removal, and assembly optimization for Arkade covenants |
-| `fingerprint` | SHA-256 of compact artifact JSON before `fingerprint` and `updatedAt` are added; includes source, ABI, compiler settings, and unresolved script templates |
+| `fingerprint` | SHA-256 of compact artifact JSON before `fingerprint` and `updatedAt` are added; includes source, ABI, compiler settings, unresolved script templates, `contracts`, and `codeHash` |
 
 The fingerprint identifies artifact content, but does not authenticate its origin. Recompile the bundled source with a trusted compiler to verify an artifact received from elsewhere.
+
+A contract compiled on its own has the `codeHash` that an artifact instantiating it records in `contracts`, given the same compiler and options, so a client resolving `<CONTRACT:Name(...)>` from a separately supplied artifact can check that artifact's `codeHash` against `contracts.Name`. Edits outside those fields, such as to comments or formatting, keep the `codeHash`; edits inside them change it even when the scripts stay the same, such as renaming a witness parameter or reordering struct declarations. An instantiated contract's own `contracts` are part of its `codeHash`, so the pin covers indirect instantiations too.
 
 Covenant spend groups come first in function declaration order, followed by standalone tapscript groups in tapscript declaration order, regardless of how the declarations are interleaved. Author-written leaves within a covenant group keep their declaration order; a synthesized emulator leaf, when needed, comes first. Clients use this order to build the Taproot tree. Reordering leaves can change the output key and address; retain the original artifact to spend existing outputs.
 
@@ -634,7 +638,7 @@ Type-check and validation warnings remain available on the Rust compilation resu
 
 `constructorInputs`, `arkade.inputs`, and `witness` describe the source ABI, not the physical stack. Clients expand an array entry `oracles` of type `pubkey[3]` into `oracles.0`, `oracles.1`, `oracles.2`, and a struct entry into its scalar leaves in field order, recursively, using dotted paths such as `policy.primary.key`.
 
-Clients serialize covenant inputs in reverse `arkade.inputs` order. Every expanded constructor input the covenant reads appears as exactly one `<name>` placeholder, which instantiation replaces with a data push before the covenant hash is computed. Inputs read more than once, and every leaf of an input read through a runtime index, open the `asm` in reversed order; an input read once is pushed where it is read, and one never read from the stack (for example only through `new Child(...)` or `.length`) is omitted. The VM installs the function witness first, so prologue constructor values sit above function inputs; the body reaches everything through `OP_PICK` and friends and never emits function inputs as placeholders. After instantiation the only remaining placeholders are `<CONTRACT:Contract(<a>,<b>)>` tokens, which the runtime resolves to the child contract's 32-byte Taproot output key (witness program).
+Clients serialize covenant inputs in reverse `arkade.inputs` order. Every expanded constructor input the covenant reads appears as exactly one `<name>` placeholder, which instantiation replaces with a data push before the covenant hash is computed. Inputs read more than once, and every leaf of an input read through a runtime index, open the `asm` in reversed order; an input read once is pushed where it is read, and one never read from the stack (for example only through `new Child(...)` or an array's `.length`) is omitted. The VM installs the function witness first, so prologue constructor values sit above function inputs; the body reaches everything through `OP_PICK` and friends and never emits function inputs as placeholders. After instantiation the only remaining placeholders are `<CONTRACT:Contract(<a>,<b>)>` tokens, which the runtime resolves to the child contract's 32-byte Taproot output key (witness program).
 
 ## Security
 

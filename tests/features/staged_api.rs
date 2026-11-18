@@ -11,14 +11,15 @@ fn one_analysis_gives_diagnostics_the_typed_ast_and_the_artifact() {
     let analysis = analyze("main.ark", &files(source));
     assert!(analysis.diagnostics().is_empty());
     let contract = analysis.contract().expect("analyzed");
-    let arkade_compiler::models::Statement::Require(requirement) =
+    let arkade_compiler::models::Statement::Require(condition) =
         &contract.functions[0].statements[1].statement
     else {
         panic!("expected a requirement");
     };
-    let arkade_compiler::Requirement::Comparison { left, .. } = requirement else {
+    let arkade_compiler::models::ExprKind::BinaryOp { left, .. } = &condition.kind else {
         panic!("expected a comparison");
     };
+    assert_eq!(condition.ty(), &arkade_compiler::ArkType::Bool);
     assert_eq!(left.ty(), &arkade_compiler::ArkType::Int);
     for optimize in [true, false] {
         let options = CompileOptions { optimize };

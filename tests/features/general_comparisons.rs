@@ -90,7 +90,7 @@ fn composite_comparison_expressions_validate_operand_types() {
         .expect_err("composite ordering is invalid even with a literal").to_string();
     assert!(error.contains("not defined"), "{error}");
     let ordering = &["'<' is not defined", "'right.missing' is undefined"][..];
-    let record = &["does not produce one stack item"][..];
+    let record = &["'==' is not defined between 'Item' and 'AssetGroupOutput'"][..];
     for (comparison, diagnostics) in [
         ("left < right.missing", ordering),
         ("true || (left < right.missing)", ordering),
@@ -142,7 +142,6 @@ fn declared_scalar_types_compare_directly() {
         "bytes32",
         "int",
         "bool",
-        "asset",
     ] {
         let source = format!(
             "contract Compare() {{
@@ -368,7 +367,7 @@ contract Compare(pubkey owner, ScriptPubKey expectedScript, bytes32 expectedTxid
             ("main.ark".into(), source.into()),
             (
                 "single_sig.ark".into(),
-                "contract SingleSig(pubkey owner) {}".into(),
+                "contract SingleSig(pubkey owner) { function spend() { require(tx.numOutputs == 1); } }".into(),
             ),
         ]
         .into_iter()
@@ -692,6 +691,7 @@ contract C(pubkey owner, bytes32 hash) {
         valid = valid && (sha256(preimage) == hash || sufficient(amount));
         if (valid && sufficient(amount)) { require(valid); } else { require(!valid); }
         require(checkSigFromStack(sig, owner, hash) || !enabled);
+        @allow(offchain-locktime, "an inspection operand")
         require(tx.locktime >= 0 && (amount > 0 || enabled));
         require(sha256(preimage) == hash || checkSig(sig, owner));
         require(sufficient(amount) == (enabled || amount > 0));
@@ -745,16 +745,10 @@ fn logical_operands_require_booleans_even_when_skipped() {
             "{expression}: {error}"
         );
     }
-    for expression in [
-        "false && missing",
-        "true || absent()",
-        "false && checkSigFromStackVerify(sig, key, message)",
-    ] {
+    for expression in ["false && missing", "true || absent()"] {
         let error = compile(&format!("contract C(pubkey key, bytes32 message) {{ function compare(signature sig) {{ require({expression}); }} }}")).expect_err("invalid skipped expression").to_string();
         assert!(
-            error.contains("undefined")
-                || error.contains("unknown function")
-                || error.contains("does not produce one stack item"),
+            error.contains("undefined") || error.contains("unknown function"),
             "{expression}: {error}"
         );
     }

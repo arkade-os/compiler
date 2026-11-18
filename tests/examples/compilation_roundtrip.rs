@@ -137,20 +137,20 @@ fn fingerprint_identifies_artifact_content() {
         )
     };
     assert_eq!(digest(&pinned), fingerprint);
+    let mut code = pinned.clone();
+    (code.code_hash, code.source, code.compiler) = (None, None, None);
+    assert_eq!(Some(digest(&code)), first.code_hash);
     // This value pins the artifact's exact serialization, including field order, with the
     // compiler version fixed so releases leave it unchanged.
     pinned.compiler.as_mut().unwrap().version = "0.0.0".into();
     assert_eq!(
         digest(&pinned),
-        "sha256:58926f26dbbea23f714e32421fa590786124bb78dfb78acc4ef6e251acf65f5b"
+        "sha256:8e7da7a19b1f89c0545d400690ada1f905fdca123212c0cdc7303f413edd0661"
     );
     assert_eq!(first.fingerprint, second.fingerprint);
-    assert_ne!(
-        first.fingerprint,
-        arkade_compiler::compile(&format!("{source}\n"))
-            .unwrap()
-            .fingerprint
-    );
+    let commented = arkade_compiler::compile(&format!("{source}\n// comment\n")).unwrap();
+    assert_ne!(first.fingerprint, commented.fingerprint);
+    assert_eq!(first.code_hash, commented.code_hash);
     let unoptimized = arkade_compiler::compile_sources_with_options(
         "main.ark",
         &[("main.ark".to_string(), source.to_string())].into(),
@@ -175,6 +175,11 @@ fn roundtrip_htlc() {
     assert_eq!(output.name, "HTLC");
     // 3 spend groups: claim, refund (function-backed) + unilateral (standalone)
     assert_eq!(output.functions.len(), 3);
+    let single_sig = compile_example("single_sig/single_sig.ark");
+    assert_eq!(
+        output.contracts.get("SingleSig"),
+        single_sig.code_hash.as_ref()
+    );
 }
 
 #[test]

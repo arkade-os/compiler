@@ -69,7 +69,7 @@ properties!(
 );
 
 properties!(
-    /// `this.<property>`; `this.activeBytecode` is the current input's script struct.
+    /// `this.<property>`
     ThisProperty {
         ActiveInputIndex => ("activeInputIndex", "int", "Index of the input being spent."),
         Expiry => ("expiry", "int", "Unix expiry of the executing VTXO, in seconds. Fails the spend when unavailable."),
@@ -109,51 +109,3 @@ properties!(
         Amount => ("amount", "int", "Asset amount."),
     }
 );
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// The quoted alternatives of a grammar rule.
-    fn spelled(rule: &str) -> Vec<&'static str> {
-        let grammar = include_str!("parser/grammar.pest");
-        let start = grammar.find(&format!("{rule} = {{")).expect("rule exists");
-        let body = &grammar[start..start + grammar[start..].find('}').unwrap()];
-        body.split('"').skip(1).step_by(2).collect()
-    }
-
-    fn names<P: Copy>(all: &[P], name: fn(P) -> &'static str) -> Vec<&'static str> {
-        all.iter().map(|&property| name(property)).collect()
-    }
-
-    #[test]
-    fn the_grammar_spells_every_property() {
-        assert_eq!(
-            spelled("tx_introspection_property"),
-            names(TxProperty::ALL, TxProperty::name)
-        );
-        assert_eq!(
-            spelled("input_introspection_property"),
-            names(InputProperty::ALL, InputProperty::name)
-        );
-        assert_eq!(
-            spelled("output_introspection_property"),
-            names(OutputProperty::ALL, OutputProperty::name)
-        );
-        assert_eq!(
-            spelled("asset_group_property"),
-            names(GroupProperty::ALL, GroupProperty::name)
-        );
-        assert_eq!(
-            spelled("asset_group_io_property"),
-            names(GroupIoProperty::ALL, GroupIoProperty::name)
-        );
-        assert_eq!(
-            spelled("asset_at_property"),
-            names(AssetProperty::ALL, AssetProperty::name)
-        );
-        let mut this = names(ThisProperty::ALL, ThisProperty::name);
-        this.insert(1, "activeBytecode");
-        assert_eq!(spelled("this_property"), this);
-    }
-}

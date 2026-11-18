@@ -12,7 +12,7 @@ pub(super) fn validate_functions(contract: &Contract, issues: &mut Vec<Validatio
         if let Some(result) = &function.return_type {
             if !function.is_private {
                 issues.push(ValidationIssue::error(format!(
-                    "public function '{}' cannot declare a return type",
+                    "covenant function '{}' cannot declare a return type",
                     function.name
                 )));
             }
@@ -76,9 +76,6 @@ fn validate_body(
             );
         }
         match statement {
-            Statement::Require(Requirement::Comparison { left, right, .. }) => {
-                validate_comparison_literals(left, right, function, contract, issues);
-            }
             Statement::Return(value) => {
                 if !function.is_private {
                     issues.push(ValidationIssue::error(format!(
@@ -110,9 +107,11 @@ fn validate_body(
                 declared_type,
                 value,
             } => {
-                // Non-literal initializers are type-checked with the declaration.
-                if let (Some(expected), ExprKind::ArrayLiteral(_) | ExprKind::StructLiteral(_)) =
-                    (declared_type, &value.kind)
+                // Other initializers, named literals included, are type-checked with the declaration.
+                if let (
+                    Some(expected),
+                    ExprKind::ArrayLiteral(_) | ExprKind::StructLiteral { name: None, .. },
+                ) = (declared_type, &value.kind)
                 {
                     validate_value(
                         expected,
@@ -155,7 +154,7 @@ fn validate_comparison_literals(
     for (value, other) in [(left, right), (right, left)] {
         if matches!(
             &value.kind,
-            ExprKind::ArrayLiteral(_) | ExprKind::StructLiteral(_)
+            ExprKind::ArrayLiteral(_) | ExprKind::StructLiteral { .. }
         ) && matches!(other.ty, ArkType::Array(..) | ArkType::Struct(_))
             && crate::types::resolved(&other.ty)
         {
@@ -206,7 +205,7 @@ fn validate_calls(
             Some(function) => {
                 if !function.is_private {
                     issues.push(ValidationIssue::error(format!(
-                        "public function '{name}' is an entrypoint and cannot be called"
+                        "covenant function '{name}' is an entrypoint and cannot be called"
                     )));
                 }
                 if caller.is_static && !function.is_static {
@@ -215,11 +214,7 @@ fn validate_calls(
                         caller.name
                     )));
                 }
-                if value_position && function.return_type.is_none() {
-                    issues.push(ValidationIssue::error(format!(
-                        "function '{name}' does not return a value"
-                    )));
-                } else if !value_position && function.return_type.is_some() {
+                if !value_position && function.return_type.is_some() {
                     issues.push(ValidationIssue::error(format!(
                         "return value of '{name}' must be used"
                     )));
@@ -242,6 +237,15 @@ fn validate_calls(
                 }
             }
         }
+    }
+    // A named literal is checked against its own type; its position checks only the name.
+    if let ExprKind::StructLiteral {
+        name: Some(name),
+        fields,
+    } = &expression.kind
+    {
+        let context = format!("{name} literal");
+        validate_fields(name, fields, &contract.structs, &context, issues);
     }
     locate(&mut issues[first..], expression.span);
     for child in child_exprs(expression) {
@@ -276,54 +280,8 @@ pub(super) fn validate_value(
                 );
             }
         }
-        (ExprKind::StructLiteral(fields), _, ArkType::Struct(name)) => {
-            let native =
-                crate::models::builtin_struct_fields(name).map(|fields| StructDefinition {
-                    span: Default::default(),
-                    name: name.clone(),
-                    fields: fields
-                        .iter()
-                        .map(|(name, ty)| crate::models::Parameter {
-                            span: Default::default(),
-                            name: name.to_string(),
-                            param_type: TypeName::parse(ty),
-                        })
-                        .collect(),
-                });
-            if let Some(definition) = native
-                .as_ref()
-                .or_else(|| structs.iter().find(|s| s.name == *name))
-            {
-                let mut seen = HashSet::new();
-                for (name, value) in fields {
-                    if !seen.insert(name) {
-                        issues.push(ValidationIssue::error(format!(
-                            "{context}: duplicate field '{name}'"
-                        )));
-                    }
-                    if let Some(field) = definition.fields.iter().find(|f| f.name == *name) {
-                        validate_value(
-                            &field.param_type,
-                            value,
-                            structs,
-                            &format!("{context}, field '{name}'"),
-                            issues,
-                        );
-                    } else {
-                        issues.push(ValidationIssue::error(format!(
-                            "{context}: unknown field '{name}'"
-                        )));
-                    }
-                }
-                for field in &definition.fields {
-                    if !seen.contains(&field.name) {
-                        issues.push(ValidationIssue::error(format!(
-                            "{context}: missing field '{}'",
-                            field.name
-                        )));
-                    }
-                }
-            }
+        (ExprKind::StructLiteral { name: None, fields }, _, ArkType::Struct(name)) => {
+            validate_fields(name, fields, structs, context, issues)
         }
         _ => {
             let actual = &value.ty;
@@ -336,6 +294,65 @@ pub(super) fn validate_value(
         }
     }
     locate(&mut issues[first..], value.span);
+}
+
+/// Check a struct literal's fields against the definition of struct `name`.
+fn validate_fields(
+    name: &str,
+    fields: &[(String, Expression)],
+    structs: &[StructDefinition],
+    context: &str,
+    issues: &mut Vec<ValidationIssue>,
+) {
+    let native = crate::models::builtin_struct_fields(name).map(|fields| StructDefinition {
+        span: Default::default(),
+        name: name.to_string(),
+        fields: fields
+            .iter()
+            .map(|(name, ty)| crate::models::Parameter {
+                span: Default::default(),
+                name: name.to_string(),
+                param_type: TypeName::parse(ty),
+            })
+            .collect(),
+    });
+    if let Some(definition) = native
+        .as_ref()
+        .or_else(|| structs.iter().find(|s| s.name == *name))
+    {
+        let mut seen = HashSet::new();
+        for (name, value) in fields {
+            if !seen.insert(name) {
+                issues.push(ValidationIssue::error(format!(
+                    "{context}: duplicate field '{name}'"
+                )));
+            }
+            if let Some(field) = definition.fields.iter().find(|f| f.name == *name) {
+                validate_value(
+                    &field.param_type,
+                    value,
+                    structs,
+                    &format!("{context}, field '{name}'"),
+                    issues,
+                );
+            } else {
+                issues.push(ValidationIssue::error(format!(
+                    "{context}: unknown field '{name}'"
+                )));
+            }
+        }
+        for field in &definition.fields {
+            if !seen.contains(&field.name) {
+                issues.push(ValidationIssue::error(format!(
+                    "{context}: missing field '{}'",
+                    field.name
+                )));
+            }
+        }
+        if name == "AssetId" {
+            super::assets::validate_gidx(fields, issues);
+        }
+    }
 }
 
 fn analyze_function(

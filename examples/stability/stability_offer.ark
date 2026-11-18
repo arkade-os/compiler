@@ -38,7 +38,9 @@ contract StabilityOffer(
 
   // Taking an offer needs dynamic taproot reconstruction. Restore this
   // function once private functions plus EC return decomposition can implement
-  // it, or once a generic builtin provides the same verification.
+  // it, or once a generic builtin provides the same verification. Its
+  // commented-out `new StabilityOffer(...)` check cannot return as written, since
+  // a contract cannot instantiate itself.
 
   // -------------------------------------------------------------------------
   // TAKE
@@ -73,7 +75,7 @@ contract StabilityOffer(
 //     require(oracleAge >= 0, "future-dated oracle");
 //     require(oracleAge <= 600, "stale oracle");
 
-//     let oracleMsg = sha256(ticker + num2bin(oraclePrice, 8) + num2bin(oracleTime, 8));
+//     let oracleMsg = sha256(ticker + int2bytes(oraclePrice, 8) + int2bytes(oracleTime, 8));
 //     require(checkSigFromStack(oracleSig, oraclePk, oracleMsg), "invalid oracle signature");
 
 //     int targetUSD = userBTC * oraclePrice / 100000000;

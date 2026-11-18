@@ -14,15 +14,11 @@ pub struct ArkadeParser;
 
 // Parser split into domain submodules. Each declares its pub(crate)
 // parse_* helpers; siblings reach them via `use super::*`.
-mod asset;
-mod checksig;
 mod crypto;
 mod expr;
 mod introspection;
 mod tapscript;
 
-pub(crate) use asset::*;
-pub(crate) use checksig::*;
 pub(crate) use crypto::*;
 pub(crate) use expr::*;
 pub(crate) use introspection::*;
@@ -51,6 +47,77 @@ pub(crate) fn imports(
         .collect()
 }
 
+/// Fail at the leading pragma of `source` when compiler `version` satisfies none of its
+/// alternatives. Only `version`'s major.minor.patch counts, so a prerelease satisfies what its
+/// release does. The pragma is parsed on its own, so a file written for another compiler fails
+/// here rather than on syntax this one does not know; an absent or malformed pragma passes, and
+/// the full parse reports a malformed one.
+pub(crate) fn check_pragma(source: &str, version: &str) -> Result<(), CompileError> {
+    let Ok(mut head) = ArkadeParser::parse(Rule::pragma_head, source) else {
+        return Ok(());
+    };
+    let head = head.next().expect("pragma head");
+    let pragma = head.into_inner().next().expect("pragma");
+    let current = version_numbers(version);
+    let mut satisfied = false;
+    let mut alternatives = Vec::new();
+    for range in pragma
+        .clone()
+        .into_inner()
+        .filter(|p| p.as_rule() == Rule::pragma_range)
+    {
+        let mut all = true;
+        let mut constraints = Vec::new();
+        for constraint in range.into_inner() {
+            let operator = [">=", "<=", ">", "<", "=", "^", "~"]
+                .into_iter()
+                .find(|operator| constraint.as_str().starts_with(operator))
+                .unwrap_or("");
+            let wanted = constraint
+                .into_inner()
+                .next()
+                .expect("pragma version")
+                .as_str();
+            all &= satisfies(operator, version_numbers(wanted), current);
+            constraints.push(format!("{operator}{wanted}"));
+        }
+        satisfied |= all;
+        alternatives.push(constraints.join(" "));
+    }
+    if satisfied {
+        return Ok(());
+    }
+    Err(CompileError::from(format!(
+        "pragma requires arkade {}, but this compiler is version {version}",
+        alternatives.join(" || ")
+    ))
+    .at(pragma.as_span().into()))
+}
+
+/// The major, minor and patch numbers that start `version`.
+fn version_numbers(version: &str) -> [u64; 3] {
+    // A component beyond u64 saturates; the compiler's own never does, so comparisons stay exact.
+    let mut parts = version
+        .split(['.', '-', '+'])
+        .map(|part| part.parse().unwrap_or(u64::MAX));
+    std::array::from_fn(|_| parts.next().expect("three version components"))
+}
+
+/// Whether `version` satisfies `operator` `wanted`, with npm's caret and tilde ranges.
+fn satisfies(operator: &str, wanted: [u64; 3], version: [u64; 3]) -> bool {
+    match operator {
+        ">" => version > wanted,
+        ">=" => version >= wanted,
+        "<" => version < wanted,
+        "<=" => version <= wanted,
+        // `^` keeps the first nonzero component, so `^0.0.x` is exact; `~` keeps major.minor.
+        "^" if wanted[0] > 0 => version >= wanted && version[0] == wanted[0],
+        "^" if wanted[1] > 0 => version >= wanted && version[..2] == wanted[..2],
+        "~" => version >= wanted && version[..2] == wanted[..2],
+        _ => version == wanted,
+    }
+}
+
 /// Parse a source file, naming expected tokens in source terms instead of grammar rules.
 #[cfg(test)]
 pub(crate) fn parse_main(source: &str) -> Result<Pairs<'_, Rule>, String> {
@@ -69,7 +136,7 @@ fn readable_error(error: pest::error::Error<Rule>, source: &str) -> pest::error:
         .expected_tokens()
         .iter()
         .map(ToString::to_string)
-        .filter(|t| !t.trim().is_empty() && t != "//" && !t.contains(".."))
+        .filter(|t| !t.trim().is_empty() && t != "//" && t != "/*" && !t.contains(".."))
         .map(|t| format!("'{t}'"))
         .collect();
     let mut expected: Vec<String> = tokens
@@ -87,7 +154,12 @@ fn readable_error(error: pest::error::Error<Rule>, source: &str) -> pest::error:
             }
         }
     }
-    if expected.is_empty() {
+    // A block comment left open fails where the file ends, where pest may not name `*/`.
+    let unterminated =
+        unterminated_comment(source).filter(|_| attempts.max_position == source.len());
+    if unterminated.is_some() {
+        expected = vec!["'*/'".to_string()];
+    } else if expected.is_empty() {
         expected = tokens;
     }
     let message = match expected.split_last() {
@@ -97,7 +169,9 @@ fn readable_error(error: pest::error::Error<Rule>, source: &str) -> pest::error:
     };
     let closing = ["';'", "')'", "'}'", "']'", "','", "an operator"];
     let mut at = attempts.max_position;
-    if let Some((word, start, end)) = lone_word(source, at) {
+    if let Some(open) = unterminated {
+        at = open;
+    } else if let Some((word, start, end)) = lone_word(source, at) {
         let message = format!("`{word}` on its own is not a statement");
         return match (
             pest::Position::new(source, start),
@@ -128,17 +202,67 @@ fn missing_at(source: &str, at: usize) -> usize {
     }
 }
 
-/// The end of the code before `at`, past whitespace and line comments.
+/// `text` without the whitespace and comments that end it.
+pub(crate) fn trim_trivia_end(text: &str) -> &str {
+    &text[..code_end(text, text.len())]
+}
+
+/// The end of the code before `at`, past whitespace and comments.
 fn code_end(source: &str, at: usize) -> usize {
-    let mut end = at;
-    loop {
-        let code = source[..end].trim_end();
-        let line = code.rfind('\n').map_or(0, |i| i + 1);
-        match comment_start(&code[line..]) {
-            Some(comment) => end = line + comment,
-            None => return code.len(),
+    code(&source[..at]).last().map_or(0, |code| code.end)
+}
+
+/// `text` without the whitespace and comments the grammar allows between terms.
+pub(crate) fn without_trivia(text: &str) -> String {
+    code(text).map(|code| &text[code]).collect()
+}
+
+/// The byte ranges of `source` that are code: each character outside comments, string literal
+/// contents and escapes included, other than whitespace outside string literals.
+fn code(source: &str) -> impl Iterator<Item = std::ops::Range<usize>> + '_ {
+    let (mut i, mut quoted) = (0, false);
+    std::iter::from_fn(move || loop {
+        let c = source[i..].chars().next()?;
+        if let Some(comment) = comment_len(&source[i..]).filter(|_| !quoted) {
+            i += comment;
+            continue;
         }
+        let start = i;
+        i += c.len_utf8();
+        match c {
+            '\\' if quoted => i += source[i..].chars().next().map_or(0, char::len_utf8),
+            '"' => quoted = !quoted,
+            // A string literal cannot span lines.
+            '\n' => quoted = false,
+            _ => {}
+        }
+        if quoted || !c.is_whitespace() {
+            return Some(start..i);
+        }
+    })
+}
+
+/// Where the block comment that `source` ends inside opens, if it ends inside one.
+fn unterminated_comment(source: &str) -> Option<usize> {
+    let mut at = code_end(source, source.len());
+    loop {
+        at = source.len() - source[at..].trim_start().len();
+        let comment = &source[at..at + comment_len(&source[at..])?];
+        if comment.starts_with("/*") && !comment[2..].ends_with("*/") {
+            return Some(at);
+        }
+        at += comment.len();
     }
+}
+
+/// The length of the `//` or `/* */` comment that starts `text`; an unterminated block comment
+/// runs to the end of `text`.
+pub(crate) fn comment_len(text: &str) -> Option<usize> {
+    if text.starts_with("//") {
+        return Some(text.find('\n').unwrap_or(text.len()));
+    }
+    let body = text.strip_prefix("/*")?;
+    Some(body.find("*/").map_or(text.len(), |end| end + 4))
 }
 
 /// A single word that starts a statement and ends the code before `at`, as in `dasd` left on its
@@ -160,23 +284,6 @@ fn lone_word(source: &str, at: usize) -> Option<(&str, usize, usize)> {
     lone.then_some((word, start, end))
 }
 
-/// The byte offset of a `//` comment in `line`, outside string literals.
-fn comment_start(line: &str) -> Option<usize> {
-    let mut quoted = false;
-    let mut characters = line.char_indices().peekable();
-    while let Some((i, c)) = characters.next() {
-        match c {
-            '\\' if quoted => {
-                characters.next();
-            }
-            '"' => quoted = !quoted,
-            '/' if !quoted && characters.peek().is_some_and(|(_, c)| *c == '/') => return Some(i),
-            _ => {}
-        }
-    }
-    None
-}
-
 fn rule_term(rule: &Rule) -> Option<String> {
     let term = match rule {
         Rule::main => return None,
@@ -195,21 +302,10 @@ fn rule_term(rule: &Rule) -> Option<String> {
         | Rule::mul_op
         | Rule::div_op
         | Rule::rem_op
-        // Field and index suffixes are postfix operators.
-        | Rule::binding_suffix => "an operator",
-        Rule::asset_lookup_source
-        | Rule::tx_introspection_property
-        | Rule::tx_property_body
-        | Rule::tx_property_part
-        | Rule::tx_input_current
-        | Rule::tx_asset_groups => "a transaction property",
-        Rule::input_introspection_property => "an input property",
-        Rule::output_introspection_property => "an output property",
-        Rule::asset_group_property | Rule::asset_group_control_is | Rule::asset_group_io_source => {
-            "an asset group property"
-        }
-        Rule::asset_at_property => "an asset property",
-        Rule::this_property => "a contract property",
+        // Field, index and call suffixes are postfix operators.
+        | Rule::binding_suffix
+        | Rule::postfix
+        | Rule::call_args => "an operator",
         Rule::identifier => "a name",
         Rule::const_keyword => "a constant",
         Rule::function_visibility | Rule::function => "a function",
@@ -221,7 +317,8 @@ fn rule_term(rule: &Rule) -> Option<String> {
         Rule::unary_expr
         | Rule::primary_expr
         | Rule::parenthesized_expr
-        | Rule::general_expression => "an expression",
+        | Rule::general_expression
+        | Rule::empty_list => "an expression",
         Rule::number_literal => "a number",
         Rule::string_literal => "a string",
         // ponytail: unmapped rules fall back to their grammar name with spaces;
@@ -483,16 +580,16 @@ fn parse_function(
 ) -> Result<Function, CompileError> {
     let declaration = pair.as_span().into();
     let mut inner = pair.into_inner().peekable();
-    let visibility = if inner
-        .peek()
-        .is_some_and(|p| p.as_rule() == Rule::function_visibility)
-    {
-        inner.next().expect("visibility").as_str()
-    } else {
-        "public"
-    };
+    let modifier = inner.next_if(|p| p.as_rule() == Rule::function_visibility);
+    let visibility = modifier.as_ref().map_or("", |p| p.as_str());
+    if is_library && visibility == "static" {
+        let message =
+            "`static` marks a contract's stateless helper; library functions need no modifier";
+        let span = modifier.expect("static modifier").as_span().into();
+        return Err(CompileError::from(message).at(span));
+    }
     let is_static = is_library || visibility == "static";
-    let is_private = is_library || visibility != "public";
+    let is_private = is_library || !visibility.is_empty();
     let is_exported = is_static && visibility != "private";
     let name = inner.next().ok_or("Missing function name")?;
     let span = crate::diagnostics::Span {
@@ -502,22 +599,8 @@ fn parse_function(
     let name = name.as_str().to_string();
     if is_private
         && (expr::reserved_function_signature(&name).is_some()
-            || matches!(
-                name.as_str(),
-                "require"
-                    | "return"
-                    | "negate"
-                    | "neg64"
-                    | "le64ToScriptNum"
-                    | "le32ToLe64"
-                    | "pubkey"
-                    | "signature"
-                    | "bytes"
-                    | "bytes20"
-                    | "bytes32"
-                    | "int"
-                    | "bool"
-            ))
+            || matches!(name.as_str(), "require" | "return")
+            || is_cast(&name))
     {
         return Err(CompileError::from(format!("function name '{name}' is reserved")).at(span));
     }
@@ -587,13 +670,13 @@ fn parse_statement(
                     .into())
                 }
             };
-            let requirement = parse_complex_expression(expr)?;
+            let condition = parse_general_expression(expr)?;
 
             if let Some(text) = inner.next() {
                 message = Some(parse_string_literal(text.as_str())?);
             }
 
-            Statement::Require(requirement)
+            Statement::Require(condition)
         }
         Rule::let_binding => {
             let mut inner = pair.into_inner();
@@ -720,19 +803,26 @@ fn parse_statement(
             }
         }
         Rule::function_call_stmt => {
-            let call = pair.into_inner().next().ok_or("Missing function call")?;
-            match parse_general_expression(call)? {
-                Expression {
-                    kind: ExprKind::Builtin { builtin, .. },
-                    ..
-                } => {
-                    return Err(CompileError::from(format!(
-                        "`{}(...)` cannot be a statement; use it inside require()",
-                        builtin.name
-                    )));
+            let mut inner = pair.into_inner();
+            let mut name = Vec::new();
+            let args = loop {
+                let part = inner.next().ok_or("Missing call arguments")?;
+                if part.as_rule() == Rule::call_args {
+                    break part;
                 }
-                call => Statement::Call(call),
+                name.push(part.as_str());
+            };
+            let name = name.join(".");
+            if name == "this.tunnel" || crate::builtins::find(&name).is_some() {
+                return Err(CompileError::from(format!(
+                    "`{name}(...)` cannot be a statement; use it inside require()"
+                )));
             }
+            let span = crate::diagnostics::Span {
+                start: span.start,
+                end: args.as_span().end(),
+            };
+            Statement::Call(parse_call(name, args.into_inner().collect(), span)?)
         }
         Rule::return_stmt => {
             let value = pair
@@ -843,9 +933,10 @@ pub(crate) fn parse_parameters(params: Pair<Rule>) -> Result<Vec<Parameter>, Str
 mod tests {
     use super::parse;
     use crate::models::{
-        AssignmentTarget, Attribute, AttributeArg, ExprKind, Expression, Requirement, Statement,
+        AssignmentTarget, Attribute, AttributeArg, ExprKind, Expression, Statement,
     };
     use crate::operators::UnaryOperator;
+    use crate::properties::TxProperty;
 
     #[test]
     fn transaction_member_forms_parse_by_rule() {
@@ -864,7 +955,7 @@ mod tests {
             Ok(ExprKind::InputIntrospection { .. })
         ));
         assert!(matches!(
-            value("tx.assetGroups.has(t, g)"),
+            value("tx.assetGroups.has({ txid: t, gidx: g })"),
             Ok(ExprKind::GroupHas { .. })
         ));
         assert!(matches!(
@@ -882,11 +973,225 @@ mod tests {
             value("tx.version"),
             Ok(ExprKind::TxIntrospection { .. })
         ));
-        for misuse in ["tx.input.current", "tx.input.current.weight"] {
+        for misuse in [
+            "tx.input.current",
+            "tx.input.current.weight",
+            "tx.input. /* c */ current",
+        ] {
             let error = value(misuse).unwrap_err();
             assert!(
                 error.contains("tx.input.current requires one of"),
                 "{misuse}: {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn member_chains_resolve_after_parsing() {
+        let value = |expression: &str| {
+            let source = format!(
+                "contract C() {{ function spend(AssetGroup g) {{ let v = {expression}; }} }}"
+            );
+            let statement = parse(&source).map(|c| c.functions[0].statements[0].statement.clone());
+            let Ok(Statement::LetBinding { value, .. }) = statement else {
+                return Err(format!("{statement:?}"));
+            };
+            let start = source.find(expression).unwrap();
+            assert_eq!(
+                (value.span.start, value.span.end),
+                (start, start + expression.len())
+            );
+            Ok(value.kind)
+        };
+        // A member call resolves by its member: a group's `controlIs`, a `tx` or `this` member.
+        assert!(matches!(
+            value("g.controlIs(id)"),
+            Ok(ExprKind::GroupControlIs { .. })
+        ));
+        assert!(matches!(
+            value("g . controlIs(id)"),
+            Ok(ExprKind::GroupControlIs { .. })
+        ));
+        assert!(matches!(
+            value("tx.packet(1)"),
+            Ok(ExprKind::PacketInspect {
+                presence_only: false,
+                ..
+            })
+        ));
+        assert!(matches!(
+            value("tx.inputs[0].packet.has(1)"),
+            Ok(ExprKind::InputPacketInspect {
+                presence_only: true,
+                ..
+            })
+        ));
+        assert!(matches!(
+            value("tx . outputs [ i ] . assets . lookup ( id , )"),
+            Ok(ExprKind::AssetLookup { .. })
+        ));
+        assert!(matches!(
+            value("tx.inputs[0].assets[1]"),
+            Ok(ExprKind::AssetAt { property: None, .. })
+        ));
+        assert!(matches!(
+            value("tx.inputs[0].assets[1].amount"),
+            Ok(ExprKind::AssetAt {
+                property: Some(_),
+                ..
+            })
+        ));
+        assert!(matches!(
+            value("tx.assetGroups.lookup(id).inputs[0].amount"),
+            Ok(ExprKind::GroupIOAccess {
+                property: Some(_),
+                ..
+            })
+        ));
+        for (count, property) in [
+            ("inputs", TxProperty::NumInputs),
+            ("outputs", TxProperty::NumOutputs),
+        ] {
+            assert!(matches!(
+                value(&format!("tx.{count}.length")),
+                Ok(ExprKind::TxIntrospection { property: p }) if p == property
+            ));
+        }
+        assert!(matches!(
+            value("this.tunnel(0, {script: true, value: true, assets: true}, [])"),
+            Ok(ExprKind::Tunnel { exceptions, .. }) if exceptions.is_empty()
+        ));
+        let error = value("this.tunnel(0, ({script: true, value: true, assets: true}))");
+        assert!(error
+            .unwrap_err()
+            .contains("wrong arguments to `this.tunnel`"));
+        assert!(matches!(value("bytes32(x)"), Ok(ExprKind::Cast { .. })));
+        assert!(matches!(value("int(0x0100)"), Ok(ExprKind::Literal(value)) if value == "256"));
+        // Fields after a member apply to its value.
+        assert!(matches!(
+            value("tx.inputs[0].script.program"),
+            Ok(ExprKind::FieldAccess { value, .. }) if matches!(value.kind, ExprKind::InputIntrospection { .. })
+        ));
+        assert!(matches!(value("this.expiry"), Ok(ExprKind::This(_))));
+        assert!(
+            matches!(value("xs.length"), Ok(ExprKind::Name(path)) if path.key() == "xs.length")
+        );
+        assert!(matches!(value("Lib . f(x)"), Ok(ExprKind::Call { name, .. }) if name == "Lib.f"));
+        assert!(
+            matches!(value("Lib.length(x)"), Ok(ExprKind::Call { name, .. }) if name == "Lib.length")
+        );
+        // A chain no member spells keeps its spelling, strings included, for validation to report.
+        for (chain, path) in [
+            ("tx.inputs[0].valueX", "tx.inputs[0].valueX"),
+            (
+                "tx.assetGroups[0].inputs[0].amountX",
+                "tx.assetGroups[0].inputs[0].amountX",
+            ),
+            (r#"tx.packet("a b", "//x")"#, r#"tx.packet("a b","//x")"#),
+        ] {
+            assert!(
+                matches!(value(chain), Ok(ExprKind::Name(p)) if p.key() == path),
+                "{chain}"
+            );
+        }
+        for call in ["a.b.c(x)", "f(x).controlIs(id)", "(Lib).f(x)"] {
+            assert!(value(call).unwrap_err().contains("cannot call"), "{call}");
+        }
+        // A call statement names its function.
+        for (call, name) in [
+            ("g.controlIs(id)", "g.controlIs"),
+            ("Lib . check(x)", "Lib.check"),
+        ] {
+            let source = format!("contract C() {{ function spend(AssetGroup g) {{ {call}; }} }}");
+            let statement = &parse(&source).unwrap().functions[0].statements[0].statement;
+            assert!(
+                matches!(statement, Statement::Call(value) if matches!(&value.kind, ExprKind::Call { name: n, .. } if n == name)),
+                "{call}"
+            );
+        }
+    }
+
+    #[test]
+    fn nested_operands_parse_in_linear_time() {
+        // Each operand has one parse, so a failure deep inside one is never retried by another.
+        let (sender, receiver) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let nested = [
+                "Lib.f(",
+                "size(tx.packet(",
+                "this.tunnel(",
+                "bytes(",
+                "g.controlIs(",
+                "(Lib.f(",
+            ]
+            .map(|open| format!("{}0", open.repeat(24)));
+            let closed = format!("{}0{}", "tx.inputs[".repeat(24), "].value".repeat(24));
+            for operand in nested.iter().chain([&closed]) {
+                let source =
+                    format!("contract C() {{ function spend() {{ require({operand} > 0); }} }}");
+                let _ = parse(&source);
+            }
+            sender.send(()).unwrap();
+        });
+        let parsed = receiver.recv_timeout(std::time::Duration::from_secs(10));
+        assert!(
+            parsed.is_ok(),
+            "deeply nested operands did not parse in time"
+        );
+    }
+
+    #[test]
+    fn typed_struct_literals_nest_and_leave_loop_bodies_alone() {
+        let source = "contract C() { function spend(int a) {
+            let p = Outer { inner: Inner { x: a }, id: { txid: t, gidx: 0 } };
+            for (i, x) in items { require(x > i); }
+            for (i, x) in Lib.items { require(x > i); }
+            for (i, x) in items { y = x; }
+            for (i, x) in items {}
+            require(f(AssetId { txid: t, gidx: 0 }) == AssetId { txid: t, gidx: 1 });
+        } }";
+        let contract = parse(source).unwrap();
+        let statements = &contract.functions[0].statements;
+        let Statement::LetBinding { value, .. } = &statements[0].statement else {
+            panic!("{:?}", statements[0]);
+        };
+        assert!(source[value.span.start..value.span.end].starts_with("Outer {"));
+        let ExprKind::StructLiteral {
+            name: Some(outer),
+            fields,
+        } = &value.kind
+        else {
+            panic!("{value:?}");
+        };
+        assert_eq!(outer, "Outer");
+        assert!(
+            matches!(&fields[0].1.kind, ExprKind::StructLiteral { name: Some(name), .. } if name == "Inner")
+        );
+        assert!(matches!(
+            &fields[1].1.kind,
+            ExprKind::StructLiteral { name: None, .. }
+        ));
+        let loops = [("items", 1), ("Lib.items", 1), ("items", 1), ("items", 0)];
+        for (statement, (name, length)) in statements[1..5].iter().zip(loops) {
+            let Statement::ForIn { iterable, body, .. } = &statement.statement else {
+                panic!("{statement:?}");
+            };
+            assert!(matches!(&iterable.kind, ExprKind::Name(path) if path.key() == name));
+            assert_eq!(body.len(), length);
+        }
+        let Statement::Require(Expression {
+            kind: ExprKind::BinaryOp { left, right, .. },
+            ..
+        }) = &statements[5].statement
+        else {
+            panic!("{:?}", statements[5]);
+        };
+        let ExprKind::Call { args, .. } = &left.kind else {
+            panic!("{left:?}");
+        };
+        for literal in [&args[0], &**right] {
+            assert!(
+                matches!(&literal.kind, ExprKind::StructLiteral { name: Some(name), .. } if name == "AssetId")
             );
         }
     }
@@ -955,7 +1260,7 @@ mod tests {
             let prefixed = -!(n);
             let packet = tx.packet(-!(n));
             let sum = tx.assetGroups[n].sumInputs;
-            let owned = tx.assetGroups.find(h, n).controlIs(h, n);
+            let owned = tx.assetGroups.lookup(id).controlIs(AssetId { txid: h, gidx: n });
             require(total > 0);
         } }";
         let contract = parse(source).expect("parses");
@@ -973,11 +1278,9 @@ mod tests {
         let mut nodes = Vec::new();
         for statement in &contract.functions[0].statements {
             match &statement.statement {
-                Statement::Require(Requirement::Comparison { left, right, .. }) => {
-                    walk(left, &mut nodes);
-                    walk(right, &mut nodes);
+                Statement::Require(value) | Statement::LetBinding { value, .. } => {
+                    walk(value, &mut nodes)
                 }
-                Statement::LetBinding { value, .. } => walk(value, &mut nodes),
                 other => panic!("unexpected statement {other:?}"),
             }
         }
@@ -1001,7 +1304,8 @@ mod tests {
             "!(n)",
             "tx.packet(-!(n))",
             "tx.assetGroups[n].sumInputs",
-            "tx.assetGroups.find(h, n).controlIs(h, n)",
+            "tx.assetGroups.lookup(id).controlIs(AssetId { txid: h, gidx: n })",
+            "AssetId { txid: h, gidx: n }",
             "total",
             "0",
         ] {
@@ -1108,6 +1412,60 @@ contract C(pubkey k, int unused) {
     }
 
     #[test]
+    fn checks_version_pragmas_against_the_compiler_version() {
+        let check = |constraint: &str, version: &str| {
+            let source = format!("pragma arkade {constraint}; contract C() {{}}");
+            super::check_pragma(&source, version)
+        };
+        for (constraint, version, accepted) in [
+            ("1.2.3", "1.2.3", true),
+            ("1.2.3", "1.2.4", false),
+            ("=1.2.3", "1.2.3", true),
+            ("=1.2.3", "1.2.2", false),
+            (">1.2.3", "1.2.4", true),
+            (">1.2.3", "1.2.3", false),
+            (">=1.2.3", "1.2.3", true),
+            (">=1.2.3", "1.2.2", false),
+            ("<1.2.3", "1.2.2", true),
+            ("<1.2.3", "1.2.3", false),
+            ("<=1.2.3", "1.2.3", true),
+            ("<=1.2.3", "1.2.4", false),
+            ("^1.2.3", "1.9.0", true),
+            ("^1.2.3", "2.0.0", false),
+            ("^1.2.3", "1.2.2", false),
+            ("^0.1.2", "0.1.9", true),
+            ("^0.1.2", "0.2.0", false),
+            ("^0.1.2", "0.1.1", false),
+            ("^0.0.3", "0.0.3", true),
+            ("^0.0.3", "0.0.4", false),
+            ("~1.2.3", "1.2.9", true),
+            ("~1.2.3", "1.3.0", false),
+            ("~1.2.3", "1.2.2", false),
+            ("~0.0.3", "0.0.9", true),
+            (">=0.1.0 <0.2.0", "0.1.5", true),
+            (">=0.1.0 <0.2.0", "0.2.0", false),
+            ("^0.1.0 || ^1.0.0", "0.1.3", true),
+            ("^0.1.0 || ^1.0.0", "1.4.0", true),
+            ("^0.1.0 || ^1.0.0", "0.2.0", false),
+            ("^0.1.0", "0.1.0-rc.1", true),
+            (">0.1.0", "0.1.0-rc.1", false),
+            ("^ // constraint\n 1.2.3", "1.3.0", true),
+            ("<99999999999999999999.0.0", "0.1.0", true),
+        ] {
+            assert_eq!(
+                check(constraint, version).is_ok(),
+                accepted,
+                "{constraint} with {version}"
+            );
+        }
+        let error = check("^1.0.0 || >=2.0.0 // range\n <3.0.0", "0.1.0-rc.1").unwrap_err();
+        assert_eq!(
+            error.message,
+            "pragma requires arkade ^1.0.0 || >=2.0.0 <3.0.0, but this compiler is version 0.1.0-rc.1"
+        );
+    }
+
+    #[test]
     fn parses_constant_array_sizes_without_changing_index_expressions() {
         let contract = parse(
             "struct State { int[N] values; } contract C(pubkey[C.N] keys) { const int N = 2; function spend(int[N] values) { int[N] local = [1, 2]; local[N - 1] = values[0]; require(true); } }",
@@ -1147,13 +1505,14 @@ contract C(pubkey k, int unused) {
         .unwrap();
         let statements = &contract.functions[0].statements;
         assert!(
-            matches!(&statements[0].statement, Statement::LetBinding { value: Expression { kind: ExprKind::Literal(value), .. }, .. } if value == "0xDEADbeef")
+            matches!(&statements[0].statement, Statement::LetBinding { value: Expression { kind: ExprKind::Literal(value), .. }, .. } if value == "0xdeadbeef")
         );
         assert!(
             matches!(&statements[1].statement, Statement::LetBinding { value: Expression { kind: ExprKind::Literal(value), .. }, .. } if value == "0xc5be0a")
         );
         assert!(
-            matches!(&statements[2].statement, Statement::Require(Requirement::Comparison { left: Expression { kind: ExprKind::Literal(left), .. }, right: Expression { kind: ExprKind::Literal(right), .. }, .. }) if left == "0x68656c6c6f" && left == right)
+            matches!(&statements[2].statement, Statement::Require(Expression { kind: ExprKind::BinaryOp { left, right, .. }, .. })
+                if matches!((&left.kind, &right.kind), (ExprKind::Literal(left), ExprKind::Literal(right)) if left == "0x68656c6c6f" && left == right))
         );
     }
 
@@ -1177,7 +1536,7 @@ contract C(pubkey k, int unused) {
         use crate::models::{ExprKind, Expression};
         let contract = parse(
             r#"contract C() {
-            public function spend(int amount) { check(amount + 1 * 2); }
+            function spend(int amount) { check(amount + 1 * 2); }
             private function check(int value) { let returnValue = value; return; }
             private function sufficient(int value) bool { return value >= 1; }
             function other() { require(true); }
@@ -1221,7 +1580,7 @@ contract C(pubkey k, int unused) {
         assert!(matches!(&right.kind, ExprKind::BinaryOp { left, op, .. }
             if op.symbol() == "&&" && matches!(&left.kind, ExprKind::BinaryOp { op, .. } if op.symbol() == "&&")));
         assert!(matches!(&contract.functions[0].statements[1].statement,
-            Statement::Require(Requirement::Expression(Expression { kind: ExprKind::BinaryOp { left, op, right }, .. }))
+            Statement::Require(Expression { kind: ExprKind::BinaryOp { left, op, right }, .. })
             if op.symbol() == "&&"
                 && matches!(&left.kind, ExprKind::BinaryOp { op, .. } if op.symbol() == "||")
                 && matches!(&right.kind, ExprKind::Unary { op: UnaryOperator::Not, value }
@@ -1280,7 +1639,7 @@ contract C() {
         let statements = &contract.functions[0].statements;
         assert!(matches!(
             &statements[0].statement,
-            Statement::Require(Requirement::Expression(Expression { kind: ExprKind::Builtin { builtin, args }, .. }))
+            Statement::Require(Expression { kind: ExprKind::Builtin { builtin, args }, .. })
                 if builtin.name == "checkSig" && matches!(&args[1].kind, ExprKind::IndexAccess { .. })
                     && args[1].source_text() == "signers[i + 1].keys[0]"
         ));
@@ -1301,8 +1660,10 @@ contract C() {
         } }";
         let contract = parse(source).unwrap();
         let statements = &contract.functions[0].statements;
-        let Statement::Require(Requirement::Comparison { left, right, .. }) =
-            &statements[0].statement
+        let Statement::Require(Expression {
+            kind: ExprKind::BinaryOp { left, right, .. },
+            ..
+        }) = &statements[0].statement
         else {
             panic!("{:?}", statements[0].statement);
         };
@@ -1325,7 +1686,7 @@ contract C() {
         // A grouped binding keeps its binding path.
         assert!(matches!(
             &statements[1].statement,
-            Statement::Require(Requirement::Comparison { left, .. })
+            Statement::Require(Expression { kind: ExprKind::BinaryOp { left, .. }, .. })
                 if matches!(&left.kind, ExprKind::Name(path) if path.key() == "p.x")
         ));
     }
@@ -1410,7 +1771,7 @@ contract Demo(pubkey first, pubkey second) {
         ));
         assert!(matches!(
             &statements[2].statement,
-            Statement::Require(Requirement::Expression(Expression { kind: ExprKind::Builtin { builtin, args }, .. }))
+            Statement::Require(Expression { kind: ExprKind::Builtin { builtin, args }, .. })
                 if builtin.name == "checkMultisig" && args.len() == 2
                     && matches!(&args[0].kind, ExprKind::ArrayLiteral(keys) if keys.iter().map(Expression::source_text).eq(["first", "second"]))
                     && matches!(&args[1].kind, ExprKind::ArrayLiteral(sigs) if sigs.iter().map(Expression::source_text).eq(["firstSig", "secondSig"]))
@@ -1442,7 +1803,7 @@ contract Demo() {
         for body in [then_body, else_body] {
             assert!(matches!(
                 &body[0].statement,
-                Statement::Require(Requirement::Expression(Expression { kind: ExprKind::Builtin { builtin, args }, .. }))
+                Statement::Require(Expression { kind: ExprKind::Builtin { builtin, args }, .. })
                     if builtin.name == "checkMultisig" && matches!(&args[2].kind, ExprKind::Name(path) if path.key() == "QUORUM")
             ));
         }
@@ -1503,6 +1864,130 @@ contract Demo(pubkey first, pubkey second) {{
                 "contract C() {{ function spend(int x) {{ if (x == 1) {{ require(x > 0); }} {chain} }} }}"
             );
             assert!(parse(&source).is_err(), "{chain}");
+        }
+    }
+
+    #[test]
+    fn block_comments_separate_tokens_and_do_not_nest() {
+        let contract = parse(
+            r#"/* header
+            */ contract/**/C(/* none */) { function spend(/* a */int/* b */x/* c */) {
+                bytes text = "/* text */"; // a line comment holds /* without closing it
+                let groups = tx /* all */ . /* the */ assetGroups;
+                require(x /* multi
+                   line */ == /* // */ 1);
+            } }"#,
+        )
+        .unwrap();
+        let statements = &contract.functions[0].statements;
+        assert!(
+            matches!(&statements[0].statement, Statement::LetBinding { value: Expression { kind: ExprKind::Literal(value), .. }, .. } if value == "0x2f2a2074657874202a2f")
+        );
+        assert!(
+            matches!(&statements[1].statement, Statement::LetBinding { value: Expression { kind: ExprKind::Name(path), .. }, .. } if path.key() == "tx.assetGroups")
+        );
+        for source in [
+            "/* /* nested */ */ contract C() {}",
+            "contract C() {} /* unterminated",
+            "contract C() {} /* unterminated *",
+            "contract C() {} /*/",
+            "contract C() {} / * split * /",
+        ] {
+            assert!(parse(source).is_err(), "{source}");
+        }
+        // Reported where it opens, also after the contract, where pest does not name `*/`.
+        let error = parse("contract C() {}\n/* unterminated").unwrap_err();
+        assert!(
+            error.contains("--> 2:1") && error.contains("expected '*/'"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn every_list_takes_one_trailing_comma() {
+        let contract = parse(
+            r#"@allow(unused-parameter, "kept",)
+            contract C(pubkey k, int[2] xs,) {
+            function spend(signature s, int n, bytes32 id,) {
+                let a = [n, 2,];
+                let p = { x: n, y: 2, };
+                let m = min(n, 2,);
+                let h = sha256(cat(id, id,),);
+                let v = int(0x01,);
+                let l = tx.inputs[0].assets.lookup(AssetId { txid: id, gidx: 0, },);
+                let f = tx.intent.field("type",);
+                let t = this.tunnel(0, { script: true, value: true, assets: true, }, [id,],);
+                require(checkMultisig([k, k,], [s, s,], 2,), "m",);
+                require(n > 0,);
+            }
+            function exit(signature s,) tapscript {
+                require(checkSig(s, tweak(k, spend,),),);
+                require(older(blocks(144,),), "wait",);
+            }
+        }"#,
+        )
+        .unwrap();
+        assert_eq!(contract.parameters.len(), 2);
+        assert_eq!(contract.functions[0].parameters.len(), 3);
+        assert_eq!(contract.functions[0].statements.len(), 10);
+        // A lone quoted intent path is still checked at compile time.
+        let error = parse(r#"contract C() { function spend() { let f = tx.intent.field("Bad Path",); require(f == f); } }"#).unwrap_err();
+        assert!(error.contains("invalid intent message path"), "{error}");
+        for list in [
+            "f(,)",
+            "f(n,,)",
+            "f(, n)",
+            "[,]",
+            "[n,,]",
+            "{,}",
+            "{ x: n,, }",
+            "(n,)",
+            "int(,)",
+            "sha256(,)",
+            "new C(,)",
+        ] {
+            let source = format!(
+                "contract C() {{ function spend(int n) {{ let a = {list}; require(a); }} }}"
+            );
+            assert!(parse(&source).is_err(), "{list}");
+        }
+        for source in [
+            "contract C(,) {}",
+            "contract C(int n,,) {}",
+            "@allow(,) contract C() {}",
+            "contract C() { function spend(int n) { require(n > 0,,); } }",
+            "contract C() { function spend(int n) { require(,); } }",
+            "contract C(pubkey k) { function exit(signature s) tapscript { require(checkSig(s, k,,)); } }",
+        ] {
+            assert!(parse(source).is_err(), "{source}");
+        }
+    }
+
+    #[test]
+    fn digit_separators_sit_between_digits_and_drop_out_of_values() {
+        let contract = parse(
+            "contract C(int[1_0] xs) { const int BIG = 1_000_000; function spend(int n) { let a = 1_2_3 + 1000; require(n > 0); } }",
+        )
+        .unwrap();
+        assert_eq!(contract.parameters[0].param_type.to_string(), "int[10]");
+        assert!(
+            matches!(&contract.constants[0].value.kind, ExprKind::Literal(value) if value == "1000000")
+        );
+        assert!(
+            matches!(&contract.functions[0].statements[0].statement, Statement::LetBinding { value: Expression { kind: ExprKind::BinaryOp { left, .. }, .. }, .. } if matches!(&left.kind, ExprKind::Literal(value) if value == "123"))
+        );
+        for literal in ["_1", "1_", "1__0", "1_ 0", "0_1", "01", "0x1_0", "0x_10"] {
+            let source = format!(
+                "contract C() {{ function spend(int n) {{ let a = {literal}; require(n > a); }} }}"
+            );
+            assert!(parse(&source).is_err(), "{literal}");
+        }
+        for source in [
+            "contract C(int[0_1] xs) {}",
+            "contract C(int[1_] xs) {}",
+            "pragma arkade ^0.1_0.0; contract C() {}",
+        ] {
+            assert!(parse(source).is_err(), "{source}");
         }
     }
 }

@@ -22,9 +22,10 @@ pub enum ArraySize {
 }
 
 impl ArraySize {
-    /// A length literal, or the constant that names one.
+    /// A length literal, or the constant that names one. A literal drops its `_` digit separators;
+    /// a constant name starts with a letter, so dropping its underscores never makes a number.
     pub fn parse(text: &str) -> Self {
-        match text.parse() {
+        match text.replace('_', "").parse() {
             Ok(length) => ArraySize::Fixed(length),
             Err(_) => ArraySize::Const(text.to_string()),
         }
@@ -118,15 +119,7 @@ impl<'de> Deserialize<'de> for TypeName {
 pub fn is_builtin_type(declared_type: &str) -> bool {
     matches!(
         declared_type,
-        "pubkey"
-            | "signature"
-            | "bytes"
-            | "bytes20"
-            | "bytes32"
-            | "int"
-            | "bool"
-            | "asset"
-            | "AssetGroup"
+        "pubkey" | "signature" | "bytes" | "bytes20" | "bytes32" | "int" | "bool" | "AssetGroup"
     )
 }
 
@@ -141,6 +134,10 @@ pub fn builtin_struct_fields(
         "ScriptPubKey" => Some(&[("program", "bytes"), ("version", "int")]),
         "AssetEntry" => Some(&[("assetId", "AssetId"), ("amount", "int")]),
         "AssetLookup" => Some(&[("amount", "int"), ("found", "bool")]),
+        // Asset group records without the txid, which only an intent input has.
+        "AssetGroupInput" | "AssetGroupOutput" => {
+            Some(&[("type", "int"), ("index", "int"), ("amount", "int")])
+        }
         "ECPoint" => Some(&[("x", "int"), ("y", "int")]),
         // alt_bn128 G2 point; each coordinate is an Fp2 element `c1 * i + c0`.
         "G2Point" => Some(&[
@@ -162,7 +159,7 @@ pub fn is_builtin_struct(declared_type: &str) -> bool {
 pub struct Parameter {
     /// Parameter name
     pub name: String,
-    /// Parameter type (pubkey, signature, bytes32, int, bool, asset, value)
+    /// Parameter type: a builtin, struct, or fixed-size array type
     #[serde(rename = "type")]
     pub param_type: TypeName,
     /// Byte range of the name; empty for parameters the compiler builds.

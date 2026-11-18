@@ -3,7 +3,7 @@ use arkade_compiler::opcodes::{OP_ADD, OP_CAT, OP_NUM2BIN, OP_SHA256};
 
 // `+` between bytes-like values should compile to OP_CAT, not OP_ADD.
 // An int operand carries no width of its own, so the contract states one with
-// num2bin; the compiler never inserts a conversion on its own.
+// int2bytes; the compiler never inserts a conversion on its own.
 const CONCAT_CODE: &str = r#"
 contract Mix(
   pubkey  signer,
@@ -13,7 +13,7 @@ contract Mix(
 ) {
   function check(signature sig) {
     require(checkSig(sig, signer), "bad sig");
-    let msg = sha256(ticker + num2bin(price, 8) + num2bin(time, 8));
+    let msg = sha256(ticker + int2bytes(price, 8) + int2bytes(time, 8));
     require(checkSigFromStack(sig, signer, msg), "bad msg sig");
   }
 }
@@ -35,7 +35,7 @@ fn test_plus_on_bytes32_emits_op_cat() {
     assert_eq!(
         asm.matches(OP_NUM2BIN).count(),
         2,
-        "Expected exactly the two num2bin conversions the contract asks for; asm:\n{asm}"
+        "Expected exactly the two int2bytes conversions the contract asks for; asm:\n{asm}"
     );
     assert!(
         !asm.contains(OP_ADD),
@@ -73,7 +73,7 @@ fn test_loop_body_substitutes_index_through_byte_ops() {
 contract LoopHash(bytes32 tag) {
   function check(int[3] prices) {
     for (i, p) in prices {
-      let m = sha256(tag + num2bin(p, 8));
+      let m = sha256(tag + int2bytes(p, 8));
       require(m == tag);
     }
   }
@@ -95,7 +95,7 @@ contract LoopHash(bytes32 tag) {
 
 #[test]
 fn concatenation_rejects_non_byte_scalar_types() {
-    for ty in ["AssetGroup", "asset", "int", "bool"] {
+    for ty in ["AssetGroup", "int", "bool"] {
         for (expression, side) in [
             ("0x01 + value", "right"),
             ("value + 0x01", "left"),
@@ -118,11 +118,11 @@ fn concatenation_rejects_non_byte_scalar_types() {
                 "{error}"
             );
             assert_eq!(
-                error.contains("num2bin(value, width)"),
+                error.contains("int2bytes(value, width)"),
                 ty == "int",
                 "{error}"
             );
-            if matches!(ty, "AssetGroup" | "asset") {
+            if ty == "AssetGroup" {
                 assert!(
                     error.contains("both operands must be bytes-like"),
                     "{error}"

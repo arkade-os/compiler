@@ -20,6 +20,20 @@ pub fn compile_unoptimized(source: &str) -> Result<ContractJson, Box<dyn std::er
     )
 }
 
+/// Compile `entry` from in-memory `(path, source)` pairs.
+pub fn project(
+    entry: &str,
+    sources: &[(&str, &str)],
+) -> Result<ContractJson, Box<dyn std::error::Error>> {
+    arkade_compiler::compile_sources(
+        entry,
+        &sources
+            .iter()
+            .map(|(path, source)| (path.to_string(), source.to_string()))
+            .collect(),
+    )
+}
+
 /// Locate a spend group by name or panic with a descriptive message.
 pub fn group<'a>(out: &'a ContractJson, name: &str) -> &'a AbiFunctionGroup {
     out.functions
@@ -117,8 +131,7 @@ pub fn user_signatures(out: &ContractJson, group_name: &str) -> Vec<String> {
 /// Whether `lint` judges a covenant's authorization or outputs; the toy contracts of tests for
 /// other features have neither, so those tests leave such lints out.
 pub fn is_covenant_lint(lint: arkade_compiler::lint::Lint) -> bool {
-    use arkade_compiler::lint::{Category, Lint};
-    lint.category() == Category::Security || lint == Lint::OffchainLocktime
+    lint.category() == arkade_compiler::lint::Category::Security
 }
 
 /// `out`'s warnings except covenant lints.

@@ -1,5 +1,5 @@
-error[validation]: unknown transaction property 'time'; expected one of version, locktime, numInputs, numOutputs, weight, id
+error[validation]: unknown member 'time' of 'tx'; expected one of assetGroups, id, input, inputs, intent, locktime, numInputs, numOutputs, outputs, packet, version, weight
   --> 4:13
 4 |     require(tx.time >= 1000);
-  |             ^^^^^^^^
+  |             ^^^^^^^
 

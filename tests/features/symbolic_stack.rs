@@ -34,7 +34,7 @@ contract Shape(int limit) {
 }
 "#;
     let raw = compile(source).unwrap();
-    assert_eq!(raw.format_version, Some(1));
+    assert_eq!(raw.format_version, 1);
     assert_eq!(
         serde_json::to_value(&raw).unwrap()["compiler"]["options"]["optimize"],
         false
@@ -98,7 +98,7 @@ fn nested_expression_reads_bindings_without_consuming_them() {
         r#"
 contract Nested() {
     function spend(int x, int y, int z) {
-        let w = (bin2num(num2bin(x, 8)) + y) * z;
+        let w = (bytes2int(int2bytes(x, 8)) + y) * z;
         require(w > x);
     }
 }
@@ -479,7 +479,7 @@ fn constructor_references_cover_nested_bodies_and_named_operands() {
                 ),
                 (
                     "child.ark".into(),
-                    "import \"policy.ark\"; contract Child(Policy policy) {}".into(),
+                    "import \"policy.ark\"; contract Child(Policy policy) { function spend() { require(tx.numOutputs == 1); } }".into(),
                 ),
             ]
             .into_iter()
@@ -508,10 +508,10 @@ fn constructor_references_cover_nested_bodies_and_named_operands() {
          "if (checkSig(sig, key)) { require(true); } else { require(false); }",
          vec!["<key>"]),
         ("bytes32 digest, int deadline", "bytes preimage",
-         "require(sha256(preimage) == digest); require(tx.locktime >= deadline);",
+         "require(sha256(preimage) == digest); require(checkTime(deadline));",
          vec!["<digest>", "<deadline>"]),
         ("AssetGroup groupIndex, bytes32 txid, int gidx", "",
-         "require(groupIndex.sumInputs >= 0); require(groupIndex.controlIs(txid, gidx));",
+         "require(groupIndex.sumInputs >= 0); require(groupIndex.controlIs({ txid: txid, gidx: gidx }));",
          vec!["<groupIndex>", "<gidx>", "<txid>"]),
         ("Policy policy", "",
          "require(tx.outputs[0].script == new Child(policy));",
@@ -624,7 +624,7 @@ fn final_use_after_a_private_call_consumes_the_caller_binding() {
     let covenant = covenant(
         r#"
 contract Framed() {
-    public function spend(int x, int y) {
+    function spend(int x, int y) {
         require(double(x) > 0);
         require(double(x) == y);
         require(x >= 1);

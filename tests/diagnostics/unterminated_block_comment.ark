@@ -1,0 +1,7 @@
+contract Vault(pubkey owner) {
+  function spend(signature sig) {
+    require(checkSig(sig, owner), "/* not a comment");
+  }
+  /* closed */ // a line comment /*
+  /* never closed
+}

@@ -1,7 +1,7 @@
 use crate::diagnostics::{CompileError, Span};
 use crate::models::{
     ArraySize, AssignmentTarget, Constant, Contract, ExprKind, Expression, LocatedStatement, Path,
-    Requirement, Statement, TypeName,
+    Statement, TypeName,
 };
 use crate::operators::{BinaryOperator, OperatorClass, UnaryOperator};
 use std::collections::HashMap;
@@ -77,9 +77,12 @@ fn collect(contract: &Contract) -> Result<HashMap<String, String>, CompileError>
                 "constant '{name}' collides with function '{name}'"
             )));
         }
-        if !matches!(const_type.name(), Some("int" | "bool" | "bytes")) {
+        if !matches!(
+            const_type.name(),
+            Some("int" | "bool" | "bytes" | "bytes20" | "bytes32" | "pubkey")
+        ) {
             return Err(error(format!(
-                "constant '{name}' must be int, bool or bytes"
+                "constant '{name}' must be int, bool, bytes, bytes20, bytes32 or pubkey"
             )));
         }
         declarations.insert(name.clone(), constant);
@@ -140,7 +143,14 @@ fn resolve_value(
             false => format!("constant '{name}': {error}"),
         })?;
     active.pop();
-    if constant.const_type.name() != Some(kind(&value)) {
+    let width = value.strip_prefix("0x").map(|hex| hex.len() / 2);
+    let valid = match constant.const_type.name() {
+        Some("bytes20") => width == Some(20),
+        Some("bytes32") => width == Some(32),
+        Some("pubkey") => width.is_some_and(|width| width > 0),
+        declared => declared == Some(kind(&value)),
+    };
+    if !valid {
         return Err(format!(
             "constant '{name}' is not a valid '{}' literal",
             constant.const_type
@@ -283,10 +293,7 @@ pub(crate) fn evaluate(
                         "operator '{op}' requires constants of the same type"
                     ));
                 }
-                // Hex literals carry whole byte pairs in either case.
-                return Ok(
-                    (left.eq_ignore_ascii_case(&right) == (*op == BinaryOperator::Eq)).to_string(),
-                );
+                return Ok(((left == right) == (*op == BinaryOperator::Eq)).to_string());
             }
             let (left, right) = (integer(&left)?, integer(&right)?);
             let value = match op {
@@ -357,9 +364,9 @@ fn fold_statements(
     for statement in statements {
         let at = at(statement.span);
         match &mut statement.statement {
-            Statement::Call(expression) | Statement::Return(Some(expression)) => {
-                fold_expression(expression, values, uses)
-            }
+            Statement::Call(expression)
+            | Statement::Return(Some(expression))
+            | Statement::Require(expression) => fold_expression(expression, values, uses),
             Statement::Declaration { declared_type, .. } => {
                 fold_type(declared_type, values).map_err(at)?
             }
@@ -381,7 +388,6 @@ fn fold_statements(
                 }
                 fold_expression(value, values, uses);
             }
-            Statement::Require(requirement) => fold_requirement(requirement, values, uses),
             Statement::IfElse {
                 condition,
                 then_body,
@@ -410,20 +416,6 @@ fn fold_statements(
     Ok(())
 }
 
-fn fold_requirement(
-    requirement: &mut Requirement,
-    values: &HashMap<String, String>,
-    uses: &mut Vec<(Path, Span)>,
-) {
-    match requirement {
-        Requirement::Expression(expression) => fold_expression(expression, values, uses),
-        Requirement::Comparison { left, right, .. } => {
-            fold_expression(left, values, uses);
-            fold_expression(right, values, uses);
-        }
-    }
-}
-
 fn fold_expression(
     expression: &mut Expression,
     values: &HashMap<String, String>,
@@ -434,6 +426,16 @@ fn fold_expression(
             uses.push((path.clone(), expression.span));
             expression.kind = ExprKind::Literal(value.clone());
             return;
+        }
+        // `KEY.length` is the length of the constant's value.
+        if let Some((constant, "length")) = path.split_last() {
+            if let Some(value) = values.get(&constant.key()) {
+                uses.push((constant.clone(), expression.span));
+                let value = Box::new(expression.with_kind(ExprKind::Literal(value.clone())));
+                let field = "length".to_string();
+                expression.kind = ExprKind::FieldAccess { value, field };
+                return;
+            }
         }
     }
     if let ExprKind::Tunnel { policy, .. } = &mut expression.kind {

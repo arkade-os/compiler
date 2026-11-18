@@ -11,26 +11,44 @@ fn push_literal_asm(lit: &str, asm: &mut Vec<Op>) {
     }
 }
 
+/// The fields of a native struct value that are read one by one, in `fields` order: a binding's
+/// leaves or a literal's values.
+// ponytail: validation checked a literal against `fields`, which are all scalars for today's
+// native struct parameters; one with struct fields needs recursive emission.
+pub(crate) fn native_struct_leaves(
+    value: &Expression,
+    fields: &[(&str, &str)],
+) -> Option<Vec<Expression>> {
+    match &value.kind {
+        ExprKind::Name(path) => Some(
+            fields
+                .iter()
+                .map(|(field, _)| value.with_kind(ExprKind::Name(path.clone().field(*field))))
+                .collect(),
+        ),
+        ExprKind::StructLiteral { fields: values, .. } => Some(
+            fields
+                .iter()
+                .map(|(field, _)| {
+                    let (_, value) = values
+                        .iter()
+                        .find(|(name, _)| name == field)
+                        .expect("validated struct literal has every field");
+                    value.clone()
+                })
+                .collect(),
+        ),
+        _ => None,
+    }
+}
+
 /// Push a two-field native struct with its first field deepest, as native opcodes expect.
 fn emit_native_struct_asm(value: &Expression, fields: &[(&str, &str)], asm: &mut Vec<Op>) {
-    match &value.kind {
-        ExprKind::Name(path) => {
-            for (field, _) in fields {
-                asm.push(Op::Read(path.clone().field(*field)));
-            }
-        }
-        // ponytail: validation checked the literal against `fields`, which are all scalars for
-        // today's native struct parameters; one with struct fields needs recursive emission.
-        ExprKind::StructLiteral(values) => {
-            for (field, _) in fields {
-                let (_, value) = values
-                    .iter()
-                    .find(|(name, _)| name == field)
-                    .expect("validated struct literal has every field");
-                emit_expression_asm(value, asm);
-            }
-        }
-        _ => {
+    match native_struct_leaves(value, fields) {
+        Some(leaves) => leaves
+            .iter()
+            .for_each(|leaf| emit_expression_asm(leaf, asm)),
+        None => {
             emit_expression_asm(value, asm);
             // Helpers return structs first-field-on-top.
             if matches!(&value.kind, ExprKind::Extracted(_)) {
@@ -38,6 +56,15 @@ fn emit_native_struct_asm(value: &Expression, fields: &[(&str, &str)], asm: &mut
             }
         }
     }
+}
+
+pub(crate) fn asset_id_fields() -> &'static [(&'static str, &'static str)] {
+    crate::models::builtin_struct_fields("AssetId").expect("AssetId is a native struct")
+}
+
+/// Push an `AssetId` value: its txid, then its gidx on top.
+pub(crate) fn emit_asset_id_asm(asset_id: &Expression, asm: &mut Vec<Op>) {
+    emit_native_struct_asm(asset_id, asset_id_fields(), asm);
 }
 
 /// Emit assembly for an expression (push its value onto the stack)
@@ -72,9 +99,7 @@ pub(crate) fn emit_expression_asm(expr: &Expression, asm: &mut Vec<Op>) {
             }
             asm.push(Op::Push(flags.to_string()));
             for exception in exceptions {
-                let fields = crate::models::builtin_struct_fields("AssetId")
-                    .expect("AssetId is a native struct");
-                emit_native_struct_asm(exception, fields, asm);
+                emit_asset_id_asm(exception, asm);
             }
             asm.push(Op::Push(exceptions.len().to_string()));
             asm.push(Tunnel.into());
@@ -82,7 +107,7 @@ pub(crate) fn emit_expression_asm(expr: &Expression, asm: &mut Vec<Op>) {
         // Rejected before emission; array declarations emit their elements directly.
         ExprKind::ArrayLiteral(_) => {}
         // Rejected before emission; typed struct declarations emit scalar leaves directly.
-        ExprKind::StructLiteral(_) => {}
+        ExprKind::StructLiteral { .. } => {}
         ExprKind::FieldAccess { .. } | ExprKind::IndexAccess { .. } => {
             unreachable!("binding accesses are extracted before emission")
         }
@@ -102,27 +127,18 @@ pub(crate) fn emit_expression_asm(expr: &Expression, asm: &mut Vec<Op>) {
         ExprKind::AssetLookup {
             source,
             index,
-            asset_txid,
-            asset_gidx,
-        } => {
-            emit_asset_lookup_asm(source, index, asset_txid, asset_gidx, asm);
-        }
+            asset_id,
+        } => emit_asset_lookup_asm(source, index, asset_id, asm),
         ExprKind::AssetHas {
             source,
             index,
-            asset_txid,
-            asset_gidx,
-        } => {
-            emit_asset_has_asm(source, index, asset_txid, asset_gidx, asm);
-        }
+            asset_id,
+        } => emit_asset_has_asm(source, index, asset_id, asm),
         ExprKind::AssetTryLookup {
             source,
             index,
-            asset_txid,
-            asset_gidx,
-        } => {
-            emit_asset_lookup_operands(source, index, asset_txid, asset_gidx, asm);
-        }
+            asset_id,
+        } => emit_asset_lookup_operands(source, index, asset_id, asm),
         ExprKind::AssetCount { source, index } => {
             emit_asset_count_asm(source, index, asm);
         }
@@ -144,24 +160,10 @@ pub(crate) fn emit_expression_asm(expr: &Expression, asm: &mut Vec<Op>) {
             emit_output_introspection_asm(index, *property, asm);
         }
         ExprKind::BinaryOp { left, op, right } => emit_binary_op_asm(left, *op, right, asm),
-        ExprKind::GroupFind {
-            asset_txid,
-            asset_gidx,
-        } => {
-            emit_group_find_asm(asset_txid, asset_gidx, asm);
-        }
-        ExprKind::GroupHas {
-            asset_txid,
-            asset_gidx,
-        } => {
-            emit_group_has_asm(asset_txid, asset_gidx, asm);
-        }
-        ExprKind::GroupControlIs {
-            group,
-            asset_txid,
-            asset_gidx,
-        } => {
-            emit_group_control_is_asm(group, asset_txid, asset_gidx, asm);
+        ExprKind::GroupLookup { asset_id } => emit_group_lookup_asm(asset_id, asm),
+        ExprKind::GroupHas { asset_id } => emit_group_has_asm(asset_id, asm),
+        ExprKind::GroupControlIs { group, asset_id } => {
+            emit_group_control_is_asm(group, asset_id, asm)
         }
         ExprKind::GroupProperty { group, property } => {
             emit_group_property_asm(group, *property, asm);
@@ -210,7 +212,8 @@ pub(crate) fn emit_expression_asm(expr: &Expression, asm: &mut Vec<Op>) {
             emit_contract_instance_asm(contract_name, args, asm);
         }
         ExprKind::Builtin { builtin, args } => {
-            let crate::builtins::Lowering::Opcodes(opcodes) = builtin.lowering else {
+            use crate::builtins::Lowering;
+            let (Lowering::Opcodes(opcodes) | Lowering::Check(opcodes)) = builtin.lowering else {
                 unreachable!("pairings are extracted before raw emission")
             };
             for (arg, (_, ty)) in args.iter().zip(builtin.params) {
@@ -220,6 +223,9 @@ pub(crate) fn emit_expression_asm(expr: &Expression, asm: &mut Vec<Op>) {
                 }
             }
             asm.extend(opcodes.iter().copied().map(Op::from));
+            if matches!(builtin.lowering, Lowering::Check(_)) {
+                asm.push(Int1.into());
+            }
         }
         ExprKind::Unary { op, value } => {
             emit_expression_asm(value, asm);
@@ -345,7 +351,7 @@ pub(crate) fn emit_binary_op_asm(
 }
 
 /// The opcodes applying a non-logical `op` to `left` and `right`.
-pub(crate) fn operator_opcodes(
+fn operator_opcodes(
     op: BinaryOperator,
     left: &Expression,
     right: &Expression,

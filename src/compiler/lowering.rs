@@ -118,10 +118,10 @@ fn lower_statement(
         _ => None,
     };
     Ok(Some(match statement.statement {
-        Statement::Require(Requirement::Expression(Expression {
+        Statement::Require(Expression {
             kind: ExprKind::Literal(value),
             ..
-        })) if fold && value == "true" => return Ok(None),
+        }) if fold && value == "true" => return Ok(None),
         Statement::IfElse {
             condition,
             then_body,

@@ -8,8 +8,7 @@
 use std::collections::HashMap;
 
 use crate::models::{
-    AssignmentTarget, Contract, ExprKind, Expression, LocatedStatement, Path, Requirement,
-    Statement, TypeName,
+    AssignmentTarget, Contract, ExprKind, Expression, LocatedStatement, Path, Statement, TypeName,
 };
 use crate::operators::{BinaryOperator, OperatorClass, UnaryOperator};
 use crate::properties::{GroupIoProperty, GroupProperty};
@@ -36,8 +35,6 @@ pub enum ArkType {
     Int,
     /// Boolean: empty is false and 0x01 is true, the only encodings a witness may use
     Bool,
-    /// Taproot Asset identifier
-    Asset,
     /// Position of an asset group in the transaction's asset packet
     AssetGroup,
 
@@ -48,6 +45,9 @@ pub enum ArkType {
     Array(Box<ArkType>, usize),
     /// Named user-defined struct.
     Struct(String),
+
+    /// No stack value: a call to a function without a result.
+    Void,
 
     /// Type could not be resolved (variable not in scope, etc.)
     Unknown,
@@ -68,7 +68,6 @@ impl ArkType {
             "bytes32" => ArkType::Bytes32,
             "int" => ArkType::Int,
             "bool" => ArkType::Bool,
-            "asset" => ArkType::Asset,
             "AssetGroup" => ArkType::AssetGroup,
             _ if !s.is_empty() => ArkType::Struct(s.to_string()),
             _ => ArkType::Unknown,
@@ -87,10 +86,10 @@ impl ArkType {
             ArkType::Bytes32 => "raw-32",
             ArkType::Int => "scriptnum",
             ArkType::Bool => "scriptnum",
-            ArkType::Asset => "raw-32",
             ArkType::AssetGroup => "scriptnum",
             ArkType::Array(..) => "array",
             ArkType::Struct(..) => "struct",
+            ArkType::Void => "void",
             ArkType::Unknown => "unknown",
         }
     }
@@ -104,10 +103,10 @@ impl ArkType {
             ArkType::Bytes32 => "bytes32".to_string(),
             ArkType::Int => "int".to_string(),
             ArkType::Bool => "bool".to_string(),
-            ArkType::Asset => "asset".to_string(),
             ArkType::AssetGroup => "AssetGroup".to_string(),
             ArkType::Array(inner, length) => format!("{}[{length}]", inner.as_str()),
             ArkType::Struct(name) => name.clone(),
+            ArkType::Void => "void".to_string(),
             ArkType::Unknown => "unknown".to_string(),
         }
     }
@@ -220,22 +219,26 @@ pub(crate) fn bind_local_type(
 /// call return types and asset-group members, which depend on the types.
 pub(crate) fn annotate(contract: &mut Contract) {
     let constructor = build_scope_with_structs(&contract.parameters, &contract.structs);
-    let returns: HashMap<_, _> = contract
+    let signatures: HashMap<_, _> = contract
         .functions
         .iter()
-        .map(|f| (f.name.clone(), f.return_type.clone()))
+        .map(|f| {
+            let parameters = f.parameters.iter().map(|p| p.param_type.clone()).collect();
+            (f.name.clone(), (parameters, f.return_type.clone()))
+        })
         .collect();
-    let typing = Typing {
-        structs: &contract.structs,
-        returns: Some(&returns),
-    };
     for function in contract.functions.iter_mut().filter(|f| !f.is_imported()) {
         let mut scope = constructor.clone();
         scope.extend(build_scope_with_structs(
             &function.parameters,
             &contract.structs,
         ));
-        typing.statements(&mut function.statements, &mut scope);
+        Typing {
+            structs: &contract.structs,
+            signatures: Some(&signatures),
+            result: function.return_type.as_ref(),
+        }
+        .statements(&mut function.statements, &mut scope);
     }
 }
 
@@ -248,7 +251,8 @@ pub(crate) fn annotate_statements(
 ) {
     Typing {
         structs,
-        returns: None,
+        signatures: None,
+        result: None,
     }
     .statements(statements, scope);
 }
@@ -257,33 +261,35 @@ pub(crate) fn annotate_statements(
 pub(crate) fn annotate_expression(expression: &mut Expression, scope: &Scope) {
     Typing {
         structs: &[],
-        returns: None,
+        signatures: None,
+        result: None,
     }
     .expression(expression, scope);
 }
 
+/// Each function's parameter and result types, by name.
+type Signatures = HashMap<String, (Vec<TypeName>, Option<TypeName>)>;
+
 struct Typing<'a> {
     structs: &'a [crate::models::StructDefinition],
     /// Present on the first pass, which also resolves names.
-    returns: Option<&'a HashMap<String, Option<TypeName>>>,
+    signatures: Option<&'a Signatures>,
+    /// The result type of the function being typed.
+    result: Option<&'a TypeName>,
 }
 
 impl Typing<'_> {
     fn statements(&self, statements: &mut [LocatedStatement], scope: &mut Scope) {
         for statement in statements {
             match &mut statement.statement {
-                Statement::Call(value) | Statement::Return(Some(value)) => {
-                    self.expression(value, scope)
+                Statement::Call(value) | Statement::Require(value) => self.expression(value, scope),
+                Statement::Return(Some(value)) => {
+                    self.expression(value, scope);
+                    if let Some(result) = self.result {
+                        self.expect(value, &result.ark_type());
+                    }
                 }
                 Statement::Return(None) => {}
-                Statement::Require(requirement) => {
-                    for value in requirement.expressions_mut() {
-                        self.expression(value, scope);
-                    }
-                    if let Requirement::Comparison { left, op, right } = requirement {
-                        type_compared_literal(left, *op, right);
-                    }
-                }
                 Statement::Declaration {
                     name,
                     declared_type,
@@ -302,10 +308,15 @@ impl Typing<'_> {
                     value,
                 } => {
                     self.expression(value, scope);
-                    let ty = declared_type
-                        .as_ref()
-                        .map(TypeName::ark_type)
-                        .unwrap_or_else(|| value.ty.clone());
+                    if let Some(declared_type) = declared_type {
+                        self.expect(value, &declared_type.ark_type());
+                    }
+                    // A binding holds a value, so one of a void initializer has no type.
+                    let ty = match (declared_type.as_ref(), &value.ty) {
+                        (Some(declared_type), _) => declared_type.ark_type(),
+                        (None, ArkType::Void) => ArkType::Unknown,
+                        (None, ty) => ty.clone(),
+                    };
                     bind_local_type(scope, name, declared_type.as_ref(), ty, self.structs);
                 }
                 Statement::VarAssign { target, value } => {
@@ -315,6 +326,18 @@ impl Typing<'_> {
                         self.expression(index, scope);
                     }
                     self.expression(value, scope);
+                    let target = match target {
+                        AssignmentTarget::Binding(path) => scope.get(&path.key()).cloned(),
+                        AssignmentTarget::ArrayIndex { array, .. } => match scope.get(&array.key())
+                        {
+                            Some(ArkType::Array(element, _)) => Some((**element).clone()),
+                            _ => None,
+                        },
+                        AssignmentTarget::Access(access) => Some(access.ty.clone()),
+                    };
+                    if let Some(target) = target {
+                        self.expect(value, &target);
+                    }
                 }
                 Statement::IfElse {
                     condition,
@@ -334,6 +357,8 @@ impl Typing<'_> {
                     body,
                 } => {
                     self.expression(iterable, scope);
+                    // A literal's elements after the first take the first's type.
+                    self.expect(iterable, &iterable.ty.clone());
                     let mut body_scope = scope.clone();
                     body_scope.insert(index_var.clone(), ArkType::Int);
                     let element = match &iterable.ty {
@@ -356,18 +381,34 @@ impl Typing<'_> {
             self.expression(child, scope);
         }
         if let ExprKind::BinaryOp { left, op, right } = &mut expression.kind {
-            type_compared_literal(left, *op, right);
+            self.type_compared_literal(left, *op, right);
         }
-        if let Some(returns) = self.returns {
+        if let Some(signatures) = self.signatures {
             if let ExprKind::Call {
-                name, return_type, ..
+                name,
+                args,
+                return_type,
             } = &mut expression.kind
             {
-                *return_type = returns.get(name).cloned().flatten();
+                let (parameters, result) = signatures.get(name).cloned().unzip();
+                *return_type = result.flatten();
+                for (arg, parameter) in args.iter_mut().zip(parameters.unwrap_or_default()) {
+                    self.expect(arg, &parameter.ark_type());
+                }
             }
+            resolve_length(expression, scope);
             resolve_group_member(expression, scope);
         }
+        self.expect_operands(expression);
         expression.ty = match &expression.kind {
+            // An unknown function, which validation reports, has no result type.
+            ExprKind::Call { name, .. }
+                if self
+                    .signatures
+                    .is_some_and(|known| !known.contains_key(name)) =>
+            {
+                ArkType::Unknown
+            }
             // A computed value's member is typed as the same member of a binding of its type.
             // TODO(ir): scopes key types by binding path, hence the made-up name `$`.
             ExprKind::FieldAccess { value, field } if expression.binding_path().is_none() => {
@@ -378,41 +419,114 @@ impl Typing<'_> {
             }
             _ => infer_type(expression, scope),
         };
-    }
-}
-
-/// A struct or array literal takes the resolved type of the value it is tested
-/// for equality with, as an initializer takes its declared type, while an array
-/// literal keeps its length; the validator checks the literal against that type.
-/// Two literals keep their own types, as typing one from the other would depend
-/// on operand order.
-fn type_compared_literal(left: &mut Expression, op: BinaryOperator, right: &mut Expression) {
-    if op.class() != OperatorClass::Equality {
-        return;
-    }
-    let literal = |e: &Expression| {
-        matches!(
-            e.kind,
-            ExprKind::ArrayLiteral(_) | ExprKind::StructLiteral(_)
-        )
-    };
-    let typed_by = |value: &Expression, peer: &Expression| match (&value.kind, &peer.ty) {
-        _ if literal(peer) || !resolved(&peer.ty) => None,
-        (ExprKind::ArrayLiteral(elements), ArkType::Array(element, _)) => {
-            Some(ArkType::Array(element.clone(), elements.len()))
+        // A named literal's own type types its nested literals.
+        if matches!(
+            expression.kind,
+            ExprKind::StructLiteral { name: Some(_), .. }
+        ) {
+            self.expect(expression, &expression.ty.clone());
         }
-        (ExprKind::StructLiteral(_), ArkType::Struct(_)) => Some(peer.ty.clone()),
-        _ => None,
-    };
-    if let Some(ty) = typed_by(left, right) {
-        left.ty = ty;
-    } else if let Some(ty) = typed_by(right, left) {
-        right.ty = ty;
+    }
+
+    /// Types the literal operands of a builtin or an asset lookup from its signature.
+    fn expect_operands(&self, expression: &mut Expression) {
+        match &mut expression.kind {
+            ExprKind::Builtin { builtin, args } => {
+                for (arg, (_, parameter)) in args.iter_mut().zip(builtin.params) {
+                    // `T[]` takes its length from the operand.
+                    let ty = match parameter.strip_suffix("[]") {
+                        Some(element) => ArkType::Array(Box::new(ArkType::parse(element)), 0),
+                        None => ArkType::parse(parameter),
+                    };
+                    self.expect(arg, &ty);
+                }
+            }
+            ExprKind::AssetLookup { asset_id, .. }
+            | ExprKind::AssetHas { asset_id, .. }
+            | ExprKind::AssetTryLookup { asset_id, .. }
+            | ExprKind::GroupLookup { asset_id }
+            | ExprKind::GroupHas { asset_id }
+            | ExprKind::GroupControlIs { asset_id, .. } => {
+                self.expect(asset_id, &ArkType::Struct("AssetId".to_string()))
+            }
+            _ => {}
+        }
+    }
+
+    /// Gives an unnamed struct literal or an array literal `ty`, the type it is checked
+    /// against, and the literals nested in it their field or element types; an array
+    /// literal already typed from its first element keeps that type.
+    fn expect(&self, value: &mut Expression, ty: &ArkType) {
+        match (&mut value.kind, ty) {
+            (ExprKind::ArrayLiteral(elements), ArkType::Array(element, _)) => {
+                for value in elements.iter_mut() {
+                    self.expect(value, element);
+                }
+                if !resolved(&value.ty) {
+                    value.ty = ArkType::Array(element.clone(), elements.len());
+                }
+            }
+            (ExprKind::StructLiteral { name, fields }, ArkType::Struct(_)) => {
+                // A named literal's fields follow its own name.
+                let own = name.as_ref().map(|name| ArkType::Struct(name.clone()));
+                let mut members = Scope::new();
+                let struct_type = own.unwrap_or_else(|| ty.clone());
+                bind_local_type(&mut members, "$", None, struct_type, self.structs);
+                for (field, value) in fields {
+                    if let Some(ty) = members.get(&format!("$.{field}")) {
+                        self.expect(value, ty);
+                    }
+                }
+                if value.ty == ArkType::Unknown {
+                    value.ty = ty.clone();
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// An unnamed struct literal or an array literal takes the resolved type of the
+    /// value it is tested for equality with, as an initializer takes its declared
+    /// type, while an array literal keeps its length; the validator checks the
+    /// literal against that type. Two literals keep their own types, as typing one
+    /// from the other would depend on operand order.
+    fn type_compared_literal(
+        &self,
+        left: &mut Expression,
+        op: BinaryOperator,
+        right: &mut Expression,
+    ) {
+        if op.class() != OperatorClass::Equality {
+            return;
+        }
+        let literal = |e: &Expression| {
+            matches!(
+                e.kind,
+                ExprKind::ArrayLiteral(_) | ExprKind::StructLiteral { .. }
+            )
+        };
+        let typed_by = |value: &Expression, peer: &Expression| match (&value.kind, &peer.ty) {
+            _ if literal(peer) || !resolved(&peer.ty) => None,
+            (ExprKind::ArrayLiteral(elements), ArkType::Array(element, _)) => {
+                Some(ArkType::Array(element.clone(), elements.len()))
+            }
+            (ExprKind::StructLiteral { name: None, .. }, ArkType::Struct(_)) => {
+                Some(peer.ty.clone())
+            }
+            _ => None,
+        };
+        if let Some(ty) = typed_by(left, right) {
+            left.ty = ty.clone();
+            self.expect(left, &ty);
+        } else if let Some(ty) = typed_by(right, left) {
+            right.ty = ty.clone();
+            self.expect(right, &ty);
+        }
     }
 }
 
-/// Group members apply to any non-struct value; the builtin table rejects
-/// operands that aren't `AssetGroup`, while struct fields keep their names.
+/// A member of an `AssetGroup` value is the group opcode that computes it;
+/// every other value keeps its own fields.
 fn resolve_group_member(expression: &mut Expression, scope: &Scope) {
     let resolved = match &expression.kind {
         // `g.delta`, `s.group.delta`
@@ -436,7 +550,7 @@ fn resolve_group_member(expression: &mut Expression, scope: &Scope) {
             ExprKind::FieldAccess {
                 value: group,
                 field,
-            } if !matches!(group.ty, ArkType::Struct(_)) => {
+            } if group.ty == ArkType::AssetGroup => {
                 group_io_source(field).map(|source| ExprKind::GroupIOAccess {
                     group: group.clone(),
                     io_index: index.clone(),
@@ -459,7 +573,7 @@ fn resolve_group_member(expression: &mut Expression, scope: &Scope) {
                 source: source.clone(),
                 property: GroupIoProperty::from_name(field),
             }),
-            _ if !matches!(value.ty, ArkType::Struct(_)) => {
+            _ if value.ty == ArkType::AssetGroup => {
                 GroupProperty::from_name(field).map(|property| ExprKind::GroupProperty {
                     group: value.clone(),
                     property,
@@ -474,14 +588,58 @@ fn resolve_group_member(expression: &mut Expression, scope: &Scope) {
     }
 }
 
-/// The binding named by `path`, when a group member can apply to it; it takes
-/// the span of the access `at`, which has none narrower for the binding alone.
+/// `.length` of a bytes-like value is `size(value)`, and of a group's `inputs` or
+/// `outputs` its `numInputs` or `numOutputs`; an array's stays its static length.
+fn resolve_length(expression: &mut Expression, scope: &Scope) {
+    let value = match &expression.kind {
+        ExprKind::Name(path) => match path.split_last() {
+            Some((base, "length")) => {
+                let mut value = expression.with_kind(ExprKind::Name(base));
+                value.ty = infer_type(&value, scope);
+                value
+            }
+            _ => return,
+        },
+        ExprKind::FieldAccess { value, field } if field == "length" => (**value).clone(),
+        _ => return,
+    };
+    let count = |source: &str| match source {
+        "inputs" => Some(GroupProperty::NumInputs),
+        "outputs" => Some(GroupProperty::NumOutputs),
+        _ => None,
+    };
+    let resolved = match value.kind {
+        _ if is_bytes_like(&value.ty) => Some(ExprKind::Builtin {
+            builtin: crate::builtins::find("size").expect("size is a builtin"),
+            args: vec![value],
+        }),
+        // `g.inputs.length`
+        ExprKind::Name(path) => path.split_last().and_then(|(base, source)| {
+            Some(ExprKind::GroupProperty {
+                group: Box::new(group_binding(base, expression, scope)?),
+                property: count(source)?,
+            })
+        }),
+        // `tx.assetGroups[k].inputs.length`
+        ExprKind::FieldAccess {
+            value: group,
+            field,
+        } if group.ty == ArkType::AssetGroup => {
+            count(&field).map(|property| ExprKind::GroupProperty { group, property })
+        }
+        _ => None,
+    };
+    if let Some(resolved) = resolved {
+        expression.kind = resolved;
+    }
+}
+
+/// The binding named by `path`, when it is an `AssetGroup`; it takes the span
+/// of the access `at`, which has none narrower for the binding alone.
 fn group_binding(path: Path, at: &Expression, scope: &Scope) -> Option<Expression> {
-    (!matches!(scope.get(&path.key()), Some(ArkType::Struct(_)))).then(|| {
-        let mut binding = at.with_kind(ExprKind::Name(path));
-        binding.ty = infer_type(&binding, scope);
-        binding
-    })
+    let mut binding = at.with_kind(ExprKind::Name(path));
+    binding.ty = infer_type(&binding, scope);
+    (binding.ty == ArkType::AssetGroup).then_some(binding)
 }
 
 pub(crate) fn group_io_source(name: &str) -> Option<crate::models::GroupIOSource> {
@@ -494,7 +652,7 @@ pub(crate) fn group_io_source(name: &str) -> Option<crate::models::GroupIOSource
 
 /// Whether a value of type `t` can be compared with `hash_fn`'s digest.
 pub(crate) fn digest_accepts(hash_fn: &crate::models::HashFn, t: &ArkType) -> bool {
-    matches!(t, ArkType::Bytes | ArkType::Unknown) || *t == ArkType::parse(hash_fn.digest_type())
+    *t == ArkType::Bytes || *t == ArkType::parse(hash_fn.digest_type())
 }
 
 // ─── Type Inference ───────────────────────────────────────────────────────────
@@ -508,7 +666,7 @@ fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
     match &expr.kind {
         ExprKind::Call { return_type, .. } => return_type
             .as_ref()
-            .map_or(ArkType::Unknown, TypeName::ark_type),
+            .map_or(ArkType::Void, TypeName::ark_type),
         ExprKind::Literal(value) if matches!(value.as_str(), "true" | "false") => ArkType::Bool,
         ExprKind::Literal(value) if value.starts_with("0x") => {
             bytes_of_width(static_byte_width(expr))
@@ -523,7 +681,10 @@ fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
             ),
             elements.len(),
         ),
-        ExprKind::StructLiteral(_) => ArkType::Unknown,
+        // An unnamed literal keeps the type it is checked against.
+        ExprKind::StructLiteral { name, .. } => name
+            .as_ref()
+            .map_or_else(|| expr.ty.clone(), |name| ArkType::Struct(name.clone())),
         ExprKind::FieldAccess { .. } => expr
             .binding_path()
             .map(|path| infer_type(&expr.with_kind(ExprKind::Name(path)), scope))
@@ -563,16 +724,16 @@ fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
         }
 
         // Asset group introspection
-        ExprKind::GroupFind { .. } | ExprKind::AssetGroupAt { .. } => ArkType::AssetGroup,
+        ExprKind::GroupLookup { .. } | ExprKind::AssetGroupAt { .. } => ArkType::AssetGroup,
         ExprKind::GroupHas { .. } => ArkType::Bool,
         ExprKind::GroupControlIs { .. } => ArkType::Bool,
         ExprKind::AssetGroupsLength => ArkType::Int,
         ExprKind::GroupProperty { property, .. } => ArkType::parse(property.value_type()),
-        ExprKind::GroupIOAccess { property, .. } => property
-            .map(|property| ArkType::parse(property.value_type()))
-            .unwrap_or(ArkType::Unknown),
+        ExprKind::GroupIOAccess {
+            source, property, ..
+        } => ArkType::parse(property.map_or(source.record_type(), |p| p.value_type())),
 
-        ExprKind::Builtin { builtin, .. } => builtin.result.map_or(ArkType::Bool, ArkType::parse),
+        ExprKind::Builtin { builtin, .. } => ArkType::parse(builtin.result),
 
         // Arithmetic
         ExprKind::Unary {
@@ -644,7 +805,7 @@ pub(crate) fn static_byte_width(expr: &Expression) -> Option<usize> {
     }
 }
 
-fn bytes_of_width(width: Option<usize>) -> ArkType {
+pub(crate) fn bytes_of_width(width: Option<usize>) -> ArkType {
     match width {
         Some(20) => ArkType::Bytes20,
         Some(32) => ArkType::Bytes32,
@@ -672,4 +833,32 @@ pub fn is_bytes_like(t: &ArkType) -> bool {
         t,
         ArkType::Bytes | ArkType::Bytes20 | ArkType::Bytes32 | ArkType::Signature
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_asset_groups_have_group_members() {
+        let mut contract = crate::parser::parse(
+            "struct S { int delta; }
+            contract V(AssetGroup g, int x, S s, bytes b) {
+                function spend() { let p = g.delta; let q = x.delta; let r = s.delta; let t = (b + b).delta; }
+            }",
+        )
+        .expect("parses");
+        annotate(&mut contract);
+        let members: Vec<_> = contract.functions[0]
+            .statements
+            .iter()
+            .map(|statement| match &statement.statement {
+                Statement::LetBinding { value, .. } => {
+                    matches!(value.kind, ExprKind::GroupProperty { .. })
+                }
+                other => panic!("{other:?}"),
+            })
+            .collect();
+        assert_eq!(members, [true, false, false, false]);
+    }
 }

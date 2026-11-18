@@ -16,13 +16,13 @@ contract Continuation() {
 
     function intent() {
         require(tx.intent.field("type") == "register");
-        require(bin2num(tx.intent.field("expire_at")) == 0);
+        require(bytes2int(tx.intent.field("expire_at")) == 0);
         require(tx.intent.has("enabled"));
         require(tx.intent.field("enabled") == "");
         require(tx.intent.has("empty"));
         require(tx.intent.field("empty") == "");
         require(!tx.intent.has("missing"));
-        require(bin2num(tx.intent.field("items.0")) == 7);
+        require(bytes2int(tx.intent.field("items.0")) == 7);
     }
 
     function noIntent() {

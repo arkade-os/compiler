@@ -15,7 +15,7 @@ fn loop_indexes_encoding_requirements_and_branches_match_static_code() {
         for (i, unused) in rounds {
             require(i + 1 < 11);
             require(batchIC[i + 1].x == input);
-            require(num2bin(i + 1, 1) == encoded);
+            require(int2bytes(i + 1, 1) == encoded);
             if (i == 0) { require(batchIC[i + 1].y == input); }
             else { require(batchIC[i + 1].y > input); }
         }
@@ -102,7 +102,7 @@ fn literal_arithmetic_and_comparisons_fold_without_propagating_locals() {
 }
 
 #[test]
-fn num2bin_preserves_sign_padding_and_boundaries() {
+fn int2bytes_preserves_sign_padding_and_boundaries() {
     for (value, width, bytes) in [
         ("0", 0, ""),
         ("0", 2, "0000"),
@@ -126,7 +126,7 @@ fn num2bin_preserves_sign_padding_and_boundaries() {
             format!("contract C() {{ function spend(bytes expected) {{ require({value} == expected); }} }}")
         };
         assert_eq!(
-            asm(&source(&format!("num2bin({value}, {width})"))),
+            asm(&source(&format!("int2bytes({value}, {width})"))),
             asm(&source(&if bytes.is_empty() {
                 "\"\"".to_string()
             } else {
@@ -135,7 +135,7 @@ fn num2bin_preserves_sign_padding_and_boundaries() {
             "{value}, {width}"
         );
     }
-    let source = "contract C() { function spend(bytes expected) { require(num2bin(-1, 520) == expected); } }";
+    let source = "contract C() { function spend(bytes expected) { require(int2bytes(-1, 520) == expected); } }";
     let tokens = asm(source);
     let literal = tokens.iter().find(|token| token.starts_with("0x")).unwrap();
     assert_eq!(literal.len(), 1042);
@@ -147,11 +147,11 @@ fn num2bin_preserves_sign_padding_and_boundaries() {
 fn invalid_or_unrepresentable_arithmetic_and_encoding_stays_at_runtime() {
     for (expression, opcode) in [
         ("170141183460469231731687303715884105727 + 1", "OP_1ADD"),
-        ("num2bin(128, 1)", "OP_NUM2BIN"),
-        ("num2bin(-128, 1)", "OP_NUM2BIN"),
-        ("num2bin(1, 0)", "OP_NUM2BIN"),
+        ("int2bytes(128, 1)", "OP_NUM2BIN"),
+        ("int2bytes(-128, 1)", "OP_NUM2BIN"),
+        ("int2bytes(1, 0)", "OP_NUM2BIN"),
     ] {
-        let ty = if expression.starts_with("num2bin") {
+        let ty = if expression.starts_with("int2bytes") {
             "bytes"
         } else {
             "int"
@@ -178,7 +178,7 @@ fn invalid_or_unrepresentable_arithmetic_and_encoding_stays_at_runtime() {
         assert!(compile(&source).is_err());
         assert!(compile_unoptimized(&source).is_err());
     }
-    for condition in ["1 + 1 == 3", "num2bin(1, 1) == 0x02"] {
+    for condition in ["1 + 1 == 3", "int2bytes(1, 1) == 0x02"] {
         let source = format!("contract C() {{ function spend() {{ require({condition}); }} }}");
         assert_eq!(asm(&source), ["OP_0"], "false requirement must still fail");
     }
@@ -579,7 +579,7 @@ fn optimization_preserves_numeric_execution_across_scopes_and_returns() {
 
 #[test]
 fn folding_keeps_byte_size_failures_and_concatenation() {
-    let source = "contract C() { function spend(bytes expected) { require(bytes32(num2bin(1, 1)) == expected); } }";
+    let source = "contract C() { function spend(bytes expected) { require(bytes32(int2bytes(1, 1)) == expected); } }";
     assert!(asm(source).iter().any(|token| token == "OP_SIZE"));
     let oversized = "00".repeat(521);
     let source = format!(

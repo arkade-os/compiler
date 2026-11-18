@@ -50,6 +50,8 @@ mod static_functions;
 mod structs;
 #[path = "features/symbolic_stack.rs"]
 mod symbolic_stack;
+#[path = "features/syntax_ergonomics.rs"]
+mod syntax_ergonomics;
 #[path = "features/tapscript_abi.rs"]
 mod tapscript_abi;
 #[path = "features/tapscript_golden.rs"]

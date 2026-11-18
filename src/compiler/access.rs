@@ -288,57 +288,74 @@ impl Generator {
             self.apply(LessThanOrEqual, 2, 1)?;
             self.apply(Verify, 1, 0)?;
         }
-        self.apply(NumEqual, 2, 1)
+        // At least the threshold must sign; for N-of-N that is all, which NUMEQUAL checks and
+        // a following VERIFY fuses with.
+        let compare = if literal_threshold == Some(count) {
+            NumEqual
+        } else {
+            GreaterThanOrEqual
+        };
+        self.apply(compare, 2, 1)
     }
 
-    /// One field of a group input record, which is `[type, txid, vin, amount]` for an
-    /// intent input and `[type, vin, amount]` for a local one.
+    /// One field of a group input record, or the whole record without its txid as
+    /// `[type, vin, amount]`. The record is `[type, txid, vin, amount]` for an intent
+    /// input and `[type, vin, amount]` for a local one.
     pub(super) fn emit_group_input(&mut self, record: &Expression) -> Result<()> {
         let ExprKind::GroupIOAccess {
             group,
             io_index,
-            property: Some(property),
+            property,
             ..
         } = &record.kind
         else {
-            return Err("asset group input records need a field".into());
+            return Err("expected an asset group input record".into());
         };
         self.emit_expression(group)?;
         self.emit_expression(io_index)?;
         self.push_temporary(Int0);
-        self.apply(InspectAssetGroup, 3, 1)?;
-        // An intent record is four items; the amount and index normalizations park one on
-        // the alt stack and then size the txid, five at most.
-        self.max_depth = self.max_depth.max(self.stack.len() + 4);
+        // An intent record is four items, and normalizing sizes its txid with the items above
+        // it dropped or parked on the alt stack: counting both stacks, at most five items for
+        // a field and six for the whole record.
+        let (items, peak) = if property.is_some() { (1, 5) } else { (3, 6) };
+        self.apply(InspectAssetGroup, 3, items)?;
+        self.max_depth = self.max_depth.max(self.stack.len() - items + peak);
         // Only an intent input's txid is 32 bytes; the type below it is 1 or 2. Each
-        // sequence takes back what it puts on the alt stack and leaves the one item the
+        // sequence takes back what it puts on the alt stack and leaves the items the
         // model holds, so the stack model needs no update.
         let size_32 = [Size.into(), Op::Push("32".into())];
         let drop_txid = [Equal.into(), If.into(), Drop.into(), EndIf.into()];
         let restore = [Drop.into(), FromAltStack.into()];
         let ops: Vec<Op> = match property {
-            GroupIoProperty::Amount => [
+            None => [
+                vec![ToAltStack.into(), ToAltStack.into()],
+                size_32.to_vec(),
+                drop_txid.to_vec(),
+                vec![FromAltStack.into(), FromAltStack.into()],
+            ]
+            .concat(),
+            Some(GroupIoProperty::Amount) => [
                 vec![ToAltStack.into(), Drop.into()],
                 size_32.to_vec(),
                 drop_txid.to_vec(),
                 restore.to_vec(),
             ]
             .concat(),
-            GroupIoProperty::Index => [
+            Some(GroupIoProperty::Index) => [
                 vec![Drop.into(), ToAltStack.into()],
                 size_32.to_vec(),
                 drop_txid.to_vec(),
                 restore.to_vec(),
             ]
             .concat(),
-            GroupIoProperty::Type => [
+            Some(GroupIoProperty::Type) => [
                 vec![Drop.into(), Drop.into()],
                 size_32.to_vec(),
                 drop_txid.to_vec(),
             ]
             .concat(),
             // A local input has no txid, so the size check fails the spend.
-            GroupIoProperty::Txid => [
+            Some(GroupIoProperty::Txid) => [
                 vec![Drop.into(), Drop.into()],
                 size_32.to_vec(),
                 vec![EqualVerify.into(), Nip.into()],
@@ -366,7 +383,7 @@ impl Generator {
             .position(|points| points.binding_path().is_none())
         {
             if matches!(&args[position].kind, ExprKind::ArrayLiteral(points)
-                if points.iter().any(|point| matches!(point.kind, ExprKind::StructLiteral(_))))
+                if points.iter().any(|point| matches!(point.kind, ExprKind::StructLiteral { name: None, .. })))
             {
                 return Err("struct literals may only initialize a typed struct declaration; composite values are not supported".into());
             }

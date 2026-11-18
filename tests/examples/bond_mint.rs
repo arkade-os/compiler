@@ -16,12 +16,14 @@ fn test_bond_mint_compiles() {
     assert_eq!(output.functions.len(), 5, "expected 5 function groups");
 
     let names: Vec<&str> = output.parameters.iter().map(|p| p.name.as_str()).collect();
-    // Asset IDs are authored as explicit (Txid, Gidx) param pairs.
+    // Asset IDs are AssetId parameters.
     for id in ["debitAssetId", "debitCtrlId"] {
         assert!(
-            names.contains(&format!("{id}Txid").as_str())
-                && names.contains(&format!("{id}Gidx").as_str()),
-            "{id} not present as explicit Txid/Gidx params, got: {names:?}"
+            output
+                .parameters
+                .iter()
+                .any(|p| p.name == id && p.param_type.to_string() == "AssetId"),
+            "{id} not present as an AssetId parameter, got: {names:?}"
         );
     }
     assert!(

@@ -1,8 +1,8 @@
 use crate::diagnostics::{CompileError, Diagnostic, Span};
 use crate::models::{
     ArkadeCovenant, AssignmentTarget, CompilerInfo, Contract, ContractJson, ExprKind, Expression,
-    Function, FunctionInput, LocatedStatement, Parameter, Path, Requirement, Segment, SourceRange,
-    Statement, TypeName,
+    Function, FunctionInput, LocatedStatement, Parameter, Path, Segment, SourceRange, Statement,
+    TypeName,
 };
 use crate::opcodes::Opcode::{
     self, Add, Bin2Num, BoolAnd, Cat, CheckSig, CheckSigAdd, Drop, Dup, EcPairing, Else, EndIf,
@@ -15,8 +15,8 @@ use crate::opcodes::Opcode::{
     InspectNumInputs, InspectNumOutputs, InspectOutAssetAt, InspectOutAssetCount,
     InspectOutAssetLookup, InspectOutputScriptPubKey, InspectOutputValue, InspectPacket,
     InspectVersion, Int0, Int1, LessThan, LessThanOrEqual, Mul, Nip, Not, NotEqual0, NumEqual,
-    Pick, PushCurrentInputIndex, PushExpiry, Put, Roll, Size, Sub, Swap, Tunnel, TxWeight, Txid,
-    Verify,
+    Pick, PushCurrentInputIndex, PushExpiry, Put, Roll, Rot, Size, Sub, Swap, Tunnel, TxWeight,
+    Txid, Verify,
 };
 use crate::types::{self};
 use crate::validator;
@@ -298,7 +298,7 @@ impl Generator {
         if matches!(&expression.kind, ExprKind::ArrayLiteral(_)) {
             return Err("array literals may only initialize an array declaration; composite values are not supported".into());
         }
-        if matches!(&expression.kind, ExprKind::StructLiteral(_)) {
+        if matches!(&expression.kind, ExprKind::StructLiteral { .. }) {
             return Err("struct literals may only initialize a typed struct declaration; composite values are not supported".into());
         }
         self.emit_expression_items(expression, 1)
@@ -446,7 +446,7 @@ pub(crate) struct Prepared {
 /// warnings and checked leaves on success, every error (each its own diagnostic, not
 /// joined into one message) on failure. Diagnostic messages carry no location prefix —
 /// `Diagnostic::span` is the byte range; `diagnostics::render_errors` adds a
-/// `"line N, column M: "` prefix only when rendering the legacy joined string.
+/// `"line N, column M: "` prefix only when rendering the joined string.
 pub(crate) fn prepare(
     contract: &mut Contract,
     require_entrypoint: bool,
@@ -503,6 +503,7 @@ pub(crate) fn emit(
     source: crate::models::SourceBundle,
     warnings: Vec<String>,
     options: crate::CompileOptions,
+    code_hash: &mut dyn FnMut(&str) -> Result<String>,
 ) -> Result<ContractJson> {
     let parameters = contract.parameters.clone();
     let entry_source = source.files.get(&source.entry).cloned().unwrap_or_default();
@@ -512,11 +513,13 @@ pub(crate) fn emit(
     }
 
     let mut json = ContractJson {
-        format_version: Some(crate::models::ARTIFACT_FORMAT_VERSION),
+        format_version: crate::models::ARTIFACT_FORMAT_VERSION,
         name: contract.name.clone(),
         structs: contract.structs.clone(),
         parameters,
         functions: Vec::new(),
+        contracts: Default::default(),
+        code_hash: None,
         source: Some(source),
         compiler: Some(CompilerInfo {
             name: "arkadec".to_string(),
@@ -564,16 +567,33 @@ pub(crate) fn emit(
             .join("; ")
             .into());
     }
-    // Serialized field order is part of the fingerprint; reordering artifact fields changes it.
-    let bytes = serde_json::to_vec(&json).map_err(|error| error.to_string())?;
-    let digest = Sha256::digest(bytes);
-    json.fingerprint = Some(format!(
-        "sha256:{}",
-        digest
-            .iter()
-            .map(|byte| format!("{byte:02x}"))
-            .collect::<String>()
-    ));
+    let instantiated: std::collections::BTreeSet<String> = json
+        .functions
+        .iter()
+        .filter_map(|group| group.arkade.as_ref())
+        .flat_map(|arkade| &arkade.asm)
+        .filter_map(|token| Some(token.strip_prefix("<CONTRACT:")?.split_once('(')?.0.into()))
+        .collect();
+    for name in instantiated {
+        let hash = code_hash(&name)?;
+        json.contracts.insert(name, hash);
+    }
+    // Serialized field order is part of both hashes; reordering artifact fields changes them.
+    let sha256 = |json: &ContractJson| -> Result<String> {
+        let bytes = serde_json::to_vec(json).map_err(|error| error.to_string())?;
+        let digest = Sha256::digest(bytes);
+        Ok(format!(
+            "sha256:{}",
+            digest
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect::<String>()
+        ))
+    };
+    let (source, compiler) = (json.source.take(), json.compiler.take());
+    json.code_hash = Some(sha256(&json)?);
+    (json.source, json.compiler) = (source, compiler);
+    json.fingerprint = Some(sha256(&json)?);
     json.updated_at = Some(Utc::now().to_rfc3339());
 
     Ok(json)
@@ -703,7 +723,7 @@ fn covenant_for(
         for leaf in crate::models::flatten_parameter(parameter, structs)? {
             let width = match leaf.leaf_type.ark_type() {
                 types::ArkType::Signature => 64,
-                types::ArkType::Bytes32 | types::ArkType::Asset => 32,
+                types::ArkType::Bytes32 => 32,
                 types::ArkType::Bytes20 => 20,
                 _ => 0,
             };

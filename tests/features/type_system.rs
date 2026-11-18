@@ -356,7 +356,7 @@ contract Casts(pubkey owner, int gidx) {
         bytes32 id = bytes32(substr(data, 0, 32));
         bytes20 short = bytes20(substr(data, 32, 20));
         pubkey key = pubkey(substr(data, 52, 32));
-        require(tx.outputs[0].assets.lookup(id, gidx) > 0);
+        require(tx.outputs[0].assets.lookup({ txid: id, gidx: gidx }) > 0);
         require(short != 0x00);
         require(checkSig(sig, key));
         require(bytes32Of(data) == id);
@@ -396,7 +396,7 @@ contract HexCasts(pubkey owner) {
     const int MAX = int(0x7fffffffffffffff);
     function spend(signature sig, int n, bool flag) {
         require(n <= MAX && n >= int(0x0100) && n != int(0x00));
-        require(n * 2 < int(0xffffffffffffffffff));
+        require(n * 2 < int(0xFFffffffffffffffff));
         require(int(flag) == 1);
         require(bool(n) == flag);
         require(checkSig(sig, owner));
@@ -484,17 +484,15 @@ contract BytesCasts(pubkey owner) {
         .iter()
         .any(|op| op == "OP_BIN2NUM" || op == "OP_0NOTEQUAL")));
 
-    for ty in ["AssetGroup", "asset"] {
-        let error = compile_error(&format!(
-            "contract C() {{ function spend({ty} value) {{ require(bytes(value) == 0x01); }} }}",
-        ));
-        assert!(
-            error.contains(&format!("cannot cast '{ty}' to 'bytes'")),
-            "{error}"
-        );
-    }
     let error = compile_error(
-        "contract C() { function spend() { require(true); } private function bytes(int n) bytes { return num2bin(n, 1); } }",
+        "contract C() { function spend(AssetGroup value) { require(bytes(value) == 0x01); } }",
+    );
+    assert!(
+        error.contains("cannot cast 'AssetGroup' to 'bytes'"),
+        "{error}"
+    );
+    let error = compile_error(
+        "contract C() { function spend() { require(true); } private function bytes(int n) bytes { return int2bytes(n, 1); } }",
     );
     assert!(
         error.contains("function name 'bytes' is reserved"),
@@ -656,12 +654,12 @@ fn builtin_operands_are_type_checked() {
             "cat operand has type 'int', expected 'bytes'",
         ),
         (
-            "bin2num(i) == 1",
-            "bin2num operand has type 'int', expected 'bytes'",
+            "bytes2int(i) == 1",
+            "bytes2int operand has type 'int', expected 'bytes'",
         ),
         (
-            "num2bin(d, 4) == d",
-            "num2bin operand has type 'bytes', expected 'int'",
+            "int2bytes(d, 4) == d",
+            "int2bytes operand has type 'bytes', expected 'int'",
         ),
         (
             "reverseBytes(i) == d",
@@ -702,7 +700,7 @@ fn builtin_operands_are_type_checked() {
         let error = compile_error(&source(expression));
         assert!(error.contains(expected), "{expression}: {error}");
     }
-    compile_ok("contract T(pubkey k) { function f(signature s, int i, bytes d, bytes32 m) { require(substr(tx.packet(16), i, 4) == d && cat(d, m) == d && bin2num(d) == i && num2bin(i, 4) == d && reverseBytes(k) == d && size(m) == 32 && sighash(0) == m && digest(d, 1) == d && tx.inputs[i].value > 0); require(checkSigFromStack(s, k, m)); require(checkSig(s, k)); } }");
+    compile_ok("contract T(pubkey k) { function f(signature s, int i, bytes d, bytes32 m) { require(substr(tx.packet(16), i, 4) == d && cat(d, m) == d && bytes2int(d) == i && int2bytes(i, 4) == d && reverseBytes(k) == d && size(m) == 32 && sighash(0) == m && digest(d, 1) == d && tx.inputs[i].value > 0); require(checkSigFromStack(s, k, m)); require(checkSig(s, k)); } }");
 }
 
 #[test]

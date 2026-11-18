@@ -159,7 +159,14 @@ impl Analysis {
             .as_ref()
             .map_err(|error| error.diagnostics(&self.entry))?;
         loaded
-            .emit(&self.entry, &self.sources, self.filesystem, options, levels)
+            .emit(
+                &self.entry,
+                &self.sources,
+                self.filesystem,
+                options,
+                levels,
+                &mut BTreeMap::new(),
+            )
             .map_err(|error| match error {
                 EmitError::Library => vec![Diagnostic::error(&self.entry, LIBRARY_ENTRY)],
                 EmitError::Lints(errors) => errors,
@@ -180,6 +187,7 @@ impl Analysis {
                 self.filesystem,
                 options,
                 &Default::default(),
+                &mut BTreeMap::new(),
             )
             .map_err(|error| match error {
                 EmitError::Library => format!("{}: {LIBRARY_ENTRY}", self.entry),
@@ -378,7 +386,8 @@ impl Loaded {
         })
     }
 
-    /// `files` are the sources of every module.
+    /// `files` are the sources of every module, and `hashes` the `codeHash` of each contract
+    /// compiled so far for this artifact.
     fn emit(
         &self,
         entry: &str,
@@ -386,6 +395,7 @@ impl Loaded {
         filesystem: bool,
         options: crate::CompileOptions,
         levels: &crate::lint::Levels,
+        hashes: &mut BTreeMap<String, String>,
     ) -> Result<ContractJson, EmitError> {
         let root = &self.modules[entry];
         if root.contract.is_library {
@@ -454,9 +464,88 @@ impl Loaded {
             })
             .collect();
         let source = bundle.files.get(&bundle.entry).cloned().unwrap_or_default();
-        compiler::emit(&root.contract, &root.leaves, bundle, warnings, options)
-            .map_err(|error| EmitError::Code(error, source))
+        compiler::emit(
+            &root.contract,
+            &root.leaves,
+            bundle,
+            warnings,
+            options,
+            &mut |name| {
+                let hash = self.code_hash(name, files, filesystem, options, levels, hashes);
+                hash.map_err(|error| match instantiation(&root.contract, name) {
+                    Some(span) => error.at(span),
+                    None => error,
+                })
+            },
+        )
+        .map_err(|error| EmitError::Code(error, source))
     }
+
+    /// The `codeHash` of contract `name` compiled as the entry, failing where that compilation
+    /// fails, and cached in `hashes`. Imports are acyclic and a contract cannot instantiate
+    /// itself, so the recursion ends.
+    fn code_hash(
+        &self,
+        name: &str,
+        files: &BTreeMap<String, String>,
+        filesystem: bool,
+        options: crate::CompileOptions,
+        levels: &crate::lint::Levels,
+        hashes: &mut BTreeMap<String, String>,
+    ) -> Result<String, CompileError> {
+        if let Some(hash) = hashes.get(name) {
+            return Ok(hash.clone());
+        }
+        let (path, module) = self
+            .modules
+            .iter()
+            .find(|(_, module)| module.contract.name == name)
+            .ok_or_else(|| CompileError::internal(format!("contract '{name}' is not loaded")))?;
+        let source = files.get(path).map_or("", String::as_str);
+        // Imported modules skip the checks only an entry gets.
+        let compiled = match crate::validator::validate_ast(&module.contract, true).first() {
+            Some(issue) => Err(crate::diagnostics::located(
+                &issue.message,
+                issue.span,
+                source,
+            )),
+            None => self
+                .emit(path, files, filesystem, options, levels, hashes)
+                .map_err(|error| match error {
+                    EmitError::Library => LIBRARY_ENTRY.to_string(),
+                    EmitError::Lints(errors) => crate::diagnostics::render_errors(&errors, source),
+                    EmitError::Code(error, _) => {
+                        crate::diagnostics::located(&error.to_string(), error.span, source)
+                    }
+                }),
+        };
+        let hash = compiled
+            .map_err(|message| {
+                CompileError::from(format!(
+                    "contract '{name}' does not compile on its own: {path}: {message}"
+                ))
+            })?
+            .code_hash
+            .expect("emit sets codeHash");
+        hashes.insert(name.to_string(), hash.clone());
+        Ok(hash)
+    }
+}
+
+/// The span of the first `new name(...)` in `contract`'s own functions.
+fn instantiation(contract: &Contract, name: &str) -> Option<crate::diagnostics::Span> {
+    let mut span = None;
+    for function in contract.functions.iter().filter(|f| !f.is_imported()) {
+        let mut statements = function.statements.clone();
+        let _ = visit_statements(&mut statements, &mut |expression| {
+            if matches!(&expression.kind, ExprKind::ContractInstance { contract_name, .. } if contract_name == name)
+            {
+                span.get_or_insert(expression.span);
+            }
+            Ok(())
+        });
+    }
+    span
 }
 
 fn load(
@@ -483,6 +572,8 @@ fn load(
     active.push(path.to_string());
     let result = (|| -> Result<(), LoadError> {
         let source = &source;
+        parser::check_pragma(source, env!("CARGO_PKG_VERSION"))
+            .map_err(|error| locate(path, source, error, None))?;
         let pairs = parser::try_parse(source).map_err(|error| {
             let diagnostic = parser::parse_error_diagnostic(&error, path, source);
             LoadError::Located(
@@ -564,12 +655,7 @@ fn load(
         }
         for function in &mut contract.functions {
             visit_statements(&mut function.statements, &mut |expression| {
-                if let ExprKind::GroupControlIs {
-                    group,
-                    asset_txid,
-                    asset_gidx,
-                } = &expression.kind
-                {
+                if let ExprKind::GroupControlIs { group, asset_id } = &expression.kind {
                     // Only a bare name can be a library; other groups stay asset groups.
                     let ExprKind::Name(models::Path {
                         root: group,
@@ -584,7 +670,7 @@ fn load(
                     if group == &contract.name || visible_contracts.contains_key(group) {
                         expression.kind = ExprKind::Call {
                             name: format!("{group}.controlIs"),
-                            args: vec![*asset_txid.clone(), *asset_gidx.clone()],
+                            args: vec![*asset_id.clone()],
                             return_type: None,
                         };
                     }
@@ -807,6 +893,14 @@ fn validate_scope(
                 {
                     return Err(format!("unknown constant '{}'", path.key()));
                 }
+                ExprKind::StructLiteral {
+                    name: Some(name), ..
+                } => {
+                    check_type(&models::TypeName::Named(name.clone()))?;
+                    if models::is_builtin_type(name) {
+                        return Err(format!("'{name}' is not a struct type"));
+                    }
+                }
                 ExprKind::ContractInstance {
                     contract_name,
                     args,
@@ -816,6 +910,11 @@ fn validate_scope(
                     })?;
                     if target.is_library {
                         return Err(format!("library '{contract_name}' cannot be instantiated"));
+                    }
+                    if contract_name == &contract.name {
+                        return Err(format!(
+                            "contract '{contract_name}' cannot instantiate itself, since its address would depend on itself; to keep funds in this contract, compare against the input's own script, e.g. `tx.outputs[0].script == tx.input.current.script`"
+                        ));
                     }
                     if args.len() != target.parameters.len() {
                         return Err(format!(
@@ -915,14 +1014,8 @@ fn visit_statements(
         match &mut statement.statement {
             Statement::Call(expr)
             | Statement::Return(Some(expr))
+            | Statement::Require(expr)
             | Statement::LetBinding { value: expr, .. } => visit_expression(expr, visit)?,
-            Statement::Require(requirement) => match requirement {
-                models::Requirement::Expression(expr) => visit_expression(expr, visit)?,
-                models::Requirement::Comparison { left, right, .. } => {
-                    visit_expression(left, visit)?;
-                    visit_expression(right, visit)?;
-                }
-            },
             Statement::VarAssign { target, value } => {
                 if let models::AssignmentTarget::ArrayIndex { index, .. }
                 | models::AssignmentTarget::Access(index) = target

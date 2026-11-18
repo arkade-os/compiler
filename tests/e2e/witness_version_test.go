@@ -54,20 +54,24 @@ contract WitnessVersion() {
 }
 
 func TestContractScriptVersion(t *testing.T) {
-	source := filepath.Join(t.TempDir(), "script.ark")
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "d.ark"), []byte(`contract D() { function spend() { require(tx.numOutputs == 1); } }`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	source := filepath.Join(dir, "script.ark")
 	if err := os.WriteFile(source, []byte(`
+import "d.ark";
 contract C() {
-    function direct() { require(tx.outputs[0].script == new C()); }
-    function reversed() { require(new C() == tx.outputs[0].script); }
+    function direct() { require(tx.outputs[0].script == new D()); }
+    function reversed() { require(new D() == tx.outputs[0].script); }
     function bound() {
-        let expected = new C();
+        let expected = new D();
         require(expected.version == 1);
         require(tx.outputs[0].script == expected);
     }
     function supplied(ScriptPubKey expected) { require(tx.outputs[0].script == expected); }
-    function different() { require(tx.outputs[0].script != new C()); }
+    function different() { require(tx.outputs[0].script != new D()); }
     function continuation() { require(tx.input.current.script == tx.outputs[0].script); }
-    function activeBytecode() { require(tx.outputs[0].script == this.activeBytecode); }
 }`), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -75,14 +79,14 @@ contract C() {
 	serverKey, emulatorKey := fixedPrivateKey(1), fixedPrivateKey(2)
 	program := bytes.Repeat([]byte{7}, 32)
 	otherProgram := bytes.Repeat([]byte{8}, 32)
-	for _, name := range []string{"direct", "reversed", "bound", "supplied", "different", "continuation", "activeBytecode"} {
+	for _, name := range []string{"direct", "reversed", "bound", "supplied", "different", "continuation"} {
 		t.Run(name, func(t *testing.T) {
 			group := instantiateGroup(t, contract, name, map[string][]byte{
-				"CONTRACT:C()": program,
+				"CONTRACT:D()": program,
 			}, serverKey.PubKey(), emulatorKey.PubKey())
 			deployment := fundingTx(group.pkScript, 10_000)
 			expectedProgram := program
-			if name == "continuation" || name == "activeBytecode" {
+			if name == "continuation" {
 				expectedProgram = group.pkScript[2:]
 			}
 			witness := covenantWitness(t, contract, covenantGroup(t, contract, name), map[string][]byte{

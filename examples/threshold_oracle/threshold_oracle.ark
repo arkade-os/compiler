@@ -13,10 +13,8 @@ pragma arkade ^0.1.0;
 // N oracles, require M valid signatures over a message.
 
 contract ThresholdOracle(
-  bytes32 tokenAssetIdTxid,
-  int tokenAssetIdGidx,
-  bytes32 ctrlAssetIdTxid,
-  int ctrlAssetIdGidx,
+  AssetId tokenAssetId,
+  AssetId ctrlAssetId,
   pubkey[3] oracles,
   int threshold
 ) {
@@ -30,7 +28,7 @@ contract ThresholdOracle(
 
     // The oracles sign this spend: its input, amount and recipient.
     let outpoint = tx.input.current.outpoint;
-    let message = sha256(outpoint.txid + num2bin(outpoint.vout, 4) + num2bin(amount, 8) + recipientScriptPubKey.program + num2bin(recipientScriptPubKey.version, 1));
+    let message = sha256(outpoint.txid + int2bytes(outpoint.vout, 4) + int2bytes(amount, 8) + recipientScriptPubKey.program + int2bytes(recipientScriptPubKey.version, 1));
     int valid = 0;
     for (i, sig) in oracleSigs {
       if (checkSigFromStack(sig, oracles[i], message)) {
@@ -39,10 +37,10 @@ contract ThresholdOracle(
     }
     require(valid >= threshold, "quorum failed");
 
-    require(tx.inputs[0].assets.lookup(ctrlAssetIdTxid, ctrlAssetIdGidx) > 0, "no ctrl");
-    require(tx.outputs[1].assets.lookup(tokenAssetIdTxid, tokenAssetIdGidx) >= amount, "short");
+    require(tx.inputs[0].assets.lookup(ctrlAssetId) > 0, "no ctrl");
+    require(tx.outputs[1].assets.lookup(tokenAssetId) >= amount, "short");
     require(tx.outputs[1].script == recipientScriptPubKey, "wrong dest");
-    require(tx.outputs[0].script == new ThresholdOracle(tokenAssetIdTxid, tokenAssetIdGidx, ctrlAssetIdTxid, ctrlAssetIdGidx, oracles, threshold), "broken");
+    require(tx.outputs[0].script == tx.input.current.script, "broken");
     require(tx.outputs[0].value >= tx.input.current.value, "value lost");
   }
 }

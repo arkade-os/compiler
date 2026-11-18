@@ -124,7 +124,7 @@ contract C() {
         "contract C() { function spend(bytes data, bytes20 hash, signature sig) tapscript { require(sha1(data) == hash); require(checkSig(sig, server)); } }"
     ).unwrap_err().to_string();
     assert!(
-        error.contains("unsupported compound expression in tapscript"),
+        error.contains("`sha1(...)` is only available in covenant functions"),
         "{error}"
     );
 }
@@ -778,45 +778,39 @@ fn bytes32_operands_accept_only_32_byte_literals() {
 }
 
 #[test]
-fn test_ec_mul_scalar_verify_cannot_be_value_bound() {
-    let code = r#"
-        contract CryptoOps(pubkey owner) {
-            function verifyScalarMul(signature ownerSig, bytes32 scalar, pubkey P, pubkey Q) {
-                require(checkSig(ownerSig, owner));
-                let result = ecMulScalarVerify(scalar, P, Q);
-            }
-        }
-    "#;
-
-    let result = compile(code);
-    assert!(
-        result
-            .expect_err("verify opcode produces no bindable value")
-            .to_string()
-            .contains("expression does not produce one stack item"),
-        "{OP_ECMULSCALARVERIFY} must not be accepted as a value"
-    );
-}
-
-#[test]
-fn test_tweak_verify_cannot_be_value_bound() {
-    let code = r#"
-        contract CryptoOps(pubkey owner) {
-            function verifyTweak(signature ownerSig, bytes32 P, bytes32 tweak, pubkey Q) {
-                require(checkSig(ownerSig, owner));
-                let result = tweakVerify(P, tweak, Q);
-            }
-        }
-    "#;
-
-    let result = compile(code);
-    assert!(
-        result
-            .expect_err("verify opcode produces no bindable value")
-            .to_string()
-            .contains("expression does not produce one stack item"),
-        "{OP_TWEAKVERIFY} must not be accepted as a value"
-    );
+fn verify_builtins_are_true_as_values_and_only_check_in_require() {
+    for (params, call, check) in [
+        (
+            "bytes32 p, bytes32 k, bytes q",
+            "tweakVerify(p, k, q)",
+            &[OP_TWEAKVERIFY][..],
+        ),
+        (
+            "bytes32 k, bytes p, bytes q",
+            "ecMulScalarVerify(k, p, q)",
+            &[OP_ECMULSCALARVERIFY],
+        ),
+        (
+            "signature s, pubkey p, bytes32 m",
+            "checkSigFromStackVerify(s, p, m)",
+            &[OP_CHECKSIGFROMSTACK, "OP_VERIFY"],
+        ),
+    ] {
+        let output = compile(&format!(
+            "contract C() {{ function spend({params}, bool flag) {{ if (flag) {{ require({call}); }} \
+             else {{ let ok = {call}; require(ok || flag); }} }} }}"
+        ))
+        .unwrap_or_else(|error| panic!("{call}: {error}"));
+        let asm = crate::common::arkade_asm_tokens(&output, "spend");
+        assert!(
+            contains_tokens(&asm, &[check, &["OP_ELSE"]].concat()),
+            "{call} inside require pushes nothing: {asm:?}"
+        );
+        assert!(
+            contains_tokens(&asm, &[check, &[OP_1]].concat()),
+            "{call} as a value pushes true: {asm:?}"
+        );
+    }
 }
 
 // ─── Signatures ────────────────────────────────────────────────────────
@@ -912,7 +906,7 @@ fn unary_negation_precedence_and_spend_shape() {
         ("!!false", "OP_0 OP_NOT OP_NOT"),
         ("!(1 < 2)", "1 2 OP_LESSTHAN OP_NOT"),
         ("!true != false", "OP_1 OP_NOT OP_0 OP_NUMNOTEQUAL"),
-        ("num2bin(-1, 4)", "1 OP_NEGATE 4 OP_NUM2BIN"),
+        ("int2bytes(-1, 4)", "1 OP_NEGATE 4 OP_NUM2BIN"),
         ("modExp(-2, 3, 5)", "2 OP_NEGATE 3 5 OP_MODEXP"),
     ] {
         let source = format!(
@@ -951,7 +945,7 @@ fn unary_negation_in_loops_and_conditions() {
             function spend(bool[2] flags) {
                 for (i, flag) in flags {
                     if (!flag) { require(!!flag == false); }
-                    let encoded = num2bin(-(i + 1), 4);
+                    let encoded = int2bytes(-(i + 1), 4);
                     require(size(encoded) == 4);
                 }
             }
@@ -985,8 +979,8 @@ fn unary_negation_rejects_invalid_operand_types() {
         ("bytes value", "-value", "expected 'int'"),
         ("int value", "!value", "expected 'bool'"),
         ("bytes value", "!value", "expected 'bool'"),
-        ("bool value", "num2bin(-value, 4)", "expected 'int'"),
-        ("int value", "num2bin(-(value == 1), 4)", "expected 'int'"),
+        ("bool value", "int2bytes(-value, 4)", "expected 'int'"),
+        ("int value", "int2bytes(-(value == 1), 4)", "expected 'int'"),
         ("bool value", "modExp(-value, 2, 3)", "expected 'int'"),
         ("bool value", "!-value", "expected 'int'"),
         ("int value", "-!value", "expected 'bool'"),
@@ -1043,11 +1037,11 @@ fn unary_negation_remains_unsupported_in_l1_tapscripts() {
 fn unary_negation_in_builtin_atom_arguments() {
     for (statement, expected) in [
         (
-            "let result = num2bin(-(-1), 4);",
+            "let result = int2bytes(-(-1), 4);",
             "1 OP_NEGATE OP_NEGATE 4 OP_NUM2BIN",
         ),
         (
-            "let result = num2bin(-value, 4);",
+            "let result = int2bytes(-value, 4);",
             "OP_0 OP_ROLL OP_NEGATE 4 OP_NUM2BIN",
         ),
         (
@@ -1079,7 +1073,7 @@ fn unary_negation_in_builtin_atom_arguments() {
             "1 OP_ADD OP_NEGATE 2 3 OP_MUL OP_SUBSTR",
         ),
         (
-            "let result = num2bin(-(value + 1), (2 + 2));",
+            "let result = int2bytes(-(value + 1), (2 + 2));",
             "1 OP_ADD OP_NEGATE 2 2 OP_ADD OP_NUM2BIN",
         ),
         (
@@ -1201,7 +1195,7 @@ fn builtin_arguments_are_general_expressions() {
             &["OP_SHA256", "OP_CAT"][..],
         ),
         (
-            "require(bin2num(reverseBytes(substr(a, 0, 4))) == 7);",
+            "require(bytes2int(reverseBytes(substr(a, 0, 4))) == 7);",
             &["OP_SUBSTR", "OP_REVERSEBYTES", "OP_BIN2NUM"],
         ),
         (
@@ -1412,7 +1406,7 @@ contract C(pubkey first, pubkey second) {
             "OP_2",
             "OP_LESSTHANOREQUAL",
             "OP_VERIFY",
-            "OP_NUMEQUAL"
+            "OP_GREATERTHANOREQUAL"
         ]
     ));
     assert!(asm.iter().all(|token| !token.contains('$')));
@@ -1432,8 +1426,6 @@ fn crypto_builtins_keep_operand_and_verify_validation() {
         "require(checkMultisig([key], [sig], true));",
         "require(checkMultisig([key], [sig], 0));",
         "require(checkMultisig([key], [sig], 2));",
-        "let x = checkSigFromStackVerify(sig, key, data); require(x);",
-        "require(checkSigFromStackVerify(sig, key, data) || true);",
     ] {
         let source = format!("contract C(pubkey key) {{ function spend(signature sig, bytes data) {{ require(checkSig(sig, key)); require(size(data) >= 0); {body} }} }}");
         assert!(compile(&source).is_err(), "{body}");

@@ -12,36 +12,34 @@ pragma arkade ^0.1.0;
 // enabling balance verification without iterating individual UTXOs.
 
 contract ControlledMint(
-  bytes32 tokenAssetIdTxid,
-  int tokenAssetIdGidx,
-  bytes32 ctrlAssetIdTxid,
-  int ctrlAssetIdGidx,
+  AssetId tokenAssetId,
+  AssetId ctrlAssetId,
   pubkey issuerPk
 ) {
   // Mint: delta > 0, control asset present and retained
   function mint(int amount, ScriptPubKey recipientScriptPubKey, signature issuerSig) {
-    let tokenGroup = tx.assetGroups.find(tokenAssetIdTxid, tokenAssetIdGidx);
+    let tokenGroup = tx.assetGroups.lookup(tokenAssetId);
     require(tokenGroup.delta == amount, "delta mismatch");
-    require(tokenGroup.controlIs(ctrlAssetIdTxid, ctrlAssetIdGidx), "wrong control");
+    require(tokenGroup.controlIs(ctrlAssetId), "wrong control");
 
-    let ctrlGroup = tx.assetGroups.find(ctrlAssetIdTxid, ctrlAssetIdGidx);
+    let ctrlGroup = tx.assetGroups.lookup(ctrlAssetId);
     require(ctrlGroup.delta == 0, "ctrl supply changed");
 
-    require(tx.outputs[0].assets.lookup(tokenAssetIdTxid, tokenAssetIdGidx) >= amount, "mint short");
+    require(tx.outputs[0].assets.lookup(tokenAssetId) >= amount, "mint short");
     require(tx.outputs[0].script == recipientScriptPubKey, "wrong dest");
     require(checkSig(issuerSig, issuerPk), "bad sig");
   }
 
   // Burn: delta < 0, no control asset needed
   function burn(int amount, signature issuerSig) {
-    let tokenGroup = tx.assetGroups.find(tokenAssetIdTxid, tokenAssetIdGidx);
+    let tokenGroup = tx.assetGroups.lookup(tokenAssetId);
     require(tokenGroup.sumInputs >= tokenGroup.sumOutputs + amount, "burn short");
     require(checkSig(issuerSig, issuerPk), "bad sig");
   }
 
   // Lock supply forever: burn the control asset
   function lockSupply(signature issuerSig) {
-    let ctrlGroup = tx.assetGroups.find(ctrlAssetIdTxid, ctrlAssetIdGidx);
+    let ctrlGroup = tx.assetGroups.lookup(ctrlAssetId);
     require(ctrlGroup.sumOutputs == 0, "ctrl not burned");
     require(checkSig(issuerSig, issuerPk), "bad sig");
   }

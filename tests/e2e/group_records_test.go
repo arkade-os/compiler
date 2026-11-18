@@ -22,6 +22,17 @@ contract GroupRecords() {
         require(g.outputs[0].type == 1);
         require(g.outputs[0].amount == amount);
     }
+    function bound(AssetGroup g, int j, int amount, int kind, int index) {
+        let record = g.inputs[j];
+        let out = g.outputs[0];
+        require(record.amount == amount);
+        require(record.type == kind);
+        require(record.index == index);
+        require(out.index == 1);
+        require(out.type == 1);
+        require(out.amount == amount);
+        require(record == g.inputs[j]);
+    }
     function source(AssetGroup g, bytes32 txid) {
         require(g.inputs[0].txid == txid);
     }
@@ -34,9 +45,6 @@ contract GroupRecords() {
 	}
 	contract := compileArtifact(t, source)
 	serverKey, emulatorKey := fixedPrivateKey(1), fixedPrivateKey(2)
-	group := covenantGroup(t, contract, "spend")
-	instance := instantiateGroup(t, contract, "spend", nil, serverKey.PubKey(), emulatorKey.PubKey())
-	deployment := fundingTx(instance.pkScript, 10_000)
 
 	local, intent := asset.AssetId{Txid: chainhash.Hash{4}, Index: 3}, asset.AssetId{Txid: chainhash.Hash{5}, Index: 0}
 	// A group's inputs share one type, so each kind gets its own group.
@@ -92,26 +100,32 @@ contract GroupRecords() {
 			requireVMResult(t, spend, emulatorKey.PubKey(), tc.wantErr)
 		})
 	}
-	for _, tc := range []struct {
-		name                      string
-		g, j, amount, kind, index int64
-		wantErr                   string
-	}{
-		{"local input", 0, 0, 7, 1, 0, ""},
-		{"intent input", 1, 0, 11, 2, 3, ""},
-		{"wrong amount", 1, 0, 7, 2, 3, "OP_NUMEQUALVERIFY failed"},
-		{"wrong type", 0, 0, 7, 2, 0, "OP_NUMEQUALVERIFY failed"},
-		{"wrong index", 1, 0, 11, 2, 0, "OP_NUMEQUALVERIFY failed"},
-		{"input out of range", 0, 1, 7, 1, 0, "input index out of range"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			values := map[string][]byte{
-				"g": scriptInt(t, tc.g), "j": scriptInt(t, tc.j), "amount": scriptInt(t, tc.amount),
-				"kind": scriptInt(t, tc.kind), "index": scriptInt(t, tc.index),
-			}
-			spend := spendingPSBTWithWitness(t, deployment, instance, 10_000, instance.pkScript,
-				covenantWitness(t, contract, group, values), extension.Packet(packet))
-			requireVMResult(t, spend, emulatorKey.PubKey(), tc.wantErr)
-		})
+	// Field reads and a bound record read the same fields of either input kind.
+	for _, function := range []string{"spend", "bound"} {
+		group := covenantGroup(t, contract, function)
+		instance := instantiateGroup(t, contract, function, nil, serverKey.PubKey(), emulatorKey.PubKey())
+		deployment := fundingTx(instance.pkScript, 10_000)
+		for _, tc := range []struct {
+			name                      string
+			g, j, amount, kind, index int64
+			wantErr                   string
+		}{
+			{"local input", 0, 0, 7, 1, 0, ""},
+			{"intent input", 1, 0, 11, 2, 3, ""},
+			{"wrong amount", 1, 0, 7, 2, 3, "OP_NUMEQUALVERIFY failed"},
+			{"wrong type", 0, 0, 7, 2, 0, "OP_NUMEQUALVERIFY failed"},
+			{"wrong index", 1, 0, 11, 2, 0, "OP_NUMEQUALVERIFY failed"},
+			{"input out of range", 0, 1, 7, 1, 0, "input index out of range"},
+		} {
+			t.Run(function+"/"+tc.name, func(t *testing.T) {
+				values := map[string][]byte{
+					"g": scriptInt(t, tc.g), "j": scriptInt(t, tc.j), "amount": scriptInt(t, tc.amount),
+					"kind": scriptInt(t, tc.kind), "index": scriptInt(t, tc.index),
+				}
+				spend := spendingPSBTWithWitness(t, deployment, instance, 10_000, instance.pkScript,
+					covenantWitness(t, contract, group, values), extension.Packet(packet))
+				requireVMResult(t, spend, emulatorKey.PubKey(), tc.wantErr)
+			})
+		}
 	}
 }

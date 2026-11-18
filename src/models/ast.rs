@@ -237,8 +237,8 @@ pub enum Statement {
     Call(Expression),
     /// Return from a private function.
     Return(Option<Expression>),
-    /// require(expr, "message");
-    Require(Requirement),
+    /// require(expr, "message"); aborts unless the bool `expr` holds.
+    Require(Expression),
     /// type name; — no value or stack slot until assignment.
     Declaration {
         name: String,
@@ -288,9 +288,9 @@ impl Statement {
     /// statements.
     pub(crate) fn expressions(&self) -> Vec<&Expression> {
         match self {
-            Statement::Call(expression) | Statement::Return(Some(expression)) => vec![expression],
-            Statement::Require(Requirement::Expression(expression)) => vec![expression],
-            Statement::Require(Requirement::Comparison { left, right, .. }) => vec![left, right],
+            Statement::Call(expression)
+            | Statement::Return(Some(expression))
+            | Statement::Require(expression) => vec![expression],
             Statement::LetBinding { value, .. } => vec![value],
             Statement::VarAssign {
                 target: AssignmentTarget::ArrayIndex { index, .. } | AssignmentTarget::Access(index),
@@ -303,28 +303,6 @@ impl Statement {
             Statement::Return(None) | Statement::Declaration { .. } => vec![],
         }
     }
-}
-
-impl Requirement {
-    pub(crate) fn expressions_mut(&mut self) -> Vec<&mut Expression> {
-        match self {
-            Requirement::Expression(expression) => vec![expression],
-            Requirement::Comparison { left, right, .. } => vec![left, right],
-        }
-    }
-}
-
-/// Requirement AST
-#[derive(Debug, Clone)]
-pub enum Requirement {
-    /// Expression that must evaluate to true
-    Expression(Expression),
-    /// Comparison requirement
-    Comparison {
-        left: Expression,
-        op: crate::operators::BinaryOperator,
-        right: Expression,
-    },
 }
 
 /// Hash function used in a tapscript condition prefix (`hashFn(x) == h`).
@@ -384,6 +362,8 @@ pub enum KeyExpr {
     /// A pubkey binding: a reserved role (`server`, `emulator`) or any pubkey in
     /// scope (constructor pubkey, struct field, array element, etc.).
     Ident(Path),
+    /// A 32-byte x-only key from a `pubkey` constant, as `0x`-prefixed hex.
+    Literal(String),
     /// `tweak(base, func)`: `base` tweaked by `func`'s covenant hash.
     /// `base` is `emulator` or a constructor pubkey (a second enclave).
     Tweak { base: String, func: String },
@@ -441,12 +421,8 @@ pub enum TapItem {
         value: TapOperand,
         unit: Option<TimeUnit>,
     },
-    /// `checkSig`/`checkMultisig` → multisig suffix. `threshold == None` means N-of-N.
-    Sig {
-        keys: Vec<KeyExpr>,
-        sigs: Vec<Path>,
-        threshold: Option<u16>,
-    },
+    /// `checkSig`/`checkMultisig` → N-of-N multisig suffix.
+    Sig { keys: Vec<KeyExpr>, sigs: Vec<Path> },
 }
 
 /// A hash value or timelock operand: a literal, with constants already folded in, or the
@@ -513,6 +489,16 @@ pub enum GroupIOSource {
     Inputs,
     /// outputs (source=1)
     Outputs,
+}
+
+impl GroupIOSource {
+    /// The native struct of a record read without a property.
+    pub fn record_type(&self) -> &'static str {
+        match self {
+            GroupIOSource::Inputs => "AssetGroupInput",
+            GroupIOSource::Outputs => "AssetGroupOutput",
+        }
+    }
 }
 
 /// An expression with the byte range of the source text it came from.
@@ -586,8 +572,12 @@ pub enum ExprKind {
     },
     /// Array literal; only valid as the initializer of an array declaration.
     ArrayLiteral(Vec<Expression>),
-    /// Named struct literal; only valid as the initializer of a typed declaration.
-    StructLiteral(Vec<(String, Expression)>),
+    /// Struct literal: `Point { x: 1, y: 2 }` names its type; `{ x: 1, y: 2 }` takes the
+    /// type its position expects.
+    StructLiteral {
+        name: Option<String>,
+        fields: Vec<(String, Expression)>,
+    },
     /// A field of a statically laid-out value.
     FieldAccess {
         value: Box<Expression>,
@@ -602,32 +592,29 @@ pub enum ExprKind {
     ArrayIndex { array: Path, index: Box<Expression> },
     /// `this.activeInputIndex`, `this.expiry`
     This(crate::properties::ThisProperty),
-    /// Asset lookup: tx.inputs[i].assets.lookup(txid, gidx) or
-    /// tx.outputs[o].assets.lookup(txid, gidx). Asserts the asset is present
+    /// Asset lookup: tx.inputs[i].assets.lookup(id) or
+    /// tx.outputs[o].assets.lookup(id) with an `AssetId` id. Asserts the asset is present
     /// (consumes the opcode success flag with OP_VERIFY) and leaves its amount.
     AssetLookup {
         source: AssetLookupSource,
         index: Box<Expression>,
-        asset_txid: Box<Expression>, // bytes32 expression
-        asset_gidx: Box<Expression>, // int reference or literal (0..65535)
+        asset_id: Box<Expression>,
     },
-    /// Asset presence predicate: tx.inputs[i].assets.has(txid, gidx) or
-    /// tx.outputs[o].assets.has(txid, gidx). Boolean — true when the asset is
+    /// Asset presence predicate: tx.inputs[i].assets.has(id) or
+    /// tx.outputs[o].assets.has(id). Boolean — true when the asset is
     /// present, false when absent (keeps the opcode success flag, drops amount).
     AssetHas {
         source: AssetLookupSource,
         index: Box<Expression>,
-        asset_txid: Box<Expression>,
-        asset_gidx: Box<Expression>,
+        asset_id: Box<Expression>,
     },
-    /// Non-aborting asset lookup: tx.inputs[i].assets.tryLookup(txid, gidx) or
-    /// tx.outputs[o].assets.tryLookup(txid, gidx). An `AssetLookup` holding the
+    /// Non-aborting asset lookup: tx.inputs[i].assets.tryLookup(id) or
+    /// tx.outputs[o].assets.tryLookup(id). An `AssetLookup` holding the
     /// amount and the opcode success flag.
     AssetTryLookup {
         source: AssetLookupSource,
         index: Box<Expression>,
-        asset_txid: Box<Expression>,
-        asset_gidx: Box<Expression>,
+        asset_id: Box<Expression>,
     },
     /// Asset count: tx.inputs[i].assets.length or tx.outputs[o].assets.length
     AssetCount {
@@ -663,18 +650,12 @@ pub enum ExprKind {
         op: crate::operators::BinaryOperator,
         right: Box<Expression>,
     },
-    /// Asset group find: tx.assetGroups.find(txid, gidx) → the `AssetGroup` with
+    /// Asset group lookup: tx.assetGroups.lookup(id) → the `AssetGroup` with
     /// that Asset ID. Asserts existence (consumes the success flag with OP_VERIFY).
-    GroupFind {
-        asset_txid: Box<Expression>,
-        asset_gidx: Box<Expression>,
-    },
-    /// Asset group presence predicate: tx.assetGroups.has(txid, gidx). Boolean —
+    GroupLookup { asset_id: Box<Expression> },
+    /// Asset group presence predicate: tx.assetGroups.has(id). Boolean —
     /// true when a group with that Asset ID exists, false otherwise.
-    GroupHas {
-        asset_txid: Box<Expression>,
-        asset_gidx: Box<Expression>,
-    },
+    GroupHas { asset_id: Box<Expression> },
     /// The `AssetGroup` at packet position k: tx.assetGroups[k].
     AssetGroupAt { index: Box<Expression> },
     /// Asset group property: group.sumInputs, group.delta, etc.
@@ -683,23 +664,22 @@ pub enum ExprKind {
         property: crate::properties::GroupProperty,
     },
     /// Boolean equality over the complete canonical control Asset ID:
-    /// group.controlIs(txid, gidx). False when control is absent or either
+    /// group.controlIs(id). False when control is absent or either
     /// component differs. `group.hasControl` (presence only) is modeled as a
     /// plain `GroupProperty { property: "hasControl" }`.
     GroupControlIs {
         group: Box<Expression>,
-        asset_txid: Box<Expression>,
-        asset_gidx: Box<Expression>,
+        asset_id: Box<Expression>,
     },
     /// Asset groups length: tx.assetGroups.length → csn
     AssetGroupsLength,
     /// Per-group input/output access: group.inputs[j] or group.outputs[j]
-    /// Returns: type_u8, data..., amount_u64 based on input/output type
     GroupIOAccess {
         group: Box<Expression>,
         io_index: Box<Expression>,
         source: GroupIOSource,
-        property: Option<crate::properties::GroupIoProperty>, // None returns the raw record
+        // None is the whole record: an `AssetGroupInput` or `AssetGroupOutput`
+        property: Option<crate::properties::GroupIoProperty>,
     },
     // ─── Arithmetic ────────────────────────────────────────────────────
     /// Prefix operator: -value, !value or ~value
@@ -711,8 +691,9 @@ pub enum ExprKind {
     ///
     /// Resolves to the Taproot program and witness version 1 of the named contract instantiated
     /// with the given arguments. Options (server key, exit timelock) are
-    /// inherited from the enclosing contract. Used for recursion enforcement
-    /// via output introspection: `tx.outputs[0].script == new Foo(x)`
+    /// inherited from the enclosing contract. Used to pin an output to another
+    /// contract: `tx.outputs[0].script == new Foo(x)`. A contract cannot
+    /// instantiate itself; it compares against `tx.input.current.script` instead.
     ContractInstance {
         /// Name of the contract to instantiate
         contract_name: String,
@@ -749,13 +730,18 @@ pub enum ExprKind {
 /// Native struct returned by a fixed-width multi-item expression.
 pub fn expression_result_struct(expression: &Expression) -> Option<&'static str> {
     match &expression.kind {
-        ExprKind::Builtin { builtin, .. } => builtin.result,
+        ExprKind::Builtin { builtin, .. } => Some(builtin.result),
         ExprKind::AssetAt { property, .. } => {
             Some(property.map_or("AssetEntry", |p| p.value_type()))
         }
         ExprKind::AssetTryLookup { .. } => Some("AssetLookup"),
         ExprKind::ContractInstance { .. } => Some("ScriptPubKey"),
         ExprKind::GroupProperty { property, .. } => Some(property.value_type()),
+        ExprKind::GroupIOAccess {
+            source,
+            property: None,
+            ..
+        } => Some(source.record_type()),
         ExprKind::InputIntrospection { property, .. } => Some(property.value_type()),
         ExprKind::OutputIntrospection { property, .. } => Some(property.value_type()),
         _ => None,
@@ -785,26 +771,19 @@ macro_rules! expression_children {
                 ExprKind::ArrayLiteral(elements)
                 | ExprKind::Call { args: elements, .. }
                 | ExprKind::Builtin { args: elements, .. } => elements.$iter().collect(),
-                ExprKind::StructLiteral(fields) => fields.$iter().map(|(_, value)| value).collect(),
+                ExprKind::StructLiteral { fields, .. } => {
+                    fields.$iter().map(|(_, value)| value).collect()
+                }
 
                 ExprKind::AssetLookup {
-                    index,
-                    asset_txid,
-                    asset_gidx,
-                    ..
+                    index, asset_id, ..
                 }
                 | ExprKind::AssetHas {
-                    index,
-                    asset_txid,
-                    asset_gidx,
-                    ..
+                    index, asset_id, ..
                 }
                 | ExprKind::AssetTryLookup {
-                    index,
-                    asset_txid,
-                    asset_gidx,
-                    ..
-                } => vec![index, asset_txid, asset_gidx],
+                    index, asset_id, ..
+                } => vec![index, asset_id],
                 ExprKind::AssetCount { index, .. }
                 | ExprKind::InputIntrospection { index, .. }
                 | ExprKind::OutputIntrospection { index, .. }
@@ -818,19 +797,10 @@ macro_rules! expression_children {
                 ExprKind::BinaryOp { left, right, .. } => {
                     vec![left, right]
                 }
-                ExprKind::GroupFind {
-                    asset_txid,
-                    asset_gidx,
+                ExprKind::GroupLookup { asset_id } | ExprKind::GroupHas { asset_id } => {
+                    vec![asset_id]
                 }
-                | ExprKind::GroupHas {
-                    asset_txid,
-                    asset_gidx,
-                } => vec![asset_txid, asset_gidx],
-                ExprKind::GroupControlIs {
-                    group,
-                    asset_txid,
-                    asset_gidx,
-                } => vec![group, asset_txid, asset_gidx],
+                ExprKind::GroupControlIs { group, asset_id } => vec![group, asset_id],
                 ExprKind::GroupIOAccess {
                     group, io_index, ..
                 } => vec![group, io_index],
@@ -898,6 +868,16 @@ impl Expression {
                     _ => e.source_text(),
                 };
                 format!("{} {op} {}", operand(left), operand(right))
+            }
+            ExprKind::StructLiteral { name, fields } => {
+                let fields: Vec<String> = fields
+                    .iter()
+                    .map(|(field, value)| format!("{field}: {}", value.source_text()))
+                    .collect();
+                let name = name
+                    .as_ref()
+                    .map_or(String::new(), |name| format!("{name} "));
+                format!("{name}{{ {} }}", fields.join(", "))
             }
             _ => self
                 .access_path(&Self::source_text)

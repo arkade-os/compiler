@@ -77,15 +77,8 @@ contract FujiSafe(
   function renew(signature treasurySig) {
     int currentValue = tx.input.current.value;
 
-    // Recreate same contract with identical parameters
-    require(
-      tx.outputs[0].script == new FujiSafe(
-        assetCommitmentHash, borrowAmount, borrowerPk, treasuryPk,
-        expirationTimeout, priceLevel, setupTimestamp, oraclePk, assetPair,
-        treasuryBurnScript, borrowerBurnScript
-      ),
-      "contract mismatch"
-    );
+    // Recreate the same contract: the output keeps this input's script
+    require(tx.outputs[0].script == tx.input.current.script, "contract mismatch");
     require(tx.outputs[0].value == currentValue, "Value mismatch");
 
     // Require treasury signature

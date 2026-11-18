@@ -15,8 +15,8 @@ library CpMath {
     require(feeBps < BPS, "fee");
   }
 
-  function held(int index, bytes32 txid, int gidx) int {
-    let row = tx.inputs[index].assets.tryLookup(txid, gidx);
+  function held(int index, AssetId id) int {
+    let row = tx.inputs[index].assets.tryLookup(id);
     if (row.found) {
       return row.amount;
     }
@@ -52,10 +52,10 @@ library CpMath {
   // Pay floor(reserve * burned / supply) on output 1. A side that rounds to 0
   // is omitted. At least one side must pay. Burning the whole supply is exact,
   // so both sides pay.
-  function payout(bytes32 quoteTxid, int quoteGidx, int baseOut, int quoteOut) {
+  function payout(AssetId quoteId, int baseOut, int quoteOut) {
     require(baseOut > 0 || quoteOut > 0, "dust");
     if (quoteOut > 0) {
-      require(tx.outputs[1].assets.lookup(quoteTxid, quoteGidx) == quoteOut, "quote out");
+      require(tx.outputs[1].assets.lookup(quoteId) == quoteOut, "quote out");
       require(tx.outputs[1].assets.length == 1, "quote only");
     } else {
       require(quoteOut == 0, "quote");

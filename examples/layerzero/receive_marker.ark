@@ -17,8 +17,7 @@ pragma arkade ^0.1.0;
 
 contract ReceiveMarker(
   bytes32 oappReceiveScriptHash,
-  bytes32 oappCtrlAssetIdTxid,
-  int     oappCtrlAssetIdGidx
+  AssetId oappCtrlAssetId
 ) {
   // Single execution path: consumed inside OApp.receive().
   //
@@ -39,7 +38,7 @@ contract ReceiveMarker(
 
     // (3) defense-in-depth: OApp control singleton on the consuming input.
     require(
-      tx.inputs[1].assets.lookup(oappCtrlAssetIdTxid, oappCtrlAssetIdGidx) == 1,
+      tx.inputs[1].assets.lookup(oappCtrlAssetId) == 1,
       "oapp state input missing control asset"
     );
   }

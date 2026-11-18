@@ -88,7 +88,7 @@ fn bytes_literals_encode_exact_bytes() {
             "0x2f2f203c696e6a65637465643e204f505f44524f50",
         ),
         ("0xdeadbeef", "0xdeadbeef"),
-        ("0xDEADBEEF", "0xDEADBEEF"),
+        ("0xDEADbeef", "0xdeadbeef"),
         ("0x000180", "0x000180"),
     ] {
         let out = compile(&format!(
@@ -123,7 +123,7 @@ fn bytes_literals_work_through_expressions_and_named_operands() {
                 require(size("") == 0);
                 require(substr("hello", 0, 2) == 0x6865);
                 require(cat("he", 0x6c6c6f) == y);
-                require(bin2num(0x01) == 1);
+                require(bytes2int(0x01) == 1);
                 require(reverseBytes(0x0001) == 0x0100);
                 require(sha256("hello") == hash);
                 require(sha256(y) == 0x00);

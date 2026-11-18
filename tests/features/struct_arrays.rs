@@ -65,10 +65,10 @@ contract C() {
 
 #[test]
 fn loops_comparisons_native_structs_and_constructor_arrays_compile() {
-    let output = compile(
-        r#"
-struct Item { int value; Outpoint position; }
-struct State { Item[2] items; }
+    let output = crate::common::project(
+        "main.ark",
+        &[("main.ark", r#"
+import "child.ark";
 contract C(State state) {
     private function copy(Item[2] items) Item[2] { return items; }
     function spend(Item[2] provided) {
@@ -78,15 +78,18 @@ contract C(State state) {
             require(item.value == state.items[index].value);
             require(item.position == provided[index].position);
         }
-        require(tx.outputs[0].script == new C(state));
+        require(tx.outputs[0].script == new Child(state));
     }
 }
-"#,
+"#), (
+            "child.ark",
+            "struct Item { int value; Outpoint position; } struct State { Item[2] items; } contract Child(State state) { function spend() { require(state.items[0].value == 0); } }",
+        )],
     )
     .unwrap();
     let asm = arkade_asm_tokens(&output, "spend");
     assert!(asm.contains(&"<state.items.1.position.vout>".to_string()));
-    assert!(asm.iter().any(|token| token.starts_with("<CONTRACT:C(")
+    assert!(asm.iter().any(|token| token.starts_with("<CONTRACT:Child(")
         && token.contains("<state.items.0.position.txid>")));
     assert!(!asm
         .iter()
@@ -342,7 +345,7 @@ struct Rule { AssetId id; int amount; }
 contract C(Rule[2] rules) {
     function spend() {
         for (i, rule) in rules {
-            require(tx.outputs[0].assets.lookup(rule.id.txid, rule.id.gidx) >= rule.amount);
+            require(tx.outputs[0].assets.lookup(rule.id) >= rule.amount);
         }
     }
 }

@@ -7,7 +7,7 @@ the full spec, plus `internal/protocol/types.go` for packet layouts).
 
 These four contracts now use the canonical introspector opcode set
 end-to-end — packet introspection (`tx.packet(...)`, `tx.inputs[i].packet(...)`),
-byte slicing (`substr`, `cat`, `bin2num`, `size`), input arkade-script-hash
+byte slicing (`substr`, `cat`, `reverseBytes`, `bytes2uint`, `size`), input arkade-script-hash
 binding (`tx.inputs[i].arkadeScriptHash`), and inline SHA256
 (`sha256(substr(...))`) — to enforce the full Go-script semantics on chain.
 See `https://github.com/ArkLabsHQ/introspector` for the opcode reference.
@@ -83,13 +83,13 @@ expressed in Arkade:
 | Marker output pinning | `tx.outputs[1].script == new ReceiveMarker(…)` | `OP_INSPECTOUTPUTSCRIPTPUBKEY` + VTXO placeholder |
 | Marker mint (1 unit) | `tx.outputs[i].assets.lookup(marker) == 1` + `group.sumOutputs == 1` | `OP_INSPECTOUTASSETLOOKUP`, `OP_INSPECTASSETGROUPSUM` |
 | Marker burn | `group.sumOutputs == 0` | same |
-| USDT0 delta == credited amount | `usdt0Group.delta == bin2num(substr(packet, off, 8))` | `OP_INSPECTASSETGROUPSUM`, `OP_SUBSTR`, `OP_BIN2NUM` |
+| USDT0 delta == credited amount | `usdt0Group.delta == bytes2uint(reverseBytes(substr(packet, off, 8)))` | `OP_INSPECTASSETGROUPSUM`, `OP_SUBSTR`, `OP_REVERSEBYTES`, `OP_NUM2BIN`, `OP_CAT`, `OP_BIN2NUM` |
 | Marker pinned to consumer | `tx.inputs[i].arkadeScriptHash == expectedHash` | `OP_INSPECTINPUTARKADESCRIPTHASH` |
 | Marker at expected input position | `this.activeInputIndex == k` | `OP_PUSHCURRENTINPUTINDEX` |
 | Packet version | `substr(tx.packet(t), 0, 1) == 1` | `OP_INSPECTPACKET`, `OP_SUBSTR` |
 | Packet size | `size(tx.packet(t)) == N` | `OP_INSPECTPACKET`, `OP_SIZE`, `OP_NIP` |
 | Route preservation | `substr(tx.packet(t), off, len) == endpointID` | `OP_INSPECTPACKET`, `OP_SUBSTR`, `OP_EQUAL` |
-| Numeric packet fields | `bin2num(substr(packet, off, 4))` | `OP_BIN2NUM` |
+| Big-endian numeric packet fields | `bytes2uint(reverseBytes(substr(packet, off, 4)))` | `OP_REVERSEBYTES`, `OP_NUM2BIN`, `OP_CAT`, `OP_BIN2NUM` |
 | DVN attested-hash binding | `sha256(substr(recv, 1, 140)) == attestedHash` | `OP_INSPECTPACKET`, `OP_SUBSTR`, `OP_SHA256` |
 | LzSend GUID = sha256(invocation) | `sha256(substr(tx.inputs[1].packet(20), 0, 175)) == substr(tx.packet(19), 77, 32)` | `OP_INSPECTINPUTPACKET`, `OP_SHA256`, `OP_INSPECTPACKET`, `OP_SUBSTR` |
 
@@ -119,18 +119,7 @@ relying on it.
 
 ## Constructor decomposition
 
-Some `bytes32` constructor parameters (`endpointCtrlAssetId`,
-`endpointIDAssetId`, `oappIDAssetId`, `usdt0AssetId`) appear in the
-generated JSON as `_txid` + `_gidx` pairs, while others
-(`oappCtrlAssetId`, `endpointID`, `oappID`, `remoteOApp`) appear as
-single `bytes32` values. This is by design: the compiler decomposes
-only the asset IDs that are passed to `tx.{inputs,outputs}[i].assets.lookup(...)`
-or to `tx.assetGroups.find(...)` inside the function bodies — those
-need to be split into the `(txid32, gidx_u16)` pair the underlying
-`OP_INSPECT*ASSETLOOKUP` / `OP_FINDASSETGROUPBYASSETID` opcodes consume.
-`bytes32` params that only get passed through to a child constructor
-(`new ReceiveMarker(oappCtrlAssetId, …)`) stay as a single 32-byte value.
-The split shows up in the JSON but is invisible at the Arkade source level.
+The Asset ID constructor parameters (`endpointCtrlAssetId`, `endpointIDAssetId`, `oappCtrlAssetId`, `oappIDAssetId`, `usdt0AssetId`) are `AssetId` values. The artifact lists each as one parameter, and the assembly reads its `txid` and `gidx` fields, the `(txid32, gidx_u16)` pair the `OP_INSPECT*ASSETLOOKUP` / `OP_FINDASSETGROUPBYASSETID` opcodes consume, as placeholders such as `<endpointCtrlAssetId.txid>` and `<endpointCtrlAssetId.gidx>`. An `AssetId` passed to a child constructor (`new ReceiveMarker(…, oappCtrlAssetId)`) is passed field by field. The other identifiers (`endpointID`, `oappID`, `remoteOApp`) are single `bytes32` values.
 
 ## Nonce monotonicity
 

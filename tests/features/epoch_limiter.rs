@@ -8,17 +8,18 @@ use crate::common::{arkade_asm, arkade_asm_tokens, leaf_asm};
 /// Exercises let bindings, branch emission, reassignment, and branch stack normalization.
 const EPOCH_LIMITER_CODE: &str = r#"
 contract EpochLimiter(
-  bytes32 ctrlAssetIdTxid, int ctrlAssetIdGidx,
+  AssetId ctrlAssetId,
   int epochLimit,
   int epochBlocks
 ) {
+  @allow(offchain-locktime, "a fixture for let bindings and branches")
   function check(int transferAmount, int epochStartIdx, int epochTotalIdx) {
     require(transferAmount > 0, "zero");
 
     let epochStart = tx.assetGroups[epochStartIdx].sumInputs;
     let epochTotal = tx.assetGroups[epochTotalIdx].sumInputs;
 
-    require(tx.inputs[0].assets.lookup(ctrlAssetIdTxid, ctrlAssetIdGidx) > 0, "no ctrl");
+    require(tx.inputs[0].assets.lookup(ctrlAssetId) > 0, "no ctrl");
 
     if (tx.locktime >= epochStart + epochBlocks) {
       let newStart = tx.locktime;
@@ -32,7 +33,7 @@ contract EpochLimiter(
       require(newTotal <= epochLimit, "exceeds limit");
     }
 
-    require(tx.outputs[0].assets.lookup(ctrlAssetIdTxid, ctrlAssetIdGidx) >= tx.inputs[0].assets.lookup(ctrlAssetIdTxid, ctrlAssetIdGidx), "ctrl leaked");
+    require(tx.outputs[0].assets.lookup(ctrlAssetId) >= tx.inputs[0].assets.lookup(ctrlAssetId), "ctrl leaked");
     require(tx.outputs[0].script == tx.input.current.script, "broken");
   }
 }

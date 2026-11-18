@@ -2,7 +2,8 @@ use arkade_compiler::compile;
 use arkade_compiler::opcodes::{
     OP_0, OP_1, OP_2DROP, OP_DROP, OP_FINDASSETGROUPBYASSETID, OP_INSPECTASSETGROUP,
     OP_INSPECTASSETGROUPASSETID, OP_INSPECTASSETGROUPCTRL, OP_INSPECTASSETGROUPMETADATAHASH,
-    OP_INSPECTASSETGROUPNUM, OP_INSPECTASSETGROUPSUM, OP_NIP, OP_SUB, OP_SWAP, OP_TXID,
+    OP_INSPECTASSETGROUPNUM, OP_INSPECTASSETGROUPSUM, OP_NIP, OP_NUMEQUALVERIFY, OP_SUB, OP_SWAP,
+    OP_TXID,
 };
 
 use crate::common::arkade_asm;
@@ -11,14 +12,14 @@ use crate::common::arkade_asm;
 #[test]
 fn test_group_asset_id_returns_struct() {
     let code = r#"
-        contract AssetIdTest(bytes32 tokenAssetIdTxid, int tokenAssetIdGidx) {
+        contract AssetIdTest(AssetId tokenAssetId) {
             function checkAssetId(signature ownerSig, pubkey owner) {
                 require(checkSig(ownerSig, owner));
-                let tokenGroup = tx.assetGroups.find(tokenAssetIdTxid, tokenAssetIdGidx);
+                let tokenGroup = tx.assetGroups.lookup(tokenAssetId);
                 AssetId id = tokenGroup.assetId;
-                require(id.txid == tokenAssetIdTxid, "asset txid mismatch");
-                require(id.gidx == tokenAssetIdGidx, "asset gidx mismatch");
-                let sameGroup = tx.assetGroups.find(id.txid, id.gidx);
+                require(id.txid == tokenAssetId.txid, "asset txid mismatch");
+                require(id.gidx == tokenAssetId.gidx, "asset gidx mismatch");
+                let sameGroup = tx.assetGroups.lookup(id);
                 require(sameGroup == tokenGroup);
             }
         }
@@ -35,10 +36,10 @@ fn test_group_asset_id_returns_struct() {
 #[test]
 fn test_group_is_fresh_basic() {
     let code = r#"
-        contract FreshAssetTest(bytes32 newAssetIdTxid, int newAssetIdGidx) {
+        contract FreshAssetTest(AssetId newAssetId) {
             function verifyFresh(signature ownerSig, pubkey owner) {
                 require(checkSig(ownerSig, owner));
-                let group = tx.assetGroups.find(newAssetIdTxid, newAssetIdGidx);
+                let group = tx.assetGroups.lookup(newAssetId);
                 require(group.isFresh == true, "must be fresh");
             }
         }
@@ -71,13 +72,13 @@ fn test_group_is_fresh_basic() {
 #[test]
 fn test_is_fresh_with_delta_combo() {
     let code = r#"
-        contract NFTMintTest(bytes32 nftAssetIdTxid, int nftAssetIdGidx, bytes32 ctrlAssetIdTxid, int ctrlAssetIdGidx) {
+        contract NFTMintTest(AssetId nftAssetId, AssetId ctrlAssetId) {
             function mintNFT(signature issuerSig, pubkey issuer) {
                 require(checkSig(issuerSig, issuer));
-                let nftGroup = tx.assetGroups.find(nftAssetIdTxid, nftAssetIdGidx);
+                let nftGroup = tx.assetGroups.lookup(nftAssetId);
                 require(nftGroup.isFresh == true, "must be new asset");
                 require(nftGroup.delta == 1, "must mint exactly 1");
-                require(nftGroup.controlIs(ctrlAssetIdTxid, ctrlAssetIdGidx), "wrong control");
+                require(nftGroup.controlIs(ctrlAssetId), "wrong control");
             }
         }
     "#;
@@ -112,10 +113,10 @@ fn test_is_fresh_with_delta_combo() {
 #[test]
 fn test_is_fresh_zero_for_existing_asset() {
     let code = r#"
-        contract ExistingAssetTest(bytes32 assetIdTxid, int assetIdGidx) {
+        contract ExistingAssetTest(AssetId assetId) {
             function transferExisting(signature ownerSig, pubkey owner) {
                 require(checkSig(ownerSig, owner));
-                let group = tx.assetGroups.find(assetIdTxid, assetIdGidx);
+                let group = tx.assetGroups.lookup(assetId);
                 require(group.isFresh == false, "must be existing asset");
                 require(group.delta == 0, "must be transfer only");
             }
@@ -140,10 +141,10 @@ fn test_is_fresh_zero_for_existing_asset() {
 #[test]
 fn test_group_metadata_hash() {
     let code = r#"
-        contract MetadataTest(bytes32 assetIdTxid, int assetIdGidx, bytes32 expectedHash) {
+        contract MetadataTest(AssetId assetId, bytes32 expectedHash) {
             function verifyMetadata(signature ownerSig, pubkey owner) {
                 require(checkSig(ownerSig, owner));
-                let group = tx.assetGroups.find(assetIdTxid, assetIdGidx);
+                let group = tx.assetGroups.lookup(assetId);
                 require(group.metadataHash == expectedHash, "metadata mismatch");
             }
         }
@@ -166,18 +167,18 @@ fn test_group_metadata_hash() {
 fn test_all_group_properties() {
     let code = r#"
         contract AllPropertiesTest(
-            bytes32 assetIdTxid, int assetIdGidx,
-            bytes32 ctrlAssetIdTxid, int ctrlAssetIdGidx,
+            AssetId assetId,
+            AssetId ctrlAssetId,
             bytes32 expectedMetadata
         ) {
             function fullCheck(signature sig, pubkey pk, int expectedDelta) {
                 require(checkSig(sig, pk));
-                let group = tx.assetGroups.find(assetIdTxid, assetIdGidx);
+                let group = tx.assetGroups.lookup(assetId);
 
                 // Test all group properties
                 require(group.isFresh == true, "not fresh");
                 require(group.delta == expectedDelta, "wrong delta");
-                require(group.controlIs(ctrlAssetIdTxid, ctrlAssetIdGidx), "wrong control");
+                require(group.controlIs(ctrlAssetId), "wrong control");
                 require(group.metadataHash == expectedMetadata, "wrong metadata");
                 require(group.sumOutputs >= group.sumInputs, "outputs < inputs");
             }
@@ -225,10 +226,10 @@ fn test_all_group_properties() {
 #[test]
 fn test_group_num_inputs() {
     let code = r#"
-        contract NumInputsTest(bytes32 assetIdTxid, int assetIdGidx) {
+        contract NumInputsTest(AssetId assetId) {
             function checkInputCount(signature sig, pubkey pk) {
                 require(checkSig(sig, pk));
-                let group = tx.assetGroups.find(assetIdTxid, assetIdGidx);
+                let group = tx.assetGroups.lookup(assetId);
                 require(group.numInputs >= 1, "need at least one input");
             }
         }
@@ -255,10 +256,10 @@ fn test_group_num_inputs() {
 #[test]
 fn test_group_num_outputs() {
     let code = r#"
-        contract NumOutputsTest(bytes32 assetIdTxid, int assetIdGidx) {
+        contract NumOutputsTest(AssetId assetId) {
             function checkOutputCount(signature sig, pubkey pk) {
                 require(checkSig(sig, pk));
-                let group = tx.assetGroups.find(assetIdTxid, assetIdGidx);
+                let group = tx.assetGroups.lookup(assetId);
                 require(group.numOutputs >= 2, "need at least two outputs");
             }
         }
@@ -285,10 +286,10 @@ fn test_group_num_outputs() {
 #[test]
 fn test_group_num_io_together() {
     let code = r#"
-        contract NumIOTest(bytes32 assetIdTxid, int assetIdGidx) {
+        contract NumIOTest(AssetId assetId) {
             function checkCounts(signature sig, pubkey pk) {
                 require(checkSig(sig, pk));
-                let group = tx.assetGroups.find(assetIdTxid, assetIdGidx);
+                let group = tx.assetGroups.lookup(assetId);
                 require(group.numInputs >= 1, "need inputs");
                 require(group.numOutputs >= 1, "need outputs");
                 require(group.numOutputs >= group.numInputs, "outputs must be >= inputs");
@@ -394,8 +395,8 @@ fn test_group_accesses_ignore_whitespace_and_comments() {
             "require(tx . assetGroups . length >= g);",
         ),
         (
-            "let x = tx.assetGroups.find(t, g); require(x == x);",
-            "let x = tx.assetGroups . find(t, g); require(x == x);",
+            "let x = tx.assetGroups.lookup({ txid: t, gidx: g }); require(x == x);",
+            "let x = tx.assetGroups . lookup({ txid: t, gidx: g }); require(x == x);",
         ),
         (
             "require(tx.input.current.value >= g);",
@@ -446,39 +447,89 @@ fn only_input_records_have_a_txid() {
     );
 }
 
-/// Without a property, the raw (type, data..., amount) tuple isn't one
-/// stack item and can't be bound either.
+/// A record read without a property is an `AssetGroupInput` or `AssetGroupOutput`
+/// value, inspected once and normalized to `[type, index, amount]`.
 #[test]
-fn test_group_io_access_without_property_is_rejected() {
-    let code = r#"
+fn group_records_are_values_from_one_inspection() {
+    let output = compile(
+        r#"
         contract GroupIOTest(pubkey owner) {
+            private function amountOf(AssetGroupInput r) int { return r.amount; }
+            private function firstOutput(AssetGroup g) AssetGroupOutput { return g.outputs[0]; }
             function spend(signature sig) {
                 require(checkSig(sig, owner));
-                let result = tx.assetGroups[0].outputs[0];
-                require(result >= 0);
+                let g = tx.assetGroups[0];
+                let x = g.inputs[0];
+                let y = g.outputs[0];
+                require(x.type == 1 && x.index == 2 && x.amount == y.amount);
+                require(y.type == 1 && y.index == 0);
+            }
+            function same(signature sig) {
+                require(checkSig(sig, owner));
+                let g = tx.assetGroups[0];
+                require(g.inputs[0] == g.inputs[1]);
+            }
+            function helpers(signature sig) {
+                require(checkSig(sig, owner));
+                let g = tx.assetGroups[0];
+                require(amountOf(g.inputs[0]) == firstOutput(g).amount);
             }
         }
-    "#;
+    "#,
+    )
+    .expect("group records are struct values");
+    let count = |function, op| crate::common::opcode_count_in_arkade(&output, function, op);
+    let normalize = "OP_0 OP_INSPECTASSETGROUP OP_TOALTSTACK OP_TOALTSTACK OP_SIZE 32 OP_EQUAL OP_IF OP_DROP OP_ENDIF OP_FROMALTSTACK OP_FROMALTSTACK";
+    assert_eq!(count("spend", OP_INSPECTASSETGROUP), 2);
+    let spend = arkade_asm(&output, "spend");
+    assert_eq!(spend.matches(normalize).count(), 1, "{spend}");
+    assert!(spend.contains("OP_1 OP_INSPECTASSETGROUP"), "{spend}");
+    // Field by field over type, index and amount.
+    assert_eq!(count("same", OP_INSPECTASSETGROUP), 2);
+    assert_eq!(count("same", OP_NUMEQUALVERIFY), 3);
+    assert_eq!(count("helpers", OP_INSPECTASSETGROUP), 2);
 
-    let error = compile(code)
-        .expect_err("a raw group IO access must not bind a value")
-        .to_string();
-    assert!(error.contains("does not produce one stack item"), "{error}");
+    let body = |statement: &str| {
+        format!("contract C(bytes32 t) {{ private function first(AssetGroup g) AssetGroupInput {{ return g.inputs[0]; }} function spend() {{ let g = tx.assetGroups[0]; {statement} }} }}")
+    };
+    for (statement, message) in [
+        (
+            "let r = g.inputs[0]; require(r.txid == t);",
+            "asset group input records have no txid; read it with g.inputs[j].txid",
+        ),
+        (
+            "require(first(g).txid == t);",
+            "asset group input records have no txid; read it with g.inputs[j].txid",
+        ),
+        (
+            "let r = g.outputs[0]; require(r.txid == t);",
+            "asset group output records have no txid",
+        ),
+        (
+            "require(g.inputs[0] == g.outputs[0]);",
+            "comparison '==' is not defined between 'AssetGroupInput' and 'AssetGroupOutput'",
+        ),
+    ] {
+        let error = compile(&body(statement)).expect_err(statement).to_string();
+        assert!(error.contains(message), "{statement}: {error}");
+    }
 }
 
 #[test]
 fn test_group_access_as_constructor_argument_is_parsed() {
     let code = r#"
+        import "u.ark";
         contract T(int amount, pubkey owner) {
             function spend(signature sig) {
                 require(checkSig(sig, owner));
                 require(amount >= 0);
-                require(tx.outputs[0].script == new T(tx.assetGroups[0].sumInputs, owner));
+                require(tx.outputs[0].script == new U(tx.assetGroups[0].sumInputs, owner));
             }
         }
     "#;
+    let child = "contract U(int amount, pubkey owner) { function spend(signature sig) { require(checkSig(sig, owner)); } }";
 
-    let error = compile(code)
+    let error = crate::common::project("main.ark", &[("main.ark", code), ("u.ark", child)])
         .expect_err("computed constructor arguments are rejected")
         .to_string();
     assert!(
@@ -508,7 +559,10 @@ fn inline_group_properties_emit_their_opcode() {
             "OP_INSPECTASSETGROUPASSETID OP_DROP OP_TXID OP_EQUAL",
         ),
     ] {
-        for group in ["tx.assetGroups[0]", "tx.assetGroups.find(t, 0)"] {
+        for group in [
+            "tx.assetGroups[0]",
+            "tx.assetGroups.lookup({ txid: t, gidx: 0 })",
+        ] {
             let code = format!(
                 "contract V(bytes32 t) {{ function spend() {{ let x = {group}.{property}; require(x == x); }} }}"
             );
@@ -527,11 +581,11 @@ fn asset_groups_bind_pass_index_and_nest_like_other_values() {
             function spend(AssetGroup g, AssetGroup[2] gs, int i, Watch w) {
                 require(g.outputs[0].amount >= 0);
                 require(gs[i].delta >= 0);
-                require(gs[i].controlIs(t, 0));
-                AssetGroup found = tx.assetGroups.find(t, 0);
+                require(gs[i].controlIs({ txid: t, gidx: 0 }));
+                AssetGroup found = tx.assetGroups.lookup({ txid: t, gidx: 0 });
                 require(found.outputs[0].type >= 0);
-                require(tx.assetGroups.find(t, 1).isFresh);
-                require(tx.assetGroups[i].controlIs(t, 2));
+                require(tx.assetGroups.lookup({ txid: t, gidx: 1 }).isFresh);
+                require(tx.assetGroups[i].controlIs({ txid: t, gidx: 2 }));
                 require(w.group.sumOutputs >= w.floor);
                 for (k, h) in gs {
                     require(h.sumOutputs >= h.sumInputs);
@@ -568,7 +622,7 @@ fn asset_groups_are_typed() {
             "binding 'g' declares type 'AssetGroup' but initializer has type 'int'",
         ),
         (
-            "int k = tx.assetGroups.find(t, 0); require(k == 0);",
+            "int k = tx.assetGroups.lookup({ txid: t, gidx: 0 }); require(k == 0);",
             "binding 'k' declares type 'int' but initializer has type 'AssetGroup'",
         ),
         (
@@ -585,11 +639,81 @@ fn asset_groups_are_typed() {
         ),
         (
             "int g = 0; require(g.delta == 0);",
-            "asset group property operand has type 'int', expected 'AssetGroup'",
+            "field 'g.delta' is undefined",
         ),
     ] {
         let code = format!("contract V(bytes32 t) {{ function spend() {{ {statement} }} }}");
         let error = compile(&code).expect_err(statement).to_string();
         assert!(error.contains(expected), "{statement}: {error}");
+    }
+}
+
+/// Group members are looked up by the base's type: struct fields named like
+/// them stay fields, and other values have none.
+#[test]
+fn group_members_resolve_only_on_asset_groups() {
+    let output = compile(
+        r#"
+        struct Tally { AssetGroup group; int delta; int[2] inputs; }
+        contract V(pubkey owner) {
+            function spend(signature sig, Tally s) {
+                require(checkSig(sig, owner));
+                require(s.delta + s.inputs[1] + s.inputs.length == s.group.delta);
+                require(s.group.inputs[0].amount >= s.group.inputs.length);
+            }
+        }
+    "#,
+    )
+    .unwrap_or_else(|error| panic!("{error}"));
+    let asm = arkade_asm(&output, "spend");
+    assert_eq!(
+        asm.matches("OP_INSPECTASSETGROUPSUM OP_SUB").count(),
+        1,
+        "{asm}"
+    );
+    assert_eq!(asm.matches("OP_INSPECTASSETGROUP ").count(), 1, "{asm}");
+    assert_eq!(asm.matches("OP_INSPECTASSETGROUPNUM").count(), 1, "{asm}");
+
+    for (statement, expected) in [
+        (
+            "require((t + t).delta == 0);",
+            "value of type 'bytes' has no field 'delta'",
+        ),
+        (
+            "int[2] xs = [1, 2]; require(xs.inputs.length == 0);",
+            "'xs.inputs' is not an array",
+        ),
+        (
+            "require(n.inputs[0].amount == 0);",
+            "array 'n.inputs' is undefined",
+        ),
+    ] {
+        let code = format!("contract V(bytes32 t, int n) {{ function spend() {{ {statement} }} }}");
+        let error = compile(&code).expect_err(statement).to_string();
+        assert!(error.contains(expected), "{statement}: {error}");
+        assert!(!error.contains("asset group"), "{statement}: {error}");
+    }
+
+    // A member path reports only its root's fault.
+    for (statement, expected) in [
+        (
+            "require(gruop.inputs[0].amount == group.delta);",
+            "binding 'gruop' is undefined; did you mean 'group'?",
+        ),
+        (
+            "require(gruop.outputs.length == group.delta);",
+            "binding 'gruop' is undefined; did you mean 'group'?",
+        ),
+        (
+            "for (k, h) in n { require(h.inputs[0].amount + h.inputs.length == h.delta); }",
+            "loop iterable 'n' has type 'int', expected array",
+        ),
+    ] {
+        let code = format!(
+            "contract V(int n) {{ function spend() {{ let group = tx.assetGroups[0]; {statement} }} }}"
+        );
+        let error = compile(&code).expect_err(statement).to_string();
+        assert!(error.contains(expected), "{statement}: {error}");
+        assert_eq!(error.matches("error").count(), 1, "{statement}: {error}");
     }
 }

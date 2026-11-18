@@ -152,24 +152,21 @@ impl Reads {
             ExprKind::AssetLookup {
                 source: io,
                 index,
-                asset_txid,
-                asset_gidx,
+                asset_id,
             }
             | ExprKind::AssetHas {
                 source: io,
                 index,
-                asset_txid,
-                asset_gidx,
+                asset_id,
             } => (
                 format!(
-                    "tx.{}[{}].assets.tryLookup({}, {})",
+                    "tx.{}[{}].assets.tryLookup({})",
                     source(io),
                     index.source_text(),
-                    asset_txid.source_text(),
-                    asset_gidx.source_text()
+                    asset_id.source_text()
                 ),
                 "`x.amount` and `x.found`, adding `require(x.found);` where `lookup` aborted on a missing asset",
-                vec![index, asset_txid, asset_gidx],
+                vec![index, asset_id],
             ),
             _ => return None,
         };
@@ -190,6 +187,9 @@ impl Reads {
             }
             ExprKind::IndexAccess { value, index } => self.stable(value) && self.stable(index),
             ExprKind::FieldAccess { value, .. } => self.stable(value),
+            ExprKind::StructLiteral { fields, .. } => {
+                fields.iter().all(|(_, value)| self.stable(value))
+            }
             _ => false,
         }
     }

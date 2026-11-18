@@ -1,4 +1,6 @@
-use crate::common::{arkade_asm_tokens, compile_unoptimized as compile, opcode_count_in_arkade};
+use crate::common::{
+    arkade_asm_tokens, compile_unoptimized as compile, opcode_count_in_arkade, project,
+};
 use arkade_compiler::opcodes::*;
 
 #[test]
@@ -34,25 +36,30 @@ fn script_binds_program_and_version_from_one_inspection() {
         .any(|w| w == ["1", OP_INSPECTINPUTSCRIPTPUBKEY, OP_SWAP]));
 }
 
+const D: (&str, &str) = (
+    "d.ark",
+    "contract D() { function spend() { require(tx.numOutputs == 1); } }",
+);
+
 #[test]
 fn contract_instances_return_versioned_scripts() {
     for inspection in [
         "tx.outputs[0].script",
         "tx.inputs[0].script",
         "tx.input.current.script",
-        "this.activeBytecode",
     ] {
         for comparison in [
-            format!("{inspection} == new C()"),
-            format!("new C() == {inspection}"),
-            format!("{inspection} != new C()"),
+            format!("{inspection} == new D()"),
+            format!("new D() == {inspection}"),
+            format!("{inspection} != new D()"),
         ] {
-            let output = compile(&format!(
-                "contract C() {{ function spend() {{ require({comparison}); }} }}"
-            ))
-            .expect("script equality compares the program and version");
+            let source = format!(
+                "import \"d.ark\"; contract C() {{ function spend() {{ require({comparison}); }} }}"
+            );
+            let output = project("main.ark", &[("main.ark", &source), D])
+                .expect("script equality compares the program and version");
             let asm = arkade_asm_tokens(&output, "spend");
-            assert!(asm.windows(2).any(|w| w == ["<CONTRACT:C()>", OP_1]));
+            assert!(asm.windows(2).any(|w| w == ["<CONTRACT:D()>", OP_1]));
             if comparison.contains(" == ") {
                 assert_eq!(
                     [OP_EQUALVERIFY, OP_NUMEQUALVERIFY]
@@ -77,19 +84,36 @@ fn contract_instances_return_versioned_scripts() {
                 .is_empty());
         }
     }
-    compile(
-        r#"contract C() {
+    project(
+        "main.ark",
+        &[
+            (
+                "main.ark",
+                r#"import "d.ark";
+        contract C() {
             function spend() {
-                let script = new C();
+                let script = new D();
                 require(script.version == 1);
-                ScriptPubKey copy = new C();
-                copy = new C();
+                ScriptPubKey copy = new D();
+                copy = new D();
                 require(tx.outputs[0].script == copy);
             }
         }"#,
+            ),
+            D,
+        ],
     )
     .expect("instances bind and assign as native structs");
-    assert!(compile("contract C() { function f(bytes p) { require(new C() == p); } }").is_err());
+    let error = project(
+        "main.ark",
+        &[("main.ark", r#"import "d.ark"; contract C() { function f(bytes p) { require(new D() == p); } }"#), D],
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(
+        error.contains("not defined between 'ScriptPubKey' and 'bytes'"),
+        "{error}"
+    );
 }
 
 #[test]
@@ -102,10 +126,10 @@ fn program_only_script_accessors_are_rejected() {
         let code = format!("contract C() {{ function spend() {{ let s = {inspection}; }} }}");
         assert!(compile(&code).is_err(), "accepted {inspection}");
     }
-    assert!(
-        compile("contract C() { function f(bytes p) { require(this.activeBytecode == p); } }")
-            .is_err()
-    );
+    assert!(compile(
+        "contract C() { function f(bytes p) { require(tx.input.current.script == p); } }"
+    )
+    .is_err());
     assert!(compile("contract C() { function f() { require(this.tunnel(0, {scriptPubKey: true, value: true, assets: true})); } }").is_err());
 }
 
@@ -118,7 +142,7 @@ fn bare_asset_entry_binds_asset_id_and_amount_from_one_inspection() {
                 require(entry.assetId.txid == txid);
                 require(entry.assetId.gidx == 2);
                 require(entry.amount >= 100);
-                require(tx.outputs[0].assets.lookup(entry.assetId.txid, entry.assetId.gidx) >= entry.amount);
+                require(tx.outputs[0].assets.lookup(entry.assetId) >= entry.amount);
                 let out = tx.outputs[2].assets[1];
                 require(out.amount == entry.amount);
             }
@@ -144,7 +168,7 @@ fn try_lookup_binds_amount_and_presence_from_one_inspection() {
     let code = r#"
         contract C(bytes32 txid) {
             function spend() {
-                let found = tx.outputs[0].assets.tryLookup(txid, 0);
+                let found = tx.outputs[0].assets.tryLookup({ txid: txid, gidx: 0 });
                 if (found.found) {
                     require(found.amount >= 100);
                 } else {
@@ -169,7 +193,7 @@ fn whole_results_are_not_scalars() {
     for expression in [
         "tx.outputs[0].script",
         "tx.inputs[0].assets[0]",
-        "tx.inputs[0].assets.tryLookup(t, 0)",
+        "tx.inputs[0].assets.tryLookup({ txid: t, gidx: 0 })",
     ] {
         let code = format!(
             "contract C(bytes32 t) {{ function spend() {{ require({expression} == 1); }} }}"
@@ -187,11 +211,11 @@ fn repeated_multi_result_inspections_warn_with_the_whole_read() {
                 require(tx.outputs[3].witnessVersion == 1);
                 require(tx.inputs[0].assets[1].amount >= 1);
                 require(tx.inputs[0].assets[1].assetId == id);
-                if (tx.outputs[0].assets.has(t, g)) {
-                    require(tx.outputs[0].assets.lookup(t, g) >= 1);
+                if (tx.outputs[0].assets.has({ txid: t, gidx: g })) {
+                    require(tx.outputs[0].assets.lookup({ txid: t, gidx: g }) >= 1);
                 }
                 require(tx.input.current.witnessVersion == 1);
-                require(this.activeBytecode == script);
+                require(tx.input.current.script == script);
             }
         }
     "#;
@@ -199,7 +223,7 @@ fn repeated_multi_result_inspections_warn_with_the_whole_read() {
     for whole in [
         "tx.outputs[3].script",
         "tx.inputs[0].assets[1]",
-        "tx.outputs[0].assets.tryLookup(t, g)",
+        "tx.outputs[0].assets.tryLookup({ txid: t, gidx: g })",
         "tx.input.current.script",
     ] {
         assert!(

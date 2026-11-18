@@ -105,11 +105,15 @@ export interface CompilerInfo {
 }
 
 export interface CompilerArtifact {
-    formatVersion?: number;
+    formatVersion: number;
     contractName: string;
     structs?: StructDefinition[];
     constructorInputs: Parameter[];
     functions: SpendGroup[];
+    /** The `codeHash` of each contract a `<CONTRACT:Name(...)>` placeholder names, by name. */
+    contracts?: Record<string, string>;
+    /** `sha256:` and the SHA-256 of the fields above, which determine the scripts. */
+    codeHash?: string;
     source?: SourceBundle;
     compiler?: CompilerInfo;
     updatedAt?: string;
