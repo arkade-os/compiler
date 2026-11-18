@@ -47,6 +47,26 @@ fn constant_product_pool_is_one_counterparty() {
             .all(|parameter| parameter.param_type != "pubkey".into()),
         "the pool takes no key, so no key can spend it"
     );
+    let mut leaves: Vec<(&str, &str)> = pool
+        .functions
+        .iter()
+        .flat_map(|group| {
+            group
+                .leaves
+                .iter()
+                .map(move |leaf| (group.name.as_str(), leaf.name.as_str()))
+        })
+        .collect();
+    leaves.sort_unstable();
+    assert_eq!(
+        leaves,
+        [
+            ("deposit", "deposit"),
+            ("swap", "swap"),
+            ("withdraw", "withdraw")
+        ],
+        "the pool should have no spending path beyond swap, deposit and withdraw"
+    );
     for function in ["deposit", "withdraw"] {
         let script = crate::common::arkade_asm(&pool, function);
         assert!(
