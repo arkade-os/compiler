@@ -201,7 +201,30 @@ fn lower_statement(
                 types::annotate_statements(&mut substituted, &mut scope.clone(), structs);
                 substituted
             });
-            unroll(span, iterations, scope, structs, fold)?
+            let unrolled = unroll(span, iterations, scope, structs, fold)?;
+            if iterable.static_path().is_some() {
+                unrolled
+            } else {
+                // Reads stay in place, but reading the iterable's length evaluates and checks
+                // its runtime indexes once at entry, even if the body reads no element. A length
+                // is never zero, so the requirement holds.
+                // ponytail: the read also scales its offset and pushes the length to verify,
+                // ops a bare index check skips; emit the checks directly if such loops grow common.
+                let mut length = iterable.with_kind(ExprKind::FieldAccess {
+                    value: Box::new(iterable.clone()),
+                    field: "length".into(),
+                });
+                length.ty = types::ArkType::Int;
+                let check = LocatedStatement {
+                    statement: Statement::Require(length),
+                    ..statement
+                };
+                Lowered::Unrolled {
+                    span,
+                    iterations: vec![vec![Lowered::Simple(check), unrolled]],
+                    guarded: false,
+                }
+            }
         }
         Statement::ForCount { count, body } => {
             let count = match &count.kind {

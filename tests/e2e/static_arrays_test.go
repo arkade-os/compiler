@@ -241,3 +241,45 @@ contract Writes() {
 		})
 	}
 }
+
+// A loop whose body writes its iterable reads elements in place, yet checks its index when the
+// loop starts, so a spend that reads no element still fails on a bad index.
+func TestInPlaceLoopsCheckTheirIndexAtEntry(t *testing.T) {
+	source := filepath.Join(t.TempDir(), "marks.ark")
+	err := os.WriteFile(source, []byte(`
+struct S { int[2] vals; }
+contract Marks() {
+    private function at(int k, int v) int { require(v != 7); return k; }
+    function spend(int k, int v, int n, int expected) {
+        S[2] local = [{ vals: [1, 2] }, { vals: [3, 4] }];
+        int total = 0;
+        for (j, y) in local[at(k, v)].vals { if (j < n) { total = total + y; local[0].vals[j] = 0; } }
+        require(total == expected);
+    }
+}`), 0600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	contract := compileArtifact(t, source)
+	serverKey, emulatorKey := fixedPrivateKey(1), fixedPrivateKey(2)
+	group := covenantGroup(t, contract, "spend")
+	instance := instantiateGroup(t, contract, "spend", nil, serverKey.PubKey(), emulatorKey.PubKey())
+	deployment := fundingTx(instance.pkScript, 10_000)
+	for _, tc := range []struct {
+		name              string
+		k, v, n, expected int64
+		wantErr           string
+	}{
+		{"in range, reads nothing", 1, 0, 0, 0, ""},
+		{"in range, reads both", 1, 0, 2, 3 + 4, ""},
+		{"out of range, reads nothing", 2, 0, 0, 0, "OP_VERIFY failed"},
+		{"negative, reads nothing", -1, 0, 0, 0, "OP_VERIFY failed"},
+		{"helper requirement fails, reads nothing", 0, 7, 0, 0, "OP_VERIFY failed"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			values := map[string][]byte{"k": scriptInt(t, tc.k), "v": scriptInt(t, tc.v), "n": scriptInt(t, tc.n), "expected": scriptInt(t, tc.expected)}
+			spend := spendingPSBTWithWitness(t, deployment, instance, 10_000, instance.pkScript, covenantWitness(t, contract, group, values))
+			requireVMResult(t, spend, emulatorKey.PubKey(), tc.wantErr)
+		})
+	}
+}
