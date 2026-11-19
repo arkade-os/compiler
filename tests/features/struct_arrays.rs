@@ -295,6 +295,23 @@ contract C(S[2] ss, Pr[2] ps, M[2] ms) {
 }
 
 #[test]
+fn length_reads_through_runtime_indexes_keep_no_constructor_leaves() {
+    let source = r#"
+struct Row { int[2] vals; int[498] padding; }
+contract C(Row[2] rows) {
+    function f(int k, int n) {
+        for (j, y) in rows[k].vals { k = k + 1; }
+        require(k == n + rows[k - 2].vals.length);
+    }
+}
+"#;
+    for output in [arkade_compiler::compile(source), compile(source)] {
+        let asm = arkade_asm_tokens(&output.expect("a length read retains no leaves"), "f");
+        assert!(!asm.iter().any(|token| token.contains("rows")), "{asm:?}");
+    }
+}
+
+#[test]
 fn access_diagnostics_report_the_written_path_once() {
     for (body, expected) in [
         (

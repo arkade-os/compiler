@@ -159,8 +159,9 @@ fn lower_statement(
             };
             // A runtime-indexed access is bound only when the body writes nothing it reads, so the
             // copy matches a live read and folding an index to a literal never changes results.
-            // ponytail: such a body still re-evaluates the index per element; binding just the
-            // index would cover it.
+            // ponytail: such a body still re-evaluates the index per element, and the copy holds
+            // every leaf of the selected array even when the body reads few; binding just the
+            // index would cover both.
             if iterable.static_path().is_none()
                 && (iterable.binding_path().is_none() || !assigns_read(&body, &iterable))
             {

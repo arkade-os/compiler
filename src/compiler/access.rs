@@ -94,13 +94,13 @@ impl Generator {
             }
             return Ok(());
         }
-        self.pin_constructor_slots(&name);
         self.emit_access_offset(&indices)?;
         if let Some(length) = length {
             self.apply(Drop, 1, 0)?;
             self.push_integer_temporary(length);
             return Ok(());
         }
+        self.pin_constructor_slots(&name);
         let leaves = self.value_leaves(&name, ty)?;
         for (copied, leaf) in leaves.iter().rev().enumerate() {
             // Copy the offset until the last leaf consumes it; each index is evaluated once.

@@ -202,6 +202,44 @@ contract Loops() {
 	}
 }
 
+// A loop whose body writes its iterable's index reads each element through the index's current value.
+func TestLoopsSeeWritesToTheirIndex(t *testing.T) {
+	source := filepath.Join(t.TempDir(), "index.ark")
+	err := os.WriteFile(source, []byte(`
+struct S { int[2] vals; }
+contract Index() {
+    function spend(int k, int expected) {
+        S[2] local = [{ vals: [1, 2] }, { vals: [3, 4] }];
+        int total = 0;
+        for (j, y) in local[k].vals { total = total + y; k = k + 1; }
+        require(total == expected);
+    }
+}`), 0600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	contract := compileArtifact(t, source)
+	serverKey, emulatorKey := fixedPrivateKey(1), fixedPrivateKey(2)
+	group := covenantGroup(t, contract, "spend")
+	instance := instantiateGroup(t, contract, "spend", nil, serverKey.PubKey(), emulatorKey.PubKey())
+	deployment := fundingTx(instance.pkScript, 10_000)
+	for _, tc := range []struct {
+		name        string
+		k, expected int64
+		wantErr     string
+	}{
+		{"index moves between reads", 0, 1 + 4, ""},
+		{"index read once before the loop", 0, 1 + 2, "OP_NUMEQUALVERIFY failed"},
+		{"index moves out of range", 1, 3, "OP_VERIFY failed"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			values := map[string][]byte{"k": scriptInt(t, tc.k), "expected": scriptInt(t, tc.expected)}
+			spend := spendingPSBTWithWitness(t, deployment, instance, 10_000, instance.pkScript, covenantWitness(t, contract, group, values))
+			requireVMResult(t, spend, emulatorKey.PubKey(), tc.wantErr)
+		})
+	}
+}
+
 // A loop reads each element when the body uses it, so a write in the body to a later element is
 // seen whether the iterable's index is a runtime value or folds to a literal.
 func TestLoopsSeeWritesToTheirIterable(t *testing.T) {
