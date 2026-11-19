@@ -138,12 +138,13 @@ pub(crate) fn validate_ast(contract: &Contract, require_entrypoint: bool) -> Vec
     // ── At least one covenant or tapscript function ──────────────────
     let public_count = contract.functions.iter().filter(|f| !f.is_private).count();
     if require_entrypoint && public_count == 0 && contract.tapscripts.is_empty() {
-        issues.push(
-            ValidationIssue::error(
+        // A file with no contract has no name to locate this at.
+        issues.push(ValidationIssue {
+            span: (!contract.name.is_empty()).then_some(contract.span),
+            ..ValidationIssue::error(
                 "contract must declare at least one covenant or tapscript function",
             )
-            .at(contract.span),
-        );
+        });
     }
 
     // ── Unique function names ──────────────────────────────────────────────
@@ -205,10 +206,13 @@ pub(crate) fn validate_ast(contract: &Contract, require_entrypoint: bool) -> Vec
         let mut seen: HashSet<&str> = HashSet::new();
         for ts in &contract.tapscripts {
             if !seen.insert(ts.name.as_str()) {
-                issues.push(ValidationIssue::error(format!(
-                    "duplicate tapscript name '{}'; each tapscript must have a unique name",
-                    ts.name
-                )));
+                issues.push(
+                    ValidationIssue::error(format!(
+                        "duplicate tapscript name '{}'; each tapscript must have a unique name",
+                        ts.name
+                    ))
+                    .at(ts.span),
+                );
             }
         }
     }
@@ -472,15 +476,18 @@ fn validate_struct_fields<'a>(
     }
     stack.push(&definition.name);
     for field in &definition.fields {
-        if !field.param_type.is_builtin_struct() {
-            validate_declared_type(
-                &field.param_type,
-                &format!("field '{}.{}'", definition.name, field.name),
-                definitions,
-                issues,
-            );
+        let base = field.param_type.base_name();
+        // A built-in name keeps its built-in layout even where a struct reuses it.
+        if crate::models::is_builtin_type(base) || crate::models::is_builtin_struct(base) {
+            continue;
         }
-        if let Some(nested) = definitions.get(field.param_type.base_name()) {
+        validate_declared_type(
+            &field.param_type,
+            &format!("field '{}.{}'", definition.name, field.name),
+            definitions,
+            issues,
+        );
+        if let Some(nested) = definitions.get(base) {
             validate_struct_fields(nested, definitions, stack, validated, issues);
         }
     }
