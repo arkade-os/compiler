@@ -8,13 +8,13 @@ use arkade_compiler::{analyze_file, CompileOptions, Severity};
 /// Arkade Compiler CLI
 ///
 /// This is the command-line interface for the Arkade Compiler.
-/// It compiles Arkade Script source code (.ark files) into JSON output
+/// It compiles Arkade Language source code (.ark files) into JSON output
 /// that represents Bitcoin Taproot scripts.
 ///
 /// The JSON output includes:
 /// - Contract name
 /// - Constructor parameters
-/// - Spend groups with optional arkade covenants
+/// - Spend groups with optional Arkade Scripts
 /// - L1 tapleaves and witness schemas
 
 // CLI arguments
@@ -44,12 +44,12 @@ struct Args {
     #[arg(long, requires = "check")]
     json: bool,
 
-    /// Also write the covenant source maps to a debug file next to the artifact
+    /// Also write the Arkade Script source maps to a debug file next to the artifact
     /// (`<name>.debug.json`)
     #[arg(long, conflicts_with = "check")]
     debug: bool,
 
-    /// Print each covenant's script bytes, stack peak and opcode execution counts
+    /// Print each Arkade Script's bytes, stack peak and opcode execution counts
     #[arg(long, conflicts_with = "check")]
     report: bool,
 
@@ -220,14 +220,14 @@ fn check(
     Ok(())
 }
 
-/// One block per covenant with its resource usage.
+/// One block per Arkade Script with its resource usage.
 fn print_report(output: &arkade_compiler::models::ContractJson) {
     for group in &output.functions {
-        let Some(covenant) = &group.arkade else {
+        let Some(script) = &group.arkade else {
             continue;
         };
         println!("{}", group.name);
-        for cost in &covenant.costs {
+        for cost in &script.costs {
             println!("  {:<24} {:>6}", cost.name, cost.used);
         }
     }

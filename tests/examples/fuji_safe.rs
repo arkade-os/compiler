@@ -30,14 +30,14 @@ fn test_fuji_safe_contract() {
     assert_eq!(output.parameters[3].name, "treasuryPk");
     assert_eq!(output.parameters[3].param_type.to_string(), "pubkey");
 
-    // 4 covenant functions + 1 standalone unilateral = 5 groups
+    // 4 Arkade Script functions + 1 standalone unilateral = 5 groups
     assert_eq!(
         output.functions.len(),
         5,
         "expected 5 groups (claim, liquidate, redeem, renew, unilateral)"
     );
 
-    // All expected covenant function names should appear as group names
+    // All expected Arkade Script function names should appear as group names
     let group_names: Vec<&str> = output.functions.iter().map(|g| g.name.as_str()).collect();
     assert!(group_names.contains(&"claim"), "missing claim group");
     assert!(
@@ -83,9 +83,9 @@ fn test_fuji_safe_contract() {
         ),
     ] {
         let group = crate::common::group(&output, function);
-        let covenant = group.arkade.as_ref().expect("covenant");
+        let script = group.arkade.as_ref().expect("Arkade Script");
         assert_eq!(
-            covenant
+            script
                 .inputs
                 .iter()
                 .map(|input| (input.name.as_str(), input.param_type.as_str()))
@@ -135,44 +135,44 @@ fn test_fuji_safe_contract() {
         );
     }
 
-    // The claim covenant checks expiration against the emulator clock.
+    // The claim Arkade Script checks expiration against the emulator clock.
     let claim_asm = crate::common::arkade_asm(&output, "claim");
     assert!(
         claim_asm.contains(&format!("{OP_CHECKTIME} OP_VERIFY")),
-        "claim covenant should enforce expiration timeout: {claim_asm}"
+        "claim Arkade Script should enforce expiration timeout: {claim_asm}"
     );
     assert!(
         claim_asm.contains(OP_CHECKSIG),
-        "claim covenant should verify treasury sig: {claim_asm}"
+        "claim Arkade Script should verify treasury sig: {claim_asm}"
     );
 
     // Verify liquidate function: price comparison + oracle sig + CLTV
     let liquidate_asm = crate::common::arkade_asm(&output, "liquidate");
     assert!(
         liquidate_asm.contains(OP_LESSTHAN),
-        "liquidate covenant should compare price: {liquidate_asm}"
+        "liquidate Arkade Script should compare price: {liquidate_asm}"
     );
     assert!(
         liquidate_asm.contains(OP_CHECKSIGFROMSTACK),
-        "liquidate covenant should verify oracle sig: {liquidate_asm}"
+        "liquidate Arkade Script should verify oracle sig: {liquidate_asm}"
     );
     assert!(
         liquidate_asm.contains(OP_CHECKSIG),
-        "liquidate covenant should verify treasury sig: {liquidate_asm}"
+        "liquidate Arkade Script should verify treasury sig: {liquidate_asm}"
     );
 
     // Verify redeem function: borrower signature
     let redeem_asm = crate::common::arkade_asm(&output, "redeem");
     assert!(
         redeem_asm.contains(OP_CHECKSIG),
-        "redeem covenant should verify borrower sig: {redeem_asm}"
+        "redeem Arkade Script should verify borrower sig: {redeem_asm}"
     );
 
     // Verify renew function: treasury signature
     let renew_asm = crate::common::arkade_asm(&output, "renew");
     assert!(
         renew_asm.contains(OP_CHECKSIG),
-        "renew covenant should verify treasury sig: {renew_asm}"
+        "renew Arkade Script should verify treasury sig: {renew_asm}"
     );
 
     // Unilateral exit: CSV-based, borrower only (no server involvement)

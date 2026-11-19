@@ -93,10 +93,10 @@ func TestConstantFolding(t *testing.T) {
 				t.Fatal(err)
 			}
 			contract := compileArtifact(t, source)
-			group := covenantGroup(t, contract, "spend")
+			group := arkadeScriptGroup(t, contract, "spend")
 			instance := instantiateGroup(t, contract, "spend", nil, serverKey.PubKey(), emulatorKey.PubKey())
 			deployment := fundingTx(instance.pkScript, 10_000)
-			spend := spendingPSBTWithWitness(t, deployment, instance, 10_000, instance.pkScript, covenantWitness(t, contract, group, tc.values))
+			spend := spendingPSBTWithWitness(t, deployment, instance, 10_000, instance.pkScript, arkadeScriptWitness(t, contract, group, tc.values))
 			requireVMResult(t, spend, emulatorKey.PubKey(), tc.wantErr)
 		})
 	}
@@ -119,7 +119,7 @@ func TestConstantFoldingMixedIndexes(t *testing.T) {
 	}
 	contract := compileArtifact(t, source)
 	serverKey, emulatorKey := fixedPrivateKey(1), fixedPrivateKey(2)
-	group := covenantGroup(t, contract, "spend")
+	group := arkadeScriptGroup(t, contract, "spend")
 	instance := instantiateGroup(t, contract, "spend", nil, serverKey.PubKey(), emulatorKey.PubKey())
 	deployment := fundingTx(instance.pkScript, 10_000)
 	for _, index := range []int64{-1, 0, 1, 2, 3} {
@@ -138,7 +138,7 @@ func TestConstantFoldingMixedIndexes(t *testing.T) {
 			wantErr = "OP_VERIFY failed"
 		}
 		values["expected"] = scriptInt(t, expected)
-		spend := spendingPSBTWithWitness(t, deployment, instance, 10_000, instance.pkScript, covenantWitness(t, contract, group, values))
+		spend := spendingPSBTWithWitness(t, deployment, instance, 10_000, instance.pkScript, arkadeScriptWitness(t, contract, group, values))
 		requireVMResult(t, spend, emulatorKey.PubKey(), wantErr)
 	}
 }
@@ -168,13 +168,13 @@ func TestConstantFoldingReturnJoins(t *testing.T) {
 			t.Fatal(err)
 		}
 		contract := compileArtifact(t, source)
-		group := covenantGroup(t, contract, "spend")
+		group := arkadeScriptGroup(t, contract, "spend")
 		instance := instantiateGroup(t, contract, "spend", nil, serverKey.PubKey(), emulatorKey.PubKey())
 		deployment := fundingTx(instance.pkScript, 10_000)
 		for _, choose := range []int64{0, 1} {
 			for _, input := range []int64{6, 7} {
 				values := map[string][]byte{"input": scriptInt(t, input), "choose": scriptInt(t, choose)}
-				spend := spendingPSBTWithWitness(t, deployment, instance, 10_000, instance.pkScript, covenantWitness(t, contract, group, values))
+				spend := spendingPSBTWithWitness(t, deployment, instance, 10_000, instance.pkScript, arkadeScriptWitness(t, contract, group, values))
 				wantErr := ""
 				if input != 7 {
 					wantErr = "OP_NUMEQUALVERIFY failed"

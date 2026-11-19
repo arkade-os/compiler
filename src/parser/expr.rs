@@ -54,7 +54,7 @@ fn reject_reserved_call(name: &str, args: usize) -> Result<(), String> {
     if let Some(signature) = reserved_function_signature(name) {
         if crate::builtins::tapscript_params(name).is_some_and(|params| params.len() == args) {
             let hint = match name {
-                "older" | "after" => "; covenant functions use `checkTime(timestamp)`",
+                "older" | "after" => "; Arkade Script functions use `checkTime(timestamp)`",
                 "tweak" => ", as a key inside checkSig or checkMultisig",
                 _ => ", inside older(...) or after(...)",
             };

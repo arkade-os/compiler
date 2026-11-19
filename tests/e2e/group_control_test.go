@@ -27,7 +27,7 @@ contract GroupControl() {
 	}
 	contract := compileArtifact(t, source)
 	serverKey, emulatorKey := fixedPrivateKey(1), fixedPrivateKey(2)
-	group := covenantGroup(t, contract, "spend")
+	group := arkadeScriptGroup(t, contract, "spend")
 	instance := instantiateGroup(t, contract, "spend", nil, serverKey.PubKey(), emulatorKey.PubKey())
 	deployment := fundingTx(instance.pkScript, 10_000)
 
@@ -70,7 +70,7 @@ contract GroupControl() {
 				"ctrl.gidx": scriptInt(t, int64(tc.want.Index)),
 			}
 			spend := spendingPSBTWithWitness(t, deployment, instance, 10_000, instance.pkScript,
-				covenantWitness(t, contract, group, values), extension.Packet(tc.packet))
+				arkadeScriptWitness(t, contract, group, values), extension.Packet(tc.packet))
 			requireVMResult(t, spend, emulatorKey.PubKey(), tc.wantErr)
 		})
 	}
@@ -94,7 +94,7 @@ contract ComputedTxid() {
 	}
 	contract := compileArtifact(t, source)
 	serverKey, emulatorKey := fixedPrivateKey(1), fixedPrivateKey(2)
-	group := covenantGroup(t, contract, "spend")
+	group := arkadeScriptGroup(t, contract, "spend")
 	instance := instantiateGroup(t, contract, "spend", nil, serverKey.PubKey(), emulatorKey.PubKey())
 	deployment := fundingTx(instance.pkScript, 10_000)
 
@@ -134,7 +134,7 @@ contract ComputedTxid() {
 				Outputs:      []asset.AssetOutput{{Type: asset.AssetOutputTypeLocal, Vout: 0, Amount: 5}},
 			}
 			spend := spendingPSBTWithWitness(t, deployment, instance, 10_000, instance.pkScript,
-				covenantWitness(t, contract, group, map[string][]byte{
+				arkadeScriptWitness(t, contract, group, map[string][]byte{
 					"d": tc.preimage, "e": tc.helper, "g": scriptInt(t, tc.gidx),
 				}),
 				extension.Packet(asset.Packet{issuance, transfer}))
@@ -183,10 +183,10 @@ contract ControlGate(AssetId banned) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			values := map[string][]byte{"banned.txid": txid[:], "banned.gidx": tc.gidx, "id.txid": txid[:], "id.gidx": tc.gidx}
-			group := covenantGroup(t, contract, tc.function)
+			group := arkadeScriptGroup(t, contract, tc.function)
 			instance := instantiateGroup(t, contract, tc.function, values, serverKey.PubKey(), emulatorKey.PubKey())
 			spend := spendingPSBTWithWitness(t, fundingTx(instance.pkScript, 10_000), instance, 10_000, instance.pkScript,
-				covenantWitness(t, contract, group, values), extension.Packet(asset.Packet{issuance}))
+				arkadeScriptWitness(t, contract, group, values), extension.Packet(asset.Packet{issuance}))
 			requireVMResult(t, spend, emulatorKey.PubKey(), tc.wantErr)
 		})
 	}

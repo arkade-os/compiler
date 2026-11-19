@@ -31,7 +31,7 @@ fn test_controlled_mint_contract() {
         );
     }
 
-    // 3 covenant functions + 1 standalone unilateral tapscript = 4 groups
+    // 3 Arkade Script functions + 1 standalone unilateral tapscript = 4 groups
     assert_eq!(output.functions.len(), 4, "expected 4 groups");
 
     // Verify mint function

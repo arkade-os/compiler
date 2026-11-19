@@ -359,7 +359,7 @@ fn declaration_errors_are_located_at_the_declared_name() {
         ),
         (
             "contract C() {}",
-            "contract must declare at least one covenant or tapscript function",
+            "contract must declare at least one Arkade Script or tapscript function",
             "contract C",
             "C",
         ),
@@ -405,7 +405,9 @@ fn a_file_without_a_contract_reports_it_unlocated() {
     let diagnostics = arkade_compiler::check("main.ark", &files);
     let error = diagnostics
         .iter()
-        .find(|d| d.message == "contract must declare at least one covenant or tapscript function")
+        .find(|d| {
+            d.message == "contract must declare at least one Arkade Script or tapscript function"
+        })
         .unwrap_or_else(|| panic!("{diagnostics:?}"));
     assert_eq!(error.span, None);
 }

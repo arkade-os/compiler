@@ -20,7 +20,7 @@ const PATH: &str = concat!(
 fn test_repayment_pool_compiles() {
     let output = compile_file(PATH).expect("compilation failed");
     assert_eq!(output.name, "RepaymentPool");
-    // 7 covenant functions (issue, acceptRepayment, rollOut, rollIn, liquidate,
+    // 7 Arkade Script functions (issue, acceptRepayment, rollOut, rollIn, liquidate,
     // acceptAuction, redeem) produce 7 function groups.
     assert_eq!(output.functions.len(), 7, "expected 7 function groups");
 
@@ -314,7 +314,7 @@ fn test_issue_enforces_deployment_invariants() {
     );
 }
 
-/// True iff the group's arkade covenant ASM contains three given tokens in any
+/// True iff the group's Arkade Script ASM contains three given tokens in any
 /// order within a 3-token sliding window. Used for targeted regression checks
 /// where the compiler may emit a comparison's operands and opcode in a
 /// non-postfix display order — what matters is adjacency, not exact sequence.
@@ -448,7 +448,7 @@ fn test_accept_auction_is_permissionless_oracle_priced_phased() {
     );
     assert!(
         ws.iter().any(|w| w == "auctioneerPk"),
-        "auctioneerPk must be a covenant input parameter, got: {ws:?}"
+        "auctioneerPk must be an Arkade Script input parameter, got: {ws:?}"
     );
 }
 
@@ -516,7 +516,7 @@ fn test_liquidate_is_oracle_priced_health_gated_permissionless() {
     );
     assert!(
         ws.iter().any(|w| w == "auctioneerPk"),
-        "auctioneerPk must be a covenant input parameter, got: {ws:?}"
+        "auctioneerPk must be an Arkade Script input parameter, got: {ws:?}"
     );
 }
 
@@ -635,15 +635,15 @@ fn test_roll_out_extinguishes_old_obligation_at_witness_index() {
     let ws = arkade_inputs(&output, "rollOut");
     assert!(
         ws.iter().any(|w| w == "expectedDischarge"),
-        "expectedDischarge must be a covenant input, got: {ws:?}"
+        "expectedDischarge must be an Arkade Script input, got: {ws:?}"
     );
     assert!(
         ws.iter().any(|w| w == "outIdxPool"),
-        "outIdxPool must be a covenant input (variable output index), got: {ws:?}"
+        "outIdxPool must be an Arkade Script input (variable output index), got: {ws:?}"
     );
     assert!(
         ws.iter().any(|w| w == "borrowerSig"),
-        "borrowerSig must be a covenant input (blocks force-liquidation attack), got: {ws:?}"
+        "borrowerSig must be an Arkade Script input (blocks force-liquidation attack), got: {ws:?}"
     );
 
     // Exactly one user signature: the borrower's. The pool-side sig is the
@@ -707,7 +707,7 @@ fn test_roll_in_oracle_priced_dual_mints_at_witness_indices() {
     for name in ["outIdxPool", "outIdxVault", "outIdxCredit"] {
         assert!(
             ws.iter().any(|w| w == name),
-            "{name} must be a covenant input (variable output index), got: {ws:?}"
+            "{name} must be an Arkade Script input (variable output index), got: {ws:?}"
         );
     }
 
@@ -771,9 +771,9 @@ fn test_roll_pair_enforces_all_deployment_invariants() {
 #[test]
 #[ignore = "dynamic contract reconstruction is temporarily disabled"]
 fn test_default_leaves_carry_no_introspection() {
-    // Every covenant function has a synthesized default leaf:
+    // Every Arkade Script function has a synthesized default leaf:
     //   `<SERVER_KEY> OP_CHECKSIGVERIFY <EMULATOR_KEY:fn> OP_CHECKSIG`
-    // All covenant introspection lives in the arkade block; the leaves are
+    // All Arkade Script introspection lives in the arkade block; the leaves are
     // pure cosig. This test verifies no introspection opcode leaked into any
     // default leaf.
     let output = compile_file(PATH).expect("compilation failed");
@@ -790,7 +790,7 @@ fn test_default_leaves_carry_no_introspection() {
         assert!(
             !leaf_asm.contains(OP_INSPECTOUTPUTSCRIPTPUBKEY)
                 && !leaf_asm.contains(OP_INSPECTASSETGROUPSUM),
-            "{fn_name} default leaf must not carry covenant introspection (got: {leaf_asm})"
+            "{fn_name} default leaf must not carry Arkade Script introspection (got: {leaf_asm})"
         );
         // Each default leaf is exactly the synthesized cosig form.
         assert!(

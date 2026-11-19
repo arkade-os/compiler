@@ -28,7 +28,7 @@ contract Bitwise(bytes zero) {
 	}
 	contract := compileArtifact(t, source)
 	serverKey, emulatorKey := fixedPrivateKey(1), fixedPrivateKey(2)
-	group := covenantGroup(t, contract, "spend")
+	group := arkadeScriptGroup(t, contract, "spend")
 	instance := instantiateGroup(t, contract, "spend", map[string][]byte{"zero": {0}}, serverKey.PubKey(), emulatorKey.PubKey())
 	deployment := fundingTx(instance.pkScript, 10_000)
 	for _, tc := range []struct {
@@ -45,7 +45,7 @@ contract Bitwise(bytes zero) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			values := map[string][]byte{"mask": tc.mask, "n": scriptInt(t, tc.n), "k": scriptInt(t, tc.k)}
-			spend := spendingPSBTWithWitness(t, deployment, instance, 10_000, instance.pkScript, covenantWitness(t, contract, group, values))
+			spend := spendingPSBTWithWitness(t, deployment, instance, 10_000, instance.pkScript, arkadeScriptWitness(t, contract, group, values))
 			requireVMResult(t, spend, emulatorKey.PubKey(), tc.wantErr)
 		})
 	}

@@ -40,15 +40,15 @@ func TestDifferentialFuzz(t *testing.T) {
 			unoptimized := compileArtifact(t, source)
 			passing := program.values(t, program.passing)
 			for mode, contract := range map[string]artifact{"optimized": optimized, "unoptimized": unoptimized} {
-				if err := runCovenant(t, contract, passing); err != nil {
+				if err := runArkadeScript(t, contract, passing); err != nil {
 					t.Fatalf("%s rejects the witness %s that every requirement accepts: %v", mode, describe(program.passing), err)
 				}
 			}
 			for run := 0; run < 4; run++ {
 				ints := program.randomWitness(r)
 				values := program.values(t, ints)
-				okOptimized := runCovenant(t, optimized, values)
-				okUnoptimized := runCovenant(t, unoptimized, values)
+				okOptimized := runArkadeScript(t, optimized, values)
+				okUnoptimized := runArkadeScript(t, unoptimized, values)
 				if (okOptimized == nil) != (okUnoptimized == nil) {
 					t.Fatalf("witness %s: optimized %v, unoptimized %v", describe(ints), okOptimized, okUnoptimized)
 				}
@@ -83,12 +83,12 @@ func envInt(t *testing.T, name string, fallback int64) int64 {
 	return value
 }
 
-func runCovenant(t *testing.T, contract artifact, values map[string][]byte) error {
+func runArkadeScript(t *testing.T, contract artifact, values map[string][]byte) error {
 	serverKey, emulatorKey := fixedPrivateKey(1), fixedPrivateKey(2)
-	group := covenantGroup(t, contract, "spend")
+	group := arkadeScriptGroup(t, contract, "spend")
 	instance := instantiateGroup(t, contract, "spend", nil, serverKey.PubKey(), emulatorKey.PubKey())
 	spend := spendingPSBTWithWitness(t, fundingTx(instance.pkScript, 10_000), instance, 10_000,
-		instance.pkScript, covenantWitness(t, contract, group, values))
+		instance.pkScript, arkadeScriptWitness(t, contract, group, values))
 	return executeArkadeScripts(spend, emulatorKey.PubKey())
 }
 

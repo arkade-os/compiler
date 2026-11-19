@@ -8,10 +8,10 @@ use arkade_compiler::opcodes::{
     OP_ROT, OP_SHA256, OP_SUBSTR, OP_SWAP,
 };
 
-/// Return the emulator covenant ASM for a spend group (the function body).
-/// Cooperative signing now lives in a synthesized L1 tapleaf, so the covenant
+/// Return the Arkade Script ASM for a spend group (the function body).
+/// Cooperative signing now lives in a synthesized L1 tapleaf, so the Arkade Script
 /// carries the introspection logic and no operator co-signature.
-fn covenant<'a>(output: &'a ContractJson, name: &str) -> &'a [String] {
+fn arkade_script_asm<'a>(output: &'a ContractJson, name: &str) -> &'a [String] {
     &output
         .functions
         .iter()
@@ -19,7 +19,7 @@ fn covenant<'a>(output: &'a ContractJson, name: &str) -> &'a [String] {
         .unwrap_or_else(|| panic!("missing spend group {name}"))
         .arkade
         .as_ref()
-        .unwrap_or_else(|| panic!("group {name} has no arkade covenant"))
+        .unwrap_or_else(|| panic!("group {name} has no Arkade Script"))
         .asm
 }
 
@@ -94,7 +94,7 @@ fn test_endpoint_structure() {
     let code = load_example("endpoint");
     let output = compile(&code).unwrap();
     assert_eq!(output.name, "Endpoint");
-    // One spend group per covenant function; each carries a synthesized
+    // One spend group per Arkade Script function; each carries a synthesized
     // collaborative tapleaf.
     assert_eq!(output.functions.len(), 2);
 
@@ -104,10 +104,7 @@ fn test_endpoint_structure() {
             .iter()
             .find(|g| &g.name == name)
             .unwrap_or_else(|| panic!("missing {name} spend group"));
-        assert!(
-            group.arkade.is_some(),
-            "{name} must have an arkade covenant"
-        );
+        assert!(group.arkade.is_some(), "{name} must have an Arkade Script");
         assert!(
             !group.leaves.is_empty(),
             "{name} must have at least the synthesized collaborative leaf"
@@ -119,7 +116,7 @@ fn test_endpoint_structure() {
 fn test_endpoint_receive_verifies_both_dvn_signatures() {
     let code = load_example("endpoint");
     let output = compile(&code).unwrap();
-    let receive = covenant(&output, "receive");
+    let receive = arkade_script_asm(&output, "receive");
 
     // Both DVNs are verified via require(checkSigFromStack(...)) — the
     // introspector has no OP_CHECKSIGFROMSTACKVERIFY variant, so the contract
@@ -144,7 +141,7 @@ fn test_endpoint_receive_uses_packet_introspection() {
     // binding to the LzReceive header.
     let code = load_example("endpoint");
     let output = compile(&code).unwrap();
-    let receive = covenant(&output, "receive");
+    let receive = arkade_script_asm(&output, "receive");
 
     for op in [OP_INSPECTPACKET, OP_SUBSTR, OP_SHA256] {
         assert!(
@@ -158,7 +155,7 @@ fn test_endpoint_receive_uses_packet_introspection() {
 fn test_endpoint_receive_emits_receive_marker_output() {
     let code = load_example("endpoint");
     let output = compile(&code).unwrap();
-    let receive = covenant(&output, "receive");
+    let receive = arkade_script_asm(&output, "receive");
 
     let has_receive_marker = receive
         .iter()
@@ -185,7 +182,7 @@ fn test_endpoint_receive_emits_receive_marker_output() {
 fn test_endpoint_send_burns_send_marker() {
     let code = load_example("endpoint");
     let output = compile(&code).unwrap();
-    let send = covenant(&output, "send");
+    let send = arkade_script_asm(&output, "send");
 
     // Marker burn proof: OAppID asset group → outputSum == 0.
     let has_group_sum = send.iter().any(|s| s.contains(OP_INSPECTASSETGROUPSUM));
@@ -224,7 +221,7 @@ fn test_oapp_structure() {
 fn test_oapp_receive_consumes_endpoint_marker_and_mints_usdt0() {
     let code = load_example("oapp");
     let output = compile(&code).unwrap();
-    let receive = covenant(&output, "receive");
+    let receive = arkade_script_asm(&output, "receive");
 
     // Marker consumed from input 0 (asset lookup on input side).
     assert!(
@@ -263,7 +260,7 @@ fn test_marker_contracts_use_input_arkade_script_hash() {
     for name in &["receive_marker", "send_marker"] {
         let code = load_example(name);
         let output = compile(&code).unwrap();
-        let consume = covenant(&output, "consume");
+        let consume = arkade_script_asm(&output, "consume");
         assert!(
             consume.iter().any(|s| s == OP_INSPECTINPUTARKADESCRIPTHASH),
             "{name}.consume() must check the consumer's Arkade-script hash via {OP_INSPECTINPUTARKADESCRIPTHASH}"
@@ -292,13 +289,13 @@ fn test_oapp_send_emits_send_marker() {
         "oapp.send() must pin output[1] to the canonical SendMarker pkScript"
     );
 
-    // There is NO contract-level owner sig in the covenant (mirrors
+    // There is NO contract-level owner sig in the Arkade Script (mirrors
     // BuildOAppSendScript). Authority comes from the OApp control singleton
     // and the per-UTXO USDT0 input scripts. The operator co-signature lives
     // only in the synthesized collaborative tapleaf.
     assert!(
         !send.iter().any(|s| s == OP_CHECKSIG),
-        "oapp.send() covenant must not perform a contract-level owner signature check"
+        "oapp.send() Arkade Script must not perform a contract-level owner signature check"
     );
     assert!(
         send_group
@@ -325,7 +322,7 @@ fn test_receive_marker_pins_to_oapp_control_singleton() {
     let code = load_example("receive_marker");
     let output = compile(&code).unwrap();
     assert_eq!(output.name, "ReceiveMarker");
-    let consume = covenant(&output, "consume");
+    let consume = arkade_script_asm(&output, "consume");
 
     let has_in_lookup = consume.iter().any(|s| s.contains(OP_INSPECTINASSETLOOKUP));
     assert!(
@@ -350,7 +347,7 @@ fn test_send_marker_pins_to_endpoint_control_singleton() {
     let code = load_example("send_marker");
     let output = compile(&code).unwrap();
     assert_eq!(output.name, "SendMarker");
-    let consume = covenant(&output, "consume");
+    let consume = arkade_script_asm(&output, "consume");
 
     let has_in_lookup = consume.iter().any(|s| s.contains(OP_INSPECTINASSETLOOKUP));
     assert!(

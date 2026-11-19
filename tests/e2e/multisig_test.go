@@ -15,7 +15,7 @@ type multisigCase struct {
 	wantErr string
 }
 
-// checkMultisigSpends spends a covenant over keys a, b, c with each case's signers.
+// checkMultisigSpends spends an Arkade Script function over keys a, b, c with each case's signers.
 func checkMultisigSpends(t *testing.T, code string, values map[string][]byte, cases []multisigCase) {
 	t.Helper()
 	source := filepath.Join(t.TempDir(), "multisig.ark")
@@ -29,10 +29,10 @@ func checkMultisigSpends(t *testing.T, code string, values map[string][]byte, ca
 		values[name] = schnorr.SerializePubKey(fixedPrivateKey(byte(4 + i)).PubKey())
 	}
 	instance := instantiateGroup(t, contract, "spend", values, serverKey.PubKey(), emulatorKey.PubKey())
-	group := covenantGroup(t, contract, "spend")
+	group := arkadeScriptGroup(t, contract, "spend")
 	deployment := fundingTx(instance.pkScript, 10_000)
 	unsignedValues := map[string][]byte{"aSig": nil, "bSig": nil, "cSig": nil}
-	unsigned := spendingPSBTWithWitness(t, deployment, instance, 10_000, instance.pkScript, covenantWitness(t, contract, group, unsignedValues))
+	unsigned := spendingPSBTWithWitness(t, deployment, instance, 10_000, instance.pkScript, arkadeScriptWitness(t, contract, group, unsignedValues))
 	signatures := map[string][]byte{}
 	for i, name := range names {
 		signatures[name] = signArkadeSighash(t, unsigned, 0, fixedPrivateKey(byte(4+i)))
@@ -44,13 +44,13 @@ func checkMultisigSpends(t *testing.T, code string, values map[string][]byte, ca
 			for _, name := range tc.signed {
 				witness[name+"Sig"] = signatures[name]
 			}
-			spend := spendingPSBTWithWitness(t, deployment, instance, 10_000, instance.pkScript, covenantWitness(t, contract, group, witness))
+			spend := spendingPSBTWithWitness(t, deployment, instance, 10_000, instance.pkScript, arkadeScriptWitness(t, contract, group, witness))
 			requireVMResult(t, spend, emulatorKey.PubKey(), tc.wantErr)
 		})
 	}
 }
 
-func TestCovenantThresholdMultisig(t *testing.T) {
+func TestArkadeScriptThresholdMultisig(t *testing.T) {
 	checkMultisigSpends(t, `pragma arkade ^0.1.0;
 contract TwoOfThree(pubkey a, pubkey b, pubkey c) {
     function spend(signature aSig, signature bSig, signature cSig) {
@@ -64,7 +64,7 @@ contract TwoOfThree(pubkey a, pubkey b, pubkey c) {
 	})
 }
 
-func TestCovenantRuntimeThresholdMultisig(t *testing.T) {
+func TestArkadeScriptRuntimeThresholdMultisig(t *testing.T) {
 	const code = `pragma arkade ^0.1.0;
 contract KOfThree(pubkey a, pubkey b, pubkey c, int k) {
     function spend(signature aSig, signature bSig, signature cSig) {
@@ -92,7 +92,7 @@ contract KOfThree(pubkey a, pubkey b, pubkey c, int k) {
 	}
 }
 
-func TestCovenantRuntimeIndexedMultisig(t *testing.T) {
+func TestArkadeScriptRuntimeIndexedMultisig(t *testing.T) {
 	const code = `pragma arkade ^0.1.0;
 struct Signers { pubkey[2] keys; }
 contract Select(Signers[2] sets, int k) {

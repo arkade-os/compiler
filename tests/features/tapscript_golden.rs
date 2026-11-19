@@ -5,9 +5,9 @@
 //!   refund   → CLTVMultisigClosure{ refundTime, [server, emulator(refund)] }
 //!   unilateral → CSVMultisigClosure{ exit, [sender] }
 //!
-//! These assert the LEAF asm only; the covenant bodies just need to compile
+//! These assert the LEAF asm only; the Arkade Script function bodies just need to compile
 //! (the grammar accepts numeric subscripts, not `this.activeInputIndex`, so the
-//! covenants use `tx.outputs[0]` / `tx.inputs[0]` — irrelevant to leaf parity).
+//! Arkade Scripts use `tx.outputs[0]` / `tx.inputs[0]` — irrelevant to leaf parity).
 use arkade_compiler::compile;
 
 const HTLC: &str = r#"
@@ -128,7 +128,7 @@ fn sized_hashlock_preimages_emit_runtime_width_checks() {
             ("sha256", "bytes32", "OP_SHA256"),
             ("hash256", "bytes32", "OP_HASH256"),
         ] {
-            for (covenant, timelock, keys, signatures) in [
+            for (arkade_script_function, timelock, keys, signatures) in [
                 ("", "", "server, owner", "serverSig, sig"),
                 (
                     "",
@@ -144,7 +144,7 @@ fn sized_hashlock_preimages_emit_runtime_width_checks() {
                 ),
             ] {
                 let source = format!(
-                    "contract C(pubkey owner, {digest_type} digest) {{ {covenant} function claim({preimage_type} preimage, signature serverSig, signature sig) tapscript {{ require({hash}(preimage) == digest); {timelock} require(checkMultisig([{keys}], [{signatures}])); }} }}"
+                    "contract C(pubkey owner, {digest_type} digest) {{ {arkade_script_function} function claim({preimage_type} preimage, signature serverSig, signature sig) tapscript {{ require({hash}(preimage) == digest); {timelock} require(checkMultisig([{keys}], [{signatures}])); }} }}"
                 );
                 for optimize in [false, true] {
                     let output = arkade_compiler::compile_sources_with_options(

@@ -173,7 +173,7 @@ impl Op {
             },
             Op::Param(name) => push_size(param_width(name)),
             Op::Contract { .. } => push_size(32),
-            // The generator replaces these before a covenant is assembled.
+            // The generator replaces these before an Arkade Script is assembled.
             Op::Read(_) | Op::Value(_) | Op::ArrayElement(_) => 0,
         }
     }

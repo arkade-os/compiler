@@ -30,7 +30,7 @@ This is a Cargo workspace containing the compiler crate at the repository root a
 - `src/parser/grammar.pest` defines the language grammar.
 - `src/parser/` maps source text into the AST.
 - `src/models/mod.rs` contains AST and public artifact models.
-- `src/compiler/` emits Arkade covenant and tapscript assembly.
+- `src/compiler/` emits Arkade Script and tapscript assembly.
 - `src/types/` types every expression once; `src/validator/` enforces semantic and artifact invariants.
 - `src/main.rs`, `src/lib.rs`, and `src/wasm.rs` expose the CLI, Rust API, and optional WASM API.
 - `tests/` contains integration and regression coverage.
@@ -50,11 +50,11 @@ Treat public artifact shapes in `src/models/mod.rs`, assembly generation in `src
 
 Keep the compiler's public APIs aligned: a change to the Rust API in `src/lib.rs`, the WASM bindings in `src/wasm.rs`, or the npm wrapper in `npm/src/` must update the other layers, the playground, and their tests in the same change.
 
-Keep covenant assembly and L1 tapleaf assembly distinct in implementation and tests. Assert the affected spend group, covenant, leaves, witness shape, and critical opcodes when semantics change.
+Keep Arkade Script assembly and L1 tapleaf assembly distinct in implementation and tests. Assert the affected spend group, Arkade Script, leaves, witness shape, and critical opcodes when semantics change.
 
 Normalize or ignore the dynamic `updatedAt` field in artifact comparisons.
 
-Use “Arkade” in project terminology.
+Use “Arkade” in project terminology. The language is Arkade Language. A `function` without a modifier is an Arkade Script function, and its compiled script is Arkade Script; a `tapscript` function is a tapscript function. Call an Arkade Script function a covenant only when it constrains the spending transaction. A spending path is operator-enforced or Bitcoin-enforced.
 
 ## Generated files
 

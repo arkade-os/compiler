@@ -10,16 +10,10 @@ const SOURCE: &str = "contract C(pubkey[3] keys) {
 }";
 
 #[test]
-fn covenants_report_resource_usage() {
+fn arkade_scripts_report_resource_usage() {
     let output = compile(SOURCE).unwrap();
-    let covenant = output.functions[0].arkade.as_ref().unwrap();
-    let cost = |name: &str| {
-        covenant
-            .costs
-            .iter()
-            .find(|cost| cost.name == name)
-            .cloned()
-    };
+    let script = output.functions[0].arkade.as_ref().unwrap();
+    let cost = |name: &str| script.costs.iter().find(|cost| cost.name == name).cloned();
     let bytes = cost("script bytes (min)").unwrap();
     assert!(bytes.used > 0);
     assert!(cost("stack items (peak)").unwrap().used > 0);
@@ -32,7 +26,7 @@ fn covenants_report_resource_usage() {
     );
     assert_eq!(cost("OP_GREATERTHAN").unwrap().used, 1);
     assert_eq!(cost("OP_ECMUL"), None);
-    assert!(covenant.costs[2..]
+    assert!(script.costs[2..]
         .windows(2)
         .all(|pair| pair[0].name < pair[1].name));
     let json = serde_json::to_value(&output).unwrap();

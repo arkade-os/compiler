@@ -48,10 +48,10 @@ contract CanonicalBool() {
 		{"two in an element", "element", map[string][]byte{"flags.0": {0x01}, "flags.1": {0x02}}, "OP_EQUALVERIFY failed"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			group := covenantGroup(t, contract, tc.function)
+			group := arkadeScriptGroup(t, contract, tc.function)
 			instance := instantiateGroup(t, contract, tc.function, nil, serverKey.PubKey(), emulatorKey.PubKey())
 			deployment := fundingTx(instance.pkScript, 10_000)
-			witness := covenantWitness(t, contract, group, tc.values)
+			witness := arkadeScriptWitness(t, contract, group, tc.values)
 			spend := spendingPSBTWithWitness(t, deployment, instance, 10_000, instance.pkScript, witness)
 			requireVMResult(t, spend, emulatorKey.PubKey(), tc.wantErr)
 		})

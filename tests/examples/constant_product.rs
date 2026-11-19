@@ -12,7 +12,7 @@ fn script_bytes(output: &ContractJson, function: &str) -> usize {
     crate::common::group(output, function)
         .arkade
         .as_ref()
-        .unwrap_or_else(|| panic!("{function} has no covenant"))
+        .unwrap_or_else(|| panic!("{function} has no Arkade Script"))
         .costs
         .iter()
         .find(|cost| cost.name == "script bytes (min)")

@@ -60,7 +60,7 @@ contract GroupRecords() {
 			Outputs: []asset.AssetOutput{{Type: asset.AssetOutputTypeLocal, Vout: 1, Amount: 11}},
 		},
 	}
-	sourceGroup := covenantGroup(t, contract, "source")
+	sourceGroup := arkadeScriptGroup(t, contract, "source")
 	sourceInstance := instantiateGroup(t, contract, "source", nil, serverKey.PubKey(), emulatorKey.PubKey())
 	sourceDeployment := fundingTx(sourceInstance.pkScript, 10_000)
 	for _, tc := range []struct {
@@ -76,11 +76,11 @@ contract GroupRecords() {
 		t.Run(tc.name, func(t *testing.T) {
 			values := map[string][]byte{"g": scriptInt(t, tc.g), "txid": tc.txid[:]}
 			spend := spendingPSBTWithWitness(t, sourceDeployment, sourceInstance, 10_000, sourceInstance.pkScript,
-				covenantWitness(t, contract, sourceGroup, values), extension.Packet(packet))
+				arkadeScriptWitness(t, contract, sourceGroup, values), extension.Packet(packet))
 			requireVMResult(t, spend, emulatorKey.PubKey(), tc.wantErr)
 		})
 	}
-	guarded := covenantGroup(t, contract, "guarded")
+	guarded := arkadeScriptGroup(t, contract, "guarded")
 	guardedInstance := instantiateGroup(t, contract, "guarded", nil, serverKey.PubKey(), emulatorKey.PubKey())
 	guardedDeployment := fundingTx(guardedInstance.pkScript, 10_000)
 	for _, tc := range []struct {
@@ -96,13 +96,13 @@ contract GroupRecords() {
 		t.Run(tc.name, func(t *testing.T) {
 			values := map[string][]byte{"g": scriptInt(t, tc.g), "txid": tc.txid[:]}
 			spend := spendingPSBTWithWitness(t, guardedDeployment, guardedInstance, 10_000, guardedInstance.pkScript,
-				covenantWitness(t, contract, guarded, values), extension.Packet(packet))
+				arkadeScriptWitness(t, contract, guarded, values), extension.Packet(packet))
 			requireVMResult(t, spend, emulatorKey.PubKey(), tc.wantErr)
 		})
 	}
 	// Field reads and a bound record read the same fields of either input kind.
 	for _, function := range []string{"spend", "bound"} {
-		group := covenantGroup(t, contract, function)
+		group := arkadeScriptGroup(t, contract, function)
 		instance := instantiateGroup(t, contract, function, nil, serverKey.PubKey(), emulatorKey.PubKey())
 		deployment := fundingTx(instance.pkScript, 10_000)
 		for _, tc := range []struct {
@@ -123,7 +123,7 @@ contract GroupRecords() {
 					"kind": scriptInt(t, tc.kind), "index": scriptInt(t, tc.index),
 				}
 				spend := spendingPSBTWithWitness(t, deployment, instance, 10_000, instance.pkScript,
-					covenantWitness(t, contract, group, values), extension.Packet(packet))
+					arkadeScriptWitness(t, contract, group, values), extension.Packet(packet))
 				requireVMResult(t, spend, emulatorKey.PubKey(), tc.wantErr)
 			})
 		}

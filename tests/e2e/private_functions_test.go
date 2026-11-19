@@ -13,7 +13,7 @@ func TestPrivateFunctions(t *testing.T) {
 	serverKey := fixedPrivateKey(1)
 	emulatorKey := fixedPrivateKey(2)
 	point := fixedPrivateKey(9).PubKey().SerializeUncompressed()
-	group := covenantGroup(t, contract, "spend")
+	group := arkadeScriptGroup(t, contract, "spend")
 	instantiated := instantiateGroup(t, contract, "spend", map[string][]byte{
 		"config.minimum":   scriptInt(t, 5),
 		"config.offsets.0": scriptInt(t, 2),
@@ -65,7 +65,7 @@ func TestPrivateFunctions(t *testing.T) {
 				inputs[fmt.Sprintf("values.%d", i)] = scriptInt(t, value)
 			}
 			deployment := fundingTx(instantiated.pkScript, 10_000)
-			spending := spendingPSBTWithWitness(t, deployment, instantiated, 10_000, instantiated.pkScript, covenantWitness(t, contract, group, inputs))
+			spending := spendingPSBTWithWitness(t, deployment, instantiated, 10_000, instantiated.pkScript, arkadeScriptWitness(t, contract, group, inputs))
 			requireVMResult(t, spending, emulatorKey.PubKey(), wantErr)
 		})
 	}

@@ -93,11 +93,11 @@ fn test_beacon_structure() {
         crate::common::group(&output, "passthrough")
             .arkade
             .is_some(),
-        "Missing passthrough arkade covenant"
+        "Missing passthrough Arkade Script"
     );
     assert!(
         crate::common::group(&output, "update").arkade.is_some(),
-        "Missing update arkade covenant"
+        "Missing update Arkade Script"
     );
 }
 
@@ -158,7 +158,7 @@ fn test_price_beacon_structure() {
     for name in &["update", "passthrough"] {
         assert!(
             crate::common::group(&output, name).arkade.is_some(),
-            "Missing {name} arkade covenant"
+            "Missing {name} Arkade Script"
         );
     }
 }

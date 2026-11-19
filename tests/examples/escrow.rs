@@ -35,7 +35,7 @@ fn test_no_path_requires_a_party_signature() {
     }
     assert!(
         arkade_inputs(&output, "cancel").is_empty(),
-        "the timeout refund must take no covenant inputs"
+        "the timeout refund must take no Arkade Script inputs"
     );
     assert_eq!(
         arkade_inputs(&output, "complete"),

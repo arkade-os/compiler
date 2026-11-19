@@ -4,12 +4,12 @@ use arkade_compiler::opcodes::{
     OP_MUL, OP_PICK, OP_PUT, OP_ROLL, OP_VERIFY,
 };
 
-fn covenant(source: &str, function: &str) -> arkade_compiler::models::ArkadeCovenant {
+fn arkade_script(source: &str, function: &str) -> arkade_compiler::models::ArkadeScript {
     let output = compile(source).unwrap_or_else(|error| panic!("compile failed: {error}"));
     crate::common::group(&output, function)
         .arkade
         .clone()
-        .expect("function must have a covenant")
+        .expect("function must have an Arkade Script")
 }
 
 fn contains_tokens(asm: &[String], expected: &[&str]) -> bool {
@@ -64,7 +64,7 @@ contract Shape(int limit) {
 
 #[test]
 fn constructor_prologue_and_function_inputs_have_explicit_positions() {
-    let covenant = covenant(
+    let script = arkade_script(
         r#"
 contract Frame(int left, int right) {
     function spend(int x, int y) {
@@ -77,24 +77,24 @@ contract Frame(int left, int right) {
     );
 
     assert_eq!(
-        covenant
+        script
             .inputs
             .iter()
             .map(|input| input.name.as_str())
             .collect::<Vec<_>>(),
         ["x", "y"]
     );
-    assert_eq!(&covenant.asm[..2], ["<right>", "<left>"]);
+    assert_eq!(&script.asm[..2], ["<right>", "<left>"]);
     assert!(
-        contains_tokens(&covenant.asm, &["OP_0", OP_PICK, "OP_3", OP_ROLL, OP_ADD]),
+        contains_tokens(&script.asm, &["OP_0", OP_PICK, "OP_3", OP_ROLL, OP_ADD]),
         "constructor and function inputs must be read by depth: {:?}",
-        covenant.asm
+        script.asm
     );
 }
 
 #[test]
 fn nested_expression_reads_bindings_without_consuming_them() {
-    let covenant = covenant(
+    let script = arkade_script(
         r#"
 contract Nested() {
     function spend(int x, int y, int z) {
@@ -106,17 +106,17 @@ contract Nested() {
         "spend",
     );
 
-    assert!(covenant.asm.iter().any(|token| token == OP_MUL));
-    assert!(covenant.asm.iter().any(|token| token == OP_GREATERTHAN));
+    assert!(script.asm.iter().any(|token| token == OP_MUL));
+    assert!(script.asm.iter().any(|token| token == OP_GREATERTHAN));
     assert!(
-        covenant
+        script
             .asm
             .iter()
             .filter(|token| token.as_str() == OP_PICK)
             .count()
             == 1,
         "only the first x read must use OP_PICK: {:?}",
-        covenant.asm
+        script.asm
     );
 }
 
@@ -158,48 +158,48 @@ contract Mutate() {
         crate::common::leaf_asm(&output, "spend", "spend"),
         "<SERVER_KEY> OP_CHECKSIGVERIFY <EMULATOR_KEY:spend> OP_CHECKSIG"
     );
-    let covenant = group.arkade.as_ref().expect("spend covenant");
+    let script = group.arkade.as_ref().expect("spend Arkade Script");
     assert_eq!(
         crate::common::arkade_inputs(&output, "spend"),
         ["value", "choose"]
     );
 
     assert_eq!(
-        covenant
+        script
             .asm
             .iter()
             .filter(|token| token.as_str() == OP_PUT)
             .count(),
         2,
         "deep branch assignments still need {OP_PUT}: {:?}",
-        covenant.asm
+        script.asm
     );
-    let if_index = covenant
+    let if_index = script
         .asm
         .iter()
         .position(|token| token == OP_IF)
         .expect("if");
-    let else_index = covenant
+    let else_index = script
         .asm
         .iter()
         .position(|token| token == OP_ELSE)
         .expect("else");
-    let end_index = covenant
+    let end_index = script
         .asm
         .iter()
         .position(|token| token == OP_ENDIF)
         .expect("endif");
-    assert!(covenant.asm[if_index..else_index]
+    assert!(script.asm[if_index..else_index]
         .iter()
         .any(|token| token == OP_ROLL));
-    assert!(covenant.asm[else_index..end_index]
+    assert!(script.asm[else_index..end_index]
         .iter()
         .any(|token| token == OP_ROLL));
 }
 
 #[test]
 fn array_loop_values_remain_runtime_group_indices() {
-    let covenant = covenant(
+    let script = arkade_script(
         r#"
 contract GroupIndices() {
     function spend(AssetGroup[3] groups) {
@@ -215,7 +215,7 @@ contract GroupIndices() {
     );
 
     assert_eq!(
-        covenant
+        script
             .asm
             .iter()
             .filter(|token| token.as_str() == "OP_INSPECTASSETGROUPSUM")
@@ -223,10 +223,10 @@ contract GroupIndices() {
         3
     );
     assert!(
-        covenant.asm.iter().any(|token| token == OP_PICK),
+        script.asm.iter().any(|token| token == OP_PICK),
         "each unrolled group value must read its flattened input binding"
     );
-    assert!(covenant.asm.iter().all(|token| !token.contains("$array:")));
+    assert!(script.asm.iter().all(|token| !token.contains("$array:")));
 }
 
 #[test]
@@ -258,7 +258,7 @@ contract RuntimeIndex() {
         crate::common::leaf_asm(&output, "spend", "spend"),
         "<SERVER_KEY> OP_CHECKSIGVERIFY <EMULATOR_KEY:spend> OP_CHECKSIG"
     );
-    let covenant = group.arkade.as_ref().expect("spend covenant");
+    let script = group.arkade.as_ref().expect("spend Arkade Script");
     assert_eq!(
         crate::common::arkade_inputs(&output, "spend"),
         ["values", "index"]
@@ -266,13 +266,13 @@ contract RuntimeIndex() {
 
     for opcode in [OP_GREATERTHANOREQUAL, OP_LESSTHAN, OP_DUP, OP_PICK] {
         assert!(
-            covenant.asm.iter().any(|token| token == opcode),
+            script.asm.iter().any(|token| token == opcode),
             "runtime index must emit {opcode}: {:?}",
-            covenant.asm
+            script.asm
         );
     }
     assert!(contains_tokens(
-        &covenant.asm,
+        &script.asm,
         &[
             "OP_3",
             OP_ROLL,
@@ -291,7 +291,7 @@ contract RuntimeIndex() {
 
 #[test]
 fn array_index_accepts_integer_expressions() {
-    let covenant = covenant(
+    let script = arkade_script(
         r#"
 contract ExpressionIndex() {
     function spend(int[3] values, int x, int y) {
@@ -302,17 +302,17 @@ contract ExpressionIndex() {
         "spend",
     );
 
-    assert!(contains_tokens(&covenant.asm, &[OP_MUL, "3", OP_ADD]));
+    assert!(contains_tokens(&script.asm, &[OP_MUL, "3", OP_ADD]));
     assert!(contains_tokens(
-        &covenant.asm,
+        &script.asm,
         &[OP_GREATERTHANOREQUAL, "OP_VERIFY"]
     ));
-    assert!(contains_tokens(&covenant.asm, &[OP_LESSTHAN, "OP_VERIFY"]));
+    assert!(contains_tokens(&script.asm, &[OP_LESSTHAN, "OP_VERIFY"]));
 }
 
 #[test]
 fn literal_array_indices_remain_static() {
-    let covenant = covenant(
+    let script = arkade_script(
         r#"
 contract StaticIndex() {
     function spend(int[3] values, int expected) {
@@ -323,8 +323,8 @@ contract StaticIndex() {
         "spend",
     );
 
-    assert!(!covenant.asm.iter().any(|token| token == OP_LESSTHAN));
-    assert!(!covenant
+    assert!(!script.asm.iter().any(|token| token == OP_LESSTHAN));
+    assert!(!script
         .asm
         .iter()
         .any(|token| token == OP_GREATERTHANOREQUAL));
@@ -408,7 +408,7 @@ fn single_read_constructor_leaves_are_pushed_at_their_read() {
             "<s.length> 3 OP_NUMEQUAL OP_VERIFY OP_2 2 OP_NUMEQUAL OP_VERIFY OP_1",
         ),
     ] {
-        assert_eq!(covenant(source, "spend").asm.join(" "), expected, "{source}");
+        assert_eq!(arkade_script(source, "spend").asm.join(" "), expected, "{source}");
     }
 }
 
@@ -432,9 +432,9 @@ contract Paths(int unused, int left, int right, pubkey exitKey, int delay) {
     assert_eq!(output.functions.len(), 4);
     for (name, parameter) in [("first", "left"), ("second", "right")] {
         let group = crate::common::group(&output, name);
-        let covenant = group.arkade.as_ref().unwrap();
+        let script = group.arkade.as_ref().unwrap();
         assert_eq!(
-            covenant.asm,
+            script.asm,
             format!("OP_0 OP_ROLL <{parameter}> OP_NUMEQUAL OP_VERIFY OP_1")
                 .split_whitespace()
                 .map(String::from)
@@ -468,7 +468,7 @@ contract Paths(int unused, int left, int right, pubkey exitKey, int delay) {
 
 #[test]
 fn constructor_references_cover_nested_bodies_and_named_operands() {
-    let covenant = |source: &str, name: &str| {
+    let arkade_script = |source: &str, name: &str| {
         let output = arkade_compiler::compile_sources(
             "main.ark",
             &[
@@ -520,11 +520,11 @@ fn constructor_references_cover_nested_bodies_and_named_operands() {
         let source = format!(
             "import \"policy.ark\"; import \"child.ark\"; contract C(int unused, Policy unusedPolicy, {parameters}, int unusedTail) {{ function spend({inputs}) {{ {body} }} }}"
         );
-        let actual = covenant(&source, "spend");
+        let actual = arkade_script(&source, "spend");
         // Prologue slots first, then single-read leaves at their reads.
         let placeholders = actual.asm.iter().filter(|token| token.starts_with('<') && !token.starts_with("<CONTRACT:")).map(String::as_str).collect::<Vec<_>>();
         assert_eq!(placeholders, expected, "{body}");
-        let baseline = covenant(&source.replace("int unused, Policy unusedPolicy, ", "").replace(", int unusedTail", ""), "spend");
+        let baseline = arkade_script(&source.replace("int unused, Policy unusedPolicy, ", "").replace(", int unusedTail", ""), "spend");
         assert_eq!(actual.asm, baseline.asm, "{body}");
         if body.contains("new Child") {
             assert!(actual.asm.contains(&"<CONTRACT:Child(<policy.key>,<policy.limits.0>,<policy.limits.1>)>".to_string()));
@@ -549,7 +549,11 @@ fn final_use_liveness_keeps_repeated_reads_and_assignment_targets() {
         ),
     ] {
         let source = format!("contract FinalUse() {{ function spend(int x, int y) {{ {body} }} }}");
-        assert_eq!(covenant(&source, "spend").asm.join(" "), expected, "{body}");
+        assert_eq!(
+            arkade_script(&source, "spend").asm.join(" "),
+            expected,
+            "{body}"
+        );
     }
 }
 
@@ -567,13 +571,13 @@ fn short_circuit_operands_move_outside_open_branches() {
     ] {
         let source =
             format!("contract ShortCircuit() {{ function spend(int x, int y, int z) {{ {body} }} }}");
-        assert_eq!(covenant(&source, "spend").asm.join(" "), expected, "{body}");
+        assert_eq!(arkade_script(&source, "spend").asm.join(" "), expected, "{body}");
     }
 }
 
 #[test]
 fn top_binding_reassignment_keeps_branch_layouts() {
-    let covenant = covenant(
+    let script = arkade_script(
         r#"
 contract BranchReplace() {
     function spend(int x, bool choose) {
@@ -589,39 +593,35 @@ contract BranchReplace() {
         "spend",
     );
 
-    let if_index = covenant
-        .asm
-        .iter()
-        .position(|token| token == OP_IF)
-        .unwrap();
-    let else_index = covenant
+    let if_index = script.asm.iter().position(|token| token == OP_IF).unwrap();
+    let else_index = script
         .asm
         .iter()
         .position(|token| token == OP_ELSE)
         .unwrap();
-    let end_index = covenant
+    let end_index = script
         .asm
         .iter()
         .position(|token| token == OP_ENDIF)
         .unwrap();
     assert!(contains_tokens(
-        &covenant.asm[if_index..else_index],
+        &script.asm[if_index..else_index],
         &["OP_0", OP_ROLL, "1", OP_ADD]
     ));
     assert!(contains_tokens(
-        &covenant.asm[else_index..end_index],
+        &script.asm[else_index..end_index],
         &["7", "OP_NIP"]
     ));
-    assert!(!covenant.asm.iter().any(|token| token == OP_PUT));
+    assert!(!script.asm.iter().any(|token| token == OP_PUT));
     assert!(contains_tokens(
-        &covenant.asm[end_index..],
+        &script.asm[end_index..],
         &["OP_0", OP_ROLL, "0", OP_GREATERTHAN]
     ));
 }
 
 #[test]
 fn final_use_after_a_private_call_consumes_the_caller_binding() {
-    let covenant = covenant(
+    let script = arkade_script(
         r#"
 contract Framed() {
     function spend(int x, int y) {
@@ -638,32 +638,29 @@ contract Framed() {
     );
 
     assert_eq!(
-        covenant
+        script
             .asm
             .windows(4)
             .filter(|tokens| *tokens == ["OP_0", OP_PICK, "2", OP_MUL])
             .count(),
         2,
         "each helper invocation should read the caller slot directly: {:?}",
-        covenant.asm,
+        script.asm,
     );
-    assert!(covenant
+    assert!(script
         .asm
         .iter()
         .all(|token| token != OP_PUT && token != "OP_NIP"));
     assert!(
-        contains_tokens(
-            &covenant.asm,
-            &["OP_0", OP_ROLL, "1", OP_GREATERTHANOREQUAL]
-        ),
+        contains_tokens(&script.asm, &["OP_0", OP_ROLL, "1", OP_GREATERTHANOREQUAL]),
         "the caller's final read after a call must consume the slot: {:?}",
-        covenant.asm
+        script.asm
     );
 }
 
 #[test]
 fn readonly_private_arguments_alias_caller_slots_but_mutated_arguments_copy() {
-    let covenant = covenant(
+    let script = arkade_script(
         r#"
 contract C() {
     function spend(int x) {
@@ -679,20 +676,20 @@ contract C() {
         "spend",
     );
 
-    assert_eq!(&covenant.asm[..4], ["OP_0", OP_PICK, "1", OP_ADD]);
+    assert_eq!(&script.asm[..4], ["OP_0", OP_PICK, "1", OP_ADD]);
     assert!(contains_tokens(
-        &covenant.asm,
+        &script.asm,
         &["OP_1", OP_PICK, "2", OP_MUL]
     ));
     assert!(contains_tokens(
-        &covenant.asm,
+        &script.asm,
         &["OP_0", OP_PICK, "OP_0", OP_PICK, "0", OP_GREATERTHAN, OP_IF]
     ));
 }
 
 #[test]
 fn readonly_constructor_argument_preserves_constructor_access() {
-    let covenant = covenant(
+    let script = arkade_script(
         r#"
 contract C(int base) {
     function spend() { require(sum(base) == base * 2); }
@@ -703,7 +700,7 @@ contract C(int base) {
     );
 
     assert_eq!(
-        &covenant.asm[..6],
+        &script.asm[..6],
         ["<base>", "OP_0", OP_PICK, "OP_1", OP_PICK, OP_ADD]
     );
 }
@@ -727,8 +724,8 @@ contract C(AssetId id) {{
 "#
         )
     };
-    let whole = covenant(&source("held(0, id)", "AssetId a", "a"), "spend");
-    let fields = covenant(
+    let whole = arkade_script(&source("held(0, id)", "AssetId a", "a"), "spend");
+    let fields = arkade_script(
         &source(
             "held(0, id.txid, id.gidx)",
             "bytes32 txid, int gidx",
@@ -759,7 +756,7 @@ contract C(AssetId id) {{
 
 #[test]
 fn helpers_writing_a_struct_field_copy_the_argument() {
-    let covenant = covenant(
+    let script = arkade_script(
         r#"
 contract C() {
     function spend(AssetId id, int expected) {
@@ -777,14 +774,14 @@ contract C() {
 
     // Both leaves are copied into the frame and the write lands on the copy.
     assert!(contains_tokens(
-        &covenant.asm,
+        &script.asm,
         &["OP_1", OP_PICK, "OP_1", OP_PICK, "OP_1", OP_PICK, "1", OP_ADD, "OP_1", OP_PUT]
     ));
 }
 
 #[test]
 fn caller_top_slot_rebinding_ignores_same_named_helper_locals() {
-    let covenant = covenant(
+    let script = arkade_script(
         r#"
 contract C() {
     function spend(int y, bool c) {
@@ -803,7 +800,7 @@ contract C() {
     );
 
     assert!(contains_tokens(
-        &covenant.asm,
+        &script.asm,
         &[
             OP_IF,
             "OP_0",
@@ -814,13 +811,13 @@ contract C() {
             OP_ENDIF
         ]
     ));
-    let end = covenant
+    let end = script
         .asm
         .iter()
         .rposition(|token| token == OP_ENDIF)
         .unwrap();
     assert_eq!(
-        &covenant.asm[end + 1..],
+        &script.asm[end + 1..],
         [
             "5",
             "OP_NIP",

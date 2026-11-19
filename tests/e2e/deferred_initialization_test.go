@@ -95,16 +95,16 @@ func TestDeferredInitialization(t *testing.T) {
 				t.Fatal(err)
 			}
 			contract := compileArtifact(t, source)
-			group := covenantGroup(t, contract, "spend")
+			group := arkadeScriptGroup(t, contract, "spend")
 			instance := instantiateGroup(t, contract, "spend", nil, serverKey.PubKey(), emulatorKey.PubKey())
 			deployment := fundingTx(instance.pkScript, 10_000)
 			for _, choose := range []int64{0, 1} {
 				for _, index := range []int64{0, 1} {
 					values := map[string][]byte{"choose": scriptInt(t, choose), "input": scriptInt(t, 7), "index": scriptInt(t, index)}
-					spend := spendingPSBTWithWitness(t, deployment, instance, 10_000, instance.pkScript, covenantWitness(t, contract, group, values))
+					spend := spendingPSBTWithWitness(t, deployment, instance, 10_000, instance.pkScript, arkadeScriptWitness(t, contract, group, values))
 					requireVMResult(t, spend, emulatorKey.PubKey(), "")
 					values["input"] = scriptInt(t, 6)
-					spend = spendingPSBTWithWitness(t, deployment, instance, 10_000, instance.pkScript, covenantWitness(t, contract, group, values))
+					spend = spendingPSBTWithWitness(t, deployment, instance, 10_000, instance.pkScript, arkadeScriptWitness(t, contract, group, values))
 					requireVMResult(t, spend, emulatorKey.PubKey(), "VERIFY failed")
 				}
 			}
@@ -129,7 +129,7 @@ func TestDeferredInitializationScriptSize(t *testing.T) {
 				}
 				contract := compileArtifact(t, source)
 				instance := instantiateGroup(t, contract, "spend", nil, serverKey.PubKey(), emulatorKey.PubKey())
-				sizes = append(sizes, len(instance.covenant))
+				sizes = append(sizes, len(instance.arkadeScript))
 			}
 			if sizes[0] >= sizes[1] {
 				t.Fatalf("deferred script = %d bytes, zero-filled = %d", sizes[0], sizes[1])
@@ -193,10 +193,10 @@ func TestHelperLocalNamesDoNotBypassSignatureChecks(t *testing.T) {
 				"ownerA": schnorr.SerializePubKey(ownerA.PubKey()),
 				"ownerB": schnorr.SerializePubKey(ownerB.PubKey()),
 			}, serverKey.PubKey(), emulatorKey.PubKey())
-			group := covenantGroup(t, contract, "spend")
+			group := arkadeScriptGroup(t, contract, "spend")
 			deployment := fundingTx(instance.pkScript, 10_000)
 			values := map[string][]byte{"signatures.0": nil, "signatures.1": nil}
-			unsigned := spendingPSBTWithWitness(t, deployment, instance, 10_000, instance.pkScript, covenantWitness(t, contract, group, values))
+			unsigned := spendingPSBTWithWitness(t, deployment, instance, 10_000, instance.pkScript, arkadeScriptWitness(t, contract, group, values))
 			signatureA := signArkadeSighash(t, unsigned, 0, ownerA)
 			signatureB := signArkadeSighash(t, unsigned, 0, ownerB)
 			for _, witness := range []struct {
@@ -210,7 +210,7 @@ func TestHelperLocalNamesDoNotBypassSignatureChecks(t *testing.T) {
 				t.Run(witness.name, func(t *testing.T) {
 					values["signatures.0"] = signatureA
 					values["signatures.1"] = witness.second
-					spend := spendingPSBTWithWitness(t, deployment, instance, 10_000, instance.pkScript, covenantWitness(t, contract, group, values))
+					spend := spendingPSBTWithWitness(t, deployment, instance, 10_000, instance.pkScript, arkadeScriptWitness(t, contract, group, values))
 					requireVMResult(t, spend, emulatorKey.PubKey(), witness.wantErr)
 				})
 			}

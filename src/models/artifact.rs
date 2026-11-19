@@ -39,7 +39,7 @@ pub struct FunctionInput {
 pub struct WitnessElement {
     /// Parameter name (matches an `<name>` placeholder in `asm`)
     pub name: String,
-    /// Arkade Script type string (e.g., `"pubkey"`, `"signature"`, `"bytes32"`)
+    /// Arkade Language type string (e.g., `"pubkey"`, `"signature"`, `"bytes32"`)
     #[serde(rename = "type")]
     pub elem_type: String,
     /// Wire-encoding descriptor for client stub generators
@@ -49,12 +49,12 @@ pub struct WitnessElement {
     pub injected: bool,
 }
 
-/// The emulator-run covenant for a function-backed spend group.
+/// The Arkade Script that the operator runs for an Arkade Script function's spend group.
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct ArkadeCovenant {
-    /// Covenant inputs (function parameters, array-expanded). No server/emulator sigs.
+pub struct ArkadeScript {
+    /// Function inputs (function parameters, array-expanded). No server/emulator sigs.
     pub inputs: Vec<FunctionInput>,
-    /// Covenant assembly.
+    /// Arkade Script assembly.
     pub asm: Vec<String>,
     /// The entry-file statement each run of `asm` tokens was compiled from; tokens the
     /// compiler adds itself, such as the final cleanup, are not covered. Written to the
@@ -66,7 +66,7 @@ pub struct ArkadeCovenant {
     pub costs: Vec<Cost>,
 }
 
-/// A run of covenant tokens and the source statement they come from.
+/// A run of Arkade Script tokens and the source statement they come from.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct SourceRange {
     /// Half-open range of indexes into `asm`.
@@ -91,7 +91,8 @@ pub struct Cost {
 /// One L1 tapleaf within a spend group.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct AbiLeaf {
-    /// Leaf name (source tapscript name, or covenant name for a synthesized default).
+    /// Leaf name (source tapscript name, or the Arkade Script function's name for a synthesized
+    /// default).
     pub name: String,
     /// Ordered witness stack the caller supplies at spend time.
     pub witness: Vec<WitnessElement>,
@@ -99,14 +100,14 @@ pub struct AbiLeaf {
     pub asm: Vec<String>,
 }
 
-/// A spend group: an optional covenant plus its L1 leaves.
+/// A spend group: an optional Arkade Script plus its L1 leaves.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct AbiFunctionGroup {
-    /// Group name (covenant function name, or a standalone leaf's own name).
+    /// Group name (Arkade Script function name, or a standalone leaf's own name).
     pub name: String,
-    /// Emulator covenant; absent for groups containing only standalone leaves.
+    /// Absent for groups containing only standalone leaves.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub arkade: Option<ArkadeCovenant>,
+    pub arkade: Option<ArkadeScript>,
     /// L1 tapleaves grouped under this entry.
     pub leaves: Vec<AbiLeaf>,
 }
@@ -143,7 +144,7 @@ pub struct ContractJson {
 }
 
 impl ContractJson {
-    /// The debug file: each covenant's source map keyed by spend group name, linked to this
+    /// The debug file: each Arkade Script's source map keyed by spend group name, linked to this
     /// artifact by its fingerprint. Positions point into the artifact's `source` bundle.
     pub fn debug_info(&self) -> serde_json::Value {
         let functions: serde_json::Map<_, _> = self

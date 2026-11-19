@@ -175,7 +175,7 @@ contract Guards() {{
 #[test]
 fn invalid_function_signatures_calls_and_returns_are_rejected() {
     let cases = [
-        ("function spend() bool { return true; }", "covenant function 'spend' cannot declare a return type"),
+        ("function spend() bool { return true; }", "Arkade Script function 'spend' cannot declare a return type"),
         ("function spend() { require(true); return; }", "only allowed in private"),
         ("function spend() { missing(); require(true); }", "unknown function"),
         ("function spend() { require(true); spend(); }", "entrypoint and cannot be called"),

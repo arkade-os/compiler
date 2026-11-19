@@ -53,32 +53,32 @@ fn leaf<'a>(out: &'a ContractJson, group_name: &str, leaf_name: &str) -> &'a Abi
         .unwrap_or_else(|| panic!("leaf {leaf_name} not found in group {group_name}"))
 }
 
-/// The arkade covenant ASM of a group, joined into one searchable string.
-/// Panics if the group has no arkade covenant.
+/// The Arkade Script ASM of a group, joined into one searchable string.
+/// Panics if the group has no Arkade Script.
 pub fn arkade_asm(out: &ContractJson, group_name: &str) -> String {
     group(out, group_name)
         .arkade
         .as_ref()
-        .unwrap_or_else(|| panic!("group {group_name} has no arkade covenant"))
+        .unwrap_or_else(|| panic!("group {group_name} has no Arkade Script"))
         .asm
         .join(" ")
 }
 
-/// The arkade covenant ASM as a token vector — for structural checks
+/// The Arkade Script ASM as a token vector — for structural checks
 /// (e.g. "the operand immediately before OP_CHECKLOCKTIMEVERIFY must be
 /// <redeemStart>") that can't be done via substring search.
-/// Panics if the group has no arkade covenant.
+/// Panics if the group has no Arkade Script.
 pub fn arkade_asm_tokens(out: &ContractJson, group_name: &str) -> Vec<String> {
     group(out, group_name)
         .arkade
         .as_ref()
-        .unwrap_or_else(|| panic!("group {group_name} has no arkade covenant"))
+        .unwrap_or_else(|| panic!("group {group_name} has no Arkade Script"))
         .asm
         .clone()
 }
 
-/// The arkade covenant input parameter names (function parameters that go into
-/// the covenant, NOT the leaf's cosig witnesses). Returns empty if no arkade.
+/// The Arkade Script input parameter names (function parameters that go into
+/// the Arkade Script, NOT the leaf's cosig witnesses). Returns empty if no arkade.
 pub fn arkade_inputs(out: &ContractJson, group_name: &str) -> Vec<String> {
     group(out, group_name)
         .arkade
@@ -106,7 +106,7 @@ pub fn witness_names(out: &ContractJson, group_name: &str, leaf_name: &str) -> V
         .collect()
 }
 
-/// Count exact-token occurrences of an opcode in a group's arkade covenant ASM.
+/// Count exact-token occurrences of an opcode in a group's Arkade Script ASM.
 /// Exact match, so "OP_GREATERTHAN" does NOT match "OP_GREATERTHANOREQUAL".
 /// Returns 0 if the group has no arkade.
 pub fn opcode_count_in_arkade(out: &ContractJson, group_name: &str, op: &str) -> usize {
@@ -117,7 +117,7 @@ pub fn opcode_count_in_arkade(out: &ContractJson, group_name: &str, op: &str) ->
         .unwrap_or(0)
 }
 
-/// Signature-input names from the arkade covenant inputs, identified by name
+/// Signature-input names from the Arkade Script inputs, identified by name
 /// ending with "sig" (case-insensitive). These are the user-supplied signatures
 /// — excludes serverSig/emulatorSig which live in the leaf witness, not in
 /// arkade.inputs.
@@ -128,13 +128,13 @@ pub fn user_signatures(out: &ContractJson, group_name: &str) -> Vec<String> {
         .collect()
 }
 
-/// Whether `lint` judges a covenant's authorization or outputs; the toy contracts of tests for
+/// Whether `lint` judges a function's authorization or outputs; the toy contracts of tests for
 /// other features have neither, so those tests leave such lints out.
-pub fn is_covenant_lint(lint: arkade_compiler::lint::Lint) -> bool {
+pub fn is_security_lint(lint: arkade_compiler::lint::Lint) -> bool {
     lint.category() == arkade_compiler::lint::Category::Security
 }
 
-/// `out`'s warnings except covenant lints.
+/// `out`'s warnings except security lints.
 pub fn feature_warnings(out: &ContractJson) -> Vec<&String> {
     out.warnings
         .iter()
@@ -143,7 +143,7 @@ pub fn feature_warnings(out: &ContractJson) -> Vec<&String> {
                 .strip_prefix("warning[")
                 .and_then(|rest| rest.split_once(']'));
             !id.and_then(|(id, _)| id.parse().ok())
-                .is_some_and(is_covenant_lint)
+                .is_some_and(is_security_lint)
         })
         .collect()
 }

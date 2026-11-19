@@ -54,14 +54,14 @@ fn test_ir_constructor_field_encoding() {
 }
 
 #[test]
-fn test_ir_covenant_group_leaf_and_injected_witness() {
+fn test_ir_arkade_script_group_leaf_and_injected_witness() {
     let ir = build_ir(&load_artifact_str(&load_fixture("htlc")).unwrap()).unwrap();
 
     let claim = ir.groups.iter().find(|g| g.name == "claim").unwrap();
-    // Covenant-backed group carries an emulator covenant.
+    // An Arkade Script function's group carries its Arkade Script.
     assert!(
-        claim.covenant.is_some(),
-        "claim group should have a covenant"
+        claim.arkade.is_some(),
+        "claim group should have an Arkade Script"
     );
     assert_eq!(claim.leaves.len(), 1);
 
@@ -83,11 +83,11 @@ fn test_ir_covenant_group_leaf_and_injected_witness() {
 }
 
 #[test]
-fn test_ir_standalone_leaf_group_has_no_covenant() {
+fn test_ir_standalone_leaf_group_has_no_arkade_script() {
     let ir = build_ir(&load_artifact_str(&load_fixture("htlc")).unwrap()).unwrap();
 
     let uni = ir.groups.iter().find(|g| g.name == "unilateral").unwrap();
-    assert!(uni.covenant.is_none(), "standalone exit has no covenant");
+    assert!(uni.arkade.is_none(), "standalone exit has no Arkade Script");
     let leaf = &uni.leaves[0];
     let user: Vec<&str> = leaf.user_fields().iter().map(|f| f.name.as_str()).collect();
     assert_eq!(user, ["senderSig"]);
@@ -157,7 +157,7 @@ fn test_ir_expands_grouped_array_fields() {
 
     let group = &ir.groups[0];
     let inputs: Vec<&str> = group
-        .covenant
+        .arkade
         .as_ref()
         .unwrap()
         .inputs
@@ -227,7 +227,7 @@ fn test_ir_expands_nested_struct_fields() {
     );
     assert_eq!(
         ir.groups[0]
-            .covenant
+            .arkade
             .as_ref()
             .unwrap()
             .inputs
@@ -270,7 +270,7 @@ contract C(State state) {
     );
     assert_eq!(
         ir.groups[0]
-            .covenant
+            .arkade
             .as_ref()
             .unwrap()
             .inputs
@@ -298,7 +298,7 @@ contract C(ScriptPubKey destination) {
     let ir = build_ir(&load_artifact_str(&json).unwrap()).unwrap();
     for (fields, prefix) in [
         (&ir.constructor_fields, "destination"),
-        (&ir.groups[0].covenant.as_ref().unwrap().inputs, "expected"),
+        (&ir.groups[0].arkade.as_ref().unwrap().inputs, "expected"),
     ] {
         assert_eq!(
             fields

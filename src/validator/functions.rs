@@ -12,7 +12,7 @@ pub(super) fn validate_functions(contract: &Contract, issues: &mut Vec<Validatio
         if let Some(result) = &function.return_type {
             if !function.is_private {
                 issues.push(ValidationIssue::error(format!(
-                    "covenant function '{}' cannot declare a return type",
+                    "Arkade Script function '{}' cannot declare a return type",
                     function.name
                 )));
             }
@@ -205,7 +205,7 @@ fn validate_calls(
             Some(function) => {
                 if !function.is_private {
                     issues.push(ValidationIssue::error(format!(
-                        "covenant function '{name}' is an entrypoint and cannot be called"
+                        "Arkade Script function '{name}' is an entrypoint and cannot be called"
                     )));
                 }
                 if caller.is_static && !function.is_static {

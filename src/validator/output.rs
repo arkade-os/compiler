@@ -22,7 +22,7 @@ pub(crate) fn validate_output(output: &ContractJson) -> Vec<ValidationIssue> {
         if let Some(arkade) = &group.arkade {
             if arkade.asm.is_empty() {
                 issues.push(ValidationIssue::error(format!(
-                    "group '{}' arkade covenant has empty asm",
+                    "group '{}' Arkade Script has empty asm",
                     group.name
                 )));
             }
@@ -55,7 +55,7 @@ pub(crate) fn validate_output(output: &ContractJson) -> Vec<ValidationIssue> {
                 .any(|token| !leaves.contains(token) || !pushed.insert(token))
             {
                 issues.push(ValidationIssue::error(format!(
-                    "group '{}' arkade covenant has an invalid constructor placeholder",
+                    "group '{}' Arkade Script has an invalid constructor placeholder",
                     group.name
                 )));
             }

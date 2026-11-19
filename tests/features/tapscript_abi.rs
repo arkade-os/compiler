@@ -3,7 +3,7 @@ use arkade_compiler::compile;
 use crate::common::group;
 
 #[test]
-fn htlc_emits_grouped_leaves_with_arkade_covenants() {
+fn htlc_emits_grouped_leaves_with_arkade_scripts() {
     let src = r#"
 contract HTLC(pubkey receiver, pubkey sender, bytes20 preimageHash, int refundTime, int exit) {
     function claim() {
@@ -52,10 +52,7 @@ contract HTLC(pubkey receiver, pubkey sender, bytes20 preimageHash, int refundTi
         .iter()
         .find(|g| g.name == "unilateral")
         .unwrap();
-    assert!(
-        uni.arkade.is_none(),
-        "standalone leaf has no arkade covenant"
-    );
+    assert!(uni.arkade.is_none(), "standalone leaf has no Arkade Script");
 }
 
 #[test]
@@ -154,7 +151,7 @@ contract Escrowish(pubkey a, pubkey b, pubkey c, int exit) {
     assert_eq!(
         names,
         ["spend", "refund", "exitZulu", "exitAlpha", "exitMike"],
-        "covenant groups first, then standalone leaves as written"
+        "Arkade Script function groups first, then standalone leaves as written"
     );
 
     let spend = group(&out, "spend");

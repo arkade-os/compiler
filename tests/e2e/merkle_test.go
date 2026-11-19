@@ -57,10 +57,10 @@ contract Merkle(bytes32 root) {
 		{"long prehashed leaf", nil, []byte("branch"), append(leafHash[:], 0), proof, root, "raw hash mode requires leaf_data to be 32 bytes"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			group := covenantGroup(t, contract, "spend")
+			group := arkadeScriptGroup(t, contract, "spend")
 			instance := instantiateGroup(t, contract, "spend", map[string][]byte{"root": tc.root}, serverKey.PubKey(), emulatorKey.PubKey())
 			deployment := fundingTx(instance.pkScript, 10_000)
-			witness := covenantWitness(t, contract, group, map[string][]byte{"leafTag": tc.leafTag, "branchTag": tc.branchTag, "proof": tc.proof, "leaf": tc.leaf})
+			witness := arkadeScriptWitness(t, contract, group, map[string][]byte{"leafTag": tc.leafTag, "branchTag": tc.branchTag, "proof": tc.proof, "leaf": tc.leaf})
 			spend := spendingPSBTWithWitness(t, deployment, instance, 10_000, instance.pkScript, witness)
 			requireVMResult(t, spend, emulatorKey.PubKey(), tc.wantErr)
 		})

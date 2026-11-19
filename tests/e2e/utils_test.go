@@ -59,7 +59,7 @@ type leafArtifact struct {
 }
 
 type instantiatedGroup struct {
-	covenant      []byte
+	arkadeScript  []byte
 	pkScript      []byte
 	tapLeafScript *psbt.TaprootTapLeafScript
 }
@@ -131,7 +131,7 @@ func instantiateGroup(
 ) instantiatedGroup {
 	t.Helper()
 
-	group := covenantGroup(t, contract, name)
+	group := arkadeScriptGroup(t, contract, name)
 
 	var leaf *leafArtifact
 	for i := range group.Leaves {
@@ -144,27 +144,27 @@ func instantiateGroup(
 		t.Fatalf("%s.%s leaf not found", contract.Name, name)
 	}
 
-	covenant := assemble(t, group.Arkade.ASM, values)
+	arkadeScript := assemble(t, group.Arkade.ASM, values)
 	leafValues := make(map[string][]byte, len(values)+2)
 	for key, value := range values {
 		leafValues[key] = value
 	}
 	leafValues["SERVER_KEY"] = schnorr.SerializePubKey(serverKey)
 	leafValues["EMULATOR_KEY:"+name] = schnorr.SerializePubKey(
-		arkade.ComputeArkadeScriptPublicKey(emulatorKey, arkade.ArkadeScriptHash(covenant)),
+		arkade.ComputeArkadeScriptPublicKey(emulatorKey, arkade.ArkadeScriptHash(arkadeScript)),
 	)
 	leafScript := assemble(t, leaf.ASM, leafValues)
 	pkScript, tapLeafScript := taprootLeaf(t, leafScript)
 
 	return instantiatedGroup{
-		covenant:      covenant,
+		arkadeScript:  arkadeScript,
 		pkScript:      pkScript,
 		tapLeafScript: tapLeafScript,
 	}
 }
 
 // instantiateLeaf builds a spend group that is only an L1 leaf, with no
-// covenant to tweak the emulator key against — the shape unilateral exits use.
+// Arkade Script to tweak the emulator key against — the shape unilateral exits use.
 func instantiateLeaf(
 	t *testing.T,
 	contract artifact,
@@ -180,7 +180,7 @@ func instantiateLeaf(
 			continue
 		}
 		if contract.Functions[i].Arkade != nil {
-			t.Fatalf("%s.%s has a covenant; use instantiateGroup", contract.Name, name)
+			t.Fatalf("%s.%s has an Arkade Script; use instantiateGroup", contract.Name, name)
 		}
 		for j := range contract.Functions[i].Leaves {
 			if contract.Functions[i].Leaves[j].Name == name {
@@ -204,7 +204,7 @@ func instantiateLeaf(
 	return instantiatedGroup{pkScript: pkScript, tapLeafScript: tapLeafScript}
 }
 
-func covenantGroup(t *testing.T, contract artifact, name string) *functionGroup {
+func arkadeScriptGroup(t *testing.T, contract artifact, name string) *functionGroup {
 	t.Helper()
 
 	for i := range contract.Functions {
@@ -212,7 +212,7 @@ func covenantGroup(t *testing.T, contract artifact, name string) *functionGroup 
 			return &contract.Functions[i]
 		}
 	}
-	t.Fatalf("%s.%s covenant not found", contract.Name, name)
+	t.Fatalf("%s.%s Arkade Script not found", contract.Name, name)
 	return nil
 }
 
@@ -274,10 +274,10 @@ func expandInput(input abiInput, structs []structDefinition) []string {
 	return names
 }
 
-// covenantWitness builds the covenant witness from the ABI alone: inputs in
+// arkadeScriptWitness builds the Arkade Script witness from the ABI alone: inputs in
 // reverse declaration order, with composite entries expanded per expandInput.
 // This is the client-side convention the artifact documents.
-func covenantWitness(
+func arkadeScriptWitness(
 	t *testing.T,
 	contract artifact,
 	group *functionGroup,
@@ -291,7 +291,7 @@ func covenantWitness(
 		for _, name := range expandInput(inputs[i], contract.Structs) {
 			value, ok := values[name]
 			if !ok {
-				t.Fatalf("missing witness value for covenant input %q", name)
+				t.Fatalf("missing witness value for Arkade Script input %q", name)
 			}
 			witness = append(witness, value)
 		}
@@ -420,7 +420,7 @@ func spendingPSBTWithWitness(
 }
 
 // spendingPSBTOutputs is the general form: an explicit output list and
-// locktime, for covenants that pin several payouts or read tx.locktime.
+// locktime, for Arkade Scripts that pin several payouts or read tx.locktime.
 func spendingPSBTOutputs(
 	t *testing.T,
 	prevTx *wire.MsgTx,
@@ -442,7 +442,7 @@ func spendingPSBTOutputs(
 
 	emulatorPacket, err := arkade.NewPacket(arkade.EmulatorEntry{
 		Vin:     0,
-		Script:  group.covenant,
+		Script:  group.arkadeScript,
 		Witness: witness,
 	})
 	if err != nil {
@@ -468,7 +468,7 @@ func spendingPSBTOutputs(
 	return ptx
 }
 
-// withExtraInput appends a second prevout so the covenant sees tx.numInputs == 2.
+// withExtraInput appends a second prevout so the Arkade Script sees tx.numInputs == 2.
 func withExtraInput(t *testing.T, ptx *psbt.Packet, extra *wire.MsgTx) *psbt.Packet {
 	t.Helper()
 
@@ -503,7 +503,7 @@ func requireVMResult(
 	if strings.Contains(err.Error(), wantErr) {
 		return
 	}
-	// Unoptimized covenants verify with an unfused OP_VERIFY where the optimizer
+	// Unoptimized Arkade Scripts verify with an unfused OP_VERIFY where the optimizer
 	// emits OP_EQUALVERIFY or leaves the result for the final stack check.
 	unfused := os.Getenv("ARKADEC_NO_OPTIMIZE") != "" &&
 		(strings.HasSuffix(wantErr, "VERIFY failed") || wantErr == "false stack entry") &&

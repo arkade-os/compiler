@@ -15,7 +15,7 @@ const OFFER_PATH: &str = concat!(
 #[test]
 #[ignore = "dynamic contract reconstruction is temporarily disabled"]
 fn test_vault_compiles_with_9_groups() {
-    // 8 covenant functions + 1 unilateral tapscript = 9 groups
+    // 8 Arkade Script functions + 1 unilateral tapscript = 9 groups
     let out = compile_file(VAULT_PATH).expect("vault compile");
     assert_eq!(out.name, "StabilityVault");
     assert_eq!(out.functions.len(), 9);
@@ -42,7 +42,7 @@ fn test_merge_emits_active_input_index_opcode() {
 fn test_vault_settlement_verifies_full_oracle_message() {
     // seekerExit and providerExit must reconstruct sha256(ticker || price || time)
     // via OP_CAT + OP_SHA256 and verify the oracle sig against it.
-    // Oracle logic lives in the covenant (arkade) ASM.
+    // Oracle logic lives in the Arkade Script ASM.
     let out = compile_file(VAULT_PATH).unwrap();
     for name in &["seekerExit", "providerExit"] {
         let asm_tokens: Vec<String> = crate::common::arkade_asm_tokens(&out, name);
@@ -134,7 +134,7 @@ fn test_remove_capital_verifies_oracle() {
 #[test]
 #[ignore = "dynamic contract reconstruction is temporarily disabled"]
 fn test_offer_compiles_with_3_groups() {
-    // 2 covenant functions + 1 unilateral tapscript = 3 groups
+    // 2 Arkade Script functions + 1 unilateral tapscript = 3 groups
     let out = compile_file(OFFER_PATH).expect("offer compile");
     assert_eq!(out.name, "StabilityOffer");
     assert_eq!(out.functions.len(), 3);

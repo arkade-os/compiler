@@ -36,7 +36,7 @@ func TestTunnel(t *testing.T) {
 		{name: "native exception", function: "native", amount: 10000, assets: 6},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			group := covenantGroup(t, contract, test.function)
+			group := arkadeScriptGroup(t, contract, test.function)
 			instance := instantiateGroup(t, contract, test.function, nil, serverKey.PubKey(), emulatorKey.PubKey())
 			deployment := fundingTx(instance.pkScript, 10000)
 			packet := asset.Packet{{
@@ -54,7 +54,7 @@ func TestTunnel(t *testing.T) {
 				outputScript = p2trScript(t, []byte{0x51})
 			}
 			ptx := spendingPSBTWithWitness(t, deployment, instance, test.amount, outputScript,
-				covenantWitness(t, contract, group, values), packet)
+				arkadeScriptWitness(t, contract, group, values), packet)
 			requireVMResult(t, ptx, emulatorKey.PubKey(), test.wantErr)
 		})
 	}
@@ -86,11 +86,11 @@ func TestOpcodeExecutionContext(t *testing.T) {
 		{name: "has with context", function: "noIntent", options: []arkade.ExecuteOption{message}, wantErr: "false stack entry"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			group := covenantGroup(t, contract, test.function)
+			group := arkadeScriptGroup(t, contract, test.function)
 			instance := instantiateGroup(t, contract, test.function, nil, serverKey.PubKey(), emulatorKey.PubKey())
 			deployment := fundingTx(instance.pkScript, 10000)
 			ptx := spendingPSBTWithWitness(t, deployment, instance, 10000, instance.pkScript,
-				covenantWitness(t, contract, group, test.inputs))
+				arkadeScriptWitness(t, contract, group, test.inputs))
 			requireVMResult(t, ptx, emulatorKey.PubKey(), test.wantErr, test.options...)
 		})
 	}
@@ -157,11 +157,11 @@ func TestECPairing(t *testing.T) {
 		{name: "computed index out of range", function: "computedProof", inputs: proofs(2, 0), wantErr: "OP_VERIFY failed"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			group := covenantGroup(t, contract, test.function)
+			group := arkadeScriptGroup(t, contract, test.function)
 			instance := instantiateGroup(t, contract, test.function, nil, serverKey.PubKey(), emulatorKey.PubKey())
 			deployment := fundingTx(instance.pkScript, 10000)
 			ptx := spendingPSBTWithWitness(t, deployment, instance, 10000, instance.pkScript,
-				covenantWitness(t, contract, group, test.inputs))
+				arkadeScriptWitness(t, contract, group, test.inputs))
 			requireVMResult(t, ptx, emulatorKey.PubKey(), test.wantErr)
 		})
 	}

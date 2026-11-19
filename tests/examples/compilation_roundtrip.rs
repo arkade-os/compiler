@@ -6,7 +6,7 @@
 //! - `contractName` is non-empty.
 //! - `functions` (spend groups) array is non-empty.
 //! - Every leaf has non-empty `asm` and non-empty `witness`.
-//! - Every present `arkade` covenant has non-empty `asm` and a source map of
+//! - Every present `arkade` script has non-empty `asm` and a source map of
 //!   increasing runs inside it, and the debug file lists exactly those groups.
 //! - Every group has at least one leaf.
 //!
@@ -51,13 +51,13 @@ fn assert_output_invariants(output: &arkade_compiler::models::ContractJson, file
         if let Some(arkade) = &group.arkade {
             assert!(
                 !arkade.asm.is_empty(),
-                "{}: group '{}' arkade covenant must have non-empty ASM",
+                "{}: group '{}' Arkade Script must have non-empty ASM",
                 filename,
                 group.name
             );
             assert!(
                 !arkade.source_map.is_empty(),
-                "{}: group '{}' arkade covenant must have a source map",
+                "{}: group '{}' Arkade Script must have a source map",
                 filename,
                 group.name
             );
@@ -79,7 +79,7 @@ fn assert_output_invariants(output: &arkade_compiler::models::ContractJson, file
         assert_eq!(
             debug["functions"].get(&group.name).is_some(),
             group.arkade.is_some(),
-            "{}: group '{}' must be in the debug file exactly when it has a covenant",
+            "{}: group '{}' must be in the debug file exactly when it has an Arkade Script",
             filename,
             group.name
         );

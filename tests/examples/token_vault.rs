@@ -30,14 +30,14 @@ fn test_token_vault_contract() {
         );
     }
 
-    // 2 covenant functions (deposit, withdraw) + 1 standalone unilateral = 3 groups
+    // 2 Arkade Script functions (deposit, withdraw) + 1 standalone unilateral = 3 groups
     assert_eq!(
         output.functions.len(),
         3,
         "expected 3 groups (deposit, withdraw, unilateral)"
     );
 
-    // Verify deposit function: arkade covenant holds all introspection logic
+    // Verify deposit function: Arkade Script holds all introspection logic
     let deposit_asm = crate::common::arkade_asm(&output, "deposit");
 
     assert!(
@@ -67,10 +67,10 @@ fn test_token_vault_contract() {
         "missing output >= input token amount comparison in deposit asm: {deposit_asm}"
     );
 
-    // deposit covenant should verify owner signature
+    // deposit Arkade Script should verify owner signature
     assert!(
         deposit_asm.contains(OP_CHECKSIG),
-        "missing {OP_CHECKSIG} in deposit covenant: {deposit_asm}"
+        "missing {OP_CHECKSIG} in deposit Arkade Script: {deposit_asm}"
     );
 
     // deposit leaf carries server + emulator cosig

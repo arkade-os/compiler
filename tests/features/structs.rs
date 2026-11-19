@@ -147,7 +147,7 @@ contract Vault(Policy policy) {
     .expect("nested struct fields should compile");
 
     assert_eq!(output.parameters[0].param_type.to_string(), "Policy");
-    let arkade = output.functions[0].arkade.as_ref().expect("covenant");
+    let arkade = output.functions[0].arkade.as_ref().expect("Arkade Script");
     assert_eq!(arkade.inputs[0].name, "candidate");
     assert_eq!(arkade.inputs[0].param_type, "Policy");
     // Constructor leaves are pushed at their only read; `limits` is only measured.
@@ -400,7 +400,7 @@ contract C(Point point) {
     assert!(output.functions[0]
         .arkade
         .as_ref()
-        .expect("covenant")
+        .expect("Arkade Script")
         .asm
         .contains(&"<CONTRACT:Child(<point.x>,<point.y>)>".to_string()));
 }
@@ -467,7 +467,11 @@ contract C(Values values) {
     )
     .expect("array fields should retain array behavior");
 
-    let asm = &output.functions[0].arkade.as_ref().expect("covenant").asm;
+    let asm = &output.functions[0]
+        .arkade
+        .as_ref()
+        .expect("Arkade Script")
+        .asm;
     assert!(asm.windows(2).any(|tokens| tokens == ["OP_3", OP_LESSTHAN]));
     assert!(asm.iter().filter(|token| token.as_str() == OP_ADD).count() >= 4);
 }
@@ -504,12 +508,12 @@ contract C() {
         crate::common::leaf_asm(&output, "spend", "spend"),
         "<SERVER_KEY> OP_CHECKSIGVERIFY <EMULATOR_KEY:spend> OP_CHECKSIG"
     );
-    let covenant = group.arkade.as_ref().expect("spend covenant");
+    let script = group.arkade.as_ref().expect("spend Arkade Script");
     assert_eq!(
         crate::common::arkade_inputs(&output, "spend"),
         ["index", "next"]
     );
-    let asm = &covenant.asm;
+    let asm = &script.asm;
     assert!(asm.iter().any(|token| token == OP_PUT), "{asm:?}");
     assert!(
         asm.windows(4)
@@ -537,7 +541,11 @@ contract C(Ambiguous value) {
     .expect("dotted field paths are unambiguous");
 
     assert_eq!(
-        &output.functions[0].arkade.as_ref().expect("covenant").asm[..2],
+        &output.functions[0]
+            .arkade
+            .as_ref()
+            .expect("Arkade Script")
+            .asm[..2],
         ["<value.a_b>", "<value.a.b>"]
     );
 }
@@ -554,7 +562,11 @@ contract C(Token token) {
     )
     .expect("asset-group property names should remain valid struct fields");
 
-    let asm = &output.functions[0].arkade.as_ref().expect("covenant").asm;
+    let asm = &output.functions[0]
+        .arkade
+        .as_ref()
+        .expect("Arkade Script")
+        .asm;
     assert!(asm.iter().all(|token| token != OP_INSPECTASSETGROUPASSETID));
     assert_eq!(asm[0], "<token.assetId>");
 }
@@ -580,7 +592,11 @@ contract C() {
     )
     .expect("local struct leaves should behave like scalar locals");
 
-    let asm = &output.functions[0].arkade.as_ref().expect("covenant").asm;
+    let asm = &output.functions[0]
+        .arkade
+        .as_ref()
+        .expect("Arkade Script")
+        .asm;
     assert!(asm.iter().all(|token| !token.contains("policy.")));
     assert!(asm.iter().filter(|token| *token == OP_PICK).count() >= 2);
     assert!(asm.iter().any(|token| token == OP_NUMEQUAL));
@@ -604,7 +620,11 @@ contract C(Snapshot expected) {
     )
     .expect("native struct result nested in a user struct");
 
-    let asm = &output.functions[0].arkade.as_ref().expect("covenant").asm;
+    let asm = &output.functions[0]
+        .arkade
+        .as_ref()
+        .expect("Arkade Script")
+        .asm;
     assert_eq!(asm[0], "<expected.minimumVout>");
     assert!(asm
         .windows(2)
@@ -899,17 +919,17 @@ contract C(AssetId expected) {
     .expect("native result structs flatten like any other struct");
 
     assert_eq!(output.parameters[0].param_type.to_string(), "AssetId");
-    let covenant = output.functions[0].arkade.as_ref().expect("covenant");
-    assert_eq!(covenant.inputs[0].param_type, "Outpoint");
+    let script = output.functions[0].arkade.as_ref().expect("Arkade Script");
+    assert_eq!(script.inputs[0].param_type, "Outpoint");
     assert!(
-        covenant
+        script
             .asm
             .windows(2)
             .any(|tokens| tokens == ["<expected.txid>", "OP_EQUAL"]),
         "{:?}",
-        covenant.asm
+        script.asm
     );
-    assert!(covenant.asm.iter().all(|token| token != "<expected.gidx>"));
+    assert!(script.asm.iter().all(|token| token != "<expected.gidx>"));
 }
 
 #[test]
@@ -932,7 +952,11 @@ contract C(Packet packet, Wrapper wrapper, ArrayField array) {
     )
     .expect("a scalar field named `length` is a binding, not an array length");
 
-    let asm = &output.functions[0].arkade.as_ref().expect("covenant").asm;
+    let asm = &output.functions[0]
+        .arkade
+        .as_ref()
+        .expect("Arkade Script")
+        .asm;
     assert!(
         asm.iter().any(|token| token == "<packet.length>"),
         "the field must be read from its own stack leaf: {asm:?}"
@@ -940,7 +964,7 @@ contract C(Packet packet, Wrapper wrapper, ArrayField array) {
 }
 
 #[test]
-fn whole_composite_assignments_preserve_the_covenant_and_witness_shape() {
+fn whole_composite_assignments_preserve_the_arkade_script_and_witness_shape() {
     let output = compile(
         r#"
 struct Point { int x; int y; }

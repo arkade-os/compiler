@@ -1,4 +1,4 @@
-A covenant function with a spending path that checks no transaction signature (`checkSig`, `checkMultisig`).
+An Arkade Script function with a spending path that checks no transaction signature (`checkSig`, `checkMultisig`).
 
 A check holds on every path when it sits outside any `if`, or in both arms of one. An arm that never passes, such as one with `require(1 == 2)`, leaves only the other arm. An empty arm, such as an absent `else`, is taken to be covered by sibling `if`s, so a signature checked only in an `if` without `else` counts for the path.
 

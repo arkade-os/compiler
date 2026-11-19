@@ -76,12 +76,12 @@ func TestCompiledEscrow(t *testing.T) {
 	)
 
 	t.Run("complete", func(t *testing.T) {
-		group := covenantGroup(t, contract, "complete")
+		group := arkadeScriptGroup(t, contract, "complete")
 
 		attested := func(
 			funded int64, msg []byte, signer *btcec.PrivateKey, outputs []*wire.TxOut,
 		) *psbt.Packet {
-			witness := covenantWitness(t, contract, group, map[string][]byte{
+			witness := arkadeScriptWitness(t, contract, group, map[string][]byte{
 				"oracleMsg": msg,
 				"oracleSig": signBIP340(t, signer, msg),
 			})

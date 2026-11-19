@@ -279,15 +279,15 @@ assert.match(elements['errors-output'].innerHTML, /\(main\.ark:2:\d+\)/);
 const mapped = await compile({ entry: 'main.ark', files: {
     'main.ark': 'contract M(pubkey k) {\n  function f(signature s, int n) {\n    require(n > 0);\n    if (n > 1) {\n      require(checkSig(s, k));\n    }\n  }\n}',
 } });
-const covenant = mapped.artifact.functions[0].arkade;
-assert.equal(covenant.sourceMap, undefined);
+const script = mapped.artifact.functions[0].arkade;
+assert.equal(script.sourceMap, undefined);
 const sourceMap = mapped.debug.functions.f.sourceMap;
-context.covenant = covenant;
+context.script = script;
 context.sourceMap = sourceMap;
-const html = vm.runInContext('asmRuns = []; covenantListing(covenant.asm, sourceMap)', context);
+const html = vm.runInContext('asmRuns = []; arkadeScriptListing(script.asm, sourceMap)', context);
 assert.equal((html.match(/class="asm-line asm-run"/g) || []).length, sourceMap.length);
 assert.equal((html.match(/class="asm-line"/g) || []).length > 0, true);
-for (const token of covenant.asm) assert.ok(html.includes(token.replace(/</g, '&lt;').replace(/>/g, '&gt;')), token);
+for (const token of script.asm) assert.ok(html.includes(token.replace(/</g, '&lt;').replace(/>/g, '&gt;')), token);
 const runs = vm.runInContext('asmRuns', context);
 const innermost = line => [...vm.runInContext(`innermostRuns(asmRuns, ${line}, 9)`, context)].map(run => runs[run].start[0]);
 assert.deepEqual(innermost(3), [3]);
@@ -419,12 +419,12 @@ await vm.runInContext(`
 assert.equal(elements['errors-output'].textContent, 'Storage quota exceeded');
 context.localStorage.setItem = setItem;
 
-// Assembly rendering takes the artifact and debug file and keeps covenant and leaf sections.
+// Assembly rendering takes the artifact and debug file and keeps Arkade Script and leaf sections.
 elements['asm-output'] = { dataset: { linked: 'true' } };
 context.displayAsm = displayAsm;
 context.mappedResult = await compile({ entry: 'main.ark', files: { 'main.ark': warningSource } });
 vm.runInContext('displayAsm(mappedResult.artifact, mappedResult.debug)', context);
-assert.match(elements['asm-output'].innerHTML, /arkade covenant/);
+assert.match(elements['asm-output'].innerHTML, /arkade script/);
 assert.match(elements['asm-output'].innerHTML, /tapscript leaf/);
 
 function loadStored(saved) {

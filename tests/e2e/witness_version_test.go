@@ -43,7 +43,7 @@ contract WitnessVersion() {
 		{"wrong version", group.pkScript, 0, "OP_NUMEQUALVERIFY failed"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			spend := spendingPSBTWithWitness(t, deployment, group, 10_000, tc.pkScript, covenantWitness(t, contract, covenantGroup(t, contract, "spend"), map[string][]byte{
+			spend := spendingPSBTWithWitness(t, deployment, group, 10_000, tc.pkScript, arkadeScriptWitness(t, contract, arkadeScriptGroup(t, contract, "spend"), map[string][]byte{
 				// Script introspection returns the program without the version and push-length prefix.
 				"version": scriptInt(t, tc.version), "inputProgram": p2wpkh[2:], "outputProgram": tc.pkScript[2:],
 			}))
@@ -89,7 +89,7 @@ contract C() {
 			if name == "continuation" {
 				expectedProgram = group.pkScript[2:]
 			}
-			witness := covenantWitness(t, contract, covenantGroup(t, contract, name), map[string][]byte{
+			witness := arkadeScriptWitness(t, contract, arkadeScriptGroup(t, contract, name), map[string][]byte{
 				"expected.program": program, "expected.version": scriptInt(t, 1),
 			})
 			for _, tc := range []struct {

@@ -38,10 +38,10 @@ contract NumericEquality() {
 		{"negative zero bool", "branches", map[string][]byte{"x": {0x06}, "flag": {0x80}}, "minimally encoded"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			group := covenantGroup(t, contract, tc.function)
+			group := arkadeScriptGroup(t, contract, tc.function)
 			instance := instantiateGroup(t, contract, tc.function, nil, serverKey.PubKey(), emulatorKey.PubKey())
 			deployment := fundingTx(instance.pkScript, 10_000)
-			witness := covenantWitness(t, contract, group, tc.values)
+			witness := arkadeScriptWitness(t, contract, group, tc.values)
 			spend := spendingPSBTWithWitness(t, deployment, instance, 10_000, instance.pkScript, witness)
 			requireVMResult(t, spend, emulatorKey.PubKey(), tc.wantErr)
 		})

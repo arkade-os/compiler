@@ -38,19 +38,19 @@ impl Default for CompileOptions {
     }
 }
 
-/// Compile Arkade Script source code to a JSON-serializable structure
+/// Compile Arkade Language source code to a JSON-serializable structure
 ///
-/// This function takes Arkade Script source code as input, parses it into an AST,
+/// This function takes Arkade Language source code as input, parses it into an AST,
 /// and then compiles it into a ContractJson structure that can be serialized to JSON.
 ///
 /// The output includes:
 /// - Contract name
 /// - Parameters
-/// - Spend groups with optional arkade covenants and L1 tapleaves
+/// - Spend groups with optional Arkade Scripts and L1 tapleaves
 ///
 /// # Arguments
 ///
-/// * `source_code` - The Arkade Script source code as a string
+/// * `source_code` - The Arkade Language source code as a string
 ///
 /// # Returns
 ///

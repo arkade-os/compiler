@@ -35,7 +35,7 @@ Users control their own keys. Remote servers, operators, solvers, plugins, peers
 - No spend path may move funds without the signatures, timelocks, asset rules, and other conditions required by the protocol.
 - VTXO, batch, commitment, exit, renewal, and recovery transitions must conserve value and reject wrong-network, wrong-outpoint, duplicate, and replayed transactions.
 - The VM, compiler, and emulator must preserve script semantics, reject malformed or unbounded inputs, and never gain an unintended host-level execution path.
-- Compiled artifacts and generated bindings must correspond to the reviewed source and must not silently weaken covenant or unilateral-exit constraints.
+- Compiled artifacts and generated bindings must correspond to the reviewed source and must not silently weaken operator-enforced or Bitcoin-enforced constraints.
 - Settlement and recovery state must be idempotent. A timeout, restart, or unknown outcome must not create a second spend, credit, batch, or payout.
 
 ## Reportable Findings and Severity Context
@@ -44,7 +44,7 @@ A reportable finding is a practical violation of confidentiality, integrity, ava
 
 Raise severity when reachability is unauthenticated, the issue affects many users or deployments, funds or keys can be taken or frozen, an attacker can turn an unknown outcome into a duplicate spend or credit, or the issue enters a published package or release artifact.
 
-- **Critical:** theft or loss of funds or keys at scale, unauthenticated signing or spending, a covenant or VM bypass across users, enclave or MPC secret extraction, or broad compromise of a published package.
+- **Critical:** theft or loss of funds or keys at scale, unauthenticated signing or spending, a bypass of operator-enforced paths or the VM across users, enclave or MPC secret extraction, or broad compromise of a published package.
 - **High:** practical loss of one user's or one merchant's funds, repeatable double settlement or credit, authorization bypass to a privileged operation, persistent production denial of service, or a supply-chain flaw in a supported release.
 - **Medium:** bounded denial of service, cross-user information disclosure, privilege escalation without direct fund impact, or a security-control bypass with realistic but limited preconditions.
 - **Low:** a demonstrated information leak, missing hardening, or defense-in-depth gap without a practical path to meaningful impact.

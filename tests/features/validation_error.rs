@@ -313,7 +313,7 @@ contract AllInternal(pubkey owner) {
 
 #[test]
 fn minimal_contract_succeeds() {
-    // A single covenant function gets a synthesized default collaborative leaf.
+    // A single Arkade Script function gets a synthesized default collaborative leaf.
     let source = r#"
 contract Minimal(pubkey owner) {
     function spend(signature sig) {
@@ -685,7 +685,7 @@ fn check_reports_unknown_tx_and_this_members_at_their_path() {
 }
 
 #[test]
-fn covenants_over_the_vm_stack_limit_do_not_compile() {
+fn arkade_scripts_over_the_vm_stack_limit_do_not_compile() {
     let source = |items: usize| {
         format!("contract C() {{ function spend(int[{items}] xs) {{ require(xs[0] == 1); }} }}")
     };
@@ -732,7 +732,7 @@ fn witness_length_checks_count_toward_the_stack_limit() {
 }
 
 #[test]
-fn covenants_over_the_vm_script_size_do_not_compile() {
+fn arkade_scripts_over_the_vm_script_size_do_not_compile() {
     let source = |wide: usize| {
         let requires: String = (0..1667)
             .map(|i| {

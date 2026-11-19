@@ -29,7 +29,7 @@ contract Big() {
 	}
 	contract := compileArtifact(t, source)
 	serverKey, emulatorKey := fixedPrivateKey(1), fixedPrivateKey(2)
-	group := covenantGroup(t, contract, "spend")
+	group := arkadeScriptGroup(t, contract, "spend")
 	instance := instantiateGroup(t, contract, "spend", nil, serverKey.PubKey(), emulatorKey.PubKey())
 	deployment := fundingTx(instance.pkScript, 10_000)
 	pow := new(big.Int).Lsh(big.NewInt(1), 100)
@@ -43,7 +43,7 @@ contract Big() {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			values := map[string][]byte{"n": tc.n}
-			spend := spendingPSBTWithWitness(t, deployment, instance, 10_000, instance.pkScript, covenantWitness(t, contract, group, values))
+			spend := spendingPSBTWithWitness(t, deployment, instance, 10_000, instance.pkScript, arkadeScriptWitness(t, contract, group, values))
 			requireVMResult(t, spend, emulatorKey.PubKey(), tc.wantErr)
 		})
 	}

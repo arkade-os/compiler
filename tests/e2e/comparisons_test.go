@@ -49,7 +49,7 @@ contract C() {
 				t.Fatal(err)
 			}
 			contract := compileArtifact(t, source)
-			group := covenantGroup(t, contract, "spend")
+			group := arkadeScriptGroup(t, contract, "spend")
 			inspections := 0
 			for _, token := range group.Arkade.ASM {
 				if token == "OP_INSPECTOUTPUTVALUE" {
@@ -89,7 +89,7 @@ contract C() {
 							if wrongExpectation {
 								wantErr = "OP_NUMEQUALVERIFY failed"
 							}
-							spend := spendingPSBTWithWitness(t, deployment, instance, 10_000, instance.pkScript, covenantWitness(t, contract, group, values))
+							spend := spendingPSBTWithWitness(t, deployment, instance, 10_000, instance.pkScript, arkadeScriptWitness(t, contract, group, values))
 							requireVMResult(t, spend, emulatorKey.PubKey(), wantErr)
 						})
 					}
@@ -105,7 +105,7 @@ contract C() {
 				if skip == 0 {
 					wantErr = "OP_VERIFY failed"
 				}
-				spend := spendingPSBTWithWitness(t, fundingTx(guarded.pkScript, 10_000), guarded, 10_000, guarded.pkScript, covenantWitness(t, contract, covenantGroup(t, contract, "guarded"), values))
+				spend := spendingPSBTWithWitness(t, fundingTx(guarded.pkScript, 10_000), guarded, 10_000, guarded.pkScript, arkadeScriptWitness(t, contract, arkadeScriptGroup(t, contract, "guarded"), values))
 				requireVMResult(t, spend, emulatorKey.PubKey(), wantErr)
 			}
 		})
@@ -141,7 +141,7 @@ contract C() {
 		{"non-witness", []byte{0x51}, 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			witness := covenantWitness(t, contract, covenantGroup(t, contract, "spend"), map[string][]byte{"expected": scriptInt(t, tc.expected)})
+			witness := arkadeScriptWitness(t, contract, arkadeScriptGroup(t, contract, "spend"), map[string][]byte{"expected": scriptInt(t, tc.expected)})
 			spend := spendingPSBTWithWitness(t, fundingTx(instance.pkScript, 10_000), instance, 10_000, tc.pkScript, witness)
 			requireVMResult(t, spend, emulatorKey.PubKey(), "")
 		})
