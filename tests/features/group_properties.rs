@@ -594,11 +594,11 @@ fn asset_groups_bind_pass_index_and_nest_like_other_values() {
         }
     "#;
     let output = compile(code).unwrap_or_else(|error| panic!("{error}"));
-    let covenant = crate::common::group(&output, "spend")
+    let script = crate::common::group(&output, "spend")
         .arkade
         .as_ref()
         .unwrap();
-    let types: Vec<_> = covenant
+    let types: Vec<_> = script
         .inputs
         .iter()
         .map(|input| input.param_type.as_str())

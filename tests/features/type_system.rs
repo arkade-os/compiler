@@ -598,12 +598,12 @@ fn hash_comparisons_expect_the_digest_width() {
         ("hash160", "bytes20", "bytes32"),
         ("ripemd160", "bytes20", "bytes32"),
     ] {
-        let covenant = |ty: &str| {
+        let contract_source = |ty: &str| {
             format!("contract H({ty} h, pubkey k) {{ function spend(bytes p, signature s) {{ require({hash_fn}(p) == h); require(checkSig(s, k)); }} }}")
         };
-        compile_ok(&covenant(digest));
-        compile_ok(&covenant("bytes"));
-        let error = compile_error(&covenant(wrong));
+        compile_ok(&contract_source(digest));
+        compile_ok(&contract_source("bytes"));
+        let error = compile_error(&contract_source(wrong));
         assert!(
             error.contains(&format!(
                 "comparison '==' is not defined between '{digest}' and '{wrong}'"

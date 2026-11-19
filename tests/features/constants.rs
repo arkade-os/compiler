@@ -8,7 +8,7 @@ fn error(source: &str) -> String {
 }
 
 #[test]
-fn constants_fold_into_covenant_and_tapleaf() {
+fn constants_fold_into_arkade_script_and_tapleaf() {
     let source = |declarations: &str, delay: &str, strict: &str| {
         format!(
             r#"
@@ -80,7 +80,7 @@ contract Vault(pubkey owner) {{
 }
 
 #[test]
-fn covenant_time_comparisons_use_inspection() {
+fn arkade_script_time_comparisons_use_inspection() {
     for bound in ["500000", "DEADLINE", "deadline", "deadline + 1"] {
         let source = format!(
             "contract Vault(int deadline) {{ const int DEADLINE = 500000; @allow(offchain-locktime, \"tests nLockTime inspection\") function spend() {{ require(tx.locktime >= {bound}); }} }}"

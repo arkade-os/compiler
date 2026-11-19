@@ -46,7 +46,7 @@ func TestTapscriptHashlockPreimageLength(t *testing.T) {
 	}
 }
 
-func TestCovenantHashlockPreimageLength(t *testing.T) {
+func TestArkadeScriptHashlockPreimageLength(t *testing.T) {
 	for _, declaredType := range []string{"bytes", "bytes20", "bytes32"} {
 		// The preimage sits below `n`, so its check reads it by depth.
 		source := fmt.Sprintf(`contract C(bytes20 digest) {
@@ -60,7 +60,7 @@ func TestCovenantHashlockPreimageLength(t *testing.T) {
 			t.Fatal(err)
 		}
 		contract := compileArtifact(t, path)
-		group := covenantGroup(t, contract, "claim")
+		group := arkadeScriptGroup(t, contract, "claim")
 		serverKey, emulatorKey := fixedPrivateKey(1), fixedPrivateKey(2)
 		for _, length := range []int{19, 20, 21, 31, 32, 33} {
 			t.Run(fmt.Sprintf("%s/%d", declaredType, length), func(t *testing.T) {
@@ -68,7 +68,7 @@ func TestCovenantHashlockPreimageLength(t *testing.T) {
 				instance := instantiateGroup(t, contract, "claim", map[string][]byte{
 					"digest": btcutil.Hash160(preimage),
 				}, serverKey.PubKey(), emulatorKey.PubKey())
-				witness := covenantWitness(t, contract, group, map[string][]byte{"n": {1}, "preimage": preimage})
+				witness := arkadeScriptWitness(t, contract, group, map[string][]byte{"n": {1}, "preimage": preimage})
 				spend := spendingPSBTWithWitness(t, fundingTx(instance.pkScript, 10_000), instance, 10_000, instance.pkScript, witness)
 				wantError := ""
 				if declaredType == "bytes20" && length != 20 || declaredType == "bytes32" && length != 32 {

@@ -22,14 +22,14 @@ func TestStackLimitMatchesTheVM(t *testing.T) {
 
 	contract := compileArtifact(t, write(998))
 	serverKey, emulatorKey := fixedPrivateKey(1), fixedPrivateKey(2)
-	group := covenantGroup(t, contract, "spend")
+	group := arkadeScriptGroup(t, contract, "spend")
 	instance := instantiateGroup(t, contract, "spend", nil, serverKey.PubKey(), emulatorKey.PubKey())
 	values := map[string][]byte{}
 	for i := 0; i < 998; i++ {
 		values[fmt.Sprintf("xs.%d", i)] = scriptInt(t, 1)
 	}
 	spend := spendingPSBTWithWitness(t, fundingTx(instance.pkScript, 10_000), instance, 10_000,
-		instance.pkScript, covenantWitness(t, contract, group, values))
+		instance.pkScript, arkadeScriptWitness(t, contract, group, values))
 	requireVMResult(t, spend, emulatorKey.PubKey(), "")
 
 	output, err := compile(t, write(999), filepath.Join(t.TempDir(), "a.json"))
@@ -47,13 +47,13 @@ func TestWitnessLengthChecksFitTheStackLimit(t *testing.T) {
 	}
 	artifact := compileArtifact(t, source)
 	serverKey, emulatorKey := fixedPrivateKey(1), fixedPrivateKey(2)
-	group := covenantGroup(t, artifact, "spend")
+	group := arkadeScriptGroup(t, artifact, "spend")
 	instance := instantiateGroup(t, artifact, "spend", nil, serverKey.PubKey(), emulatorKey.PubKey())
 	values := map[string][]byte{}
 	for i := 0; i < 997; i++ {
 		values[fmt.Sprintf("xs.%d", i)] = make([]byte, 32)
 	}
 	spend := spendingPSBTWithWitness(t, fundingTx(instance.pkScript, 10_000), instance, 10_000,
-		instance.pkScript, covenantWitness(t, artifact, group, values))
+		instance.pkScript, arkadeScriptWitness(t, artifact, group, values))
 	requireVMResult(t, spend, emulatorKey.PubKey(), "")
 }

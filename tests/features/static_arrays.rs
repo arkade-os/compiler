@@ -41,7 +41,7 @@ contract Sized(pubkey[2] owners) {
     assert_eq!(
         inputs,
         vec!["sigs", "msg"],
-        "covenant inputs keep one entry per source parameter"
+        "Arkade Script inputs keep one entry per source parameter"
     );
 
     let asm = crate::common::arkade_asm(&output, "spend");

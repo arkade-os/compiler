@@ -26,21 +26,21 @@ fn test_arkade_kitties_structure() {
 
     assert_eq!(output.name, "ArkadeKitties");
 
-    // 2 covenant functions (breed, transfer) → 2 groups
+    // 2 Arkade Script functions (breed, transfer) → 2 groups
     assert_eq!(output.functions.len(), 2, "expected 2 function groups");
 
-    // Verify breed group exists with arkade covenant
+    // Verify breed group exists with an Arkade Script
     let breed = crate::common::group(&output, "breed");
     assert!(
         breed.arkade.is_some(),
-        "breed group should have arkade covenant"
+        "breed group should have an Arkade Script"
     );
 
-    // Verify transfer group exists with arkade covenant
+    // Verify transfer group exists with an Arkade Script
     let transfer = crate::common::group(&output, "transfer");
     assert!(
         transfer.arkade.is_some(),
-        "transfer group should have arkade covenant"
+        "transfer group should have an Arkade Script"
     );
 }
 
@@ -137,7 +137,7 @@ fn test_transfer_uses_owner_authorized_destination_script() {
     let transfer = crate::common::group(&output, "transfer")
         .arkade
         .as_ref()
-        .expect("transfer covenant");
+        .expect("transfer Arkade Script");
     let destination = transfer
         .inputs
         .iter()

@@ -21,7 +21,7 @@ fn lints(function: &str) -> Vec<String> {
 }
 
 #[test]
-fn covenant_lints_report_unauthorized_and_half_constrained_spends() {
+fn security_lints_report_unauthorized_and_half_constrained_spends() {
     for (function, expected) in [
         (
             "function f(bytes p) { require(sha256(p) == hash); }",
@@ -238,7 +238,7 @@ fn levels_allow_warn_or_deny_each_lint() {
 }
 
 #[test]
-fn a_covenant_reading_tx_locktime_fails_to_compile() {
+fn an_arkade_script_function_reading_tx_locktime_fails_to_compile() {
     let error = arkade_compiler::compile(
         "contract C(pubkey owner) { function f(signature s) { require(checkSig(s, owner)); require(tx.locktime >= 100); } }",
     )
@@ -591,7 +591,7 @@ fn a_helper_call_counts_as_a_use_and_an_empty_branch_does_not() {
 }
 
 #[test]
-fn an_allowed_unused_local_is_dropped_from_the_covenant_stack() {
+fn an_allowed_unused_local_is_dropped_from_the_arkade_script_stack() {
     let source = r#"contract P(pubkey owner) { function spend(signature ownerSig, int amount) {
         @allow(unused-variable, "probe") int doubled = amount * 2;
         require(amount > 0);

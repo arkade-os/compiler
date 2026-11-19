@@ -21,12 +21,12 @@ use arkade_compiler::opcodes::{
 
 fn compile_first_function_asm(src: &str) -> Vec<String> {
     let out = compile(src).unwrap_or_else(|e| panic!("compile: {e:?}"));
-    // The covenant (function body) carries the introspection logic; cooperative
-    // signing lives in a synthesized tapleaf, not the covenant.
+    // The Arkade Script (function body) carries the introspection logic; cooperative
+    // signing lives in a synthesized tapleaf, not the Arkade Script.
     out.functions
         .iter()
         .find_map(|g| g.arkade.as_ref())
-        .expect("covenant group")
+        .expect("Arkade Script function group")
         .asm
         .clone()
 }

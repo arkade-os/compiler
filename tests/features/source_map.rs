@@ -42,9 +42,9 @@ fn compiled(optimize: bool) -> ContractJson {
 
 /// The source text of each range, the tokens it covers and its message.
 fn lines(output: &ContractJson) -> Vec<(String, String, Option<String>)> {
-    let covenant = output.functions[0].arkade.as_ref().unwrap();
+    let script = output.functions[0].arkade.as_ref().unwrap();
     let at = |[line, column]: [usize; 2]| offset(MAIN, line, column).unwrap();
-    covenant
+    script
         .source_map
         .iter()
         .map(
@@ -55,7 +55,7 @@ fn lines(output: &ContractJson) -> Vec<(String, String, Option<String>)> {
                  message,
              }| {
                 let text = MAIN[at(*start)..at(*end)].to_string();
-                let tokens = covenant.asm[asm[0]..asm[1]].join(" ");
+                let tokens = script.asm[asm[0]..asm[1]].join(" ");
                 (text, tokens, message.clone())
             },
         )
@@ -66,11 +66,11 @@ fn lines(output: &ContractJson) -> Vec<(String, String, Option<String>)> {
 fn every_statement_maps_its_tokens_and_requires_carry_their_messages() {
     for optimize in [true, false] {
         let output = compiled(optimize);
-        let covenant = output.functions[0].arkade.as_ref().unwrap();
+        let script = output.functions[0].arkade.as_ref().unwrap();
         let mut previous_end = 0;
-        for range in &covenant.source_map {
+        for range in &script.source_map {
             assert!(range.asm[0] >= previous_end && range.asm[0] < range.asm[1]);
-            assert!(range.asm[1] <= covenant.asm.len());
+            assert!(range.asm[1] <= script.asm.len());
             previous_end = range.asm[1];
         }
         let lines = lines(&output);
@@ -127,10 +127,10 @@ fn rewritten_instructions_keep_their_statement() {
         .find(|(line, _, _)| line.starts_with("require(checkSig(sig, owner)"))
         .unwrap();
     assert!(tokens.ends_with("OP_CHECKSIGVERIFY"), "{tokens}");
-    let covenant = output.functions[0].arkade.as_ref().unwrap();
+    let script = output.functions[0].arkade.as_ref().unwrap();
     // The final stack cleanup is not mapped.
-    let last = covenant.source_map.last().unwrap().asm[1];
-    assert!(last < covenant.asm.len());
+    let last = script.source_map.last().unwrap().asm[1];
+    assert!(last < script.asm.len());
 }
 
 #[test]

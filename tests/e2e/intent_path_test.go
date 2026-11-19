@@ -41,11 +41,11 @@ contract IntentPath() {
 		{"invalid field path", "read", "Type", "", 0, "invalid intent message path"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			group := covenantGroup(t, contract, tc.function)
+			group := arkadeScriptGroup(t, contract, tc.function)
 			instance := instantiateGroup(t, contract, tc.function, nil, serverKey.PubKey(), emulatorKey.PubKey())
 			deployment := fundingTx(instance.pkScript, 10_000)
 			values := map[string][]byte{"path": []byte(tc.path), "expected": []byte(tc.expected), "present": scriptInt(t, tc.present)}
-			spend := spendingPSBTWithWitness(t, deployment, instance, 10_000, instance.pkScript, covenantWitness(t, contract, group, values))
+			spend := spendingPSBTWithWitness(t, deployment, instance, 10_000, instance.pkScript, arkadeScriptWitness(t, contract, group, values))
 			requireVMResult(t, spend, emulatorKey.PubKey(), tc.wantErr, message)
 		})
 	}

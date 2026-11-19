@@ -4,7 +4,7 @@
 
 use crate::common::compile_unoptimized as compile;
 
-/// Return the covenant ASM for `func` in the compiled output of `src`.
+/// Return the Arkade Script ASM for `func` in the compiled output of `src`.
 fn arkade_asm(src: &str, func: &str) -> String {
     let out = compile(src).unwrap_or_else(|e| panic!("compile failed: {e:?}"));
     crate::common::arkade_asm(&out, func)

@@ -56,7 +56,7 @@ func TestCompiledCounterRecursion(t *testing.T) {
 			serverKey,
 			arkade.ComputeArkadeScriptPrivateKey(
 				emulatorKey,
-				arkade.ArkadeScriptHash(counter.covenant),
+				arkade.ArkadeScriptHash(counter.arkadeScript),
 			),
 		}
 

@@ -76,7 +76,7 @@ fn utility_builtins_emit_native_opcodes_and_validate_signatures() {
 }
 
 #[test]
-fn utility_builtins_compose_in_helpers_and_preserve_the_covenant_abi() {
+fn utility_builtins_compose_in_helpers_and_preserve_the_arkade_script_abi() {
     use crate::common::{arkade_asm_tokens, arkade_inputs, group, leaf_asm, witness_names};
     let source = r#"
 contract C() {
@@ -850,7 +850,7 @@ fn test_check_sig_from_stack_verify() {
     let asm = crate::common::arkade_asm(&output, "verifyMessageSig");
     assert!(
         asm.contains(OP_CHECKSIGFROMSTACK),
-        "expected {OP_CHECKSIGFROMSTACK} in covenant ASM: {asm}"
+        "expected {OP_CHECKSIGFROMSTACK} in Arkade Script ASM: {asm}"
     );
 }
 

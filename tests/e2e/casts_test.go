@@ -64,7 +64,7 @@ contract ScalarBytes() {
 	}
 	contract := compileArtifact(t, source)
 	serverKey, emulatorKey := fixedPrivateKey(1), fixedPrivateKey(2)
-	group := covenantGroup(t, contract, "spend")
+	group := arkadeScriptGroup(t, contract, "spend")
 	instance := instantiateGroup(t, contract, "spend", nil, serverKey.PubKey(), emulatorKey.PubKey())
 	deployment := fundingTx(instance.pkScript, 10_000)
 	for _, tc := range []struct {
@@ -88,11 +88,11 @@ contract ScalarBytes() {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			values := map[string][]byte{"value": tc.value, "expected": tc.expected}
-			spend := spendingPSBTWithWitness(t, deployment, instance, 10_000, instance.pkScript, covenantWitness(t, contract, group, values))
+			spend := spendingPSBTWithWitness(t, deployment, instance, 10_000, instance.pkScript, arkadeScriptWitness(t, contract, group, values))
 			requireVMResult(t, spend, emulatorKey.PubKey(), tc.wantErr)
 		})
 	}
-	boolGroup := covenantGroup(t, contract, "boolBytes")
+	boolGroup := arkadeScriptGroup(t, contract, "boolBytes")
 	boolInstance := instantiateGroup(t, contract, "boolBytes", nil, serverKey.PubKey(), emulatorKey.PubKey())
 	boolDeployment := fundingTx(boolInstance.pkScript, 10_000)
 	for _, tc := range []struct {
@@ -113,7 +113,7 @@ contract ScalarBytes() {
 	} {
 		t.Run("bool/"+tc.name, func(t *testing.T) {
 			values := map[string][]byte{"flag": tc.value, "expected": tc.expected}
-			spend := spendingPSBTWithWitness(t, boolDeployment, boolInstance, 10_000, boolInstance.pkScript, covenantWitness(t, contract, boolGroup, values))
+			spend := spendingPSBTWithWitness(t, boolDeployment, boolInstance, 10_000, boolInstance.pkScript, arkadeScriptWitness(t, contract, boolGroup, values))
 			requireVMResult(t, spend, emulatorKey.PubKey(), tc.wantErr)
 		})
 	}

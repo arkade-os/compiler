@@ -8,11 +8,11 @@ import (
 	"testing"
 )
 
-// The compiler's script size bound matches the VM's: a 10000-byte covenant runs,
+// The compiler's script size bound matches the VM's: a 10000-byte Arkade Script runs,
 // one byte more does not compile.
 func TestScriptSizeLimitMatchesTheVM(t *testing.T) {
 	if os.Getenv("ARKADEC_NO_OPTIMIZE") != "" {
-		t.Skip("the byte counts below are for the optimized covenant")
+		t.Skip("the byte counts below are for the optimized Arkade Script")
 	}
 	// `require(x != n)` assembles to 6 bytes for a two-byte n and 7 for a three-byte one,
 	// less the last requirement's DUP and VERIFY.
@@ -35,14 +35,14 @@ func TestScriptSizeLimitMatchesTheVM(t *testing.T) {
 
 	contract := compileArtifact(t, write(0))
 	serverKey, emulatorKey := fixedPrivateKey(1), fixedPrivateKey(2)
-	group := covenantGroup(t, contract, "spend")
+	group := arkadeScriptGroup(t, contract, "spend")
 	instance := instantiateGroup(t, contract, "spend", nil, serverKey.PubKey(), emulatorKey.PubKey())
-	if len(instance.covenant) != 10000 {
-		t.Fatalf("covenant is %d bytes, want 10000", len(instance.covenant))
+	if len(instance.arkadeScript) != 10000 {
+		t.Fatalf("Arkade Script is %d bytes, want 10000", len(instance.arkadeScript))
 	}
 	values := map[string][]byte{"x": scriptInt(t, 1)}
 	spend := spendingPSBTWithWitness(t, fundingTx(instance.pkScript, 10_000), instance, 10_000,
-		instance.pkScript, covenantWitness(t, contract, group, values))
+		instance.pkScript, arkadeScriptWitness(t, contract, group, values))
 	requireVMResult(t, spend, emulatorKey.PubKey(), "")
 
 	output, err := compile(t, write(1), filepath.Join(t.TempDir(), "a.json"))

@@ -60,7 +60,7 @@ fn test_epoch_limiter_has_if_else() {
 
     let asm_str = arkade_asm(&output, "check");
 
-    // Check for if/else opcodes in the covenant assembly
+    // Check for if/else opcodes in the Arkade Script assembly
     assert!(
         asm_str.contains(OP_IF),
         "Missing OP_IF in assembly: {asm_str}"

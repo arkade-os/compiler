@@ -3,7 +3,7 @@ use arkade_compiler::opcodes::{OP_CHECKSEQUENCEVERIFY, OP_CHECKSIG, OP_CHECKSIGV
 
 use crate::common::{group, leaf_asm, witness_names};
 
-// A bare VTXO has no arkade covenant — it is just L1 taproot leaves:
+// A bare VTXO has no Arkade Script — it is just L1 taproot leaves:
 //   • a collaborative forfeit closure (server + user), and
 //   • a unilateral CSV exit closure (user alone after a delay).
 // Both are standalone `tapscript`s, so `server` is the reserved key role (→ <SERVER_KEY>).
@@ -41,11 +41,11 @@ contract SingleSig(
 
     assert_eq!(output.functions.len(), 2);
 
-    // ── cooperative closure: no covenant, [server, user] ──────────────
+    // ── cooperative closure: no Arkade Script, [server, user] ─────────
     let coop = group(&output, "cooperative");
     assert!(
         coop.arkade.is_none(),
-        "bare VTXO cooperative path has no arkade covenant"
+        "bare VTXO cooperative path has no Arkade Script"
     );
 
     let coop_leaf = leaf_asm(&output, "cooperative", "cooperative");
@@ -71,7 +71,7 @@ contract SingleSig(
     let uni = group(&output, "unilateral");
     assert!(
         uni.arkade.is_none(),
-        "bare VTXO unilateral exit has no arkade covenant"
+        "bare VTXO unilateral exit has no Arkade Script"
     );
 
     let uni_leaf = leaf_asm(&output, "unilateral", "unilateral");

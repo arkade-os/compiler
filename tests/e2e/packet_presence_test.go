@@ -26,7 +26,7 @@ contract Packets() {
 	}
 	contract := compileArtifact(t, source)
 	serverKey, emulatorKey := fixedPrivateKey(1), fixedPrivateKey(2)
-	group := covenantGroup(t, contract, "spend")
+	group := arkadeScriptGroup(t, contract, "spend")
 	instance := instantiateGroup(t, contract, "spend", nil, serverKey.PubKey(), emulatorKey.PubKey())
 	seven := extension.UnknownPacket{PacketType: 2, Data: []byte{7}}
 	withPacket := func(tx *wire.MsgTx) *wire.MsgTx {
@@ -61,7 +61,7 @@ contract Packets() {
 				packets = append(packets, seven)
 			}
 			values := map[string][]byte{"current": scriptInt(t, tc.claim[0]), "previous": scriptInt(t, tc.claim[1])}
-			spend := spendingPSBTWithWitness(t, deployment, instance, 10_000, instance.pkScript, covenantWitness(t, contract, group, values), packets...)
+			spend := spendingPSBTWithWitness(t, deployment, instance, 10_000, instance.pkScript, arkadeScriptWitness(t, contract, group, values), packets...)
 			requireVMResult(t, spend, emulatorKey.PubKey(), tc.wantErr)
 		})
 	}

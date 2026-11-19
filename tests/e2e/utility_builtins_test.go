@@ -68,10 +68,10 @@ contract Utility() {
 			} {
 				values[name] = scriptInt(t, value)
 			}
-			group := covenantGroup(t, contract, "numbers")
+			group := arkadeScriptGroup(t, contract, "numbers")
 			instance := instantiateGroup(t, contract, "numbers", nil, serverKey.PubKey(), emulatorKey.PubKey())
 			deployment := fundingTx(instance.pkScript, 10_000)
-			spend := spendingPSBTWithWitness(t, deployment, instance, 10_000, instance.pkScript, covenantWitness(t, contract, group, values))
+			spend := spendingPSBTWithWitness(t, deployment, instance, 10_000, instance.pkScript, arkadeScriptWitness(t, contract, group, values))
 			requireVMResult(t, spend, emulatorKey.PubKey(), "")
 		})
 	}
@@ -102,10 +102,10 @@ contract Utility() {
 					}
 				}
 				values := map[string][]byte{"data": []byte(tc.data), "count": scriptInt(t, tc.count), "expected": []byte(expected)}
-				group := covenantGroup(t, contract, function)
+				group := arkadeScriptGroup(t, contract, function)
 				instance := instantiateGroup(t, contract, function, nil, serverKey.PubKey(), emulatorKey.PubKey())
 				deployment := fundingTx(instance.pkScript, 10_000)
-				spend := spendingPSBTWithWitness(t, deployment, instance, 10_000, instance.pkScript, covenantWitness(t, contract, group, values))
+				spend := spendingPSBTWithWitness(t, deployment, instance, 10_000, instance.pkScript, arkadeScriptWitness(t, contract, group, values))
 				requireVMResult(t, spend, emulatorKey.PubKey(), wantErr)
 			})
 		}
@@ -120,10 +120,10 @@ contract Utility() {
 		t.Run(fmt.Sprintf("sha1/%q/%d", tc.data, tc.count), func(t *testing.T) {
 			digest := sha1.Sum([]byte(tc.data[:tc.count] + tc.data[len(tc.data)-int(tc.count):]))
 			values := map[string][]byte{"data": []byte(tc.data), "count": scriptInt(t, tc.count), "expected": digest[:]}
-			group := covenantGroup(t, contract, "hash")
+			group := arkadeScriptGroup(t, contract, "hash")
 			instance := instantiateGroup(t, contract, "hash", nil, serverKey.PubKey(), emulatorKey.PubKey())
 			deployment := fundingTx(instance.pkScript, 10_000)
-			spend := spendingPSBTWithWitness(t, deployment, instance, 10_000, instance.pkScript, covenantWitness(t, contract, group, values))
+			spend := spendingPSBTWithWitness(t, deployment, instance, 10_000, instance.pkScript, arkadeScriptWitness(t, contract, group, values))
 			requireVMResult(t, spend, emulatorKey.PubKey(), "")
 		})
 	}
@@ -152,10 +152,10 @@ contract Streaming() {
 	contract := compileArtifact(t, source)
 	serverKey, emulatorKey := fixedPrivateKey(1), fixedPrivateKey(2)
 	spend := func(t *testing.T, function string, values map[string][]byte, wantErr string) {
-		group := covenantGroup(t, contract, function)
+		group := arkadeScriptGroup(t, contract, function)
 		instance := instantiateGroup(t, contract, function, nil, serverKey.PubKey(), emulatorKey.PubKey())
 		deployment := fundingTx(instance.pkScript, 10_000)
-		ptx := spendingPSBTWithWitness(t, deployment, instance, 10_000, instance.pkScript, covenantWitness(t, contract, group, values))
+		ptx := spendingPSBTWithWitness(t, deployment, instance, 10_000, instance.pkScript, arkadeScriptWitness(t, contract, group, values))
 		requireVMResult(t, ptx, emulatorKey.PubKey(), wantErr)
 	}
 

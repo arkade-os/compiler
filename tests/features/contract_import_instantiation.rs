@@ -94,7 +94,7 @@ contract RecursiveVtxo(pubkey ownerPk, int exit) {
 
 #[test]
 fn test_new_expression_asm_output() {
-    // Verify the covenant ASM contains the scriptPubKey check and contract placeholder.
+    // Verify the Arkade Script ASM contains the scriptPubKey check and contract placeholder.
     let code = r#"
 import "single_sig.ark";
 
@@ -107,7 +107,7 @@ contract RecursiveVtxo(pubkey ownerPk, int exit) {
 
     let result = compile(code).expect("Compile failed");
 
-    // Must contain the output introspection opcode (in covenant/arkade asm)
+    // Must contain the output introspection opcode (in Arkade Script asm)
     let send_asm = arkade_asm(&result, "send");
     assert!(
         send_asm.contains("OP_INSPECTOUTPUTSCRIPTPUBKEY"),
@@ -234,7 +234,7 @@ contract RecursiveVtxo(pubkey ownerPk, int exit) {
     assert_eq!(
         arkade_asm_tokens(&result, "send"),
         expected_arkade,
-        "Unexpected covenant ASM"
+        "Unexpected Arkade Script ASM"
     );
 
     // Default leaf ASM: server+emulator cosig guard.
@@ -253,7 +253,7 @@ contract RecursiveVtxo(pubkey ownerPk, int exit) {
 
 #[test]
 fn test_exit_path_asm_order() {
-    // Covenant-only functions get the synthesized server+emulator cosig leaf.
+    // Arkade Script functions without a tapscript get the synthesized server+emulator cosig leaf.
     let code = r#"
 import "single_sig.ark";
 
@@ -453,7 +453,7 @@ contract Forwarder(pubkey[3] owners) {
 #[test]
 fn test_multiple_contract_instances_in_one_function() {
     // A function that enforces two different outputs each matching a different
-    // VTXO contract.  Both covenant-path placeholders must appear in ASM.
+    // VTXO contract.  Both Arkade Script placeholders must appear in ASM.
     let code = r#"
 import "single_sig.ark";
 import "htlc.ark";
@@ -470,7 +470,7 @@ contract Splitter(pubkey alicePk, pubkey bobPk, int exit) {
 
     let split_asm = arkade_asm(&result, "split");
 
-    // Both placeholders must appear in the covenant ASM.
+    // Both placeholders must appear in the Arkade Script ASM.
     assert!(
         split_asm.contains("CONTRACT:SingleSig") && split_asm.contains("<alicePk>"),
         "Missing CONTRACT:SingleSig(<alicePk>,...) in {split_asm:?}"
@@ -496,7 +496,7 @@ contract Splitter(pubkey alicePk, pubkey bobPk, int exit) {
 
 #[test]
 fn test_mixed_contract_instance_and_checksig_cooperative_path() {
-    // Covenant ASM must include BOTH the introspection check and the
+    // Arkade Script ASM must include BOTH the introspection check and the
     // explicit checkSig requirement when they appear in the same function.
     let code = r#"
 import "single_sig.ark";
@@ -513,14 +513,14 @@ contract ForwardAndSign(pubkey ownerPk, int exit) {
 
     let send_asm = arkade_asm(&result, "send");
 
-    // Both checks present in covenant ASM.
+    // Both checks present in Arkade Script ASM.
     assert!(
         send_asm.contains("CONTRACT:SingleSig"),
-        "Covenant ASM missing contract placeholder in {send_asm:?}"
+        "Arkade Script ASM missing contract placeholder in {send_asm:?}"
     );
     assert!(
         send_asm.contains("OP_CHECKSIG"),
-        "Covenant ASM missing OP_CHECKSIG in {send_asm:?}"
+        "Arkade Script ASM missing OP_CHECKSIG in {send_asm:?}"
     );
 }
 
@@ -563,7 +563,7 @@ contract ForwardAndSign(pubkey ownerPk, int exit) {
 #[test]
 fn test_introspection_detection_is_per_function() {
     // Only the function that contains a ContractInstance gets its introspection
-    // in the covenant ASM; the sibling function stays as a plain checkSig covenant.
+    // in the Arkade Script ASM; the sibling function stays a plain checkSig Arkade Script function.
     // Both get the synthesized default leaf (server+emulator cosig guard).
     let code = r#"
 import "single_sig.ark";
@@ -581,11 +581,11 @@ contract TwoFunctions(pubkey ownerPk, int exit) {
 
     let result = compile(code).expect("Compile failed");
 
-    // forward() covenant ASM has introspection; its default leaf does not
+    // forward() Arkade Script ASM has introspection; its default leaf does not
     let forward_asm = arkade_asm(&result, "forward");
     assert!(
         forward_asm.contains("OP_INSPECTOUTPUTSCRIPTPUBKEY"),
-        "forward() covenant must have introspection, got {forward_asm:?}"
+        "forward() Arkade Script must have introspection, got {forward_asm:?}"
     );
 
     let forward_leaf = leaf_asm(&result, "forward", "forward");
@@ -598,15 +598,15 @@ contract TwoFunctions(pubkey ownerPk, int exit) {
         "forward() default leaf must not contain contract placeholders, got {forward_leaf:?}"
     );
 
-    // spend() covenant ASM: plain checkSig, no introspection
+    // spend() Arkade Script ASM: plain checkSig, no introspection
     let spend_asm = arkade_asm(&result, "spend");
     assert!(
         spend_asm.contains("OP_CHECKSIG"),
-        "spend() covenant must contain OP_CHECKSIG, got {spend_asm:?}"
+        "spend() Arkade Script must contain OP_CHECKSIG, got {spend_asm:?}"
     );
     assert!(
         !spend_asm.contains("CONTRACT:"),
-        "spend() covenant must not have contract placeholders, got {spend_asm:?}"
+        "spend() Arkade Script must not have contract placeholders, got {spend_asm:?}"
     );
 
     // spend() default leaf: server+emulator cosig guard

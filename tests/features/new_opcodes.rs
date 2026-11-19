@@ -2,7 +2,7 @@ use crate::common::{arkade_asm, arkade_inputs, group, witness_names};
 use arkade_compiler::compile;
 
 #[test]
-fn covenant_opcodes_report_their_context_in_tapscript() {
+fn arkade_script_opcodes_report_their_context_in_tapscript() {
     for (expression, name) in [
         ("this . expiry > 0", "this.expiry"),
         ("after(this.expiry)", "this.expiry"),
@@ -83,7 +83,7 @@ fn covenant_opcodes_report_their_context_in_tapscript() {
 }
 
 #[test]
-fn tapscript_opcodes_report_their_context_in_covenants() {
+fn tapscript_opcodes_report_their_context_in_arkade_script_functions() {
     for (expression, name, hint) in [
         (
             "older(1)",
@@ -159,7 +159,7 @@ fn tunnel_indexes_require_integer_helper_returns() {
 }
 
 #[test]
-fn expiry_is_an_integer_in_the_covenant_only() {
+fn expiry_is_an_integer_in_arkade_script_functions_only() {
     let output = compile(
         r#"
         contract Expiry(int margin) {

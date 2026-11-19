@@ -244,7 +244,7 @@ fn boolean_literals_emit_canonical_script_values() {
         }",
     );
 
-    // Each require() fails fast via OP_VERIFY; the covenant terminates with OP_1.
+    // Each require() fails fast via OP_VERIFY; the Arkade Script terminates with OP_1.
     assert_eq!(
         asm,
         [OP_1, OP_VERIFY, OP_0, OP_VERIFY, OP_1],

@@ -72,17 +72,17 @@ fn test_threshold_oracle_constructor_array_is_one_grouped_input() {
 }
 
 #[test]
-fn test_threshold_oracle_covenant_array_input_is_one_grouped_input() {
+fn test_threshold_oracle_arkade_script_array_input_is_one_grouped_input() {
     let output = compile(THRESHOLD_ORACLE_CODE).unwrap();
 
     let input_names = arkade_inputs(&output, "attest");
     assert!(
         input_names.contains(&"recipientScriptPubKey".to_string()),
-        "Missing recipientScriptPubKey in covenant inputs. Got: {input_names:?}"
+        "Missing recipientScriptPubKey in Arkade Script inputs. Got: {input_names:?}"
     );
     assert!(
         input_names.contains(&"oracleSigs".to_string()),
-        "covenant inputs keep one entry per source parameter. Got: {input_names:?}"
+        "Arkade Script inputs keep one entry per source parameter. Got: {input_names:?}"
     );
     assert!(
         !input_names

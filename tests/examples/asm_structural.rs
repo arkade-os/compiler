@@ -6,7 +6,7 @@
 //! - OP_IF / OP_ELSE / OP_ENDIF are balanced (no dangling branches).
 //! - No empty instruction strings (would silently produce malformed scripts).
 //! - Every `<placeholder>` token is syntactically well-formed.
-//! - Every `<placeholder>` is resolvable (appears in covenant inputs,
+//! - Every `<placeholder>` is resolvable (appears in Arkade Script inputs,
 //!   leaf witness, or constructorInputs).
 //! - Stack depth never goes negative at known opcode sites.
 //!
@@ -138,7 +138,7 @@ fn all_examples_have_balanced_if_else_endif() {
                 let balance = if_else_endif_balance(&arkade.asm);
                 assert_eq!(
                     balance, 0,
-                    "{}: group '{}' covenant has unbalanced OP_IF/OP_ENDIF (net depth={})",
+                    "{}: group '{}' Arkade Script has unbalanced OP_IF/OP_ENDIF (net depth={})",
                     filename, group.name, balance
                 );
             }
@@ -174,7 +174,7 @@ fn all_examples_have_no_empty_asm_instructions() {
                 for (i, instr) in arkade.asm.iter().enumerate() {
                     assert!(
                         !instr.is_empty(),
-                        "{}: group '{}' covenant has empty instruction at index {}",
+                        "{}: group '{}' Arkade Script has empty instruction at index {}",
                         filename,
                         group.name,
                         i
@@ -221,7 +221,7 @@ fn all_examples_have_well_formed_placeholders() {
                 let errors = local_check_asm_structure(&arkade.asm);
                 assert!(
                     errors.is_empty(),
-                    "{}: group '{}' covenant has ASM structure errors: {:?}",
+                    "{}: group '{}' Arkade Script has ASM structure errors: {:?}",
                     filename,
                     group.name,
                     errors
@@ -274,7 +274,7 @@ fn simple_contracts_have_fully_resolvable_placeholders() {
                     .collect();
                 assert!(
                     unresolvable.is_empty(),
-                    "{}: group '{}' covenant has unresolvable placeholders: {:?}",
+                    "{}: group '{}' Arkade Script has unresolvable placeholders: {:?}",
                     filename,
                     group.name,
                     unresolvable

@@ -41,7 +41,7 @@ func TestStructs(t *testing.T) {
 		t.Fatalf("account leaves = %v, want %v", accountLeaves, wantAccountLeaves)
 	}
 
-	group := covenantGroup(t, contract, "spend")
+	group := arkadeScriptGroup(t, contract, "spend")
 	constructorInputs := expandInput(contract.ConstructorInputs[0], contract.Structs)
 	// Each constructor leaf is pushed once: in the prologue or at its single read.
 	pushed := map[string]bool{}
@@ -52,12 +52,12 @@ func TestStructs(t *testing.T) {
 		}
 		name = strings.TrimSuffix(name, ">")
 		if !slices.Contains(constructorInputs, name) || pushed[name] {
-			t.Fatalf("covenant placeholder %q is not a single constructor leaf push", token)
+			t.Fatalf("Arkade Script placeholder %q is not a single constructor leaf push", token)
 		}
 		pushed[name] = true
 	}
 	if got, want := inputTypes(group.Arkade.Inputs), []string{"Rules", "ECPoint", "int", "int", "signature"}; !slices.Equal(got, want) {
-		t.Fatalf("covenant input types = %v, want %v", got, want)
+		t.Fatalf("Arkade Script input types = %v, want %v", got, want)
 	}
 
 	constructorValues := map[string][]byte{
@@ -127,7 +127,7 @@ func TestStructs(t *testing.T) {
 				instance,
 				10_000,
 				instance.pkScript,
-				covenantWitness(t, contract, group, values),
+				arkadeScriptWitness(t, contract, group, values),
 				assetPacket,
 			)
 			values["ownerSig"] = signArkadeSighash(t, unsigned, 0, ownerKey)
@@ -137,7 +137,7 @@ func TestStructs(t *testing.T) {
 				instance,
 				10_000,
 				instance.pkScript,
-				covenantWitness(t, contract, group, values),
+				arkadeScriptWitness(t, contract, group, values),
 				assetPacket,
 			)
 
@@ -184,7 +184,7 @@ func scriptPositiveBigInt(t *testing.T, bigEndian []byte) []byte {
 
 func TestStructArrays(t *testing.T) {
 	contract := compileArtifact(t, "contracts/structs.ark")
-	group := covenantGroup(t, contract, "arraySpend")
+	group := arkadeScriptGroup(t, contract, "arraySpend")
 	serverKey := fixedPrivateKey(1)
 	emulatorKey := fixedPrivateKey(2)
 	instance := instantiateGroup(t, contract, "arraySpend", nil, serverKey.PubKey(), emulatorKey.PubKey())
@@ -220,7 +220,7 @@ func TestStructArrays(t *testing.T) {
 				}
 			}
 			deployment := fundingTx(instance.pkScript, 10_000)
-			spending := spendingPSBTWithWitness(t, deployment, instance, 10_000, instance.pkScript, covenantWitness(t, contract, group, values))
+			spending := spendingPSBTWithWitness(t, deployment, instance, 10_000, instance.pkScript, arkadeScriptWitness(t, contract, group, values))
 			requireVMResult(t, spending, emulatorKey.PubKey(), tc.wantErr)
 		})
 	}
@@ -264,12 +264,12 @@ contract LiteralComparisons() {
 		{"differLeft", structItems, "false stack entry", ""},
 		{"nativeLeft", nativeItems, "", "VERIFY failed"},
 	} {
-		group := covenantGroup(t, contract, tc.function)
+		group := arkadeScriptGroup(t, contract, tc.function)
 		instance := instantiateGroup(t, contract, tc.function, nil, serverKey.PubKey(), emulatorKey.PubKey())
 		run := func(name string, values map[string][]byte, wantErr string) {
 			t.Run(tc.function+"/"+name, func(t *testing.T) {
 				deployment := fundingTx(instance.pkScript, 10_000)
-				witness := covenantWitness(t, contract, group, values)
+				witness := arkadeScriptWitness(t, contract, group, values)
 				spend := spendingPSBTWithWitness(t, deployment, instance, 10_000, instance.pkScript, witness)
 				requireVMResult(t, spend, emulatorKey.PubKey(), wantErr)
 			})
@@ -307,7 +307,7 @@ func TestComputedValueAccess(t *testing.T) {
 	}
 	contract := compileArtifact(t, source)
 	serverKey, emulatorKey := fixedPrivateKey(1), fixedPrivateKey(2)
-	group := covenantGroup(t, contract, "spend")
+	group := arkadeScriptGroup(t, contract, "spend")
 	instance := instantiateGroup(t, contract, "spend", nil, serverKey.PubKey(), emulatorKey.PubKey())
 	deployment := fundingTx(instance.pkScript, 10_000)
 	for _, tc := range []struct {
@@ -326,7 +326,7 @@ func TestComputedValueAccess(t *testing.T) {
 			values := map[string][]byte{
 				"seed": scriptInt(t, tc.seed), "index": scriptInt(t, tc.index), "expected": scriptInt(t, tc.expected),
 			}
-			spending := spendingPSBTWithWitness(t, deployment, instance, 10_000, instance.pkScript, covenantWitness(t, contract, group, values))
+			spending := spendingPSBTWithWitness(t, deployment, instance, 10_000, instance.pkScript, arkadeScriptWitness(t, contract, group, values))
 			requireVMResult(t, spending, emulatorKey.PubKey(), tc.wantErr)
 		})
 	}

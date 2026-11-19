@@ -57,13 +57,13 @@ fn test_threshold_multisig() {
     assert_eq!(output.functions.len(), 3);
 
     // ── twoOfTwo group ────────────────────────────────────────────────────────
-    // Covenant inputs: the two signer signatures
+    // Arkade Script inputs: the two signer signatures
     let tof_inputs = arkade_inputs(&output, "twoOfTwo");
     assert_eq!(tof_inputs.len(), 2);
     assert_eq!(tof_inputs[0], "signerSig");
     assert_eq!(tof_inputs[1], "signer1Sig");
 
-    // Covenant ASM: each key is read once, so it is pushed at its checksig.
+    // Arkade Script ASM: each key is read once, so it is pushed at its checksig.
     let tof_tokens = arkade_asm_tokens(&output, "twoOfTwo");
     assert!(tof_tokens
         .windows(4)
@@ -102,7 +102,7 @@ fn test_threshold_multisig() {
     );
 
     // ── fiveOfFive group ──────────────────────────────────────────────────────
-    // Covenant inputs: all 5 signer signatures
+    // Arkade Script inputs: all 5 signer signatures
     let fof_inputs = arkade_inputs(&output, "fiveOfFive");
     assert_eq!(fof_inputs.len(), 5);
     assert_eq!(fof_inputs[0], "signerSig");
@@ -111,7 +111,7 @@ fn test_threshold_multisig() {
     assert_eq!(fof_inputs[3], "signer3Sig");
     assert_eq!(fof_inputs[4], "signer4Sig");
 
-    // Covenant ASM: 5-of-5 CHECKSIGADD form with stack reads.
+    // Arkade Script ASM: 5-of-5 CHECKSIGADD form with stack reads.
     let fof_tokens = arkade_asm_tokens(&output, "fiveOfFive");
     assert_eq!(
         fof_tokens
@@ -147,7 +147,7 @@ fn test_threshold_multisig() {
     );
 
     // ── threeOfFive group ─────────────────────────────────────────────────────
-    // Covenant inputs: all 5 signer signatures
+    // Arkade Script inputs: all 5 signer signatures
     let three_inputs = arkade_inputs(&output, "threeOfFive");
     assert_eq!(three_inputs.len(), 5);
     assert_eq!(three_inputs[0], "signerSig");

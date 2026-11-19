@@ -44,7 +44,7 @@ func TestCompiledHTLC(t *testing.T) {
 		t, contract, "refund", values, serverKey.PubKey(), emulatorKey.PubKey(),
 	)
 
-	t.Run("covenant", func(t *testing.T) {
+	t.Run("Arkade Script", func(t *testing.T) {
 		for name, test := range map[string]struct {
 			group         instantiatedGroup
 			payout, other []byte
@@ -74,7 +74,7 @@ func TestCompiledHTLC(t *testing.T) {
 			serverKey,
 			arkade.ComputeArkadeScriptPrivateKey(
 				emulatorKey,
-				arkade.ArkadeScriptHash(claim.covenant),
+				arkade.ArkadeScriptHash(claim.arkadeScript),
 			),
 		}
 
@@ -109,7 +109,7 @@ func TestCompiledHTLC(t *testing.T) {
 			serverKey,
 			arkade.ComputeArkadeScriptPrivateKey(
 				emulatorKey,
-				arkade.ArkadeScriptHash(refund.covenant),
+				arkade.ArkadeScriptHash(refund.arkadeScript),
 			),
 		}
 

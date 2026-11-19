@@ -33,7 +33,7 @@ fn test_htlc_contract() {
     assert_eq!(output.parameters[3].name, "refundTime");
     assert_eq!(output.parameters[3].param_type.to_string(), "int");
 
-    // 2 covenant groups (claim, refund) + 1 standalone unilateral = 3 groups
+    // 2 Arkade Script function groups (claim, refund) + 1 standalone unilateral = 3 groups
     assert_eq!(
         output.functions.len(),
         3,
@@ -41,19 +41,19 @@ fn test_htlc_contract() {
     );
 
     // --- claim group -------------------------------------------------------
-    // Covenant: checks output value >= input value
-    let claim_cov = crate::common::arkade_asm(&output, "claim");
+    // Arkade Script: checks output value >= input value
+    let claim_script = crate::common::arkade_asm(&output, "claim");
     assert!(
-        claim_cov.contains(&format!(
+        claim_script.contains(&format!(
             "OP_PUSHCURRENTINPUTINDEX {OP_INSPECTOUTPUTVALUE} OP_PUSHCURRENTINPUTINDEX {OP_INSPECTINPUTVALUE} {OP_GREATERTHANOREQUAL}"
         )),
-        "claim covenant should keep its own input value in its own output: {claim_cov}"
+        "claim Arkade Script should keep its own input value in its own output: {claim_script}"
     );
     assert!(
-        claim_cov.contains(
+        claim_script.contains(
             "<CONTRACT:SingleSig(<receiver>)> OP_1 OP_SWAP OP_ROT OP_EQUALVERIFY OP_NUMEQUALVERIFY"
         ),
-        "claim covenant should pay the receiver: {claim_cov}"
+        "claim Arkade Script should pay the receiver: {claim_script}"
     );
 
     // Leaf: hash-preimage check + server/emulator multisig
@@ -91,19 +91,19 @@ fn test_htlc_contract() {
     );
 
     // --- refund group ------------------------------------------------------
-    // Covenant: checks output value >= input value
-    let refund_cov = crate::common::arkade_asm(&output, "refund");
+    // Arkade Script: checks output value >= input value
+    let refund_script = crate::common::arkade_asm(&output, "refund");
     assert!(
-        refund_cov.contains(&format!(
+        refund_script.contains(&format!(
             "OP_PUSHCURRENTINPUTINDEX {OP_INSPECTOUTPUTVALUE} OP_PUSHCURRENTINPUTINDEX {OP_INSPECTINPUTVALUE} {OP_GREATERTHANOREQUAL}"
         )),
-        "refund covenant should keep its own input value in its own output: {refund_cov}"
+        "refund Arkade Script should keep its own input value in its own output: {refund_script}"
     );
     assert!(
-        refund_cov.contains(
+        refund_script.contains(
             "<CONTRACT:SingleSig(<sender>)> OP_1 OP_SWAP OP_ROT OP_EQUALVERIFY OP_NUMEQUALVERIFY"
         ),
-        "refund covenant should pay the sender: {refund_cov}"
+        "refund Arkade Script should pay the sender: {refund_script}"
     );
 
     // Leaf: absolute timelock (CLTV) + server/emulator multisig
@@ -133,11 +133,11 @@ fn test_htlc_contract() {
     );
 
     // --- unilateral group --------------------------------------------------
-    // Standalone CSV exit leaf: no arkade covenant, pure Bitcoin.
+    // Standalone CSV exit leaf: no Arkade Script, pure Bitcoin.
     let unilateral_group = crate::common::group(&output, "unilateral");
     assert!(
         unilateral_group.arkade.is_none(),
-        "unilateral should have no arkade covenant"
+        "unilateral should have no Arkade Script"
     );
 
     let unilateral_leaf = crate::common::leaf_asm(&output, "unilateral", "unilateral");

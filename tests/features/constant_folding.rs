@@ -596,7 +596,7 @@ fn folding_keeps_byte_size_failures_and_concatenation() {
 }
 
 #[test]
-fn a_covenant_that_only_checks_its_witness_is_not_empty() {
+fn an_arkade_script_that_only_checks_its_witness_is_not_empty() {
     for body in ["require(b);", "require(1 < 2); require((0 < 1 || b) && b);"] {
         let source = format!("contract C() {{ function spend(bool b) {{ {body} }} }}");
         assert_eq!(

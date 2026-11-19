@@ -198,11 +198,11 @@ contract Demo(int[3] xs) {
 "#;
 
     let output = compile(source).expect("source and internal array bindings must remain distinct");
-    let covenant = crate::common::group(&output, "f")
+    let script = crate::common::group(&output, "f")
         .arkade
         .as_ref()
-        .expect("covenant");
-    assert!(covenant.asm.iter().all(|token| !token.contains("$array:")));
+        .expect("Arkade Script");
+    assert!(script.asm.iter().all(|token| !token.contains("$array:")));
 }
 
 #[test]

@@ -26,7 +26,7 @@ fn test_asset_count_parsing() {
     let output = result.unwrap();
     assert_eq!(output.name, "AssetCounter");
 
-    // Check that the covenant ASM contains the asset count opcode
+    // Check that the Arkade Script ASM contains the asset count opcode
     let asm_str = crate::common::arkade_asm(&output, "checkAssetCount");
     assert!(
         asm_str.contains(OP_INSPECTOUTASSETCOUNT),
@@ -54,7 +54,7 @@ fn test_asset_at_amount_parsing() {
 
     let output = result.unwrap();
 
-    // Check that the covenant ASM contains the asset at opcode
+    // Check that the Arkade Script ASM contains the asset at opcode
     let asm_str = crate::common::arkade_asm(&output, "checkAssetAmount");
     assert!(
         asm_str.contains(OP_INSPECTOUTASSETAT),
@@ -107,7 +107,7 @@ fn test_input_asset_count() {
 
     let output = result.unwrap();
 
-    // Check that the covenant ASM contains the input asset count opcode
+    // Check that the Arkade Script ASM contains the input asset count opcode
     let asm_str = crate::common::arkade_asm(&output, "checkInputAssets");
     assert!(
         asm_str.contains(OP_INSPECTINASSETCOUNT),
@@ -135,7 +135,7 @@ fn test_input_asset_at() {
 
     let output = result.unwrap();
 
-    // Check that the covenant ASM contains the input asset at opcode
+    // Check that the Arkade Script ASM contains the input asset at opcode
     let asm_str = crate::common::arkade_asm(&output, "checkInputAssetAmount");
     assert!(
         asm_str.contains(OP_INSPECTINASSETAT),

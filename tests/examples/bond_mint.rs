@@ -12,7 +12,7 @@ const PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/examples/bonds/bond_min
 fn test_bond_mint_compiles() {
     let output = compile_file(PATH).expect("compilation failed");
     assert_eq!(output.name, "BondMint");
-    // 4 covenant functions (repay, liquidate, auction, roll) + 1 tapscript (unilateral) = 5 groups
+    // 4 Arkade Script functions (repay, liquidate, auction, roll) + 1 tapscript (unilateral) = 5 groups
     assert_eq!(output.functions.len(), 5, "expected 5 function groups");
 
     let names: Vec<&str> = output.parameters.iter().map(|p| p.name.as_str()).collect();
@@ -89,12 +89,12 @@ fn test_liquidate_is_permissionless_prematurity() {
     );
     assert!(
         ws.iter().any(|w| w == "auctioneerScriptPubKey"),
-        "auctioneerScriptPubKey must be a covenant input parameter (got: {ws:?})"
+        "auctioneerScriptPubKey must be an Arkade Script input parameter (got: {ws:?})"
     );
     let destination = crate::common::group(&output, "liquidate")
         .arkade
         .as_ref()
-        .expect("liquidate covenant")
+        .expect("liquidate Arkade Script")
         .inputs
         .iter()
         .find(|input| input.name == "auctioneerScriptPubKey")
@@ -138,12 +138,12 @@ fn test_auction_is_permissionless_and_phased() {
     );
     assert!(
         ws.iter().any(|w| w == "auctioneerScriptPubKey"),
-        "auctioneerScriptPubKey must be a covenant input parameter (got: {ws:?})"
+        "auctioneerScriptPubKey must be an Arkade Script input parameter (got: {ws:?})"
     );
     let destination = crate::common::group(&output, "auction")
         .arkade
         .as_ref()
-        .expect("auction covenant")
+        .expect("auction Arkade Script")
         .inputs
         .iter()
         .find(|input| input.name == "auctioneerScriptPubKey")
@@ -203,7 +203,7 @@ fn test_roll_is_borrower_authorized_prematurity_pool_cospent() {
 
 #[test]
 fn test_unilateral_exit_is_csv_timelocked() {
-    // The shared unilateral exit leaf must be CSV-timelocked, avoid covenant
+    // The shared unilateral exit leaf must be CSV-timelocked, avoid Arkade Script
     // introspection, and require only the borrower's signature.
     use arkade_compiler::opcodes::OP_DROP;
     let output = compile_file(PATH).expect("compilation failed");
@@ -217,7 +217,7 @@ fn test_unilateral_exit_is_csv_timelocked() {
         asm.contains(OP_DROP),
         "unilateral exit must drop the CSV value"
     );
-    // No covenant introspection on the exit leaf.
+    // No Arkade Script introspection on the exit leaf.
     assert!(
         !asm.contains(OP_INSPECTOUTPUTVALUE),
         "exit leaf must carry no output-value introspection"

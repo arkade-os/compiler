@@ -31,10 +31,10 @@ fn test_fee_adapter_contract() {
         "missing AssetId paymentAssetId, got: {param_names:?}"
     );
 
-    // 2 covenant functions (execute, adjust) + 1 standalone unilateral = 3 groups
+    // 2 Arkade Script functions (execute, adjust) + 1 standalone unilateral = 3 groups
     assert_eq!(output.functions.len(), 3, "expected 3 groups");
 
-    // Verify execute function arkade covenant
+    // Verify execute function's Arkade Script
     let execute_group = crate::common::group(&output, "execute");
     let execute_inputs = &execute_group.arkade.as_ref().unwrap().inputs;
     assert_eq!(execute_inputs.len(), 2);
