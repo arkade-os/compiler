@@ -758,6 +758,31 @@ contract C(AssetId id) {{
 }
 
 #[test]
+fn helpers_writing_a_struct_field_copy_the_argument() {
+    let covenant = covenant(
+        r#"
+contract C() {
+    function spend(AssetId id, int expected) {
+        require(bump(id) == expected);
+        require(id.gidx == expected - 1);
+    }
+    private function bump(AssetId a) int {
+        a.gidx = a.gidx + 1;
+        return a.gidx;
+    }
+}
+"#,
+        "spend",
+    );
+
+    // Both leaves are copied into the frame and the write lands on the copy.
+    assert!(contains_tokens(
+        &covenant.asm,
+        &["OP_1", OP_PICK, "OP_1", OP_PICK, "OP_1", OP_PICK, "1", OP_ADD, "OP_1", OP_PUT]
+    ));
+}
+
+#[test]
 fn caller_top_slot_rebinding_ignores_same_named_helper_locals() {
     let covenant = covenant(
         r#"
