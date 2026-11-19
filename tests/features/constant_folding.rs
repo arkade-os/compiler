@@ -303,6 +303,69 @@ fn unrolled_index_validation_skips_dead_branches_and_returned_iterations_in_both
 }
 
 #[test]
+fn unoptimized_builds_check_unrolled_indexes_past_the_end_of_removed_code_at_runtime() {
+    // Index 3 is past the end of each array only in code folding removes: a branch whose
+    // condition becomes false, and the iterations after an unconditional return.
+    let check = [
+        "OP_DUP",
+        "OP_0",
+        "OP_GREATERTHANOREQUAL",
+        "OP_VERIFY",
+        "OP_DUP",
+        "OP_3",
+        "OP_LESSTHAN",
+        "OP_VERIFY",
+    ];
+    for access in [
+        "t = t + xs[i];",
+        "t = t + ps[i].b;",
+        "int[3] ys = [1, 2, 3]; ys[i] = t; t = t + ys[0];",
+        "W[3] wl = ws; P q = {a: t, b: t}; wl[i].p = q; t = t + wl[0].p.a;",
+        "W[3] wl = ws; wl[i].vals = ws[0].vals; t = t + wl[0].vals[1];",
+    ] {
+        let source = format!("struct P {{ int a; int b; }} struct W {{ P p; int[2] vals; }} contract C(int[3] xs, P[3] ps, W[3] ws) {{ const int K = 1; private function f(int t) int {{ int[4] quad = [1, 2, 3, 4]; for (i, z) in quad {{ if (K == 1) {{ return t + z; }} {access} }} return 0; }} function branch(int v, int lo, int hi) {{ int[4] quad = [1, 2, 3, 4]; int t = v; for (i, z) in quad {{ if (i < xs.length) {{ {access} }} else {{ t = t + z; }} }} require(t >= lo); require(t <= hi); }} function returned(int v, int lo, int hi) {{ int t = f(v); require(t >= lo); require(t <= hi); }} }}");
+        let optimized = compile(&source).unwrap();
+        let raw = compile_unoptimized(&source).unwrap();
+        if access.contains("xs[i]") {
+            // The dead read picks the index past `xs[0]`, which iteration 0 reads at depth 5.
+            let tokens = arkade_asm_tokens(&raw, "branch").join(" ");
+            assert!(
+                tokens.contains("OP_0 OP_ROLL OP_5 OP_PICK OP_ADD"),
+                "{tokens}"
+            );
+            let dead = format!(
+                "OP_0 OP_ROLL OP_3 {} OP_5 OP_ADD OP_PICK OP_ADD",
+                check.join(" ")
+            );
+            assert!(tokens.contains(&dead), "{tokens}");
+        }
+        for function in ["branch", "returned"] {
+            let tokens = arkade_asm_tokens(&raw, function);
+            assert!(
+                tokens
+                    .windows(check.len() + 1)
+                    .any(
+                        |window| matches!(window[0].as_str(), "3" | "OP_3") && window[1..] == check
+                    ),
+                "{access} {function}: {tokens:?}"
+            );
+            assert!(!arkade_asm_tokens(&optimized, function)
+                .windows(check.len())
+                .any(|window| window == check));
+            assert_eq!(group(&raw, function).leaves.len(), 1);
+            assert_eq!(
+                leaf_asm(&raw, function, function),
+                leaf_asm(&optimized, function, function)
+            );
+            assert_eq!(
+                witness_names(&raw, function, function),
+                ["serverSig", "emulatorSig"]
+            );
+        }
+    }
+}
+
+#[test]
 fn static_branches_preserve_scopes_and_deferred_initialization() {
     for (body, expected) in [
         (

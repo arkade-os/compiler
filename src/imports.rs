@@ -925,7 +925,7 @@ fn validate_scope(
                     }
                     for (arg, param) in args.iter().zip(&target.parameters) {
                         let mut arg = arg.clone();
-                        types::annotate_expression(&mut arg, &scope);
+                        types::annotate_expression(&mut arg, &scope, &contract.structs);
                         let actual = arg.ty;
                         if actual != types::ArkType::Unknown
                             && !crate::validator::binding_types_compatible(

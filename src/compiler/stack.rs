@@ -37,6 +37,18 @@ impl Generator {
             self.push_integer_temporary(length);
             return Ok(());
         }
+        // Only an out-of-range constant index names no element. Validation and folding reject
+        // one on a reachable path; one left here is in code that folding removes, so it is
+        // checked at runtime.
+        if let Some((Segment::Index(index), segments)) =
+            name.segments.split_last().filter(|_| !is_binding)
+        {
+            self.push_integer_temporary(*index);
+            return self.select_indexed_value(&Path {
+                root: name.root.clone(),
+                segments: segments.to_vec(),
+            });
+        }
         self.read_static_binding(name, false)
     }
 
@@ -216,14 +228,13 @@ impl Generator {
         match target {
             AssignmentTarget::Access(value) => self.assign_access(value),
             AssignmentTarget::Binding(name) => self.assign_static_binding(name.clone()),
-            AssignmentTarget::ArrayIndex { array, index } => match &index.kind {
-                ExprKind::Literal(literal) => match literal.parse() {
-                    Ok(index) => self.assign_static_binding(array.clone().index(index)),
-                    Err(_) => {
-                        Err(format!("assignment to undeclared binding '{array}[{literal}]'").into())
-                    }
-                },
-                _ => self.assign_indexed_binding(array, index),
+            // As for reads, an out-of-range constant index is checked at runtime.
+            AssignmentTarget::ArrayIndex { array, index } => match index
+                .literal_index()
+                .filter(|&literal| literal < self.array_length(array))
+            {
+                Some(literal) => self.assign_static_binding(array.clone().index(literal)),
+                None => self.assign_indexed_binding(array, index),
             },
         }
     }

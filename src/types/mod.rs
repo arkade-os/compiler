@@ -258,9 +258,13 @@ pub(crate) fn annotate_statements(
 }
 
 /// Type one expression of code that has not been annotated.
-pub(crate) fn annotate_expression(expression: &mut Expression, scope: &Scope) {
+pub(crate) fn annotate_expression(
+    expression: &mut Expression,
+    scope: &Scope,
+    structs: &[crate::models::StructDefinition],
+) {
     Typing {
-        structs: &[],
+        structs,
         signatures: None,
         result: None,
     }
@@ -409,9 +413,14 @@ impl Typing<'_> {
             {
                 ArkType::Unknown
             }
-            // A computed value's member is typed as the same member of a binding of its type.
+            // A computed value's member, or one whose path an out-of-range constant index leaves
+            // unbound, is typed as the same member of a binding of its type.
             // TODO(ir): scopes key types by binding path, hence the made-up name `$`.
-            ExprKind::FieldAccess { value, field } if expression.binding_path().is_none() => {
+            ExprKind::FieldAccess { value, field }
+                if expression
+                    .binding_path()
+                    .is_none_or(|path| !scope.contains_key(&path.key())) =>
+            {
                 let mut members = Scope::new();
                 bind_local_type(&mut members, "$", None, value.ty.clone(), self.structs);
                 let member = expression.with_kind(ExprKind::Name(Path::new("$").field(field)));

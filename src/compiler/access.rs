@@ -31,29 +31,25 @@ impl Generator {
         value: &'a Expression,
         indices: &mut Vec<(&'a Expression, usize, usize)>,
     ) -> Result<Path> {
-        let path = value.binding_path().ok_or("expected a binding access")?;
         let (array, index) = match &value.kind {
-            ExprKind::FieldAccess { value, .. } => {
-                self.access_indices(value, indices)?;
-                return Ok(path);
+            ExprKind::Name(path) => return Ok(path.clone()),
+            ExprKind::FieldAccess { value, field } => {
+                return Ok(self.access_indices(value, indices)?.field(field));
             }
             ExprKind::ArrayIndex { array, index } => (array.clone(), index),
             ExprKind::IndexAccess { value, index } => (self.access_indices(value, indices)?, index),
-            _ => return Ok(path),
+            _ => return Err("expected a binding access".into()),
         };
         let Some(ArkType::Array(element, length)) = self.scope.get(&array.key()) else {
             return Err(format!("'{array}' is not an array").into());
         };
-        match index.literal_index() {
-            Some(literal) if literal >= *length => {
-                return Err(
-                    format!("array index '{literal}' is out of range for '{array}'").into(),
-                );
-            }
-            Some(_) => {}
-            None => indices.push((index, *length, self.width(&(&**element).into())?)),
+        // Validation and folding reject an out-of-range constant on a reachable path; one left
+        // here is in code that folding removes, so it is checked at runtime.
+        if let Some(literal) = index.literal_index().filter(|literal| literal < length) {
+            return Ok(array.index(literal));
         }
-        Ok(path)
+        indices.push((index, *length, self.width(&(&**element).into())?));
+        Ok(array.index(0))
     }
 
     fn emit_access_offset(&mut self, indices: &[(&Expression, usize, usize)]) -> Result<()> {
