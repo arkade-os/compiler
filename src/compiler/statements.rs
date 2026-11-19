@@ -234,7 +234,7 @@ fn emit_statement(stmt: &LocatedStatement, generator: &mut Generator) -> Result<
                 },
                 AssignmentTarget::Access(access) => access.kind.clone(),
             });
-            types::annotate_expression(&mut access, &generator.scope);
+            types::annotate_expression(&mut access, &generator.scope, &generator.structs);
             // Only a bare name can be declared without a value.
             if let AssignmentTarget::Binding(name) = target {
                 if name.segments.is_empty() && generator.deferred.remove(&name.root) {

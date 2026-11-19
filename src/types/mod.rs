@@ -258,9 +258,13 @@ pub(crate) fn annotate_statements(
 }
 
 /// Type one expression of code that has not been annotated.
-pub(crate) fn annotate_expression(expression: &mut Expression, scope: &Scope) {
+pub(crate) fn annotate_expression(
+    expression: &mut Expression,
+    scope: &Scope,
+    structs: &[crate::models::StructDefinition],
+) {
     Typing {
-        structs: &[],
+        structs,
         signatures: None,
         result: None,
     }

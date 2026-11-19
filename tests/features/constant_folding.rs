@@ -320,10 +320,25 @@ fn unoptimized_builds_check_unrolled_indexes_past_the_end_of_removed_code_at_run
         "t = t + xs[i];",
         "t = t + ps[i].b;",
         "int[3] ys = [1, 2, 3]; ys[i] = t; t = t + ys[0];",
+        "W[3] wl = ws; P q = {a: t, b: t}; wl[i].p = q; t = t + wl[0].p.a;",
+        "W[3] wl = ws; wl[i].vals = ws[0].vals; t = t + wl[0].vals[1];",
     ] {
-        let source = format!("struct P {{ int a; int b; }} contract C(int[3] xs, P[3] ps) {{ const int K = 1; private function f(int t) int {{ int[4] quad = [1, 2, 3, 4]; for (i, z) in quad {{ if (K == 1) {{ return t + z; }} {access} }} return 0; }} function branch(int v, int lo, int hi) {{ int[4] quad = [1, 2, 3, 4]; int t = v; for (i, z) in quad {{ if (i < xs.length) {{ {access} }} else {{ t = t + z; }} }} require(t >= lo); require(t <= hi); }} function returned(int v, int lo, int hi) {{ int t = f(v); require(t >= lo); require(t <= hi); }} }}");
+        let source = format!("struct P {{ int a; int b; }} struct W {{ P p; int[2] vals; }} contract C(int[3] xs, P[3] ps, W[3] ws) {{ const int K = 1; private function f(int t) int {{ int[4] quad = [1, 2, 3, 4]; for (i, z) in quad {{ if (K == 1) {{ return t + z; }} {access} }} return 0; }} function branch(int v, int lo, int hi) {{ int[4] quad = [1, 2, 3, 4]; int t = v; for (i, z) in quad {{ if (i < xs.length) {{ {access} }} else {{ t = t + z; }} }} require(t >= lo); require(t <= hi); }} function returned(int v, int lo, int hi) {{ int t = f(v); require(t >= lo); require(t <= hi); }} }}");
         let optimized = compile(&source).unwrap();
         let raw = compile_unoptimized(&source).unwrap();
+        if access.contains("xs[i]") {
+            // The dead read picks the index past `xs[0]`, which iteration 0 reads at depth 5.
+            let tokens = arkade_asm_tokens(&raw, "branch").join(" ");
+            assert!(
+                tokens.contains("OP_0 OP_ROLL OP_5 OP_PICK OP_ADD"),
+                "{tokens}"
+            );
+            let dead = format!(
+                "OP_0 OP_ROLL OP_3 {} OP_5 OP_ADD OP_PICK OP_ADD",
+                check.join(" ")
+            );
+            assert!(tokens.contains(&dead), "{tokens}");
+        }
         for function in ["branch", "returned"] {
             let tokens = arkade_asm_tokens(&raw, function);
             assert!(
