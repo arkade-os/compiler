@@ -120,12 +120,18 @@ func TestECPairing(t *testing.T) {
 		}
 		return inputs
 	}
-	proofs := func(selected bn254.G1Affine) map[string][]byte {
-		inputs := pairs("proofs.0.", g1, g1)
-		for name, value := range pairs("proofs.1.", g1, selected) {
-			inputs[name] = value
+	// Only proof `balanced` pairs to one, so a spend passes exactly when `index` selects it.
+	proofs := func(index, balanced int) map[string][]byte {
+		inputs := map[string][]byte{"index": scriptInt(t, int64(index))}
+		for i := range 2 {
+			second := g1
+			if i == balanced {
+				second = negG1
+			}
+			for name, value := range pairs(fmt.Sprintf("proofs.%d.", i), g1, second) {
+				inputs[name] = value
+			}
 		}
-		inputs["index"] = scriptInt(t, 1)
 		return inputs
 	}
 	for _, test := range []struct {
@@ -140,8 +146,15 @@ func TestECPairing(t *testing.T) {
 		{name: "computed unbalanced pairs", function: "computedPairing", inputs: pairs("", g1, g1), wantErr: "OP_VERIFY failed"},
 		{name: "literal balanced pairs", function: "literalPairing", inputs: pairs("", g1, negG1)},
 		{name: "literal unbalanced pairs", function: "literalPairing", inputs: pairs("", g1, g1), wantErr: "OP_VERIFY failed"},
-		{name: "selected balanced proof", function: "pairingProof", inputs: proofs(negG1)},
-		{name: "selected unbalanced proof", function: "pairingProof", inputs: proofs(g1), wantErr: "OP_VERIFY failed"},
+		{name: "selected balanced proof", function: "pairingProof", inputs: proofs(1, 1)},
+		{name: "selected unbalanced proof", function: "pairingProof", inputs: proofs(1, 0), wantErr: "OP_VERIFY failed"},
+		{name: "first balanced proof", function: "pairingProof", inputs: proofs(0, 0)},
+		{name: "first unbalanced proof", function: "pairingProof", inputs: proofs(0, 1), wantErr: "OP_VERIFY failed"},
+		{name: "computed index balanced proof", function: "computedProof", inputs: proofs(1, 1)},
+		{name: "computed index unbalanced proof", function: "computedProof", inputs: proofs(1, 0), wantErr: "OP_VERIFY failed"},
+		{name: "computed index first balanced proof", function: "computedProof", inputs: proofs(0, 0)},
+		{name: "computed index first unbalanced proof", function: "computedProof", inputs: proofs(0, 1), wantErr: "OP_VERIFY failed"},
+		{name: "computed index out of range", function: "computedProof", inputs: proofs(2, 0), wantErr: "OP_VERIFY failed"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			group := covenantGroup(t, contract, test.function)

@@ -269,6 +269,49 @@ contract C(Signer[2] signers) {
 }
 
 #[test]
+fn runtime_indexed_arrays_read_element_wise_evaluate_the_index_once() {
+    let source = r#"
+struct S { int[2] vals; }
+struct Pr { ECPoint[2] g1; G2Point[2] g2; }
+struct M { pubkey[2] keys; }
+contract C(S[2] ss, Pr[2] ps, M[2] ms) {
+    private function idx(int v) int { require(v != 1234); return v; }
+    function loop(int v) { for (j, y) in ss[idx(v)].vals { require(y > 0); } }
+    function pair(int v) { require(ecPairing(ps[idx(v)].g1, ps[0].g2, 2)); }
+    function multi(int v, signature s1, signature s2) { require(checkMultisig(ms[idx(v)].keys, [s1, s2])); }
+}
+"#;
+    for output in [arkade_compiler::compile(source), compile(source)] {
+        let output = output.expect("runtime-indexed arrays are read element-wise");
+        for function in ["loop", "pair", "multi"] {
+            let asm = arkade_asm_tokens(&output, function);
+            assert_eq!(
+                asm.iter().filter(|token| *token == "1234").count(),
+                1,
+                "{function} runs the index helper once, not once per element: {asm:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn length_reads_through_runtime_indexes_keep_no_constructor_leaves() {
+    let source = r#"
+struct Row { int[2] vals; int[498] padding; }
+contract C(Row[2] rows) {
+    function f(int k, int n) {
+        for (j, y) in rows[k].vals { k = k + 1; }
+        require(k == n + rows[k - 2].vals.length);
+    }
+}
+"#;
+    for output in [arkade_compiler::compile(source), compile(source)] {
+        let asm = arkade_asm_tokens(&output.expect("a length read retains no leaves"), "f");
+        assert!(!asm.iter().any(|token| token.contains("rows")), "{asm:?}");
+    }
+}
+
+#[test]
 fn access_diagnostics_report_the_written_path_once() {
     for (body, expected) in [
         (

@@ -53,16 +53,17 @@ pub(super) fn contains_return(statements: &[LocatedStatement]) -> bool {
         })
 }
 
-// This scans each helper body per argument; cache assigned names if call counts grow.
-fn assigns_parameter(statements: &[LocatedStatement], name: &str) -> bool {
+/// Whether `statements` assign `name` or any part of it.
+// ponytail: scans the whole body per name; cache assigned roots if helper calls or loops grow.
+pub(super) fn assigns(statements: &[LocatedStatement], name: &str) -> bool {
     statements
         .iter()
         .any(|statement| match &statement.statement {
             Statement::VarAssign { target, .. } => match target {
                 AssignmentTarget::Binding(path)
                 | AssignmentTarget::ArrayIndex { array: path, .. } => path.root == name,
-                AssignmentTarget::Access(value) => {
-                    value.binding_path().is_none_or(|path| path.root == name)
+                AssignmentTarget::Access(access) => {
+                    access.binding_path().is_none_or(|path| path.root == name)
                 }
             },
             Statement::IfElse {
@@ -70,14 +71,10 @@ fn assigns_parameter(statements: &[LocatedStatement], name: &str) -> bool {
                 else_body,
                 ..
             } => {
-                assigns_parameter(then_body, name)
-                    || else_body
-                        .as_ref()
-                        .is_some_and(|body| assigns_parameter(body, name))
+                assigns(then_body, name)
+                    || else_body.as_ref().is_some_and(|body| assigns(body, name))
             }
-            Statement::ForIn { body, .. } | Statement::ForCount { body, .. } => {
-                assigns_parameter(body, name)
-            }
+            Statement::ForIn { body, .. } | Statement::ForCount { body, .. } => assigns(body, name),
             _ => false,
         })
 }
@@ -216,7 +213,7 @@ impl Generator {
         let mut aliases = std::collections::HashMap::new();
         for (index, (argument, parameter)) in args.iter().zip(&function.parameters).enumerate() {
             if !matches!(parameter.param_type, TypeName::Array(..))
-                && !assigns_parameter(&function.statements, &parameter.name)
+                && !assigns(&function.statements, &parameter.name)
             {
                 let source = match &argument.kind {
                     ExprKind::Name(path) => Some(path.clone()),

@@ -158,12 +158,15 @@ contract Loops() {
     private function values(int v) int[2] { require(v != 7); return [v, v + 1]; }
     private function points(int v) Point[2] { return [{ x: v, y: v * 2 }, { x: v + 1, y: v * 3 }]; }
     private function shape(int v) Shape { return { points: points(v) }; }
-    function spend(int v, int expected) {
+    private function at(int k) int { return k; }
+    function spend(int v, int k, int expected) {
         int total = 0;
         for (i, item) in values(v) { total = total + item * (i + 1); }
         for (i, p) in points(v) { total = total + p.y - p.x * i; }
         for (i, w) in [v, 5] { total = total + w * i; }
         for (i, p) in shape(v).points { total = total + p.x * i; }
+        Shape[2] shapes = [shape(v), shape(v + 2)];
+        for (i, p) in shapes[at(k)].points { total = total + p.y * (i + 1) - p.x; }
         require(total == expected);
     }
 }`), 0600)
@@ -175,19 +178,144 @@ contract Loops() {
 	group := covenantGroup(t, contract, "spend")
 	instance := instantiateGroup(t, contract, "spend", nil, serverKey.PubKey(), emulatorKey.PubKey())
 	deployment := fundingTx(instance.pkScript, 10_000)
-	// Each loop's terms differ when its elements or fields are read out of order.
-	total := func(v int64) int64 { return (v + (v+1)*2) + (2*v + 3*v - (v + 1)) + 5 + (v + 1) }
+	// Each loop's terms differ when its elements or fields are read out of order, and the
+	// last loop's when it reads the shape k does not select.
+	total := func(v, k int64) int64 {
+		return (v + (v+1)*2) + (2*v + 3*v - (v + 1)) + 5 + (v + 1) + 6*(v+2*k) - 1
+	}
 	for _, tc := range []struct {
-		name     string
-		v, delta int64
-		wantErr  string
+		name        string
+		v, k, delta int64
+		wantErr     string
 	}{
-		{"elements in order", 4, 0, ""},
-		{"wrong total", 4, 1, "false stack entry"},
-		{"helper requirement fails", 7, 0, "OP_VERIFY failed"},
+		{"elements in order", 4, 0, 0, ""},
+		{"second shape", 4, 1, 0, ""},
+		{"wrong total", 4, 0, 1, "OP_NUMEQUALVERIFY failed"},
+		{"helper requirement fails", 7, 0, 0, "OP_VERIFY failed"},
+		{"shape index out of range", 4, 2, 0, "OP_VERIFY failed"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			values := map[string][]byte{"v": scriptInt(t, tc.v), "expected": scriptInt(t, total(tc.v)+tc.delta)}
+			values := map[string][]byte{"v": scriptInt(t, tc.v), "k": scriptInt(t, tc.k), "expected": scriptInt(t, total(tc.v, tc.k)+tc.delta)}
+			spend := spendingPSBTWithWitness(t, deployment, instance, 10_000, instance.pkScript, covenantWitness(t, contract, group, values))
+			requireVMResult(t, spend, emulatorKey.PubKey(), tc.wantErr)
+		})
+	}
+}
+
+// A loop whose body writes its iterable's index reads each element through the index's current value.
+func TestLoopsSeeWritesToTheirIndex(t *testing.T) {
+	source := filepath.Join(t.TempDir(), "index.ark")
+	err := os.WriteFile(source, []byte(`
+struct S { int[2] vals; }
+contract Index() {
+    function spend(int k, int expected) {
+        S[2] local = [{ vals: [1, 2] }, { vals: [3, 4] }];
+        int total = 0;
+        for (j, y) in local[k].vals { total = total + y; k = k + 1; }
+        require(total == expected);
+    }
+}`), 0600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	contract := compileArtifact(t, source)
+	serverKey, emulatorKey := fixedPrivateKey(1), fixedPrivateKey(2)
+	group := covenantGroup(t, contract, "spend")
+	instance := instantiateGroup(t, contract, "spend", nil, serverKey.PubKey(), emulatorKey.PubKey())
+	deployment := fundingTx(instance.pkScript, 10_000)
+	for _, tc := range []struct {
+		name        string
+		k, expected int64
+		wantErr     string
+	}{
+		{"index moves between reads", 0, 1 + 4, ""},
+		{"index read once before the loop", 0, 1 + 2, "OP_NUMEQUALVERIFY failed"},
+		{"index moves out of range", 1, 3, "OP_VERIFY failed"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			values := map[string][]byte{"k": scriptInt(t, tc.k), "expected": scriptInt(t, tc.expected)}
+			spend := spendingPSBTWithWitness(t, deployment, instance, 10_000, instance.pkScript, covenantWitness(t, contract, group, values))
+			requireVMResult(t, spend, emulatorKey.PubKey(), tc.wantErr)
+		})
+	}
+}
+
+// A loop reads each element when the body uses it, so a write in the body to a later element is
+// seen whether the iterable's index is a runtime value or folds to a literal.
+func TestLoopsSeeWritesToTheirIterable(t *testing.T) {
+	source := filepath.Join(t.TempDir(), "writes.ark")
+	err := os.WriteFile(source, []byte(`
+struct S { int[2] vals; }
+contract Writes() {
+    function spend(int k, int expected) {
+        S[2] local = [{ vals: [1, 2] }, { vals: [3, 4] }];
+        int total = 0;
+        for (j, y) in local[k].vals { local[k].vals[1] = 100; total = total + y; }
+        for (j, y) in local[0 + 0].vals { local[0].vals[1] = 200; total = total + y; }
+        require(total == expected);
+    }
+}`), 0600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	contract := compileArtifact(t, source)
+	serverKey, emulatorKey := fixedPrivateKey(1), fixedPrivateKey(2)
+	group := covenantGroup(t, contract, "spend")
+	instance := instantiateGroup(t, contract, "spend", nil, serverKey.PubKey(), emulatorKey.PubKey())
+	deployment := fundingTx(instance.pkScript, 10_000)
+	for _, tc := range []struct {
+		name        string
+		k, expected int64
+		wantErr     string
+	}{
+		{"first struct", 0, 1 + 100 + 1 + 200, ""},
+		{"second struct", 1, 3 + 100 + 1 + 200, ""},
+		{"elements copied before the loop", 0, 1 + 2 + 1 + 100, "OP_NUMEQUALVERIFY failed"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			values := map[string][]byte{"k": scriptInt(t, tc.k), "expected": scriptInt(t, tc.expected)}
+			spend := spendingPSBTWithWitness(t, deployment, instance, 10_000, instance.pkScript, covenantWitness(t, contract, group, values))
+			requireVMResult(t, spend, emulatorKey.PubKey(), tc.wantErr)
+		})
+	}
+}
+
+// A loop whose body writes its iterable reads elements in place, yet checks its index when the
+// loop starts, so a spend that reads no element still fails on a bad index.
+func TestInPlaceLoopsCheckTheirIndexAtEntry(t *testing.T) {
+	source := filepath.Join(t.TempDir(), "marks.ark")
+	err := os.WriteFile(source, []byte(`
+struct S { int[2] vals; }
+contract Marks() {
+    private function at(int k, int v) int { require(v != 7); return k; }
+    function spend(int k, int v, int n, int expected) {
+        S[2] local = [{ vals: [1, 2] }, { vals: [3, 4] }];
+        int total = 0;
+        for (j, y) in local[at(k, v)].vals { if (j < n) { total = total + y; local[0].vals[j] = 0; } }
+        require(total == expected);
+    }
+}`), 0600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	contract := compileArtifact(t, source)
+	serverKey, emulatorKey := fixedPrivateKey(1), fixedPrivateKey(2)
+	group := covenantGroup(t, contract, "spend")
+	instance := instantiateGroup(t, contract, "spend", nil, serverKey.PubKey(), emulatorKey.PubKey())
+	deployment := fundingTx(instance.pkScript, 10_000)
+	for _, tc := range []struct {
+		name              string
+		k, v, n, expected int64
+		wantErr           string
+	}{
+		{"in range, reads nothing", 1, 0, 0, 0, ""},
+		{"in range, reads both", 1, 0, 2, 3 + 4, ""},
+		{"out of range, reads nothing", 2, 0, 0, 0, "OP_VERIFY failed"},
+		{"negative, reads nothing", -1, 0, 0, 0, "OP_VERIFY failed"},
+		{"helper requirement fails, reads nothing", 0, 7, 0, 0, "OP_VERIFY failed"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			values := map[string][]byte{"k": scriptInt(t, tc.k), "v": scriptInt(t, tc.v), "n": scriptInt(t, tc.n), "expected": scriptInt(t, tc.expected)}
 			spend := spendingPSBTWithWitness(t, deployment, instance, 10_000, instance.pkScript, covenantWitness(t, contract, group, values))
 			requireVMResult(t, spend, emulatorKey.PubKey(), tc.wantErr)
 		})
