@@ -62,15 +62,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "arkade-bindgen"
-version = "0.1.0-rc.1"
-dependencies = [
- "arkade-compiler",
- "clap",
- "serde_json",
-]
-
-[[package]]
 name = "arkade-compiler"
 version = "0.1.0-rc.1"
 dependencies = [

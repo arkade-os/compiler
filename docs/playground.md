@@ -21,7 +21,6 @@ Pick a contract from the Explorer and edit it. Errors and warnings appear as you
 |---|---|
 | JSON Output | The full artifact, the same bytes `arkadec` writes to disk |
 | Assembly | Every spend group: its Arkade Script ASM and each tapscript leaf |
-| Bindings | Generated TypeScript or Go client code for the artifact, switchable per target |
 | Diagnostics | Every compiler error and warning with its location, updated as you type |
 
 The copy button copies the current tab's output to the clipboard.
@@ -33,8 +32,6 @@ In the Assembly tab, the Arkade Script shows one source statement per line with 
 - Moving the cursor highlights the cursor's statement.
 
 Diagnostics are also underlined in the editor, and clicking one moves the cursor to it.
-
-The Bindings tab uses the playground's own generator, so its output can differ in shape from what [`arkade-bindgen`](cli.md#generate-client-bindings) writes.
 
 ## Explorer
 
