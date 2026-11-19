@@ -12,16 +12,22 @@ pub(super) fn check_shadowing(contract: &Contract, issues: &mut Vec<ValidationIs
     for tapscript in &contract.tapscripts {
         for input in &tapscript.inputs {
             if ctor_names.contains(input.name.as_str()) {
-                issues.push(ValidationIssue::error(format!(
-                    "input '{}' in tapscript '{}' shadows constructor parameter '{}'",
-                    input.name, tapscript.name, input.name
-                )));
+                issues.push(
+                    ValidationIssue::error(format!(
+                        "input '{}' in tapscript '{}' shadows constructor parameter '{}'",
+                        input.name, tapscript.name, input.name
+                    ))
+                    .at(input.span),
+                );
             }
             if const_names.contains(input.name.as_str()) {
-                issues.push(ValidationIssue::error(format!(
-                    "input '{}' in tapscript '{}' shadows constant '{}'",
-                    input.name, tapscript.name, input.name
-                )));
+                issues.push(
+                    ValidationIssue::error(format!(
+                        "input '{}' in tapscript '{}' shadows constant '{}'",
+                        input.name, tapscript.name, input.name
+                    ))
+                    .at(input.span),
+                );
             }
         }
     }

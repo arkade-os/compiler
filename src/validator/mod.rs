@@ -138,9 +138,12 @@ pub(crate) fn validate_ast(contract: &Contract, require_entrypoint: bool) -> Vec
     // ── At least one covenant or tapscript function ──────────────────
     let public_count = contract.functions.iter().filter(|f| !f.is_private).count();
     if require_entrypoint && public_count == 0 && contract.tapscripts.is_empty() {
-        issues.push(ValidationIssue::error(
-            "contract must declare at least one covenant or tapscript function",
-        ));
+        issues.push(
+            ValidationIssue::error(
+                "contract must declare at least one covenant or tapscript function",
+            )
+            .at(contract.span),
+        );
     }
 
     // ── Unique function names ──────────────────────────────────────────────
@@ -163,6 +166,7 @@ pub(crate) fn validate_ast(contract: &Contract, require_entrypoint: bool) -> Vec
     {
         let mut seen: HashSet<&str> = HashSet::new();
         for param in &contract.parameters {
+            let first = issues.len();
             validate_source_identifier(&param.name, "constructor parameter", &mut issues);
             if !seen.insert(param.name.as_str()) {
                 issues.push(ValidationIssue::error(format!(
@@ -170,6 +174,7 @@ pub(crate) fn validate_ast(contract: &Contract, require_entrypoint: bool) -> Vec
                     param.name
                 )));
             }
+            locate(&mut issues[first..], param.span);
         }
     }
 
@@ -212,15 +217,19 @@ pub(crate) fn validate_ast(contract: &Contract, require_entrypoint: bool) -> Vec
     // supplied by the server, never by constructor parameters.
     for p in &contract.parameters {
         if crate::models::RESERVED_NAMES.contains(&p.name.as_str()) {
-            issues.push(ValidationIssue::error(format!(
-                "constructor parameter '{}' collides with a reserved arkd name",
-                p.name
-            )));
+            issues.push(
+                ValidationIssue::error(format!(
+                    "constructor parameter '{}' collides with a reserved arkd name",
+                    p.name
+                ))
+                .at(p.span),
+            );
         }
     }
 
     for ts in &contract.tapscripts {
         for p in &ts.inputs {
+            let first = issues.len();
             validate_source_identifier(
                 &p.name,
                 &format!("input in tapscript '{}'", ts.name),
@@ -250,15 +259,19 @@ pub(crate) fn validate_ast(contract: &Contract, require_entrypoint: bool) -> Vec
                     ts.name, p.name, p.param_type
                 )));
             }
+            locate(&mut issues[first..], p.span);
         }
         // Duplicate input names within a tapscript.
         let mut seen = std::collections::HashSet::new();
         for p in &ts.inputs {
             if !seen.insert(p.name.as_str()) {
-                issues.push(ValidationIssue::error(format!(
-                    "duplicate input '{}' in tapscript '{}'",
-                    p.name, ts.name
-                )));
+                issues.push(
+                    ValidationIssue::error(format!(
+                        "duplicate input '{}' in tapscript '{}'",
+                        p.name, ts.name
+                    ))
+                    .at(p.span),
+                );
             }
         }
     }
@@ -330,10 +343,13 @@ fn check_struct_definitions(contract: &Contract, issues: &mut Vec<ValidationIssu
         if crate::models::is_builtin_type(&definition.name)
             || crate::models::is_builtin_struct(&definition.name)
         {
-            issues.push(ValidationIssue::error(format!(
-                "struct '{}' collides with a built-in type",
-                definition.name
-            )));
+            issues.push(
+                ValidationIssue::error(format!(
+                    "struct '{}' collides with a built-in type",
+                    definition.name
+                ))
+                .at(definition.span),
+            );
         }
         if !names.insert(definition.name.as_str()) {
             issues.push(ValidationIssue::error(format!(
@@ -344,10 +360,13 @@ fn check_struct_definitions(contract: &Contract, issues: &mut Vec<ValidationIssu
         let mut fields = HashSet::new();
         for field in &definition.fields {
             if !fields.insert(field.name.as_str()) {
-                issues.push(ValidationIssue::error(format!(
-                    "duplicate field '{}' in struct '{}'",
-                    field.name, definition.name
-                )));
+                issues.push(
+                    ValidationIssue::error(format!(
+                        "duplicate field '{}' in struct '{}'",
+                        field.name, definition.name
+                    ))
+                    .at(field.span),
+                );
             }
         }
     }
@@ -443,9 +462,9 @@ fn validate_struct_fields<'a>(
             cycle.push_str(" -> ");
         }
         cycle.push_str(&definition.name);
-        issues.push(ValidationIssue::error(format!(
-            "recursive struct layout: {cycle}"
-        )));
+        issues.push(
+            ValidationIssue::error(format!("recursive struct layout: {cycle}")).at(definition.span),
+        );
         return;
     }
     if !validated.insert(definition.name.as_str()) {

@@ -286,3 +286,63 @@ fn a_word_left_on_its_own_is_reported_at_the_word() {
     let message = at_line(&body("    require(checkSig(s, o));\n    héllo", "")).2;
     assert!(!message.contains("on its own"), "{message}");
 }
+
+#[test]
+fn declaration_errors_are_located_at_the_declared_name() {
+    for (source, expected_message, name) in [
+        (
+            "contract C(pubkey o) { function f(signature server) tapscript { require(checkSig(server, o)); } }",
+            "tapscript 'f' input 'server' collides with a reserved arkd name",
+            "server",
+        ),
+        (
+            "contract C(pubkey o) { function f(signature s, signature s) tapscript { require(checkSig(s, o)); } }",
+            "duplicate input 's' in tapscript 'f'",
+            "s",
+        ),
+        (
+            "contract C(pubkey emulator) { function f(signature s) { require(checkSig(s, emulator)); } }",
+            "constructor parameter 'emulator' collides with a reserved arkd name",
+            "emulator",
+        ),
+        (
+            "contract C(pubkey o, pubkey o) { function f(signature s) { require(checkSig(s, o)); } }",
+            "duplicate constructor parameter 'o'",
+            "o",
+        ),
+        (
+            "contract C(pubkey o) { function f(signature o) tapscript { require(checkSig(o, o)); } }",
+            "input 'o' in tapscript 'f' shadows constructor parameter 'o'",
+            "o",
+        ),
+        (
+            "struct AssetId { int x; } contract C() { function f() { require(true); } }",
+            "struct 'AssetId' collides with a built-in type",
+            "AssetId",
+        ),
+        (
+            "struct S { int x; bool x; } contract C() { function f() { require(true); } }",
+            "duplicate field 'x' in struct 'S'",
+            "x",
+        ),
+        (
+            "struct A { B b; } struct B { A a; } contract C() { function f() { require(true); } }",
+            "recursive struct layout: A -> B -> A",
+            "A",
+        ),
+        (
+            "contract C() {}",
+            "contract must declare at least one covenant or tapscript function",
+            "C",
+        ),
+    ] {
+        let files = BTreeMap::from([("main.ark".to_string(), source.to_string())]);
+        let diagnostics = arkade_compiler::check("main.ark", &files);
+        let error = diagnostics
+            .iter()
+            .find(|d| d.message == expected_message)
+            .unwrap_or_else(|| panic!("{source}: {diagnostics:?}"));
+        let span = error.span.unwrap_or_else(|| panic!("{source}: unlocated"));
+        assert_eq!(&source[span.start..span.end], name, "{source}");
+    }
+}

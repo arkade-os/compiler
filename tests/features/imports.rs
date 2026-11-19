@@ -567,7 +567,7 @@ fn instantiated_contracts_must_compile_as_entries() {
     for (other, expected) in [
         (
             "contract Other(pubkey owner) {}",
-            "other.ark: contract must declare at least one covenant or tapscript function",
+            "other.ark: line 1, column 10: contract must declare at least one covenant or tapscript function",
         ),
         // The child's own attributes decide its lints, as when it is the entry.
         (
