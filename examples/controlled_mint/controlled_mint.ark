@@ -46,7 +46,7 @@ contract ControlledMint(
 
   // Unilateral exit (CSV): issuer recovers after exit delay.
   function unilateral(signature issuerSig) tapscript {
-    require(older(serverExitDelay));
+    require(older(operatorExitDelay));
     require(checkSig(issuerSig, issuerPk));
   }
 }

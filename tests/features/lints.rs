@@ -79,7 +79,7 @@ fn security_lints_report_unauthorized_and_half_constrained_spends() {
             &["duplicate-multisig-key"],
         ),
         (
-            "function f(signature s, signature t, signature u) tapscript { require(checkMultisig([server, owner, owner], [s, t, u])); }",
+            "function f(signature s, signature t, signature u) tapscript { require(checkMultisig([operator, owner, owner], [s, t, u])); }",
             &["duplicate-multisig-key"],
         ),
         (
@@ -167,15 +167,15 @@ fn security_lints_report_unauthorized_and_half_constrained_spends() {
             &[],
         ),
         (
-            "function claim() { require(tx.outputs[this.activeInputIndex].value >= tx.input.current.value); require(tx.outputs[this.activeInputIndex].script == tx.input.current.script); } function claim(bytes p, signature a, signature b) tapscript { require(sha256(p) == hash); require(checkMultisig([server, emulator], [a, b])); }",
+            "function claim() { require(tx.outputs[this.activeInputIndex].value >= tx.input.current.value); require(tx.outputs[this.activeInputIndex].script == tx.input.current.script); } function claim(bytes p, signature a, signature b) tapscript { require(sha256(p) == hash); require(checkMultisig([operator, tweak(operator, claim)], [a, b])); }",
             &["unsigned-spend-path"],
         ),
         (
-            "function claim(bytes p) { require(sha256(p) == hash); require(tx.outputs[this.activeInputIndex].value >= tx.input.current.value); require(tx.outputs[this.activeInputIndex].script == tx.input.current.script); } function claim(signature a, signature b) tapscript { require(checkMultisig([server, emulator], [a, b])); }",
+            "function claim(bytes p) { require(sha256(p) == hash); require(tx.outputs[this.activeInputIndex].value >= tx.input.current.value); require(tx.outputs[this.activeInputIndex].script == tx.input.current.script); } function claim(signature a, signature b) tapscript { require(checkMultisig([operator, tweak(operator, claim)], [a, b])); }",
             &["unsigned-spend-path"],
         ),
         (
-            "function f(bytes p) { require(sha256(p) == hash); } function g() { require(1 == 2); } function g(signature a, signature b) tapscript { require(checkMultisig([server, emulator], [a, b])); }",
+            "function f(bytes p) { require(sha256(p) == hash); } function g() { require(1 == 2); } function g(signature a, signature b) tapscript { require(checkMultisig([operator, tweak(operator, g)], [a, b])); }",
             &["unsigned-spend-path"],
         ),
         (
@@ -183,19 +183,27 @@ fn security_lints_report_unauthorized_and_half_constrained_spends() {
             &[],
         ),
         (
-            "function w(int x) { require(x > 0); } function w(signature a, signature b, signature c) tapscript { require(checkMultisig([owner, server, emulator], [a, b, c])); }",
+            "function w(int x) { require(x > 0); } function w(signature a, signature b, signature c) tapscript { require(checkMultisig([owner, operator, tweak(operator, w)], [a, b, c])); }",
             &[],
         ),
         (
-            "function w(int x) { require(x > 0); } function w(signature a, signature b) tapscript { require(checkMultisig([server, emulator], [a, b])); }",
+            "function w(int x) { require(x > 0); } function w(signature a, signature b) tapscript { require(checkMultisig([operator, tweak(operator, w)], [a, b])); }",
             &["unsigned-spend-path"],
         ),
         (
-            "const pubkey KEY = 0x79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798; function w(int x) { require(x > 0); } function w(signature a, signature b, signature c) tapscript { require(checkMultisig([KEY, server, emulator], [a, b, c], 3)); }",
+            "function w(int x) { require(x > 0); } function late(signature a, signature b) tapscript { require(older(blocks(144))); require(checkMultisig([owner, tweak(oracle, w)], [a, b])); }",
+            &["unsigned-spend-path"],
+        ),
+        (
+            "function w(int x) { require(x > 0); } function race(signature a, signature b, signature c) tapscript { require(checkMultisig([operator, owner, tweak(oracle, w)], [a, b, c])); }",
             &[],
         ),
         (
-            "const pubkey KEY = 0x79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798; function f(signature s, signature t, signature u) tapscript { require(checkMultisig([server, KEY, KEY], [s, t, u])); }",
+            "const pubkey KEY = 0x79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798; function w(int x) { require(x > 0); } function w(signature a, signature b, signature c) tapscript { require(checkMultisig([KEY, operator, tweak(operator, w)], [a, b, c], 3)); }",
+            &[],
+        ),
+        (
+            "const pubkey KEY = 0x79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798; function f(signature s, signature t, signature u) tapscript { require(checkMultisig([operator, KEY, KEY], [s, t, u])); }",
             &["duplicate-multisig-key"],
         ),
     ] {
@@ -499,12 +507,12 @@ fn a_tapscript_reading_an_element_or_field_uses_its_parameter() {
             require(older(exitDelay));
             require(checkMultisig([guardians[0], guardians[1]], [g0Sig, g1Sig]));
         }
-        function claim(bytes32 preimage, signature serverSig, signature ownerSig) tapscript {
+        function claim(bytes32 preimage, signature operatorSig, signature ownerSig) tapscript {
             require(sha256(preimage) == policy.lockHash);
-            require(checkMultisig([server, policy.owner], [serverSig, ownerSig]));
+            require(checkMultisig([operator, policy.owner], [operatorSig, ownerSig]));
         }
-        function recover(signature serverSig, signature backupSig) tapscript {
-            require(checkMultisig([server, backups[1].owner], [serverSig, backupSig]));
+        function recover(signature operatorSig, signature backupSig) tapscript {
+            require(checkMultisig([operator, backups[1].owner], [operatorSig, backupSig]));
         }
     }"#;
     let messages: Vec<String> = diagnostics_with(source, &Levels::default())
@@ -519,12 +527,12 @@ fn a_leaf_keyed_by_an_element_or_field_is_signed() {
     let source = r#"struct Policy { pubkey owner; int weight; }
     contract Vault(pubkey[2] guardians, Policy policy) {
         function claim() { require(tx.input.current.value >= 1); }
-        function claim(signature serverSig, signature emulatorSig, signature gSig) tapscript {
-            require(checkMultisig([server, emulator, guardians[0]], [serverSig, emulatorSig, gSig]));
+        function claim(signature operatorSig, signature gSig) tapscript {
+            require(checkMultisig([tweak(operator, claim), guardians[0]], [operatorSig, gSig]));
         }
         function release() { require(tx.input.current.value >= 1); }
-        function release(signature serverSig, signature emulatorSig, signature oSig) tapscript {
-            require(checkMultisig([server, emulator, policy.owner], [serverSig, emulatorSig, oSig]));
+        function release(signature operatorSig, signature oSig) tapscript {
+            require(checkMultisig([tweak(operator, release), policy.owner], [operatorSig, oSig]));
         }
         function refund() { require(tx.input.current.value >= 1); }
     }"#;

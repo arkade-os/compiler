@@ -5,7 +5,7 @@ pragma arkade ^0.1.0;
 //
 // This contract locks tokens and allows:
 // 1. deposit() - Owner deposits tokens; output must hold at least as many as input
-// 2. withdraw() - Owner withdraws tokens with server co-signature
+// 2. withdraw() - Owner withdraws tokens with operator co-signature
 //
 // Uses asset lookups on tx.inputs and tx.outputs with arithmetic
 // comparisons for balance verification.
@@ -35,7 +35,7 @@ contract TokenVault(
     require(checkSig(ownerSig, ownerPk), "invalid owner signature");
   }
 
-  // Withdraw: owner withdraws tokens cooperatively with server
+  // Withdraw: owner withdraws tokens cooperatively with the operator
   function withdraw(signature ownerSig) {
     // Control asset must stay in the output
     require(tx.outputs[0].assets.lookup(ctrlAssetId) > 0, "no ctrl in output");
@@ -46,7 +46,7 @@ contract TokenVault(
 
   // Unilateral exit (CSV): owner recovers after exit delay.
   function unilateral(signature ownerSig) tapscript {
-    require(older(serverExitDelay));
+    require(older(operatorExitDelay));
     require(checkSig(ownerSig, ownerPk));
   }
 }

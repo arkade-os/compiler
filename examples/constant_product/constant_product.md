@@ -24,7 +24,7 @@ Every settlement has the pool at input 0 and one standing order at input 1. Outp
 | `ConstantProductDeposit.fill` | BTC above 330 plus the matching quote | 330 sats and the minted LP tokens, paid to `payScript` |
 | `ConstantProductExit.fill` | 330 sats and LP tokens | the floored BTC and quote, paid to `payScript`; a side that rounds to 0 is omitted |
 
-`refund` on an unfilled order is one input and pays `payScript` (`numOutputs == 3`). Each order has a CSV leaf for `ownerPk`, so the trader or LP can take that order back on L1 after `serverExitDelay`.
+`refund` on an unfilled order is one input and pays `payScript` (`numOutputs == 3`). Each order has a CSV leaf for `ownerPk`, so the trader or LP can take that order back on L1 after `operatorExitDelay`.
 
 The pool has no tapscript leaf. `swap`, `deposit`, and `withdraw` are emulated spending paths, and each one asks for the operator's signature. If the operator is unavailable, a funded order can still be recovered by its owner, and the pool reserves cannot move.
 

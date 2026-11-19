@@ -356,7 +356,7 @@ pub(crate) fn parse_tap_multisig(
     Ok(TapItem::Sig { keys, sigs })
 }
 
-/// Parse a `key_expr` (a pubkey binding, a pubkey constant or `tweak(emulator, func)`).
+/// Parse a `key_expr` (a pubkey binding, a pubkey constant or `tweak(base, func)`).
 pub(crate) fn parse_key_expr(
     pair: Pair<Rule>,
     constants: &[Constant],
@@ -419,9 +419,9 @@ contract Demo(pubkey owner) {
     function claim() {
         require(tx.outputs[0].value >= 1);
     }
-    function claim(bytes preimage, signature serverSig, signature emulatorSig) tapscript {
+    function claim(bytes preimage, signature operatorSig, signature ownerSig) tapscript {
         require(hash160(preimage) == preimageHash);
-        require(checkMultisig([server, emulator], [serverSig, emulatorSig]));
+        require(checkMultisig([operator, owner], [operatorSig, ownerSig]));
     }
 }
 "#;
@@ -456,14 +456,11 @@ contract Demo(pubkey owner) {
                 assert_eq!(
                     keys,
                     &vec![
-                        KeyExpr::Ident("server".into()),
-                        KeyExpr::Ident("emulator".into())
+                        KeyExpr::Ident("operator".into()),
+                        KeyExpr::Ident("owner".into())
                     ]
                 );
-                assert_eq!(
-                    sigs,
-                    &vec![Path::new("serverSig"), Path::new("emulatorSig")]
-                );
+                assert_eq!(sigs, &vec![Path::new("operatorSig"), Path::new("ownerSig")]);
             }
             other => panic!("expected Sig item, got {other:?}"),
         }
@@ -477,12 +474,12 @@ contract Demo(pubkey owner) {
         require(older(exitDelay));
         require(checkSig(ownerSig, owner));
     }
-    function direct(signature emulatorSig) tapscript {
-        require(checkSig(emulatorSig, tweak(emulator, exit)));
+    function direct(signature operatorSig) tapscript {
+        require(checkSig(operatorSig, tweak(operator, exit)));
     }
-    function cancel(signature backupSig, signature serverSig) tapscript {
+    function cancel(signature backupSig, signature operatorSig) tapscript {
         require(after(cancelTime));
-        require(checkMultisig([backup, server], [backupSig, serverSig]));
+        require(checkMultisig([backup, operator], [backupSig, operatorSig]));
     }
 }
 "#;
@@ -497,7 +494,7 @@ contract Demo(pubkey owner) {
             TapItem::Sig { keys, .. } => assert_eq!(
                 keys,
                 &vec![KeyExpr::Tweak {
-                    base: "emulator".into(),
+                    base: "operator".into(),
                     func: "exit".into()
                 }]
             ),

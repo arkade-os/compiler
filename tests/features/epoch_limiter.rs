@@ -114,7 +114,7 @@ fn test_epoch_limiter_arithmetic() {
 
 #[test]
 fn test_epoch_limiter_default_leaf_has_checksig() {
-    // The synthesized default leaf must carry the SERVER_KEY + EMULATOR_KEY guard.
+    // The synthesized default leaf must carry the operator key tweaked by `check`.
     let output = compile(EPOCH_LIMITER_CODE).unwrap();
     let l = leaf_asm(&output, "check", "check");
 
@@ -123,7 +123,7 @@ fn test_epoch_limiter_default_leaf_has_checksig() {
         "Default leaf missing OP_CHECKSIG: {l}"
     );
     assert!(
-        l.contains("<SERVER_KEY>"),
-        "Default leaf missing <SERVER_KEY>: {l}"
+        l.contains("<OPERATOR_KEY:check>"),
+        "Default leaf missing <OPERATOR_KEY:check>: {l}"
     );
 }

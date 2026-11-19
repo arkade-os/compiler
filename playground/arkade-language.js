@@ -86,9 +86,8 @@ const arkadeCompletions = [
     // Implicit bindings
     S('tx', 'Variable', 'tx', 'Spending transaction'),
     S('this', 'Variable', 'this', 'Current contract'),
-    S('server', 'Variable', 'server', 'Arkade server key'),
-    S('emulator', 'Variable', 'emulator', 'Arkade emulator key'),
-    S('serverExitDelay', 'Variable', 'serverExitDelay', 'Arkade server unilateral exit delay'),
+    S('operator', 'Variable', 'operator', 'Arkade operator key'),
+    S('operatorExitDelay', 'Variable', 'operatorExitDelay', 'Arkade operator unilateral exit delay'),
 ];
 
 // Monarch tokenizer definition (for setMonarchTokensProvider); word lists come from the completions.

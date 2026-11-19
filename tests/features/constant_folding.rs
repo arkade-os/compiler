@@ -60,10 +60,7 @@ fn loop_indexes_encoding_requirements_and_branches_match_static_code() {
         leaf_asm(&output, "spend", "spend"),
         leaf_asm(&raw, "spend", "spend")
     );
-    assert_eq!(
-        witness_names(&output, "spend", "spend"),
-        ["serverSig", "emulatorSig"]
-    );
+    assert_eq!(witness_names(&output, "spend", "spend"), ["operatorSig"]);
 }
 
 #[test]
@@ -357,10 +354,7 @@ fn unoptimized_builds_check_unrolled_indexes_past_the_end_of_removed_code_at_run
                 leaf_asm(&raw, function, function),
                 leaf_asm(&optimized, function, function)
             );
-            assert_eq!(
-                witness_names(&raw, function, function),
-                ["serverSig", "emulatorSig"]
-            );
+            assert_eq!(witness_names(&raw, function, function), ["operatorSig"]);
         }
     }
 }

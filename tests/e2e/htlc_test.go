@@ -35,7 +35,7 @@ func TestCompiledHTLC(t *testing.T) {
 		"refundTime":                     refundTimeBytes,
 		"sender":                         fixedPublicKey(4).SerializeCompressed(),
 		"receiver":                       fixedPublicKey(5).SerializeCompressed(),
-		"SERVER_EXIT_DELAY":              exitBytes,
+		"OPERATOR_EXIT_DELAY":            exitBytes,
 	}
 	claim := instantiateGroup(
 		t, contract, "claim", values, serverKey.PubKey(), emulatorKey.PubKey(),

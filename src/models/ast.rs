@@ -359,42 +359,31 @@ impl HashFn {
 /// A key operand in a tapscript `checkSig`/`checkMultisig`.
 #[derive(Debug, Clone, PartialEq)]
 pub enum KeyExpr {
-    /// A pubkey binding: a reserved role (`server`, `emulator`) or any pubkey in
-    /// scope (constructor pubkey, struct field, array element, etc.).
+    /// A pubkey binding: the reserved `operator` role or any pubkey in scope
+    /// (constructor pubkey, struct field, array element, etc.).
     Ident(Path),
     /// A 32-byte x-only key from a `pubkey` constant, as `0x`-prefixed hex.
     Literal(String),
     /// `tweak(base, func)`: `base` tweaked by `func`'s Arkade Script hash.
-    /// `base` is `emulator` or a constructor pubkey (a second enclave).
+    /// `base` is `operator` or a constructor pubkey (a second enclave).
     Tweak { base: String, func: String },
 }
 
-/// Names the server supplies; a contract cannot declare them.
-pub(crate) const SERVER: &str = "server";
-pub(crate) const EMULATOR: &str = "emulator";
-pub(crate) const SERVER_EXIT_DELAY: &str = "serverExitDelay";
-pub(crate) const RESERVED_NAMES: [&str; 3] = [SERVER, EMULATOR, SERVER_EXIT_DELAY];
+/// Names the operator supplies; a contract cannot declare them.
+pub(crate) const OPERATOR: &str = "operator";
+pub(crate) const OPERATOR_EXIT_DELAY: &str = "operatorExitDelay";
+pub(crate) const RESERVED_NAMES: [&str; 2] = [OPERATOR, OPERATOR_EXIT_DELAY];
 /// Artifact placeholders the SDK fills; reserved as source identifiers.
-pub(crate) const RESERVED_PLACEHOLDERS: [&str; 2] = ["SERVER_KEY", "SERVER_EXIT_DELAY"];
+pub(crate) const RESERVED_PLACEHOLDERS: [&str; 2] = ["OPERATOR_KEY", "OPERATOR_EXIT_DELAY"];
 
 impl KeyExpr {
-    /// The reserved arkd-operator role.
-    pub fn is_server(&self) -> bool {
-        matches!(self, KeyExpr::Ident(id) if id == SERVER)
-    }
-
-    /// A bare (implicitly-tweaked) emulator role.
-    pub fn is_emulator(&self) -> bool {
-        matches!(self, KeyExpr::Ident(id) if id == EMULATOR)
-    }
-
-    /// An infra-injected co-signer whose signature is generated, not user pubkey:
-    /// `server`, bare `emulator`, or an explicit `tweak(emulator, …)`.
-    /// `tweak` of a constructor pubkey is that key's own signature.
-    pub fn is_cosigner(&self) -> bool {
-        self.is_server()
-            || self.is_emulator()
-            || matches!(self, KeyExpr::Tweak { base, .. } if base == EMULATOR)
+    /// The operator key, bare or tweaked: the operator supplies its signature.
+    pub fn is_operator(&self) -> bool {
+        match self {
+            KeyExpr::Ident(id) => id == OPERATOR,
+            KeyExpr::Tweak { base, .. } => base == OPERATOR,
+            KeyExpr::Literal(_) => false,
+        }
     }
 }
 
@@ -409,7 +398,7 @@ pub enum TapItem {
         hash: TapOperand,
     },
     /// `older(n)` → CSV (relative timelock, exit class). `value` is a literal,
-    /// constant, parameter, or `serverExitDelay`; without a unit it is the raw
+    /// constant, parameter, or `operatorExitDelay`; without a unit it is the raw
     /// BIP68 sequence.
     Older {
         value: TapOperand,
@@ -690,7 +679,7 @@ pub enum ExprKind {
     /// Contract instantiation: new ContractName(arg1, arg2, ...)
     ///
     /// Resolves to the Taproot program and witness version 1 of the named contract instantiated
-    /// with the given arguments. Options (server key, exit timelock) are
+    /// with the given arguments. Options (operator key, exit timelock) are
     /// inherited from the enclosing contract. Used to pin an output to another
     /// contract: `tx.outputs[0].script == new Foo(x)`. A contract cannot
     /// instantiate itself; it compares against `tx.input.current.script` instead.

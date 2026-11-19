@@ -111,17 +111,14 @@ contract C() {
             ["n", "limit", "data", "count", "expected"]
         );
         assert_eq!(group(&output, "spend").leaves.len(), 1);
-        assert_eq!(
-            witness_names(&output, "spend", "spend"),
-            ["serverSig", "emulatorSig"]
-        );
+        assert_eq!(witness_names(&output, "spend", "spend"), ["operatorSig"]);
         assert_eq!(
             leaf_asm(&output, "spend", "spend"),
-            "<SERVER_KEY> OP_CHECKSIGVERIFY <EMULATOR_KEY:spend> OP_CHECKSIG"
+            "<OPERATOR_KEY:spend> OP_CHECKSIG"
         );
     }
     let error = arkade_compiler::compile(
-        "contract C() { function spend(bytes data, bytes20 hash, signature sig) tapscript { require(sha1(data) == hash); require(checkSig(sig, server)); } }"
+        "contract C() { function spend(bytes data, bytes20 hash, signature sig) tapscript { require(sha1(data) == hash); require(checkSig(sig, operator)); } }"
     ).unwrap_err().to_string();
     assert!(
         error.contains("`sha1(...)` is only available in Arkade Script functions"),
@@ -928,11 +925,11 @@ fn unary_negation_precedence_and_spend_shape() {
         assert!(crate::common::arkade_inputs(&output, "spend").is_empty());
         assert_eq!(
             crate::common::witness_names(&output, "spend", "spend"),
-            ["serverSig", "emulatorSig"]
+            ["operatorSig"]
         );
         assert_eq!(
             crate::common::leaf_asm(&output, "spend", "spend"),
-            "<SERVER_KEY> OP_CHECKSIGVERIFY <EMULATOR_KEY:spend> OP_CHECKSIG"
+            "<OPERATOR_KEY:spend> OP_CHECKSIG"
         );
     }
 }
@@ -1337,13 +1334,10 @@ contract H({ty} expected) {{
         assert!(asm.iter().any(|token| token == "OP_IF"));
         assert_eq!(arkade_inputs(&output, "spend"), ["data", "fallback"]);
         assert_eq!(group(&output, "spend").leaves.len(), 1);
-        assert_eq!(
-            witness_names(&output, "spend", "spend"),
-            ["serverSig", "emulatorSig"]
-        );
+        assert_eq!(witness_names(&output, "spend", "spend"), ["operatorSig"]);
         assert_eq!(
             leaf_asm(&output, "spend", "spend"),
-            "<SERVER_KEY> OP_CHECKSIGVERIFY <EMULATOR_KEY:spend> OP_CHECKSIG"
+            "<OPERATOR_KEY:spend> OP_CHECKSIG"
         );
     }
 }
@@ -1449,13 +1443,10 @@ contract C(pubkey first, pubkey second) {
     .expect("both multisig arrays can be helper results");
     assert_eq!(arkade_inputs(&output, "spend"), ["a", "b"]);
     assert_eq!(group(&output, "spend").leaves.len(), 1);
-    assert_eq!(
-        witness_names(&output, "spend", "spend"),
-        ["serverSig", "emulatorSig"]
-    );
+    assert_eq!(witness_names(&output, "spend", "spend"), ["operatorSig"]);
     assert_eq!(
         leaf_asm(&output, "spend", "spend"),
-        "<SERVER_KEY> OP_CHECKSIGVERIFY <EMULATOR_KEY:spend> OP_CHECKSIG"
+        "<OPERATOR_KEY:spend> OP_CHECKSIG"
     );
 
     // This models this contract's stack operations; extend it if its emitted opcodes change.
@@ -1540,16 +1531,11 @@ fn merkle_root_pushes_operands_in_vm_order() {
     );
     assert_eq!(
         crate::common::leaf_asm_tokens(&output, "spend", "spend"),
-        [
-            "<SERVER_KEY>",
-            "OP_CHECKSIGVERIFY",
-            "<EMULATOR_KEY:spend>",
-            "OP_CHECKSIG"
-        ]
+        ["<OPERATOR_KEY:spend>", "OP_CHECKSIG"]
     );
     assert_eq!(
         crate::common::witness_names(&output, "spend", "spend"),
-        ["serverSig", "emulatorSig"]
+        ["operatorSig"]
     );
 
     for (args, expected) in [

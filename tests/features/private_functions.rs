@@ -33,10 +33,7 @@ contract Vault(Policy policy, pubkey owner) {
         ["spend", "exit"]
     );
     assert_eq!(arkade_inputs(&output, "spend"), ["sig", "amount"]);
-    assert_eq!(
-        witness_names(&output, "spend", "spend"),
-        ["serverSig", "emulatorSig"]
-    );
+    assert_eq!(witness_names(&output, "spend", "spend"), ["operatorSig"]);
     let asm = arkade_asm_tokens(&output, "spend");
     // Twice-read leaves keep slots; `owner` is read once and `limits[1]` never.
     assert_eq!(&asm[..2], ["<policy.limits.0>", "<policy.minimum>"]);
@@ -46,7 +43,7 @@ contract Vault(Policy policy, pubkey owner) {
     assert!(asm.iter().all(|s| !s.contains('$') && s != "OP_RETURN"));
     assert_eq!(
         leaf_asm(&output, "spend", "spend"),
-        "<SERVER_KEY> OP_CHECKSIGVERIFY <EMULATOR_KEY:spend> OP_CHECKSIG"
+        "<OPERATOR_KEY:spend> OP_CHECKSIG"
     );
 }
 
@@ -216,7 +213,7 @@ fn tapscript_cannot_call_bind_or_tweak_private_helpers() {
         "function exit(signature sig) tapscript { helper(); require(checkSig(sig, owner)); }",
         "function exit(signature sig) tapscript { require(helper()); require(checkSig(sig, owner)); }",
         "function helper(signature sig) tapscript { require(checkSig(sig, owner)); }",
-        "function exit(signature sig) tapscript { require(checkSig(sig, tweak(emulator, helper))); }",
+        "function exit(signature sig) tapscript { require(checkSig(sig, tweak(operator, helper))); }",
     ] {
         let source = format!("contract C(pubkey owner) {{ function spend() {{ require(true); }} private function helper() bool {{ return true; }} {body} }}");
         assert!(compile(&source).is_err(), "{body}");

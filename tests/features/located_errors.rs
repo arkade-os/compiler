@@ -98,10 +98,10 @@ fn errors_outside_the_validator_are_located() {
             "contract name 'tx' is reserved",
         ),
         (
-            "contract C(pubkey owner) { function weird(signature serverSig, signature emulatorSig) tapscript { require(checkMultisig([server, emulator], [serverSig, emulatorSig])); } }",
+            "contract C(pubkey owner) { function weird() { require(true); } function weird(signature operatorSig) tapscript { require(checkSig(operatorSig, operator)); } }",
             &[],
             "weird",
-            "standalone",
+            "must tweak a key to `weird`",
         ),
     ] {
         let (_, text, message) = located(main, others);
@@ -292,10 +292,10 @@ fn declaration_errors_are_located_at_the_declared_name() {
     // Each span must end the `context` occurrence and cover only `name`.
     for (source, expected_message, context, name) in [
         (
-            "contract C(pubkey o) { function f(signature server) tapscript { require(checkSig(server, o)); } }",
-            "tapscript 'f' input 'server' collides with a reserved arkd name",
-            "f(signature server",
-            "server",
+            "contract C(pubkey o) { function f(signature operator) tapscript { require(checkSig(operator, o)); } }",
+            "tapscript 'f' input 'operator' collides with a reserved arkd name",
+            "f(signature operator",
+            "operator",
         ),
         (
             "contract C(pubkey o) { function f(signature s, signature s) tapscript { require(checkSig(s, o)); } }",
@@ -322,10 +322,10 @@ fn declaration_errors_are_located_at_the_declared_name() {
             "f",
         ),
         (
-            "contract C(pubkey emulator) { function f(signature s) { require(checkSig(s, emulator)); } }",
-            "constructor parameter 'emulator' collides with a reserved arkd name",
-            "C(pubkey emulator",
-            "emulator",
+            "contract C(pubkey operator) { function f(signature s) { require(checkSig(s, operator)); } }",
+            "constructor parameter 'operator' collides with a reserved arkd name",
+            "C(pubkey operator",
+            "operator",
         ),
         (
             "contract C(pubkey o, pubkey o) { function f(signature s) { require(checkSig(s, o)); } }",
@@ -334,10 +334,10 @@ fn declaration_errors_are_located_at_the_declared_name() {
             "o",
         ),
         (
-            "contract C(pubkey SERVER_KEY) { function f(signature s) { require(checkSig(s, SERVER_KEY)); } }",
-            "constructor parameter 'SERVER_KEY' uses a compiler-reserved placeholder name",
-            "C(pubkey SERVER_KEY",
-            "SERVER_KEY",
+            "contract C(pubkey OPERATOR_KEY) { function f(signature s) { require(checkSig(s, OPERATOR_KEY)); } }",
+            "constructor parameter 'OPERATOR_KEY' uses a compiler-reserved placeholder name",
+            "C(pubkey OPERATOR_KEY",
+            "OPERATOR_KEY",
         ),
         (
             "struct AssetId { int x; } contract C() { function f() { require(true); } }",

@@ -14,11 +14,11 @@ fn arkade_script_opcodes_report_their_context_in_tapscript() {
         ("substr(0x00, 0, 1) == 0x00", "substr(...)"),
         ("within(1, 0, 2)", "within(...)"),
         (
-            "checkSigFromStack(0x00, server, 0x00)",
+            "checkSigFromStack(0x00, operator, 0x00)",
             "checkSigFromStack(...)",
         ),
         (
-            "checkSigFromStackVerify(0x00, server, 0x00)",
+            "checkSigFromStackVerify(0x00, operator, 0x00)",
             "checkSigFromStackVerify(...)",
         ),
         (
@@ -68,7 +68,7 @@ fn arkade_script_opcodes_report_their_context_in_tapscript() {
             "`seconds` only as `older(seconds(count))` or `after(seconds(count))`",
         ),
         (
-            "sha256(tweak(server, spend)) == 0x00",
+            "sha256(tweak(operator, spend)) == 0x00",
             "`tweak` only as a key inside checkSig or checkMultisig",
         ),
     ] {
@@ -102,7 +102,7 @@ fn tapscript_opcodes_report_their_context_in_arkade_script_functions() {
             "inside older(...) or after(...)",
         ),
         (
-            "checkSig(s, tweak(emulator, spend))",
+            "checkSig(s, tweak(operator, spend))",
             "tweak",
             "as a key inside checkSig or checkMultisig",
         ),
@@ -122,7 +122,7 @@ fn tapscript_opcodes_report_their_context_in_arkade_script_functions() {
         ("older()", "older(sequence)"),
         ("after(1, 2)", "after(locktime)"),
         ("blocks(1, 2) > 0", "blocks(count)"),
-        ("tweak(emulator) == 0x00", "tweak(base, name)"),
+        ("tweak(operator) == 0x00", "tweak(base, name)"),
     ] {
         let source = format!("contract C() {{ function spend() {{ require({expression}); }} }}");
         let error = compile(&source).unwrap_err().to_string();
@@ -175,18 +175,10 @@ fn expiry_is_an_integer_in_arkade_script_functions_only() {
     assert_eq!(arkade_inputs(&output, "spend"), ["deadline"]);
     let spend = group(&output, "spend");
     assert_eq!(spend.leaves.len(), 1);
-    assert_eq!(
-        spend.leaves[0].asm,
-        [
-            "<SERVER_KEY>",
-            "OP_CHECKSIGVERIFY",
-            "<EMULATOR_KEY:spend>",
-            "OP_CHECKSIG"
-        ]
-    );
+    assert_eq!(spend.leaves[0].asm, ["<OPERATOR_KEY:spend>", "OP_CHECKSIG"]);
     assert_eq!(
         witness_names(&output, "spend", &spend.leaves[0].name),
-        ["serverSig", "emulatorSig"]
+        ["operatorSig"]
     );
     for source in [
         "contract Bad() { function spend() { bool expiry = this.expiry; } }",

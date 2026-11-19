@@ -73,11 +73,11 @@ fn test_token_vault_contract() {
         "missing {OP_CHECKSIG} in deposit Arkade Script: {deposit_asm}"
     );
 
-    // deposit leaf carries server + emulator cosig
+    // deposit leaf carries the operator cosig
     let deposit_leaf = crate::common::leaf_asm(&output, "deposit", "deposit");
     assert!(
-        deposit_leaf.contains("<SERVER_KEY>"),
-        "deposit leaf should have SERVER_KEY: {deposit_leaf}"
+        deposit_leaf.contains("<OPERATOR_KEY:deposit>"),
+        "deposit leaf should have OPERATOR_KEY:deposit: {deposit_leaf}"
     );
 
     // Unilateral exit: standalone CSV leaf with no introspection.

@@ -50,8 +50,8 @@ fn constant_product_pool_is_one_counterparty() {
     for function in ["swap", "deposit", "withdraw"] {
         let leaf = crate::common::leaf_asm(&pool, function, function);
         assert!(
-            leaf.contains("<SERVER_KEY>") && leaf.contains(&format!("<EMULATOR_KEY:{function}>")),
-            "{function} should spend with the server and the emulator: {leaf}"
+            leaf.contains(&format!("<OPERATOR_KEY:{function}>")),
+            "{function} should spend with the operator key tweaked to it: {leaf}"
         );
         assert!(
             !leaf.contains("OP_CHECKSEQUENCEVERIFY"),

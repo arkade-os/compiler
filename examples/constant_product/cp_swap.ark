@@ -75,7 +75,7 @@ contract ConstantProductSwap(
   }
 
   function unilateral(signature ownerSig) tapscript {
-    require(older(serverExitDelay));
+    require(older(operatorExitDelay));
     require(checkSig(ownerSig, ownerPk));
   }
 }

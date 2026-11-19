@@ -12,13 +12,13 @@ contract HTLC(pubkey receiver, pubkey sender, bytes20 preimageHash, int refundTi
     function refund() {
         require(tx.outputs[0].value >= tx.inputs[0].value);
     }
-    function claim(bytes preimage, signature serverSig, signature emulatorSig) tapscript {
+    function claim(bytes preimage, signature operatorSig) tapscript {
         require(hash160(preimage) == preimageHash);
-        require(checkMultisig([server, emulator], [serverSig, emulatorSig]));
+        require(checkSig(operatorSig, tweak(operator, claim)));
     }
-    function refund(signature serverSig, signature emulatorSig) tapscript {
+    function refund(signature operatorSig) tapscript {
         require(after(refundTime));
-        require(checkMultisig([server, emulator], [serverSig, emulatorSig]));
+        require(checkSig(operatorSig, tweak(operator, refund)));
     }
     function unilateral(signature senderSig) tapscript {
         require(older(exit));
@@ -37,15 +37,14 @@ contract HTLC(pubkey receiver, pubkey sender, bytes20 preimageHash, int refundTi
     assert!(claim.arkade.is_some(), "claim is function-backed");
     assert_eq!(claim.leaves.len(), 1);
     let leaf = &claim.leaves[0];
-    // ASM: HASH160 condition + N-of-N [server, emulator(claim)]; no sigs in asm.
+    // ASM: HASH160 condition + the operator key tweaked by claim; no sigs in asm.
     let joined = leaf.asm.join(" ");
     assert!(joined.contains("OP_HASH160"));
-    assert!(joined.contains("<SERVER_KEY>"));
-    assert!(joined.contains("<EMULATOR_KEY:claim>"));
+    assert!(joined.ends_with("<OPERATOR_KEY:claim> OP_CHECKSIG"));
     assert!(!joined.contains("Sig"));
-    // Witness carries the sigs + preimage.
+    // Witness carries the sig + preimage.
     let wnames: Vec<_> = leaf.witness.iter().map(|w| w.name.clone()).collect();
-    assert_eq!(wnames, vec!["preimage", "serverSig", "emulatorSig"]);
+    assert_eq!(wnames, vec!["preimage", "operatorSig"]);
 
     let uni = out
         .functions
@@ -69,12 +68,53 @@ contract Demo(pubkey owner) {
     assert!(g.arkade.is_some());
     assert_eq!(g.leaves.len(), 1, "default collaborative leaf synthesized");
     let leaf = &g.leaves[0];
-    let joined = leaf.asm.join(" ");
-    assert!(joined.contains("<SERVER_KEY>"));
-    assert!(joined.contains("<EMULATOR_KEY:spend>"));
-    // Synthesized leaf still lists serverSig/emulatorSig in witness.
-    let wnames: Vec<_> = leaf.witness.iter().map(|w| w.name.clone()).collect();
-    assert_eq!(wnames, vec!["serverSig", "emulatorSig"]);
+    assert_eq!(leaf.name, "spend");
+    // The operator key tweaked by spend's Arkade Script hash.
+    assert_eq!(leaf.asm, ["<OPERATOR_KEY:spend>", "OP_CHECKSIG"]);
+    // One injected operator signature.
+    let witness: Vec<_> = leaf
+        .witness
+        .iter()
+        .map(|w| (w.name.as_str(), w.elem_type.as_str(), w.injected))
+        .collect();
+    assert_eq!(witness, [("operatorSig", "signature", true)]);
+}
+
+/// The legacy two-key stack, written by hand: the untweaked operator key plus a constructor
+/// `emulator` key tweaked by `spend`. The leaf has no CSV delay, so it replaces the default.
+#[test]
+fn a_forfeit_leaf_tweaked_to_a_function_replaces_its_default_leaf() {
+    let src = r#"
+contract C(pubkey user, pubkey emulator) {
+  function spend(signature userSig) { require(checkSig(userSig, user)); }
+  function spendTap(signature operatorSig, signature emulatorSig) tapscript {
+    require(checkMultisig([operator, tweak(emulator, spend)], [operatorSig, emulatorSig]));
+  }
+}
+"#;
+    let out = compile(src).expect("compile");
+    let names: Vec<_> = out.functions.iter().map(|g| g.name.as_str()).collect();
+    assert_eq!(names, ["spend"], "spendTap joins spend's group");
+    let spend = group(&out, "spend");
+    assert!(spend.arkade.is_some());
+    assert_eq!(spend.leaves.len(), 1, "spendTap replaces the default leaf");
+    let leaf = &spend.leaves[0];
+    assert_eq!(leaf.name, "spendTap");
+    assert_eq!(
+        leaf.asm,
+        [
+            "<OPERATOR_KEY>",
+            "OP_CHECKSIGVERIFY",
+            "<TWEAK:emulator:spend>",
+            "OP_CHECKSIG"
+        ]
+    );
+    let witness: Vec<_> = leaf
+        .witness
+        .iter()
+        .map(|w| (w.name.as_str(), w.injected))
+        .collect();
+    assert_eq!(witness, [("operatorSig", true), ("emulatorSig", false)]);
 }
 
 #[test]
@@ -84,8 +124,8 @@ contract Demo(pubkey owner) {
     function claim() {
         require(tx.outputs[0].value >= 1);
     }
-    function claim(signature serverSig, signature emulatorSig, signature ownerSig) tapscript {
-        require(checkMultisig([server, emulator, owner], [serverSig, emulatorSig, ownerSig]));
+    function claim(signature operatorSig, signature boundSig, signature ownerSig) tapscript {
+        require(checkMultisig([operator, tweak(operator, claim), owner], [operatorSig, boundSig, ownerSig]));
     }
 }
 "#;
@@ -110,7 +150,7 @@ contract Demo(pubkey owner) {
         .map(|w| w.name.as_str())
         .collect();
 
-    assert_eq!(injected, vec!["serverSig", "emulatorSig"]);
+    assert_eq!(injected, vec!["operatorSig", "boundSig"]);
     assert_eq!(user_supplied, vec!["ownerSig"]);
 }
 
@@ -164,9 +204,7 @@ contract Escrowish(pubkey a, pubkey b, pubkey c, int exit) {
             .collect::<Vec<_>>(),
         ["spend", "boundZulu", "boundAlpha"]
     );
-    assert!(spend.leaves[0]
-        .asm
-        .contains(&"<EMULATOR_KEY:spend>".to_string()));
+    assert_eq!(spend.leaves[0].asm, ["<OPERATOR_KEY:spend>", "OP_CHECKSIG"]);
     for leaf in &spend.leaves[1..] {
         assert!(leaf.asm.contains(&"<TWEAK:a:spend>".to_string()));
     }
@@ -214,11 +252,11 @@ fn standalone_only_leaves_keep_declaration_order() {
         r#"
 contract Exits(pubkey owner) {
     function zulu(signature sig) tapscript {
-        require(older(serverExitDelay));
+        require(older(operatorExitDelay));
         require(checkSig(sig, owner));
     }
     function alpha(signature sig) tapscript {
-        require(older(serverExitDelay));
+        require(older(operatorExitDelay));
         require(checkSig(sig, owner));
     }
 }

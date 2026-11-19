@@ -714,11 +714,11 @@ contract C(pubkey owner, bytes32 hash) {
     assert_eq!(crate::common::group(&output, "compare").leaves.len(), 1);
     assert_eq!(
         crate::common::witness_names(&output, "compare", "compare"),
-        ["serverSig", "emulatorSig"]
+        ["operatorSig"]
     );
     assert_eq!(
         crate::common::leaf_asm(&output, "compare", "compare"),
-        "<SERVER_KEY> OP_CHECKSIGVERIFY <EMULATOR_KEY:compare> OP_CHECKSIG"
+        "<OPERATOR_KEY:compare> OP_CHECKSIG"
     );
     let asm = crate::common::arkade_asm_tokens(&output, "compare");
     assert!(asm.iter().any(|token| token == "OP_IF"));

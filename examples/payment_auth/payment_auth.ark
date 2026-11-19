@@ -109,7 +109,7 @@ contract PaymentAuthorization(
   // Unilateral exit (CSV): merchant reclaims cooperatively after CSV delay.
   // Note: customer's exit is via the refund path above; no single customer pubkey exists.
   function unilateral(signature merchantSig) tapscript {
-    require(older(serverExitDelay));
+    require(older(operatorExitDelay));
     require(checkSig(merchantSig, merchantPubkey));
   }
 }

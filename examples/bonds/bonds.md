@@ -40,7 +40,7 @@ This document is the high-level spec. Source is canonical; comments in the
 | **Lender** | Buys credit on the order book; redeems credit for pro-rata USDT after the auction window via `redeem`. | `holderPk` per redemption |
 | **Auctioneer** | Runs `liquidate` (margin call) on any vault that drops below the health threshold, OR runs `acceptAuction` on any defaulted vault post-maturity. Paying USDT for the collateral at the oracle price minus the auction discount. Permissionless. | `auctioneerPk` per spend |
 | **Oracle** | Publishes signed BTC/USDT price (Fuji-style). The contract verifies the signature on each oracle-using call. | `oraclePk` (constructor) |
-| **Arkade operator** | Co-signs cooperative-path spends off-chain; supplies the `<SERVER_KEY>` injected by the runtime. Not a trust point in the active covenant — only required for fast off-chain settlement. | `<SERVER_KEY>` |
+| **Arkade operator** | Co-signs cooperative-path spends off-chain; supplies the `<OPERATOR_KEY>` injected by the runtime. Not a trust point in the active covenant — only required for fast off-chain settlement. | `<OPERATOR_KEY>` |
 
 **Margin call and auction are both permissionless.** The phased timeline plus
 each pool function's covenant invariants make the right pairing safe without
@@ -370,8 +370,8 @@ acceptRepayment to close old), they still can — it just isn't necessary.
 | Trust | Surface | Notes |
 |---|---|---|
 | **Oracle correctness** | `issue`, `liquidate`, and `acceptAuction` verify an oracle-signed price (`ticker || price || time` → `checkSigFromStack(sig, oraclePk, sha256(msg))` + freshness check). | A wrong oracle price corrupts origination (over-/under-collateralisation), the margin-call trigger, AND auction proceeds. Mitigate with multisig or threshold oracle. |
-| **Arkade cooperative path** | `serverSig` co-signs the off-chain cooperative spend. | Standard Arkade liveness assumption. Unilateral fallback via CSV-timelocked exit variant. |
-| **Server front-running on settlement** | The Arkade server co-signs every cooperative-path tx and sees both `liquidate` and `acceptAuction` txs before relaying them. Because neither requires an auctioneer signature (`auctioneerPk` is a witness pubkey), the server can refuse to co-sign a third party's settlement tx and submit its own with `auctioneerPk` set to a server-controlled key — capturing the `auctionDiscountBps` spread on every margin call and every default. | Mitigated, not eliminated, by the unilateral exit path: after arkd's exit delay an auctioneer can broadcast on-chain bypassing the server. Within the cooperative window the server has a financial incentive to extract this spread; the magnitude is bounded by `auctionDiscountBps × (defaulted + margin-called) collateral-value` per pool. Acceptable for an MVP with a trusted operator; a self-sovereign deployment runs its own server or keeps `auctionDiscountBps` small enough that the extraction surface is negligible. |
+| **Arkade cooperative path** | `operatorSig` co-signs the off-chain cooperative spend. | Standard Arkade liveness assumption. Unilateral fallback via CSV-timelocked exit variant. |
+| **Operator front-running on settlement** | The Arkade operator co-signs every cooperative-path tx and sees both `liquidate` and `acceptAuction` txs before relaying them. Because neither requires an auctioneer signature (`auctioneerPk` is a witness pubkey), the operator can refuse to co-sign a third party's settlement tx and submit its own with `auctioneerPk` set to an operator-controlled key — capturing the `auctionDiscountBps` spread on every margin call and every default. | Mitigated, not eliminated, by the unilateral exit path: after arkd's exit delay an auctioneer can broadcast on-chain bypassing the operator. Within the cooperative window the operator has a financial incentive to extract this spread; the magnitude is bounded by `auctionDiscountBps × (defaulted + margin-called) collateral-value` per pool. Acceptable for an MVP with a trusted operator; a self-sovereign deployment runs its own operator or keeps `auctionDiscountBps` small enough that the extraction surface is negligible. |
 
 ### Strict-burn invariant
 
@@ -399,7 +399,7 @@ loose lower bound.
 ## Unilateral exits (Arkade operator unavailable)
 
 Every Arkade contract emits two ASM variants per function: a cooperative
-*server variant* (covenant + Arkade co-sign) and an *exit variant* that drops
+*operator variant* (covenant + operator co-sign) and an *exit variant* that drops
 the covenant and gates the spend on an N-of-N + CSV of arkd's exit delay. The exit
 variant is the on-chain fallback when the off-chain operator is unavailable.
 
@@ -493,7 +493,7 @@ exact lines where each one would land.
 
 | # | Item | Status | Notes |
 |---|---|---|---|
-| **H1** | Server auction front-running. | Documented in §Trust model. | Server can capture `auctionDiscountBps × defaulted-collateral-value` per default by refusing to co-sign third-party auctions and substituting its own `auctioneerPk`. Mitigated by the unilateral exit path (auctioneer can broadcast on-chain after arkd's exit delay). A self-sovereign deployment runs its own server or keeps `auctionDiscountBps` small. |
+| **H1** | Operator auction front-running. | Documented in §Trust model. | The operator can capture `auctionDiscountBps × defaulted-collateral-value` per default by refusing to co-sign third-party auctions and substituting its own `auctioneerPk`. Mitigated by the unilateral exit path (auctioneer can broadcast on-chain after arkd's exit delay). A self-sovereign deployment runs its own operator or keeps `auctionDiscountBps` small. |
 | **H2** | Threshold oracle. | Today a single `oraclePk` per pool. | Replace `checkSigFromStack(sig, oraclePk, msg)` with a k-of-n threshold-oracle check; reduces single-key compromise impact on origination + auction pricing. |
 
 ### Test infrastructure cleanup

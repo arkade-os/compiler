@@ -44,13 +44,13 @@ contract SingleSig(pubkey user) {
   }
 
   function unilateral(signature userSig) tapscript {
-    require(older(serverExitDelay));
+    require(older(operatorExitDelay));
     require(checkSig(userSig, user));
   }
 }
 ```
 
-`spend` has no modifier, so it is an Arkade Script function: the body compiles to Arkade Script that the operator runs before it cosigns. Because `spend` declares no tapscript of its own, the compiler synthesizes the collaborative L1 leaf `<SERVER_KEY> OP_CHECKSIGVERIFY <EMULATOR_KEY:spend> OP_CHECKSIG` for it. `unilateral` is marked `tapscript`, so it is a pure L1 leaf: a CSV delay followed by the user's key. `serverExitDelay` is arkd's unilateral exit delay; it lowers to `<SERVER_EXIT_DELAY>`, which the SDK fills from the server's config, so it is not a constructor input.
+`spend` has no modifier, so it is an Arkade Script function: the body compiles to Arkade Script that the operator runs before it cosigns. Because `spend` declares no tapscript of its own, the compiler synthesizes the collaborative L1 leaf `<OPERATOR_KEY:spend> OP_CHECKSIG` for it: the operator key tweaked by `spend`'s Arkade Script hash. `unilateral` is marked `tapscript`, so it is a pure L1 leaf: a CSV delay followed by the user's key. `operatorExitDelay` is the operator's unilateral exit delay; it lowers to `<OPERATOR_EXIT_DELAY>`, which the SDK fills from the operator's config, so it is not a constructor input.
 
 ### Hash and time locks
 
@@ -68,23 +68,23 @@ contract HTLC(
     require(tx.outputs[0].value >= tx.inputs[0].value);
   }
 
-  function claim(bytes preimage, signature serverSig, signature emulatorSig) tapscript {
+  function claim(bytes preimage, signature operatorSig) tapscript {
     require(hash160(preimage) == preimageHash);
-    require(checkMultisig([server, emulator], [serverSig, emulatorSig]));
+    require(checkSig(operatorSig, tweak(operator, claim)));
   }
-  function refund(signature serverSig, signature emulatorSig) tapscript {
+  function refund(signature operatorSig) tapscript {
     require(after(refundTime));
-    require(checkMultisig([server, emulator], [serverSig, emulatorSig]));
+    require(checkSig(operatorSig, tweak(operator, refund)));
   }
 
   function unilateral(signature senderSig) tapscript {
-    require(older(serverExitDelay));
+    require(older(operatorExitDelay));
     require(checkSig(senderSig, sender));
   }
 }
 ```
 
-An Arkade Script function and a tapscript function with the same name form one spend group. Here each Arkade Script function is a covenant: it enforces the payout, and the leaf with the same name is the L1 shape for that path. `server` and `emulator` are reserved key roles that Arkade infrastructure signs for, so their signatures are marked `injected` in the artifact.
+An Arkade Script function and a tapscript function with the same name form one spend group. Here each Arkade Script function is a covenant: it enforces the payout, and the leaf with the same name is the L1 shape for that path. Each leaf signs with `tweak(operator, fn)`, the operator key tweaked by its function's Arkade Script hash, so the operator cosigns only once that Arkade Script passes. `operator` is the reserved key role the Arkade operator signs for, so its signatures, bare or tweaked, are marked `injected` in the artifact.
 
 ### Recursive VTXOs with `new`
 
@@ -121,7 +121,7 @@ contract TokenVault(
   }
 
   function unilateral(signature ownerSig) tapscript {
-    require(older(serverExitDelay));
+    require(older(operatorExitDelay));
     require(checkSig(ownerSig, ownerPk));
   }
 }
@@ -369,7 +369,7 @@ static function name(<params>) int { ... }     // Helper without access to const
 function name(<params>) tapscript { ... }      // L1 tapleaf, plain Bitcoin Script
 ```
 
-An Arkade Script function and its tapscript functions form one spend group: a tapscript function whose name matches it, and a tapscript function that tweaks a key to it. The group keeps a synthesized `server` + `tweak(emulator, name)` leaf unless one of those tapscripts already signs with `emulator`. A constructor-pubkey tweak is an extra leaf; it does not replace that emulator leaf. A tapscript that tweaks nothing is a standalone leaf, which is how unilateral exits are written.
+An Arkade Script function and its tapscript functions form one spend group: a tapscript function whose name matches it, and a tapscript function that tweaks a key to it. The group keeps a synthesized `checkSig(operatorSig, tweak(operator, name))` leaf unless one of those tapscripts has no CSV delay. An offchain spend sets nSequence final, so a CSV leaf is never an offchain path; it sits beside the synthesized leaf, which keeps the Arkade Script reachable offchain. A tapscript that tweaks nothing is a standalone leaf, which is how unilateral exits are written.
 
 Private functions are helpers called from Arkade Script functions and other private helpers in the same contract. Calls inline into the caller's script. Public functions are Arkade Script functions, which have no modifier and define transaction entrypoints, and tapscript functions, which define L1 leaves. Functions can be declared in any order; call graphs must be acyclic.
 
@@ -475,13 +475,13 @@ Evaluation yields a value or fails the spend, and nothing catches a failure; `&&
 
 ### Built-ins
 
-**Signatures.** In Arkade Script functions, `checkSig(sig, key)`, `checkSigFromStack(sig, key, message)`, and `checkMultisig(keys, sigs, threshold?)` return `bool` and accept computed operands. Multisig takes equal-length fixed arrays, including array literals, bindings, and helper results, and uses `OP_CHECKSIGADD`. A threshold k passes when at least k signatures are valid, and omitting it means N-of-N. Thresholds accept `int` expressions and must be between 1 and N, with runtime bounds checks for computed thresholds. `checkSigFromStackVerify(sig, key, message)` accepts computed operands and returns `true`, failing the spend unless the signature is valid; directly inside `require` it emits only the check. A non-empty signature that fails verification fails the spend instead of returning `false`, so a check that may fail, such as a quorum count in `if (checkSigFromStack(...))` or either side of `||`, needs an empty signature for every key that does not sign; the compiler warns where a check's result is used that way. The warning follows direct expressions and does not track results through boolean bindings or helper returns. The `checkSigFromStack` message must be 32 bytes, and a message of another known width is a compile error. Tapscript signature checks retain their closure syntax. `tweak(base, fn)` is a tapscript-only key expression. `base` is `emulator` or a constructor pubkey, and the key is tweaked by `fn`'s Arkade Script.
+**Signatures.** In Arkade Script functions, `checkSig(sig, key)`, `checkSigFromStack(sig, key, message)`, and `checkMultisig(keys, sigs, threshold?)` return `bool` and accept computed operands. Multisig takes equal-length fixed arrays, including array literals, bindings, and helper results, and uses `OP_CHECKSIGADD`. A threshold k passes when at least k signatures are valid, and omitting it means N-of-N. Thresholds accept `int` expressions and must be between 1 and N, with runtime bounds checks for computed thresholds. `checkSigFromStackVerify(sig, key, message)` accepts computed operands and returns `true`, failing the spend unless the signature is valid; directly inside `require` it emits only the check. A non-empty signature that fails verification fails the spend instead of returning `false`, so a check that may fail, such as a quorum count in `if (checkSigFromStack(...))` or either side of `||`, needs an empty signature for every key that does not sign; the compiler warns where a check's result is used that way. The warning follows direct expressions and does not track results through boolean bindings or helper returns. The `checkSigFromStack` message must be 32 bytes, and a message of another known width is a compile error. Tapscript signature checks retain their closure syntax. `tweak(base, fn)` is a tapscript-only key expression. `base` is `operator` or a constructor pubkey, and the key is tweaked by `fn`'s Arkade Script.
 
 **Hashes.** In Arkade Script functions, `sha256(expr)` and `hash256(expr)` return `bytes32`; `sha1(expr)`, `hash160(expr)` and `ripemd160(expr)` return `bytes20`. All five accept computed byte operands and work in bindings, helper returns, nested calls, and comparisons. Use `sha1` only for legacy interoperability: its [collision resistance is broken](https://www.nist.gov/news-events/news/2022/12/nist-retires-sha-1-cryptographic-algorithm), so do not use it for commitments, hashlocks, or other security-critical purposes; prefer `sha256` or `hash256`. Tapscript hashlocks use `require(hashFn(preimage) == hash)` with `sha256`, `hash256`, `hash160`, or `ripemd160`. Streaming: `sha256Initialize(data)` and `sha256Update(ctx, chunk)` return an opaque `bytes` context, which can also arrive as a `bytes` input, and `sha256Finalize(ctx, lastChunk)` returns the `bytes32` digest. Runtime-selected: `digest(data, hashType)`, `sighash(hashType)`.
 
 **Merkle proofs.** `merkleRoot(leafTag, branchTag, proof, leaf)` returns the `bytes32` root that `OP_MERKLEBRANCHVERIFY` computes with BIP-341 tagged hashes: the leaf is `tagged_hash(leafTag, leaf)`, and each 32-byte sibling in `proof` is combined in sorted order as `tagged_hash(branchTag, min || max)`. An empty `leafTag` (`""`) takes a 32-byte `leaf` as already hashed. Compare the result yourself, e.g. `require(merkleRoot("leaf", "branch", proof, leaf) == root)`; the VM fails the spend when `proof` is not a multiple of 32 bytes, `branchTag` is empty, or a prehashed `leaf` is not exactly 32 bytes.
 
-**Time.** In Arkade Script functions, use `checkTime(timestamp)` for time constraints. `tx.locktime` reads the transaction nLockTime using `OP_INSPECTLOCKTIME` as a plain `int`; it is not a clock. In tapscripts, `older(n)` emits CSV and `after(n)` emits CLTV. Both are tapscript-only; `tx.locktime` is not available in tapscripts. Wrap a literal or constant in `blocks(n)` or `seconds(n)` to state its unit. `older(blocks(144))` pushes `144`, and `older(seconds(1024))` pushes the BIP68 time-based sequence `4194306` (a multiple of 512 seconds, at most 33553920). `after(blocks(n))` takes a block height below 500000000, and `after(seconds(n))` takes a Unix timestamp at or above it. A parameter, or a literal without a unit, is pushed as the raw BIP68 sequence or nLockTime; the compiler warns on a literal or constant without a unit. arkd rejects block-based timelocks unless the server allows them, so arkd exit leaves should use `older(serverExitDelay)`.
+**Time.** In Arkade Script functions, use `checkTime(timestamp)` for time constraints. `tx.locktime` reads the transaction nLockTime using `OP_INSPECTLOCKTIME` as a plain `int`; it is not a clock. In tapscripts, `older(n)` emits CSV and `after(n)` emits CLTV. Both are tapscript-only; `tx.locktime` is not available in tapscripts. Wrap a literal or constant in `blocks(n)` or `seconds(n)` to state its unit. `older(blocks(144))` pushes `144`, and `older(seconds(1024))` pushes the BIP68 time-based sequence `4194306` (a multiple of 512 seconds, at most 33553920). `after(blocks(n))` takes a block height below 500000000, and `after(seconds(n))` takes a Unix timestamp at or above it. A parameter, or a literal without a unit, is pushed as the raw BIP68 sequence or nLockTime; the compiler warns on a literal or constant without a unit. arkd rejects block-based timelocks unless the operator allows them, so arkd exit leaves should use `older(operatorExitDelay)`.
 
 In Arkade Script functions, `checkTime(timestamp)` returns whether the emulator's wall clock has reached a Unix timestamp in seconds, including equality. Use `require(checkTime(unlockAt))` to enforce it. A future timestamp returns false; a negative timestamp fails the spend. This check is independent of transaction locktime and sequence.
 
@@ -509,9 +509,9 @@ In Arkade Script functions, `checkTime(timestamp)` returns whether the emulator'
 
 A tapscript body is `require` statements only, and must follow the closure template in source order: an optional single hash condition, then an optional single timelock, then exactly one `checkSig` or `checkMultisig`. Hash plus CSV is a recognized shape; hash plus CLTV is not, so split it into two leaves. arkd accepts only N-of-N leaves, so a tapscript `checkMultisig([keys], [sigs])` takes no threshold, and each signature must be a declared `signature` input aligned 1:1 with its key.
 
-The leaf script is fixed when the address is made, and the witness is supplied when it is spent. So a hash value is a byte literal or constant of the digest's width or a scalar constructor parameter, a timelock is a number, a scalar constructor parameter or `serverExitDelay`, and a tapscript input used as a key, hash value or timelock is an error. The hash preimage and the signatures are tapscript inputs, which the leaf consumes from the witness.
+The leaf script is fixed when the address is made, and the witness is supplied when it is spent. So a hash value is a byte literal or constant of the digest's width or a scalar constructor parameter, a timelock is a number, a scalar constructor parameter or `operatorExitDelay`, and a tapscript input used as a key, hash value or timelock is an error. The hash preimage and the signatures are tapscript inputs, which the leaf consumes from the witness.
 
-Keys resolve to constructor `pubkey` parameters, 32-byte `pubkey` constants, or the roles `server` and `emulator`. A constant key is pushed as its bytes and must be a 32-byte x-only key: a tapscript signature check accepts any signature for a key of another non-zero length, so other lengths are a compile error. A `checkSig` in an Arkade Script function accepts a constant key of any length. Any leaf without a CSV delay is a forfeit path and must include `server`. A leaf whose name matches an Arkade Script function must include bare `emulator`, which the compiler tweaks with that function's Arkade Script hash. A leaf with no matching Arkade Script function may not use bare `emulator`; it either stays standalone or binds to one Arkade Script function with `tweak(emulator, fn)` or `tweak(constructorPubkey, fn)`. Every tweak in a tapscript must name that same function. `older(serverExitDelay)` uses arkd's unilateral exit delay and lowers to `<SERVER_EXIT_DELAY>`, which the SDK fills from the server's config. Inputs named `server`, `emulator`, or `serverExitDelay` are rejected.
+Keys resolve to constructor `pubkey` parameters, 32-byte `pubkey` constants, the `operator` role, or a `tweak`. Bare `operator` pushes the untweaked `<OPERATOR_KEY>`, `tweak(operator, fn)` pushes `<OPERATOR_KEY:fn>`, and `tweak(k, fn)` of a constructor pubkey `k` pushes `<TWEAK:k:fn>`. A constant key is pushed as its bytes and must be a 32-byte x-only key: a tapscript signature check accepts any signature for a key of another non-zero length, so other lengths are a compile error. A `checkSig` in an Arkade Script function accepts a constant key of any length. Any leaf without a CSV delay is a forfeit path and must include `operator` or `tweak(operator, fn)`. A leaf whose name matches an Arkade Script function must tweak at least one key to that function, so it binds the function's Arkade Script; bare `operator` is never tweaked implicitly. Such a leaf must also have no CSV delay: a CSV leaf sits beside the function's synthesized leaf, which carries the function's name, so give it another name and it still joins the function's spend group through its tweak. A leaf with no matching Arkade Script function either stays standalone or binds to one Arkade Script function with `tweak(operator, fn)` or `tweak(constructorPubkey, fn)`. Every tweak in a tapscript must name that same function. `older(operatorExitDelay)` uses the operator's unilateral exit delay and lowers to `<OPERATOR_EXIT_DELAY>`, which the SDK fills from the operator's config. Constructor parameters, constants and tapscript inputs named `operator` or `operatorExitDelay` are rejected; Arkade Script function parameters may use those names.
 
 ## Lints
 
@@ -574,10 +574,9 @@ The innermost attribute wins, and an attribute wins over the CLI, except that `-
           "name": "claim",
           "witness": [
             { "name": "preimage", "type": "bytes", "encoding": "raw" },
-            { "name": "serverSig", "type": "signature", "encoding": "schnorr-64", "injected": true },
-            { "name": "emulatorSig", "type": "signature", "encoding": "schnorr-64", "injected": true }
+            { "name": "operatorSig", "type": "signature", "encoding": "schnorr-64", "injected": true }
           ],
-          "asm": ["OP_HASH160", "<preimageHash>", "OP_EQUAL", "OP_VERIFY", "<SERVER_KEY>", "OP_CHECKSIGVERIFY", "<EMULATOR_KEY:claim>", "OP_CHECKSIG"]
+          "asm": ["OP_HASH160", "<preimageHash>", "OP_EQUAL", "OP_VERIFY", "<OPERATOR_KEY:claim>", "OP_CHECKSIG"]
         }
       ]
     },
@@ -599,7 +598,7 @@ The innermost attribute wins, and an attribute wins over the CLI, except that `-
 | `constructorInputs` | One entry per source parameter, declaration order; arrays keep their size in the type, structs keep their type name |
 | `functions[]` | Spend groups: `{ name, arkade?, leaves[] }` |
 | `arkade` | `{ inputs, asm }`; absent for groups made only of standalone leaves |
-| `leaves[]` | `{ name, witness, asm }`; `witness` lists spend-time values in source order, `injected: true` marks infrastructure signatures |
+| `leaves[]` | `{ name, witness, asm }`; `witness` lists spend-time values in source order, `injected: true` marks operator signatures |
 | `contracts` | The `codeHash` of each contract a `<CONTRACT:Name(...)>` placeholder names, keyed by name; absent when there is none |
 | `codeHash` | SHA-256 of compact artifact JSON with only the fields before it, `formatVersion` through `contracts`, which determine the scripts; `source`, `compiler`, `updatedAt` and `fingerprint` are left out |
 | `source` | `{ entry, files }`: original entry source and every recursively imported file, including comments |
@@ -610,7 +609,7 @@ The fingerprint identifies artifact content, but does not authenticate its origi
 
 A contract compiled on its own has the `codeHash` that an artifact instantiating it records in `contracts`, given the same compiler and options, so a client resolving `<CONTRACT:Name(...)>` from a separately supplied artifact can check that artifact's `codeHash` against `contracts.Name`. Edits outside those fields, such as to comments or formatting, keep the `codeHash`; edits inside them change it even when the scripts stay the same, such as renaming a witness parameter or reordering struct declarations. An instantiated contract's own `contracts` are part of its `codeHash`, so the pin covers indirect instantiations too.
 
-Arkade Script function groups come first in function declaration order, followed by standalone tapscript groups in tapscript declaration order, regardless of how the declarations are interleaved. Author-written leaves within an Arkade Script function's group keep their declaration order; a synthesized emulator leaf, when needed, comes first. Clients use this order to build the Taproot tree. Reordering leaves can change the output key and address; retain the original artifact to spend existing outputs.
+Arkade Script function groups come first in function declaration order, followed by standalone tapscript groups in tapscript declaration order, regardless of how the declarations are interleaved. Author-written leaves within an Arkade Script function's group keep their declaration order; a synthesized default leaf, when kept, comes first. Clients use this order to build the Taproot tree. Reordering leaves can change the output key and address; retain the original artifact to spend existing outputs.
 
 Witness `encoding` values: `schnorr-64`, `raw`, `raw-20`, `raw-32`, `scriptnum`. `updatedAt` changes on every compile; ignore it when diffing artifacts.
 

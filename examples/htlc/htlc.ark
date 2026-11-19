@@ -20,19 +20,19 @@ contract HTLC(
     require(tx.outputs[this.activeInputIndex].value >= tx.input.current.value);
   }
 
-  // L1 leaves, bound by name.
-  function claim(bytes preimage, signature serverSig, signature emulatorSig) tapscript {
+  // L1 leaves, bound by name: the operator key tweaked by each function's Arkade Script.
+  function claim(bytes preimage, signature operatorSig) tapscript {
     require(hash160(preimage) == preimageHash);
-    require(checkMultisig([server, emulator], [serverSig, emulatorSig]));
+    require(checkSig(operatorSig, tweak(operator, claim)));
   }
-  function refund(signature serverSig, signature emulatorSig) tapscript {
+  function refund(signature operatorSig) tapscript {
     require(after(refundTime));
-    require(checkMultisig([server, emulator], [serverSig, emulatorSig]));
+    require(checkSig(operatorSig, tweak(operator, refund)));
   }
 
   // Unilateral exit (CSV).
   function unilateral(signature senderSig) tapscript {
-    require(older(serverExitDelay));
+    require(older(operatorExitDelay));
     require(checkSig(senderSig, sender));
   }
 }

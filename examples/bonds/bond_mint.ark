@@ -178,7 +178,7 @@ contract BondMint(
   // UNILATERAL EXIT (CSV)
   // Borrower recovers collateral after exit delay (Arkade operator offline).
   function unilateral(signature borrowerSig) tapscript {
-    require(older(serverExitDelay));
+    require(older(operatorExitDelay));
     require(checkSig(borrowerSig, borrowerPk));
   }
 }

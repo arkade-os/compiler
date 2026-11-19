@@ -119,7 +119,7 @@ pub fn opcode_count_in_arkade(out: &ContractJson, group_name: &str, op: &str) ->
 
 /// Signature-input names from the Arkade Script inputs, identified by name
 /// ending with "sig" (case-insensitive). These are the user-supplied signatures
-/// — excludes serverSig/emulatorSig which live in the leaf witness, not in
+/// — excludes operatorSig, which lives in the leaf witness, not in
 /// arkade.inputs.
 pub fn user_signatures(out: &ContractJson, group_name: &str) -> Vec<String> {
     arkade_inputs(out, group_name)

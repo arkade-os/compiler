@@ -358,7 +358,7 @@ contract StabilityVault(
   // Seeker recovers after exit delay (Arkade operator offline).
   // -------------------------------------------------------------------------
   function unilateral(signature seekerSig) tapscript {
-    require(older(serverExitDelay));
+    require(older(operatorExitDelay));
     require(checkSig(seekerSig, seekerPk));
   }
 }

@@ -1,7 +1,5 @@
 use arkade_compiler::compile;
-use arkade_compiler::opcodes::{
-    OP_CHECKSIG, OP_CHECKSIGFROMSTACK, OP_CHECKSIGVERIFY, OP_CHECKTIME, OP_LESSTHAN,
-};
+use arkade_compiler::opcodes::{OP_CHECKSIG, OP_CHECKSIGFROMSTACK, OP_CHECKTIME, OP_LESSTHAN};
 
 #[test]
 fn test_fuji_safe_contract() {
@@ -115,7 +113,7 @@ fn test_fuji_safe_contract() {
         assert_eq!(group.leaves[0].name, function);
         assert_eq!(
             crate::common::leaf_asm(&output, function, function),
-            format!("<SERVER_KEY> {OP_CHECKSIGVERIFY} <EMULATOR_KEY:{function}> {OP_CHECKSIG}")
+            format!("<OPERATOR_KEY:{function}> {OP_CHECKSIG}")
         );
         assert_eq!(
             group.leaves[0]
@@ -128,10 +126,7 @@ fn test_fuji_safe_contract() {
                     input.injected
                 ))
                 .collect::<Vec<_>>(),
-            [
-                ("serverSig", "signature", "schnorr-64", true),
-                ("emulatorSig", "signature", "schnorr-64", true),
-            ]
+            [("operatorSig", "signature", "schnorr-64", true)]
         );
     }
 
@@ -175,7 +170,7 @@ fn test_fuji_safe_contract() {
         "renew Arkade Script should verify treasury sig: {renew_asm}"
     );
 
-    // Unilateral exit: CSV-based, borrower only (no server involvement)
+    // Unilateral exit: CSV-based, borrower only (no operator involvement)
     let unilateral_leaf = crate::common::leaf_asm(&output, "unilateral", "unilateral");
     assert!(
         unilateral_leaf.contains("OP_CHECKSEQUENCEVERIFY"),

@@ -46,8 +46,7 @@ fn test_htlc_typescript_generates() {
     // Per-leaf witness interfaces (name collapses when leaf == group)
     assert!(code.contains("export interface HTLCClaimWitness {"));
     assert!(code.contains("preimage: Bytes;"));
-    assert!(code.contains("// serverSig injected by Arkade"));
-    assert!(code.contains("// emulatorSig injected by Arkade"));
+    assert!(code.contains("// operatorSig injected by Arkade"));
     assert!(code.contains("export interface HTLCUnilateralWitness {"));
     assert!(code.contains("senderSig: Signature;"));
 

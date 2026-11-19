@@ -5,11 +5,11 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 
 use super::walk::{Visitor, Walk};
 use super::{Finding, Lint};
-use crate::compiler::tapscript::shared_tweak_func;
+use crate::compiler::tapscript::{keeps_default_leaf, shared_tweak_func};
 use crate::diagnostics::Span;
 use crate::models::{
     AssetLookupSource, Contract, ExprKind, Expression, Function, KeyExpr, LocatedStatement,
-    Statement, TapItem, EMULATOR,
+    Statement, TapItem,
 };
 use crate::properties::{OutputProperty, ThisProperty, TxProperty};
 
@@ -130,9 +130,9 @@ pub(super) fn check(contract: &Contract, findings: &mut Vec<Finding>) {
     unsigned_spend_path(&functions, &spending_paths(contract, &functions), findings);
 }
 
-/// A tapscript leaf, or the synthesized leaf of an Arkade Script function that no leaf signs
-/// for with the emulator: whether it needs a constructor key's signature, and the Arkade Script
-/// function whose tweaked key it signs with, which must then pass too.
+/// A tapscript leaf, or the synthesized default leaf of an Arkade Script function that keeps it:
+/// whether it needs a constructor key's signature, and the Arkade Script function whose tweaked
+/// key it signs with, which must then pass too.
 type SpendingPath<'a> = (bool, Option<(&'a Function, Path)>);
 
 fn spending_paths<'a>(
@@ -140,7 +140,6 @@ fn spending_paths<'a>(
     functions: &[(&'a Function, Path)],
 ) -> Vec<SpendingPath<'a>> {
     let mut paths = Vec::new();
-    let mut emulated = HashSet::new();
     for tapscript in &contract.tapscripts {
         let keys = tapscript
             .items
@@ -151,14 +150,9 @@ fn spending_paths<'a>(
             })
             .unwrap_or_default();
         let bound = shared_tweak_func(&tapscript.name, keys).ok().flatten();
-        if keys.iter().any(|key| {
-            key.is_emulator() || matches!(key, KeyExpr::Tweak { base, .. } if base == EMULATOR)
-        }) {
-            emulated.extend(bound.clone());
-        }
-        // Every key of a leaf signs. The server and emulator co-sign every offchain spend, and a
-        // tweaked key's enclave signs whatever its function passes, so only a constructor or
-        // constant key authorizes the spend.
+        // Every key of a leaf signs. The operator co-signs every offchain spend, and a tweaked
+        // key's enclave signs whatever its function passes, so only a constructor or constant key
+        // authorizes the spend.
         let signed = keys.iter().any(|key| {
             matches!(key, KeyExpr::Literal(_))
                 || matches!(key, KeyExpr::Ident(path) if contract.parameters.iter().any(|p| p.name == path.root))
@@ -169,7 +163,7 @@ fn spending_paths<'a>(
     paths.extend(
         functions
             .iter()
-            .filter(|(f, _)| !emulated.contains(&f.name))
+            .filter(|(f, _)| keeps_default_leaf(contract, &f.name))
             .map(|&function| (false, Some(function))),
     );
     paths

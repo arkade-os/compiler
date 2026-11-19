@@ -1,7 +1,7 @@
 use arkade_compiler::compile_file;
 use arkade_compiler::opcodes::{
-    OP_CHECKLOCKTIMEVERIFY, OP_CHECKSEQUENCEVERIFY, OP_CHECKSIG, OP_CHECKSIGVERIFY,
-    OP_GREATERTHANOREQUAL, OP_HASH160, OP_INSPECTINPUTVALUE, OP_INSPECTOUTPUTVALUE,
+    OP_CHECKLOCKTIMEVERIFY, OP_CHECKSEQUENCEVERIFY, OP_CHECKSIG, OP_GREATERTHANOREQUAL, OP_HASH160,
+    OP_INSPECTINPUTVALUE, OP_INSPECTOUTPUTVALUE,
 };
 use serde_json::Value;
 use std::fs;
@@ -56,38 +56,21 @@ fn test_htlc_contract() {
         "claim Arkade Script should pay the receiver: {claim_script}"
     );
 
-    // Leaf: hash-preimage check + server/emulator multisig
+    // Leaf: hash-preimage check + the operator key tweaked by claim
     let claim_leaf = crate::common::leaf_asm(&output, "claim", "claim");
     assert!(
         claim_leaf.contains(OP_HASH160),
         "claim leaf should hash the preimage: {claim_leaf}"
     );
     assert!(
-        claim_leaf.contains("<SERVER_KEY>"),
-        "claim leaf should require server cosig: {claim_leaf}"
-    );
-    assert!(
-        claim_leaf.contains(OP_CHECKSIGVERIFY),
-        "claim leaf should have CHECKSIGVERIFY: {claim_leaf}"
-    );
-    assert!(
-        claim_leaf.contains(OP_CHECKSIG),
-        "claim leaf should have final CHECKSIG: {claim_leaf}"
+        claim_leaf.ends_with(&format!("<OPERATOR_KEY:claim> {OP_CHECKSIG}")),
+        "claim leaf should require the operator cosig bound to claim: {claim_leaf}"
     );
 
-    // Witness: preimage + serverSig + emulatorSig
-    let claim_witnesses = crate::common::witness_names(&output, "claim", "claim");
-    assert!(
-        claim_witnesses.contains(&"preimage".to_string()),
-        "claim leaf should require preimage: {claim_witnesses:?}"
-    );
-    assert!(
-        claim_witnesses.contains(&"serverSig".to_string()),
-        "claim leaf should require serverSig: {claim_witnesses:?}"
-    );
-    assert!(
-        claim_witnesses.contains(&"emulatorSig".to_string()),
-        "claim leaf should require emulatorSig: {claim_witnesses:?}"
+    // Witness: preimage + operatorSig
+    assert_eq!(
+        crate::common::witness_names(&output, "claim", "claim"),
+        ["preimage", "operatorSig"]
     );
 
     // --- refund group ------------------------------------------------------
@@ -106,7 +89,7 @@ fn test_htlc_contract() {
         "refund Arkade Script should pay the sender: {refund_script}"
     );
 
-    // Leaf: absolute timelock (CLTV) + server/emulator multisig
+    // Leaf: absolute timelock (CLTV) + the operator key tweaked by refund
     let refund_leaf = crate::common::leaf_asm(&output, "refund", "refund");
     assert!(
         refund_leaf.contains("<refundTime>"),
@@ -117,19 +100,14 @@ fn test_htlc_contract() {
         "refund leaf should enforce timelock: {refund_leaf}"
     );
     assert!(
-        refund_leaf.contains("<SERVER_KEY>"),
-        "refund leaf should require server cosig: {refund_leaf}"
+        refund_leaf.ends_with(&format!("<OPERATOR_KEY:refund> {OP_CHECKSIG}")),
+        "refund leaf should require the operator cosig bound to refund: {refund_leaf}"
     );
 
-    // Witness: serverSig + emulatorSig
-    let refund_witnesses = crate::common::witness_names(&output, "refund", "refund");
-    assert!(
-        refund_witnesses.contains(&"serverSig".to_string()),
-        "refund leaf should require serverSig: {refund_witnesses:?}"
-    );
-    assert!(
-        refund_witnesses.contains(&"emulatorSig".to_string()),
-        "refund leaf should require emulatorSig: {refund_witnesses:?}"
+    // Witness: operatorSig
+    assert_eq!(
+        crate::common::witness_names(&output, "refund", "refund"),
+        ["operatorSig"]
     );
 
     // --- unilateral group --------------------------------------------------
@@ -142,8 +120,8 @@ fn test_htlc_contract() {
 
     let unilateral_leaf = crate::common::leaf_asm(&output, "unilateral", "unilateral");
     assert!(
-        unilateral_leaf.contains("<SERVER_EXIT_DELAY>"),
-        "unilateral leaf should push the server exit delay: {unilateral_leaf}"
+        unilateral_leaf.contains("<OPERATOR_EXIT_DELAY>"),
+        "unilateral leaf should push the operator exit delay: {unilateral_leaf}"
     );
     assert!(
         unilateral_leaf.contains(OP_CHECKSEQUENCEVERIFY),

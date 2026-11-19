@@ -274,11 +274,11 @@ function_call = {
 
 // ─── Cryptographic Primitives ──────────────────────────────────────────────────
 
-// Key expression: a bare pubkey identifier (server, emulator, owner, …) or an
-// explicit emulator tweak. Used only inside checkSig/checkMultisig.
+// Key expression: a bare pubkey identifier (operator, owner, …) or a tweak.
+// Used only inside checkSig/checkMultisig.
 key_expr = { tweak_key | named_binding }
 
-// tweak(base, funcName): base is `emulator` or a constructor pubkey.
+// tweak(base, funcName): base is `operator` or a constructor pubkey.
 tweak_key = { "tweak" ~ "(" ~ identifier ~ "," ~ identifier ~ ","? ~ ")" }
 
 // Array of key expressions (widens `array`, which is identifier-only).

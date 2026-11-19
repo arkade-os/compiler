@@ -43,7 +43,7 @@ fn vault_settles_from_nine_oracle_signatures_and_stack_arithmetic() {
     assert!(asm.iter().any(|tok| tok == "1860"), "twap divisor");
     assert_eq!(
         leaf_asm(&out, "settle", "settle"),
-        "<SERVER_KEY> OP_CHECKSIGVERIFY <EMULATOR_KEY:settle> OP_CHECKSIG"
+        "<OPERATOR_KEY:settle> OP_CHECKSIG"
     );
 }
 

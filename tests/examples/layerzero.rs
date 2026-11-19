@@ -301,8 +301,8 @@ fn test_oapp_send_emits_send_marker() {
         send_group
             .leaves
             .iter()
-            .any(|l| l.asm.iter().any(|s| s == "<SERVER_KEY>")),
-        "oapp.send() must carry a server-cosigned collaborative tapleaf"
+            .any(|l| l.asm.iter().any(|s| s == "<OPERATOR_KEY:send>")),
+        "oapp.send() must carry an operator-cosigned collaborative tapleaf"
     );
 }
 
