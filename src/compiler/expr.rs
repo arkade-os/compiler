@@ -112,7 +112,7 @@ pub(crate) fn emit_expression_asm(expr: &Expression, asm: &mut Vec<Op>) {
             unreachable!("binding accesses are extracted before emission")
         }
         ExprKind::ArrayIndex { array, index } => {
-            // The validator rejects literal indexes that are not in range.
+            // `read_binding` checks a literal index past the end at runtime.
             if let Some(index) = index.literal_index() {
                 asm.push(Op::Read(array.clone().index(index)));
             } else {
