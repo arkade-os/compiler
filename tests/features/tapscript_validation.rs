@@ -64,6 +64,38 @@ contract Demo(pubkey owner) {
 }
 
 #[test]
+fn name_matched_csv_leaf_is_rejected() {
+    let source = |name: &str, preimage: &str, condition: &str| {
+        format!(
+            r#"
+contract Demo(pubkey owner, bytes32 h) {{
+    function claim(signature s) {{ require(checkSig(s, owner)); }}
+    function {name}({preimage}signature ownerSig) tapscript {{
+        {condition}require(older(blocks(144)));
+        require(checkSig(ownerSig, tweak(owner, claim)));
+    }}
+}}"#
+        )
+    };
+    for (preimage, condition) in [("", ""), ("bytes32 p, ", "require(sha256(p) == h); ")] {
+        // The default leaf stays beside a CSV leaf and is named `claim` too.
+        let err = compile(&source("claim", preimage, condition))
+            .expect_err("a CSV leaf named after its function must fail")
+            .to_string();
+        assert!(
+            err.contains("has a CSV delay") && err.contains("give the tapscript another name"),
+            "got: {err}"
+        );
+        let out = compile(&source("claimExit", preimage, condition))
+            .expect("a renamed CSV leaf joins the group");
+        let claim = crate::common::group(&out, "claim");
+        let names: Vec<_> = claim.leaves.iter().map(|leaf| leaf.name.as_str()).collect();
+        assert_eq!(names, ["claim", "claimExit"], "{condition}");
+        assert_eq!(claim.leaves[0].asm, ["<OPERATOR_KEY:claim>", "OP_CHECKSIG"]);
+    }
+}
+
+#[test]
 fn output_invariant_every_group_has_at_least_one_leaf() {
     let src = r#"
 contract Demo(pubkey owner) {

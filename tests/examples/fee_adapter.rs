@@ -19,7 +19,7 @@ fn test_fee_adapter_contract() {
     // Verify parameters
     let param_names: Vec<&str> = output.parameters.iter().map(|p| p.name.as_str()).collect();
     assert!(param_names.contains(&"senderPk"));
-    assert!(param_names.contains(&"operatorPk"));
+    assert!(param_names.contains(&"feeOperatorPk"));
     assert!(param_names.contains(&"recipientPk"));
     assert!(param_names.contains(&"minFee"));
 
@@ -91,7 +91,7 @@ fn test_fee_adapter_contract() {
         "missing {OP_CHECKSIG} in execute: {execute_asm}"
     );
 
-    // execute leaf carries the operator cosig
+    // execute leaf carries the Arkade operator cosig
     let execute_leaf = crate::common::leaf_asm(&output, "execute", "execute");
     assert!(
         execute_leaf.contains("<OPERATOR_KEY:execute>"),
@@ -102,7 +102,7 @@ fn test_fee_adapter_contract() {
     let adjust_group = crate::common::group(&output, "adjust");
     let adjust_inputs = &adjust_group.arkade.as_ref().unwrap().inputs;
     assert_eq!(adjust_inputs.len(), 1);
-    assert_eq!(adjust_inputs[0].name, "operatorSig");
+    assert_eq!(adjust_inputs[0].name, "feeOperatorSig");
 
     // Unilateral exit: standalone CSV leaf with no introspection.
     let unilateral_asm = crate::common::leaf_asm(&output, "unilateral", "unilateral");

@@ -6,13 +6,15 @@ pragma arkade ^0.1.0;
 // This contract implements a fee-taking adapter where:
 // 1. execute() - Processes a payment, verifying output asset balances
 // 2. The output must preserve assets minus fee
+// 3. adjust() - The fee operator, a party of this contract and not the Arkade
+//    operator, adjusts fee parameters
 //
 // Uses asset lookups on tx.inputs and tx.outputs with arithmetic
 // comparisons for balance verification.
 
 contract FeeAdapter(
   pubkey senderPk,
-  pubkey operatorPk,
+  pubkey feeOperatorPk,
   pubkey recipientPk,
   AssetId paymentAssetId,
   int minFee
@@ -33,10 +35,10 @@ contract FeeAdapter(
     require(checkSig(senderSig, senderPk), "invalid sender signature");
   }
 
-  // Adjust: operator adjusts fee parameters
-  function adjust(signature operatorSig) {
-    // Operator must sign
-    require(checkSig(operatorSig, operatorPk), "invalid operator signature");
+  // Adjust: the fee operator adjusts fee parameters
+  function adjust(signature feeOperatorSig) {
+    // The fee operator must sign
+    require(checkSig(feeOperatorSig, feeOperatorPk), "invalid fee operator signature");
   }
 
   // Unilateral exit (CSV): sender recovers after exit delay.

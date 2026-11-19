@@ -195,8 +195,9 @@ pub fn validate_closure_shape(c: &Closure, ts_name: &str) -> Result<(), String> 
 }
 
 /// Enforce the binding rule (§5.3): a leaf named after an Arkade Script function tweaks a key
-/// to that function, so the leaf binds its Arkade Script. `contract` supplies the Arkade Script
-/// function names.
+/// to that function, so the leaf binds its Arkade Script, and has no CSV delay, since a CSV
+/// leaf sits beside the function's default leaf, which carries that name. `contract` supplies
+/// the Arkade Script function names.
 pub fn resolve_binding(contract: &Contract, ts: &NamedTapscript) -> Result<(), String> {
     if contract
         .functions
@@ -224,11 +225,24 @@ pub fn resolve_binding(contract: &Contract, ts: &NamedTapscript) -> Result<(), S
         })
         .unwrap_or_default();
     match shared_tweak_func(&ts.name, keys)? {
-        Some(func) if func == ts.name => Ok(()),
-        Some(func) => Err(format!(
+        Some(func) if func != ts.name => Err(format!(
             "function-bound tapscript `{}` may tweak keys only to `{}`, not `{func}`",
             ts.name, ts.name
         )),
+        Some(_)
+            if ts
+                .items
+                .iter()
+                .any(|item| matches!(item, TapItem::Older { .. })) =>
+        {
+            Err(format!(
+                "tapscript `{0}` has a CSV delay, so it sits beside `{0}`'s default leaf, which \
+                 is named `{0}`; give the tapscript another name, and it still joins `{0}`'s \
+                 spend group through its tweak",
+                ts.name
+            ))
+        }
+        Some(_) => Ok(()),
         None => Err(format!(
             "function-bound tapscript `{0}` must tweak a key to `{0}`, e.g. tweak(operator, {0})",
             ts.name
