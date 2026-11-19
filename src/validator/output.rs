@@ -69,7 +69,7 @@ pub(crate) fn validate_output(output: &ContractJson) -> Vec<ValidationIssue> {
             }
             // Leaf ASM must not carry signature placeholders (sigs are witness).
             // Case-insensitive: a leaked placeholder may be named `<sig>`,
-            // `<ownersig>`, or `<serverSig>` depending on the source naming —
+            // `<ownersig>`, or `<operatorSig>` depending on the source naming —
             // all must trip this compiler-bug self-check.
             if leaf
                 .asm

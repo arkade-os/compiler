@@ -1,7 +1,7 @@
 use arkade_compiler::compile;
 
 #[test]
-fn forfeit_leaf_without_server_is_rejected() {
+fn forfeit_leaf_without_operator_is_rejected() {
     let src = r#"
 contract Demo(pubkey owner, pubkey liquidator) {
     function liquidate(signature liquidatorSig, signature ownerSig) tapscript {
@@ -10,25 +10,57 @@ contract Demo(pubkey owner, pubkey liquidator) {
 }
 "#;
     let err = compile(src)
-        .expect_err("forfeit without server must fail")
+        .expect_err("forfeit without the operator must fail")
         .to_string();
-    assert!(err.contains("server"), "got: {err}");
+    assert!(
+        err.contains("must include `operator` or `tweak(operator, fn)`"),
+        "got: {err}"
+    );
 }
 
 #[test]
-fn standalone_emulator_is_rejected() {
+fn forfeit_leaf_with_a_tweaked_operator_is_accepted() {
     let src = r#"
-contract Demo(pubkey owner) {
-    function weird(signature serverSig, signature emulatorSig) tapscript {
-        require(checkMultisig([server, emulator], [serverSig, emulatorSig]));
+contract Demo(pubkey owner, pubkey liquidator) {
+    function claim() { require(tx.outputs[0].value >= 1); }
+    function liquidate(signature operatorSig, signature ownerSig) tapscript {
+        require(checkMultisig([tweak(operator, claim), owner], [operatorSig, ownerSig]));
     }
 }
 "#;
-    // `weird` matches no function → bare emulator forbidden.
+    let out = compile(src).expect("a tweaked operator key satisfies F2");
+    let claim = crate::common::group(&out, "claim");
+    assert_eq!(
+        claim.leaves.len(),
+        1,
+        "the forfeit leaf replaces the default"
+    );
+    assert_eq!(
+        claim.leaves[0].asm,
+        [
+            "<OPERATOR_KEY:claim>",
+            "OP_CHECKSIGVERIFY",
+            "<owner>",
+            "OP_CHECKSIG"
+        ]
+    );
+}
+
+#[test]
+fn name_matched_leaf_without_a_tweak_is_rejected() {
+    let src = r#"
+contract Demo(pubkey owner) {
+    function spend() { require(tx.outputs[0].value >= 1); }
+    function spend(signature operatorSig, signature ownerSig) tapscript {
+        require(checkMultisig([operator, owner], [operatorSig, ownerSig]));
+    }
+}
+"#;
+    // Bare `operator` is never tweaked implicitly, so the leaf binds no Arkade Script.
     let err = compile(src)
-        .expect_err("bare emulator in standalone must fail")
+        .expect_err("a name-matched leaf must tweak a key to its function")
         .to_string();
-    assert!(err.contains("standalone"), "got: {err}");
+    assert!(err.contains("must tweak a key to `spend`"), "got: {err}");
 }
 
 #[test]
@@ -52,29 +84,29 @@ fn a_tapscript_input_cannot_be_a_pushed_operand() {
     let cases = [
         (
             "pubkey k",
-            "require(checkMultisig([server, k], [serverSig, sig]));",
+            "require(checkMultisig([operator, k], [operatorSig, sig]));",
             "a key",
         ),
         (
             "pubkey k",
-            "require(checkMultisig([server, tweak(k, claim)], [serverSig, sig]));",
+            "require(checkMultisig([operator, tweak(k, claim)], [operatorSig, sig]));",
             "a key",
         ),
         (
             "bytes32 pre, bytes32 h",
             "require(sha256(pre) == h); \
-             require(checkMultisig([server, owner], [serverSig, sig]));",
+             require(checkMultisig([operator, owner], [operatorSig, sig]));",
             "a hash value",
         ),
         (
             "int t",
-            "require(older(t)); require(checkMultisig([server, owner], [serverSig, sig]));",
+            "require(older(t)); require(checkMultisig([operator, owner], [operatorSig, sig]));",
             "a timelock",
         ),
     ];
     for (inputs, body, role) in cases {
         let src = format!(
-            "contract K(pubkey owner) {{\n  function claim({inputs}, signature serverSig, \
+            "contract K(pubkey owner) {{\n  function claim({inputs}, signature operatorSig, \
              signature sig) tapscript {{\n    {body}\n  }}\n}}"
         );
         let err = compile(&src)
@@ -91,9 +123,9 @@ fn a_tapscript_input_cannot_be_a_pushed_operand() {
 fn a_constructor_parameter_cannot_be_the_preimage() {
     let src = r#"
 contract P(pubkey owner, bytes32 pre, bytes32 h) {
-    function claim(signature serverSig, signature sig) tapscript {
+    function claim(signature operatorSig, signature sig) tapscript {
         require(sha256(pre) == h);
-        require(checkMultisig([server, owner], [serverSig, sig]));
+        require(checkMultisig([operator, owner], [operatorSig, sig]));
     }
 }
 "#;

@@ -148,7 +148,7 @@ contract Mutate() {
     assert_eq!(group.leaves[0].name, "spend");
     assert_eq!(
         crate::common::witness_names(&output, "spend", "spend"),
-        ["serverSig", "emulatorSig"]
+        ["operatorSig"]
     );
     assert!(group.leaves[0]
         .witness
@@ -156,7 +156,7 @@ contract Mutate() {
         .all(|w| w.elem_type == "signature" && w.injected));
     assert_eq!(
         crate::common::leaf_asm(&output, "spend", "spend"),
-        "<SERVER_KEY> OP_CHECKSIGVERIFY <EMULATOR_KEY:spend> OP_CHECKSIG"
+        "<OPERATOR_KEY:spend> OP_CHECKSIG"
     );
     let script = group.arkade.as_ref().expect("spend Arkade Script");
     assert_eq!(
@@ -248,7 +248,7 @@ contract RuntimeIndex() {
     assert_eq!(group.leaves[0].name, "spend");
     assert_eq!(
         crate::common::witness_names(&output, "spend", "spend"),
-        ["serverSig", "emulatorSig"]
+        ["operatorSig"]
     );
     assert!(group.leaves[0]
         .witness
@@ -256,7 +256,7 @@ contract RuntimeIndex() {
         .all(|w| w.elem_type == "signature" && w.injected));
     assert_eq!(
         crate::common::leaf_asm(&output, "spend", "spend"),
-        "<SERVER_KEY> OP_CHECKSIGVERIFY <EMULATOR_KEY:spend> OP_CHECKSIG"
+        "<OPERATOR_KEY:spend> OP_CHECKSIG"
     );
     let script = group.arkade.as_ref().expect("spend Arkade Script");
     assert_eq!(
@@ -444,11 +444,11 @@ contract Paths(int unused, int left, int right, pubkey exitKey, int delay) {
         assert_eq!(group.leaves.len(), 1);
         assert_eq!(
             crate::common::witness_names(&output, name, name),
-            ["serverSig", "emulatorSig"]
+            ["operatorSig"]
         );
         assert_eq!(
             crate::common::leaf_asm(&output, name, name),
-            format!("<SERVER_KEY> OP_CHECKSIGVERIFY <EMULATOR_KEY:{name}> OP_CHECKSIG")
+            format!("<OPERATOR_KEY:{name}> OP_CHECKSIG")
         );
     }
     assert_eq!(

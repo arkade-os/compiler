@@ -283,7 +283,7 @@ fn emit_packet_result_asm(presence_only: bool, asm: &mut Vec<Op>) {
 ///
 /// Produces a `<CONTRACT:ContractName(<arg1>,<arg2>)>` placeholder for the
 /// 32-byte Taproot witness program, followed by witness version 1.
-/// Options (server key, exit timelock) are inherited from the enclosing contract
+/// Options (operator key, exit timelock) are inherited from the enclosing contract
 /// and must be applied by the runtime when computing the child contract's key.
 pub(crate) fn emit_contract_instance_asm(
     contract_name: &str,

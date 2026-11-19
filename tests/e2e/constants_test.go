@@ -55,8 +55,8 @@ func TestPubkeyConstantTapscriptKey(t *testing.T) {
 	err := os.WriteFile(source, []byte(fmt.Sprintf(`
 contract Oracle() {
     const pubkey ORACLE = 0x%x;
-    function settle(signature serverSig, signature oracleSig) tapscript {
-        require(checkMultisig([server, ORACLE], [serverSig, oracleSig]));
+    function settle(signature operatorSig, signature oracleSig) tapscript {
+        require(checkMultisig([operator, ORACLE], [operatorSig, oracleSig]));
     }
 }`, schnorr.SerializePubKey(oracleKey.PubKey()))), 0600)
 	if err != nil {

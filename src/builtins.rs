@@ -425,7 +425,7 @@ const SPELLED: &[Spelled] = &[
             "tweak",
             &["pubkey base", "function name"],
             "pubkey",
-            "base (emulator or a constructor pubkey) tweaked by the named function's Arkade Script hash. A \
+            "base (operator or a constructor pubkey) tweaked by the named function's Arkade Script hash. A \
              tapscript-only key expression inside checkSig or checkMultisig.",
         )
     },

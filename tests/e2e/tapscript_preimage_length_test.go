@@ -19,9 +19,9 @@ func TestTapscriptHashlockPreimageLength(t *testing.T) {
 			t.Run(fmt.Sprintf("%s/%d", declaredType, length), func(t *testing.T) {
 				preimage := bytes.Repeat([]byte{0x42}, length)
 				source := fmt.Sprintf(`contract C(pubkey owner, bytes20 digest) {
-    function claim(%s preimage, signature serverSig, signature ownerSig) tapscript {
+    function claim(%s preimage, signature operatorSig, signature ownerSig) tapscript {
         require(hash160(preimage) == digest);
-        require(checkMultisig([server, owner], [serverSig, ownerSig]));
+        require(checkMultisig([operator, owner], [operatorSig, ownerSig]));
     }
 }`, declaredType)
 				path := filepath.Join(t.TempDir(), "preimage.ark")

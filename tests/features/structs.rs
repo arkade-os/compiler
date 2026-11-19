@@ -498,7 +498,7 @@ contract C() {
     assert_eq!(group.leaves[0].name, "spend");
     assert_eq!(
         crate::common::witness_names(&output, "spend", "spend"),
-        ["serverSig", "emulatorSig"]
+        ["operatorSig"]
     );
     assert!(group.leaves[0]
         .witness
@@ -506,7 +506,7 @@ contract C() {
         .all(|w| w.elem_type == "signature" && w.injected));
     assert_eq!(
         crate::common::leaf_asm(&output, "spend", "spend"),
-        "<SERVER_KEY> OP_CHECKSIGVERIFY <EMULATOR_KEY:spend> OP_CHECKSIG"
+        "<OPERATOR_KEY:spend> OP_CHECKSIG"
     );
     let script = group.arkade.as_ref().expect("spend Arkade Script");
     assert_eq!(
@@ -1009,11 +1009,11 @@ contract C() {
     assert_eq!(crate::common::group(&output, "spend").leaves.len(), 1);
     assert_eq!(
         crate::common::witness_names(&output, "spend", "spend"),
-        ["serverSig", "emulatorSig"]
+        ["operatorSig"]
     );
     assert_eq!(
         crate::common::leaf_asm(&output, "spend", "spend"),
-        "<SERVER_KEY> OP_CHECKSIGVERIFY <EMULATOR_KEY:spend> OP_CHECKSIG"
+        "<OPERATOR_KEY:spend> OP_CHECKSIG"
     );
     let asm = crate::common::arkade_asm_tokens(&output, "spend");
     assert!(asm.iter().any(|op| op == "OP_ECADD"));

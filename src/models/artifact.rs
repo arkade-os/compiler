@@ -52,7 +52,7 @@ pub struct WitnessElement {
 /// The Arkade Script that the operator runs for an Arkade Script function's spend group.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ArkadeScript {
-    /// Function inputs (function parameters, array-expanded). No server/emulator sigs.
+    /// Function inputs (function parameters, array-expanded). No operator sigs.
     pub inputs: Vec<FunctionInput>,
     /// Arkade Script assembly.
     pub asm: Vec<String>,

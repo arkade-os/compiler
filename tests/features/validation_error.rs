@@ -178,7 +178,7 @@ contract DupFuncs(pubkey owner) {
 
 #[test]
 fn reserved_role_as_constructor_param_is_rejected() {
-    for role in ["server", "emulator", "serverExitDelay"] {
+    for role in ["operator", "operatorExitDelay"] {
         let source = format!(
             r#"
 contract Reserved(pubkey {role}) {{
@@ -201,34 +201,66 @@ contract Reserved(pubkey {role}) {{
 }
 
 #[test]
-fn server_exit_delay_as_tapscript_input_is_rejected() {
+fn former_roles_are_ordinary_constructor_keys() {
+    let source = r#"
+contract Former(pubkey server, pubkey emulator) {
+    function spend(signature serverSig, signature emulatorSig) {
+        require(checkSig(serverSig, server));
+        require(checkSig(emulatorSig, emulator));
+    }
+    function exit(signature serverSig, signature emulatorSig) tapscript {
+        require(older(operatorExitDelay));
+        require(checkMultisig([server, emulator], [serverSig, emulatorSig]));
+    }
+}"#;
+    let out = compile(source).expect("server and emulator are not reserved");
+    let names: Vec<_> = out.parameters.iter().map(|p| p.name.as_str()).collect();
+    assert_eq!(names, ["server", "emulator"]);
+    let exit = &crate::common::group(&out, "exit").leaves[0];
+    assert_eq!(
+        exit.asm,
+        [
+            "<OPERATOR_EXIT_DELAY>",
+            "OP_CHECKSEQUENCEVERIFY",
+            "OP_DROP",
+            "<server>",
+            "OP_CHECKSIGVERIFY",
+            "<emulator>",
+            "OP_CHECKSIG"
+        ]
+    );
+    assert!(exit.witness.iter().all(|w| !w.injected));
+}
+
+#[test]
+fn operator_exit_delay_as_tapscript_input_is_rejected() {
     let source = r#"
 contract Reserved(pubkey owner) {
-    function exit(int serverExitDelay, signature ownerSig) tapscript {
-        require(older(serverExitDelay));
+    function exit(int operatorExitDelay, signature ownerSig) tapscript {
+        require(older(operatorExitDelay));
         require(checkSig(ownerSig, owner));
     }
 }"#;
     let error = compile(source).unwrap_err().to_string();
     assert!(
-        error.contains("input 'serverExitDelay' collides with a reserved arkd name"),
+        error.contains("input 'operatorExitDelay' collides with a reserved arkd name"),
         "got: {error}"
     );
 }
 
 #[test]
-fn internal_server_key_placeholder_name_is_rejected() {
+fn internal_operator_key_placeholder_name_is_rejected() {
     let source = r#"
-contract Reserved(pubkey SERVER_KEY) {
+contract Reserved(pubkey OPERATOR_KEY) {
     function spend() {
         require(tx.outputs[0].value >= 1);
     }
 }"#;
     let error = compile(source)
-        .expect_err("SERVER_KEY must remain compiler-owned")
+        .expect_err("OPERATOR_KEY must remain compiler-owned")
         .to_string();
     assert!(
-        error.contains("SERVER_KEY") && error.contains("compiler-reserved placeholder"),
+        error.contains("OPERATOR_KEY") && error.contains("compiler-reserved placeholder"),
         "unexpected error: {error}"
     );
 }
@@ -240,11 +272,11 @@ contract DupLeaves(pubkey owner) {
     function spend() {
         require(tx.outputs[0].value >= 1);
     }
-    function spend(signature serverSig, signature emulatorSig) tapscript {
-        require(checkMultisig([server, emulator], [serverSig, emulatorSig]));
+    function spend(signature operatorSig) tapscript {
+        require(checkSig(operatorSig, tweak(operator, spend)));
     }
-    function spend(signature serverSig, signature emulatorSig) tapscript {
-        require(checkMultisig([server, emulator], [serverSig, emulatorSig]));
+    function spend(signature operatorSig) tapscript {
+        require(checkSig(operatorSig, tweak(operator, spend)));
     }
 }"#;
     let result = compile(source);

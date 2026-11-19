@@ -4,9 +4,9 @@ use arkade_compiler::opcodes::{OP_CHECKSEQUENCEVERIFY, OP_CHECKSIG, OP_CHECKSIGV
 use crate::common::{group, leaf_asm, witness_names};
 
 // A bare VTXO has no Arkade Script — it is just L1 taproot leaves:
-//   • a collaborative forfeit closure (server + user), and
+//   • a collaborative forfeit closure (operator + user), and
 //   • a unilateral CSV exit closure (user alone after a delay).
-// Both are standalone `tapscript`s, so `server` is the reserved key role (→ <SERVER_KEY>).
+// Both are standalone `tapscript`s, so `operator` is the reserved key role (→ <OPERATOR_KEY>).
 #[test]
 fn test_bare_vtxo_contract() {
     let vtxo_code = r#"
@@ -14,9 +14,9 @@ contract SingleSig(
   pubkey user,
   int exitDelay
 ) {
-  // Collaborative path: server + user (N-of-N forfeit closure).
-  function cooperative(signature serverSig, signature userSig) tapscript {
-    require(checkMultisig([server, user], [serverSig, userSig]));
+  // Collaborative path: operator + user (N-of-N forfeit closure).
+  function cooperative(signature operatorSig, signature userSig) tapscript {
+    require(checkMultisig([operator, user], [operatorSig, userSig]));
   }
 
   // Unilateral exit: user alone after a CSV delay (exit closure).
@@ -32,7 +32,7 @@ contract SingleSig(
 
     assert_eq!(output.name, "SingleSig");
 
-    // Parameters: user pubkey + exitDelay int (no serverPk — server is a reserved role).
+    // Parameters: user pubkey + exitDelay int (no operatorPk — operator is a reserved role).
     assert_eq!(output.parameters.len(), 2);
     assert_eq!(output.parameters[0].name, "user");
     assert_eq!(output.parameters[0].param_type.to_string(), "pubkey");
@@ -41,7 +41,7 @@ contract SingleSig(
 
     assert_eq!(output.functions.len(), 2);
 
-    // ── cooperative closure: no Arkade Script, [server, user] ─────────
+    // ── cooperative closure: no Arkade Script, [operator, user] ─────────
     let coop = group(&output, "cooperative");
     assert!(
         coop.arkade.is_none(),
@@ -50,8 +50,8 @@ contract SingleSig(
 
     let coop_leaf = leaf_asm(&output, "cooperative", "cooperative");
     assert!(
-        coop_leaf.contains("<SERVER_KEY>"),
-        "cooperative: server role must lower to <SERVER_KEY>: {coop_leaf}"
+        coop_leaf.contains("<OPERATOR_KEY>"),
+        "cooperative: operator role must lower to <OPERATOR_KEY>: {coop_leaf}"
     );
     assert!(
         coop_leaf.contains("<user>"),
@@ -63,9 +63,9 @@ contract SingleSig(
         "cooperative: expected N-of-N checksig chain: {coop_leaf}"
     );
 
-    // Witness carries both sigs; serverSig is infra-injected, userSig author-supplied.
+    // Witness carries both sigs; operatorSig is injected, userSig author-supplied.
     let coop_witness = witness_names(&output, "cooperative", "cooperative");
-    assert_eq!(coop_witness, vec!["serverSig", "userSig"]);
+    assert_eq!(coop_witness, vec!["operatorSig", "userSig"]);
 
     // ── unilateral closure: CSV delay + user checksig (exit closure) ─────────
     let uni = group(&output, "unilateral");

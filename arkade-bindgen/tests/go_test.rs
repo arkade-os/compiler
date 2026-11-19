@@ -40,8 +40,7 @@ fn test_htlc_go_generates() {
     // Per-leaf witness structs (name collapses when leaf == group)
     assert!(code.contains("type HTLCClaimWitness struct {"));
     assert!(code.contains("Preimage []byte"));
-    assert!(code.contains("// ServerSig injected by Arkade"));
-    assert!(code.contains("// EmulatorSig injected by Arkade"));
+    assert!(code.contains("// OperatorSig injected by Arkade"));
     assert!(code.contains("type HTLCUnilateralWitness struct {"));
     assert!(code.contains("SenderSig [64]byte"));
 

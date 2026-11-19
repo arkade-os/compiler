@@ -112,7 +112,7 @@ fn arkade_script_time_comparisons_use_inspection() {
 fn tapleaf_after_uses_cltv() {
     for bound in ["500000", "DEADLINE", "deadline"] {
         let output = compile(&format!(
-            "contract Vault(int deadline) {{ const int DEADLINE = 500000; function exit(signature sig) tapscript {{ require(after({bound})); require(checkSig(sig, server)); }} }}"
+            "contract Vault(int deadline) {{ const int DEADLINE = 500000; function exit(signature sig) tapscript {{ require(after({bound})); require(checkSig(sig, operator)); }} }}"
         )).unwrap();
         let operand = if bound == "deadline" {
             "<deadline>"
@@ -121,7 +121,7 @@ fn tapleaf_after_uses_cltv() {
         };
         assert_eq!(
             leaf_asm(&output, "exit", "exit"),
-            format!("{operand} OP_CHECKLOCKTIMEVERIFY OP_DROP <SERVER_KEY> OP_CHECKSIG")
+            format!("{operand} OP_CHECKLOCKTIMEVERIFY OP_DROP <OPERATOR_KEY> OP_CHECKSIG")
         );
         assert!(group(&output, "exit").arkade.is_none());
         assert_eq!(witness_names(&output, "exit", "exit"), ["sig"]);
@@ -228,11 +228,10 @@ fn reserved_names_cannot_be_constants() {
     for name in [
         "true",
         "false",
-        "server",
-        "emulator",
-        "serverExitDelay",
-        "SERVER_KEY",
-        "SERVER_EXIT_DELAY",
+        "operator",
+        "operatorExitDelay",
+        "OPERATOR_KEY",
+        "OPERATOR_EXIT_DELAY",
     ] {
         let source = format!(
             "contract Vault() {{ const int {name} = 10; function spend() {{ require(true); }} }}"
@@ -311,12 +310,12 @@ contract Vault() {{
     function exit(signature sig, bytes preimage) tapscript {{
         require(sha256(preimage) == {hash});
         require(older(blocks(10)));
-        require(checkSig(sig, server));
+        require(checkSig(sig, operator));
     }}
     function refund(signature sig, bytes preimage) tapscript {{
         require(hash160(preimage) == Keys.DIGEST);
         require(older(blocks(10)));
-        require(checkSig(sig, server));
+        require(checkSig(sig, operator));
     }}
     const bytes32 TAG = Keys.HASH;
     const bytes20 ID = Keys.DIGEST;
@@ -349,9 +348,9 @@ contract Vault() {{
         ("const pubkey H = \"\";", "", "constant 'H' is not a valid 'pubkey' literal"),
         ("", "function spend(bytes p) { require(sha256(p) == ID); }", "not defined between 'bytes32' and 'bytes20'"),
         ("", "function spend(bytes20 v) { require(v == TAG); }", "not defined between 'bytes20' and 'bytes32'"),
-        ("", "function exit(signature sig, bytes p) tapscript { require(sha256(p) == ID); require(older(10)); require(checkSig(sig, server)); }", "sha256 value"),
-        ("", "function exit(signature sig, bytes p) tapscript { require(sha256(p) == 0xabcd); require(older(10)); require(checkSig(sig, server)); }", "sha256 value `0xabcd` has type 'bytes'"),
-        ("", "function exit(signature sig, bytes p) tapscript { require(hash160(p) == \"\"); require(older(10)); require(checkSig(sig, server)); }", "hash160 value `0x` has type 'bytes'"),
+        ("", "function exit(signature sig, bytes p) tapscript { require(sha256(p) == ID); require(older(10)); require(checkSig(sig, operator)); }", "sha256 value"),
+        ("", "function exit(signature sig, bytes p) tapscript { require(sha256(p) == 0xabcd); require(older(10)); require(checkSig(sig, operator)); }", "sha256 value `0xabcd` has type 'bytes'"),
+        ("", "function exit(signature sig, bytes p) tapscript { require(hash160(p) == \"\"); require(older(10)); require(checkSig(sig, operator)); }", "hash160 value `0x` has type 'bytes'"),
     ] {
         let error = error(&format!(
             "contract Vault() {{ const bytes32 TAG = {hash}; const bytes20 ID = {digest}; {declaration} {body} }}"
@@ -373,7 +372,7 @@ fn pubkey_constants_are_x_only_tapscript_keys() {
     };
     let output = build(
         "function exit(signature sig) tapscript { require(older(blocks(10))); require(checkSig(sig, LOCAL)); }
-         function settle(signature serverSig, signature oracleSig, signature ownerSig) tapscript { require(checkMultisig([server, Keys.ORACLE, owner], [serverSig, oracleSig, ownerSig])); }",
+         function settle(signature operatorSig, signature oracleSig, signature ownerSig) tapscript { require(checkMultisig([operator, Keys.ORACLE, owner], [operatorSig, oracleSig, ownerSig])); }",
     )
     .unwrap();
     assert_eq!(
@@ -382,12 +381,12 @@ fn pubkey_constants_are_x_only_tapscript_keys() {
     );
     assert_eq!(
         leaf_asm(&output, "settle", "settle"),
-        format!("<SERVER_KEY> OP_CHECKSIGVERIFY {key} OP_CHECKSIGVERIFY <owner> OP_CHECKSIG")
+        format!("<OPERATOR_KEY> OP_CHECKSIGVERIFY {key} OP_CHECKSIGVERIFY <owner> OP_CHECKSIG")
     );
     assert_eq!(witness_names(&output, "exit", "exit"), ["sig"]);
     assert_eq!(
         witness_names(&output, "settle", "settle"),
-        ["serverSig", "oracleSig", "ownerSig"]
+        ["operatorSig", "oracleSig", "ownerSig"]
     );
     assert_eq!(output.parameters.len(), 1);
 
@@ -398,11 +397,11 @@ fn pubkey_constants_are_x_only_tapscript_keys() {
         ),
         (
             "function exit(signature sig) tapscript { require(older(10)); require(checkSig(sig, tweak(LOCAL, spend))); }",
-            "`LOCAL` is not a constructor pubkey",
+            "`LOCAL` is not `operator` or a constructor pubkey",
         ),
         (
             "function exit(signature sig) tapscript { require(checkSig(sig, LOCAL)); }",
-            "must include `server`",
+            "must include `operator`",
         ),
     ] {
         let error = build(members).expect_err(members).to_string();
@@ -618,7 +617,7 @@ fn constant_array_sizes_must_be_positive_integers_in_every_declaration() {
         for source in [
             "contract Vault(int[N] values) { DECL function spend() { require(true); } }",
             "contract Vault() { DECL function spend(int[N] values) { require(true); } }",
-            "contract Vault() { DECL function exit(signature[N] sigs) tapscript { require(older(10)); require(checkSig(sigs[0], server)); } }",
+            "contract Vault() { DECL function exit(signature[N] sigs) tapscript { require(older(10)); require(checkSig(sigs[0], operator)); } }",
             "contract Vault() { DECL function spend() { int[N] values = [1]; require(true); } }",
             "struct State { int[N] values; } contract Vault() { DECL function spend() { require(true); } }",
             "contract Vault() { DECL static function helper() int[N] { return [1]; } function spend() { require(true); } }",

@@ -431,7 +431,7 @@ fn test_accept_auction_is_permissionless_oracle_priced_phased() {
         "acceptAuction enforces checkTime(maturity)"
     );
 
-    // Excluding serverSig/emulatorSig (in the leaf witness, not arkade.inputs),
+    // Excluding operatorSig (in the leaf witness, not arkade.inputs),
     // exactly ONE signature in arkade.inputs: the oracle. No auctioneer
     // signature — auction is permissionless.
     let ws = arkade_inputs(&output, "acceptAuction");
@@ -772,7 +772,7 @@ fn test_roll_pair_enforces_all_deployment_invariants() {
 #[ignore = "dynamic contract reconstruction is temporarily disabled"]
 fn test_default_leaves_carry_no_introspection() {
     // Every Arkade Script function has a synthesized default leaf:
-    //   `<SERVER_KEY> OP_CHECKSIGVERIFY <EMULATOR_KEY:fn> OP_CHECKSIG`
+    //   `<OPERATOR_KEY:fn> OP_CHECKSIG`
     // All Arkade Script introspection lives in the arkade block; the leaves are
     // pure cosig. This test verifies no introspection opcode leaked into any
     // default leaf.
@@ -793,9 +793,10 @@ fn test_default_leaves_carry_no_introspection() {
             "{fn_name} default leaf must not carry Arkade Script introspection (got: {leaf_asm})"
         );
         // Each default leaf is exactly the synthesized cosig form.
-        assert!(
-            leaf_asm.contains("OP_CHECKSIGVERIFY"),
-            "{fn_name} default leaf must have SERVER_KEY OP_CHECKSIGVERIFY EMULATOR_KEY OP_CHECKSIG form"
+        assert_eq!(
+            leaf_asm,
+            format!("<OPERATOR_KEY:{fn_name}> OP_CHECKSIG"),
+            "{fn_name} default leaf must have the OPERATOR_KEY:fn OP_CHECKSIG form"
         );
     }
 }

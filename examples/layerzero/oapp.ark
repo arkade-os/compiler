@@ -153,9 +153,8 @@ contract OApp(
   //   (a) the OApp control singleton, which only sits on the real OApp state;
   //   (b) the USDT0 input UTXOs, each requiring their own owner sig under
   //       their per-UTXO scripts;
-  //   (c) the Arkade server + emulator cosign on the synthesized default
-  //       collaborative tapleaf. No contract-level owner signature exists or
-  //       is needed.
+  //   (c) the Arkade operator's cosignature on the synthesized default
+  //       tapleaf. No contract-level owner signature exists or is needed.
   // -------------------------------------------------------------------------
   @expect(outputs-shared-across-inputs, "output 0 carries the OApp control singleton, so only one input can be the OApp state")
   @allow(unsigned-spend-path, "the OApp control singleton and the USDT0 owners' own input signatures authorize the send")

@@ -10,7 +10,7 @@ contract SingleSig(
 
   // Unilateral exit (CSV).
   function unilateral(signature userSig) tapscript {
-    require(older(serverExitDelay));
+    require(older(operatorExitDelay));
     require(checkSig(userSig, user));
   }
 }

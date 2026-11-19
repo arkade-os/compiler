@@ -171,7 +171,7 @@ contract HtlcForwarder(pubkey sender, pubkey receiver, bytes hash, int refundTim
 #[test]
 fn test_new_expression_exit_path_uses_nofn_checksig() {
     // ContractInstance uses non-Bitcoin-Script opcodes (OP_INSPECTOUTPUTSCRIPTPUBKEY),
-    // so the only L1 leaf is the synthesized server+emulator cosig guard — no
+    // so the only L1 leaf is the synthesized operator cosig guard — no
     // introspection opcodes appear there.
     let code = r#"
 import "single_sig.ark";
@@ -185,7 +185,7 @@ contract RecursiveVtxo(pubkey ownerPk, int exit) {
 
     let result = compile(code).expect("Compile failed");
 
-    // The synthesized default leaf must use CHECKSIG (server+emulator N-of-N cosig)
+    // The synthesized default leaf must use CHECKSIG (the operator cosig)
     let send_leaf = leaf_asm(&result, "send", "send");
     assert!(
         send_leaf.contains("OP_CHECKSIG") || send_leaf.contains("OP_CHECKSIGVERIFY"),
@@ -237,13 +237,8 @@ contract RecursiveVtxo(pubkey ownerPk, int exit) {
         "Unexpected Arkade Script ASM"
     );
 
-    // Default leaf ASM: server+emulator cosig guard.
-    let expected_leaf: Vec<&str> = vec![
-        "<SERVER_KEY>",
-        "OP_CHECKSIGVERIFY",
-        "<EMULATOR_KEY:send>",
-        "OP_CHECKSIG",
-    ];
+    // Default leaf ASM: operator cosig guard.
+    let expected_leaf: Vec<&str> = vec!["<OPERATOR_KEY:send>", "OP_CHECKSIG"];
     assert_eq!(
         leaf_asm_tokens(&result, "send", "send"),
         expected_leaf,
@@ -253,7 +248,7 @@ contract RecursiveVtxo(pubkey ownerPk, int exit) {
 
 #[test]
 fn test_exit_path_asm_order() {
-    // Arkade Script functions without a tapscript get the synthesized server+emulator cosig leaf.
+    // Arkade Script functions without a tapscript get the synthesized operator cosig leaf.
     let code = r#"
 import "single_sig.ark";
 
@@ -266,13 +261,8 @@ contract RecursiveVtxo(pubkey ownerPk, int exit) {
 
     let result = compile(code).expect("Compile failed");
 
-    // Default leaf: server+emulator cosig guard — no introspection, no contract placeholder, no CSV
-    let expected_leaf: Vec<&str> = vec![
-        "<SERVER_KEY>",
-        "OP_CHECKSIGVERIFY",
-        "<EMULATOR_KEY:send>",
-        "OP_CHECKSIG",
-    ];
+    // Default leaf: operator cosig guard — no introspection, no contract placeholder, no CSV
+    let expected_leaf: Vec<&str> = vec!["<OPERATOR_KEY:send>", "OP_CHECKSIG"];
     assert_eq!(
         leaf_asm_tokens(&result, "send", "send"),
         expected_leaf,
@@ -541,7 +531,7 @@ contract ForwardAndSign(pubkey ownerPk, int exit) {
 
     let result = compile(code).expect("Compile failed");
 
-    // Default leaf: server+emulator cosig guard — no introspection, no VTXO.
+    // Default leaf: operator cosig guard — no introspection, no VTXO.
     let send_leaf = leaf_asm(&result, "send", "send");
     assert!(
         send_leaf.contains("OP_CHECKSIG") || send_leaf.contains("OP_CHECKSIGVERIFY"),
@@ -564,7 +554,7 @@ contract ForwardAndSign(pubkey ownerPk, int exit) {
 fn test_introspection_detection_is_per_function() {
     // Only the function that contains a ContractInstance gets its introspection
     // in the Arkade Script ASM; the sibling function stays a plain checkSig Arkade Script function.
-    // Both get the synthesized default leaf (server+emulator cosig guard).
+    // Both get the synthesized default leaf (operator cosig guard).
     let code = r#"
 import "single_sig.ark";
 
@@ -609,7 +599,7 @@ contract TwoFunctions(pubkey ownerPk, int exit) {
         "spend() Arkade Script must not have contract placeholders, got {spend_asm:?}"
     );
 
-    // spend() default leaf: server+emulator cosig guard
+    // spend() default leaf: operator cosig guard
     let spend_leaf = leaf_asm(&result, "spend", "spend");
     assert!(
         spend_leaf.contains("OP_CHECKSIG"),
@@ -642,7 +632,7 @@ contract SelfEnforcing(pubkey ownerPk, int exit) {
         "Missing CONTRACT:SingleSig placeholder in {renew_asm:?}"
     );
 
-    // Default leaf: server+emulator cosig guard (no introspection opcodes).
+    // Default leaf: operator cosig guard (no introspection opcodes).
     let renew_leaf = leaf_asm(&result, "renew", "renew");
     assert!(
         renew_leaf.contains("OP_CHECKSIG") || renew_leaf.contains("OP_CHECKSIGVERIFY"),

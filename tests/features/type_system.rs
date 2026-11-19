@@ -612,7 +612,7 @@ fn hash_comparisons_expect_the_digest_width() {
         );
     }
     let tapscript = |ty: &str| {
-        format!("contract H({ty} h, pubkey k) {{ function spend() {{ require(h == h); }} function claim(bytes p, signature s, signature ss) tapscript {{ require(hash160(p) == h); require(checkMultisig([k, server], [s, ss])); }} }}")
+        format!("contract H({ty} h, pubkey k) {{ function spend() {{ require(h == h); }} function claim(bytes p, signature s, signature ss) tapscript {{ require(hash160(p) == h); require(checkMultisig([k, operator], [s, ss])); }} }}")
     };
     compile_ok(&tapscript("bytes20"));
     let error = compile_error(&tapscript("bytes32"));

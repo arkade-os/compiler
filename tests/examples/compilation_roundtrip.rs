@@ -145,7 +145,7 @@ fn fingerprint_identifies_artifact_content() {
     pinned.compiler.as_mut().unwrap().version = "0.0.0".into();
     assert_eq!(
         digest(&pinned),
-        "sha256:8e7da7a19b1f89c0545d400690ada1f905fdca123212c0cdc7303f413edd0661"
+        "sha256:9cc92f65be1f7ed85f2f58890b6b1718df435d9730669c727d436820db414900"
     );
     assert_eq!(first.fingerprint, second.fingerprint);
     let commented = arkade_compiler::compile(&format!("{source}\n// comment\n")).unwrap();

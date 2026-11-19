@@ -165,7 +165,7 @@ contract OptionVault(
   }
 
   function unilateral(signature writerSig) tapscript {
-    require(older(serverExitDelay));
+    require(older(operatorExitDelay));
     require(checkSig(writerSig, writerPk));
   }
 }

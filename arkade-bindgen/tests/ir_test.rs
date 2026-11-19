@@ -67,19 +67,19 @@ fn test_ir_arkade_script_group_leaf_and_injected_witness() {
 
     let leaf = &claim.leaves[0];
     assert_eq!(leaf.name, "claim");
-    // Full witness is preimage + two injected co-signer sigs.
-    assert_eq!(leaf.witness_fields.len(), 3);
+    // Full witness is preimage + the injected operator sig.
+    assert_eq!(leaf.witness_fields.len(), 2);
     // User supplies only the non-injected fields.
     let user: Vec<&str> = leaf.user_fields().iter().map(|f| f.name.as_str()).collect();
     assert_eq!(user, ["preimage"]);
-    // serverSig / emulatorSig are marked injected.
+    // operatorSig is marked injected.
     let injected: Vec<&str> = leaf
         .witness_fields
         .iter()
         .filter(|f| f.is_injected)
         .map(|f| f.name.as_str())
         .collect();
-    assert_eq!(injected, ["serverSig", "emulatorSig"]);
+    assert_eq!(injected, ["operatorSig"]);
 }
 
 #[test]

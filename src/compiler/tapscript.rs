@@ -5,7 +5,7 @@ use crate::models::{
     AbiFunctionGroup, AbiLeaf, ArkadeScript, Contract, HashFn, KeyExpr, NamedTapscript, Parameter,
     TapItem, TapOperand, TimeUnit, WitnessElement,
 };
-use crate::models::{EMULATOR, SERVER, SERVER_EXIT_DELAY};
+use crate::models::{OPERATOR, OPERATOR_EXIT_DELAY};
 use crate::opcodes::{
     OP_CHECKLOCKTIMEVERIFY, OP_CHECKSEQUENCEVERIFY, OP_CHECKSIG, OP_CHECKSIGVERIFY, OP_DROP,
     OP_EQUAL, OP_EQUALVERIFY, OP_SIZE, OP_VERIFY,
@@ -51,10 +51,10 @@ pub enum Pushed {
         base: String,
         func: String,
     },
-    /// The emulator key tweaked by `func`'s Arkade Script hash.
-    Emulator(String),
-    /// A value the server supplies, by its placeholder.
-    Server(&'static str),
+    /// The operator key tweaked by `func`'s Arkade Script hash.
+    TweakedOperator(String),
+    /// A value the operator supplies, by its placeholder.
+    Operator(&'static str),
 }
 
 impl Pushed {
@@ -63,8 +63,8 @@ impl Pushed {
             Pushed::Literal(token) => token.clone(),
             Pushed::Constructor(name) => format!("<{name}>"),
             Pushed::TweakedConstructor { base, func } => format!("<TWEAK:{base}:{func}>"),
-            Pushed::Emulator(func) => format!("<EMULATOR_KEY:{func}>"),
-            Pushed::Server(placeholder) => format!("<{placeholder}>"),
+            Pushed::TweakedOperator(func) => format!("<OPERATOR_KEY:{func}>"),
+            Pushed::Operator(placeholder) => format!("<{placeholder}>"),
         }
     }
 }
@@ -194,9 +194,9 @@ pub fn validate_closure_shape(c: &Closure, ts_name: &str) -> Result<(), String> 
     Ok(())
 }
 
-/// Enforce the `emulator` binding rule (§5.3): a leaf named after an Arkade
-/// Script function includes bare `emulator`; any other leaf tweaks at most one
-/// function's emulator key. `contract` supplies the Arkade Script function names.
+/// Enforce the binding rule (§5.3): a leaf named after an Arkade Script function tweaks a key
+/// to that function, so the leaf binds its Arkade Script. `contract` supplies the Arkade Script
+/// function names.
 pub fn resolve_binding(contract: &Contract, ts: &NamedTapscript) -> Result<(), String> {
     if contract
         .functions
@@ -208,73 +208,29 @@ pub fn resolve_binding(contract: &Contract, ts: &NamedTapscript) -> Result<(), S
             ts.name
         ));
     }
-    let name_matches = contract
+    if !contract
         .functions
         .iter()
-        .any(|f| !f.is_private && f.name == ts.name);
-
-    // Collect bare-emulator usage and explicit tweak targets across all keys.
-    let mut uses_bare_emulator = false;
-    let mut tweak_targets: Vec<String> = Vec::new();
-    for item in &ts.items {
-        if let TapItem::Sig { keys, .. } = item {
-            for k in keys {
-                match k {
-                    KeyExpr::Ident(id) if id == EMULATOR => uses_bare_emulator = true,
-                    KeyExpr::Tweak { base, func } if base == EMULATOR => {
-                        tweak_targets.push(func.clone())
-                    }
-                    _ => {}
-                }
-            }
-        }
-    }
-
-    if name_matches {
-        if !tweak_targets.is_empty() {
-            return Err(format!(
-                "`tweak(emulator, ...)` not allowed in name-matched tapscript `{}`",
-                ts.name
-            ));
-        }
-        if !uses_bare_emulator {
-            return Err(format!(
-                "function-bound tapscript `{}` must include `emulator`",
-                ts.name
-            ));
-        }
+        .any(|f| !f.is_private && f.name == ts.name)
+    {
         return Ok(());
     }
-
-    // Unmatched leaf: bare emulator forbidden.
-    if uses_bare_emulator {
-        return Err(format!(
-            "`emulator` not allowed in standalone tapscript `{}`; \
-             use tweak(emulator, funcName) in a signature check",
-            ts.name
-        ));
-    }
-
-    // Validate explicit tweak targets: all must reference one existing function.
-    let unique_targets: std::collections::BTreeSet<String> = tweak_targets.into_iter().collect();
-    match unique_targets.len() {
-        0 => Ok(()),
-        1 => {
-            let func = unique_targets.iter().next().expect("one target");
-            if !contract
-                .functions
-                .iter()
-                .any(|f| !f.is_private && &f.name == func)
-            {
-                return Err(format!(
-                    "tweak(emulator, {func}) in tapscript `{}`: no function named `{func}`",
-                    ts.name
-                ));
-            }
-            Ok(())
-        }
-        _ => Err(format!(
-            "ambiguous emulator tweak targets in tapscript `{}`",
+    let keys = ts
+        .items
+        .iter()
+        .find_map(|item| match item {
+            TapItem::Sig { keys, .. } => Some(keys.as_slice()),
+            _ => None,
+        })
+        .unwrap_or_default();
+    match shared_tweak_func(&ts.name, keys)? {
+        Some(func) if func == ts.name => Ok(()),
+        Some(func) => Err(format!(
+            "function-bound tapscript `{}` may tweak keys only to `{}`, not `{func}`",
+            ts.name, ts.name
+        )),
+        None => Err(format!(
+            "function-bound tapscript `{0}` must tweak a key to `{0}`, e.g. tweak(operator, {0})",
             ts.name
         )),
     }
@@ -282,15 +238,13 @@ pub fn resolve_binding(contract: &Contract, ts: &NamedTapscript) -> Result<(), S
 
 /// The one Arkade Script function this leaf tweaks a key to.
 ///
-/// Bare `emulator` names the tapscript itself. `tweak(base, func)` names `func`.
-/// A leaf can name only one function, so it has one `leaves` array to join.
+/// `tweak(base, func)` names `func`. A leaf can name only one function, so it has one `leaves`
+/// array to join.
 pub(crate) fn shared_tweak_func(ts_name: &str, keys: &[KeyExpr]) -> Result<Option<String>, String> {
     let mut target: Option<String> = None;
     for key in keys {
-        let func = match key {
-            KeyExpr::Ident(id) if id == EMULATOR => ts_name,
-            KeyExpr::Tweak { func, .. } => func.as_str(),
-            _ => continue,
+        let KeyExpr::Tweak { func, .. } = key else {
+            continue;
         };
         if let Some(prev) = &target {
             if prev != func {
@@ -299,10 +253,26 @@ pub(crate) fn shared_tweak_func(ts_name: &str, keys: &[KeyExpr]) -> Result<Optio
                 ));
             }
         } else {
-            target = Some(func.to_string());
+            target = Some(func.clone());
         }
     }
     Ok(target)
+}
+
+/// Whether `func` keeps its synthesized default leaf: no author-written non-CSV leaf joins its
+/// spend group. An offchain spend sets nSequence final, so a CSV leaf is never an offchain path;
+/// the default stays beside it and keeps the Arkade Script reachable offchain.
+pub(crate) fn keeps_default_leaf(contract: &Contract, func: &str) -> bool {
+    !contract.tapscripts.iter().any(|ts| {
+        assemble_closure(ts).is_ok_and(|c| {
+            c.class.is_forfeit()
+                && shared_tweak_func(&ts.name, &c.keys)
+                    .ok()
+                    .flatten()
+                    .as_deref()
+                    == Some(func)
+        })
+    })
 }
 
 /// arkd structural rules F2/F3/E1, and resolution of every operand the leaf
@@ -338,10 +308,7 @@ pub fn validate_arkd_rules(
     let mut keys = Vec::with_capacity(c.keys.len());
     for k in &c.keys {
         keys.push(match k {
-            KeyExpr::Ident(id) if id == SERVER => Pushed::Server("SERVER_KEY"),
-            // `resolve_binding` admits a bare `emulator` only on a leaf named after its function.
-            KeyExpr::Ident(id) if id == EMULATOR => Pushed::Emulator(ts.name.clone()),
-            KeyExpr::Tweak { base, func } if base == EMULATOR => Pushed::Emulator(func.clone()),
+            KeyExpr::Ident(id) if id == OPERATOR => Pushed::Operator("OPERATOR_KEY"),
             KeyExpr::Literal(key) => Pushed::Literal(key.clone()),
             KeyExpr::Ident(id) => {
                 if fixed(&id.key(), "key")? != Some(ArkType::Bytes) {
@@ -350,9 +317,10 @@ pub fn validate_arkd_rules(
                 Pushed::Constructor(id.key())
             }
             KeyExpr::Tweak { base, func } => {
-                if fixed(base, "key")? != Some(ArkType::Bytes) {
+                if base != OPERATOR && fixed(base, "key")? != Some(ArkType::Bytes) {
                     return Err(format!(
-                        "tweak({base}, {func}) in tapscript `{}`: `{base}` is not a constructor pubkey",
+                        "tweak({base}, {func}) in tapscript `{}`: `{base}` is not `operator` or a \
+                         constructor pubkey",
                         ts.name
                     ));
                 }
@@ -366,13 +334,17 @@ pub fn validate_arkd_rules(
                         ts.name
                     ));
                 }
-                constructor_tweak_funcs
-                    .entry(base.clone())
-                    .or_default()
-                    .insert(func.clone());
-                Pushed::TweakedConstructor {
-                    base: base.clone(),
-                    func: func.clone(),
+                if base == OPERATOR {
+                    Pushed::TweakedOperator(func.clone())
+                } else {
+                    constructor_tweak_funcs
+                        .entry(base.clone())
+                        .or_default()
+                        .insert(func.clone());
+                    Pushed::TweakedConstructor {
+                        base: base.clone(),
+                        func: func.clone(),
+                    }
                 }
             }
         });
@@ -385,7 +357,7 @@ pub fn validate_arkd_rules(
             ));
         }
     }
-    // Bare `emulator` names this tapscript. Every tweak must name that same function.
+    // Every tweak must name the same function.
     shared_tweak_func(&ts.name, &c.keys)?;
 
     // A declared `signature` input.
@@ -485,10 +457,10 @@ pub fn validate_arkd_rules(
                     None => value.clone(),
                 };
                 timelock = Some((timelock_operand(&value, *unit, csv), csv));
-                if csv && value == SERVER_EXIT_DELAY {
+                if csv && value == OPERATOR_EXIT_DELAY {
                     if unit.is_some() {
                         return Err(format!(
-                            "tapscript `{}`: serverExitDelay has its own unit; write older(serverExitDelay)",
+                            "tapscript `{}`: operatorExitDelay has its own unit; write older(operatorExitDelay)",
                             ts.name
                         ));
                     }
@@ -558,10 +530,11 @@ pub fn validate_arkd_rules(
         }
     }
 
-    // F2: forfeit closures must contain `server`.
-    if c.class.is_forfeit() && !c.keys.iter().any(KeyExpr::is_server) {
+    // F2: forfeit closures must contain the operator key.
+    if c.class.is_forfeit() && !c.keys.iter().any(KeyExpr::is_operator) {
         return Err(format!(
-            "forfeit tapscript `{}` must include `server` (arkd co-signer)",
+            "forfeit tapscript `{}` must include `operator` or `tweak(operator, fn)` (the operator \
+             co-signs every offchain spend)",
             ts.name
         ));
     }
@@ -591,12 +564,12 @@ fn timelock_number(value: &str) -> Option<i128> {
     }))
 }
 
-/// A timelock operand: `serverExitDelay` as arkd's unilateral exit delay,
+/// A timelock operand: `operatorExitDelay` as the operator's unilateral exit delay,
 /// `seconds(n)` in a CSV as its BIP68 time-based sequence, any other number
 /// as-is, else the constructor parameter pushing the raw value.
 fn timelock_operand(value: &str, unit: Option<TimeUnit>, csv: bool) -> Pushed {
-    if value == SERVER_EXIT_DELAY {
-        return Pushed::Server("SERVER_EXIT_DELAY");
+    if value == OPERATOR_EXIT_DELAY {
+        return Pushed::Operator("OPERATOR_EXIT_DELAY");
     }
     match timelock_number(value) {
         Some(n) if csv && unit == Some(TimeUnit::Seconds) => {
@@ -670,7 +643,7 @@ fn injected_signature_names(ts: &NamedTapscript) -> std::collections::HashSet<St
     for item in &ts.items {
         if let TapItem::Sig { keys, sigs, .. } = item {
             for (key, sig) in keys.iter().zip(sigs) {
-                if key.is_cosigner() {
+                if key.is_operator() {
                     names.insert(sig.to_string());
                 }
             }
@@ -694,7 +667,7 @@ pub(crate) struct CheckedLeaf {
     group_key: String,
 }
 
-/// Every check on one author-written leaf: closure shape, emulator binding, arkd
+/// Every check on one author-written leaf: closure shape, function binding, arkd
 /// rules and its spend group.
 pub(crate) fn check_tapscript(
     contract: &Contract,
@@ -746,8 +719,7 @@ pub(crate) fn build_function_groups(
     for f in contract.functions.iter().filter(|f| !f.is_private) {
         let arkade = scripts.remove(&f.name);
         let mut leaves = grouped.remove(&f.name).unwrap_or_default();
-        // A constructor-pubkey tweak is an extra leaf. It does not replace the emulator path.
-        if !leaves.iter().any(leaf_signs_emulator) {
+        if keeps_default_leaf(contract, &f.name) {
             leaves.insert(0, synthesize_default_leaf(&f.name));
         }
         groups.push(AbiFunctionGroup {
@@ -802,36 +774,21 @@ fn resolve_constructor_field_placeholders(
     Ok(())
 }
 
-fn leaf_signs_emulator(leaf: &AbiLeaf) -> bool {
-    leaf.asm
-        .iter()
-        .any(|token| token.starts_with("<EMULATOR_KEY:"))
-}
-
-/// The §5.4 default collaborative leaf: checkMultisig([server, tweak(emulator, fn)], […]).
+/// The §5.4 default leaf: checkSig(operatorSig, tweak(operator, fn)).
 fn synthesize_default_leaf(func: &str) -> AbiLeaf {
     let script = LeafScript {
         condition: None,
         timelock: None,
-        keys: vec![Pushed::Server("SERVER_KEY"), Pushed::Emulator(func.into())],
+        keys: vec![Pushed::TweakedOperator(func.into())],
     };
-    let sig_encoding = ArkType::Signature.encoding().to_string();
     AbiLeaf {
         name: func.to_string(),
-        witness: vec![
-            WitnessElement {
-                name: "serverSig".into(),
-                elem_type: "signature".into(),
-                encoding: sig_encoding.clone(),
-                injected: true,
-            },
-            WitnessElement {
-                name: "emulatorSig".into(),
-                elem_type: "signature".into(),
-                encoding: sig_encoding,
-                injected: true,
-            },
-        ],
+        witness: vec![WitnessElement {
+            name: "operatorSig".into(),
+            elem_type: "signature".into(),
+            encoding: ArkType::Signature.encoding().to_string(),
+            injected: true,
+        }],
         asm: emit_leaf_asm(&script),
     }
 }
@@ -858,8 +815,8 @@ mod tests {
     #[test]
     fn plain_multisig_is_forfeit() {
         let c = assemble_closure(&ts(vec![TapItem::Sig {
-            keys: vec![ident("server"), ident("emulator")],
-            sigs: vec!["serverSig".into(), "emulatorSig".into()],
+            keys: vec![ident("operator"), ident("owner")],
+            sigs: vec!["operatorSig".into(), "ownerSig".into()],
         }]))
         .unwrap();
         assert_eq!(c.class, ClosureClass::Multisig);
@@ -875,8 +832,8 @@ mod tests {
                 hash: TapOperand::Name("preimageHash".into()),
             },
             TapItem::Sig {
-                keys: vec![ident("server"), ident("emulator")],
-                sigs: vec!["serverSig".into(), "emulatorSig".into()],
+                keys: vec![ident("operator"), ident("owner")],
+                sigs: vec!["operatorSig".into(), "ownerSig".into()],
             },
         ]))
         .unwrap();
@@ -907,8 +864,8 @@ mod tests {
                 unit: None,
             },
             TapItem::Sig {
-                keys: vec![ident("backup"), ident("server")],
-                sigs: vec!["backupSig".into(), "serverSig".into()],
+                keys: vec![ident("backup"), ident("operator")],
+                sigs: vec!["backupSig".into(), "operatorSig".into()],
             },
         ]))
         .unwrap();
@@ -928,8 +885,8 @@ mod tests {
                 unit: None,
             },
             TapItem::Sig {
-                keys: vec![ident("server")],
-                sigs: vec!["serverSig".into()],
+                keys: vec![ident("operator")],
+                sigs: vec!["operatorSig".into()],
             },
         ]))
         .unwrap_err();
@@ -953,8 +910,8 @@ mod tests {
     fn out_of_order_condition_after_multisig_is_rejected() {
         let err = assemble_closure(&ts(vec![
             TapItem::Sig {
-                keys: vec![ident("server")],
-                sigs: vec!["serverSig".into()],
+                keys: vec![ident("operator")],
+                sigs: vec!["operatorSig".into()],
             },
             TapItem::Hash {
                 hash_fn: HashFn::Hash160,
@@ -1037,133 +994,117 @@ mod tests {
             .collect()
     }
 
-    #[test]
-    fn name_matched_requires_bare_emulator() {
-        // claim function exists; leaf named claim with bare emulator → accepted
-        let leaf = NamedTapscript {
+    fn named(name: &str, keys: Vec<KeyExpr>) -> NamedTapscript {
+        NamedTapscript {
             span: Default::default(),
             declaration: Default::default(),
             attributes: vec![],
-            name: "claim".into(),
-            inputs: vec![],
-            items: vec![sig(vec![ident("server"), ident("emulator")])],
-        };
+            name: name.into(),
+            inputs: sig_params(keys.len()),
+            items: vec![sig(keys)],
+        }
+    }
+
+    fn tweak(base: &str, func: &str) -> KeyExpr {
+        KeyExpr::Tweak {
+            base: base.into(),
+            func: func.into(),
+        }
+    }
+
+    #[test]
+    fn name_matched_tweaks_a_key_to_its_function() {
+        let c = contract_with(&["claim"], vec![]);
+        for keys in [
+            vec![tweak("operator", "claim")],
+            vec![ident("operator"), tweak("owner", "claim")],
+        ] {
+            resolve_binding(&c, &named("claim", keys)).unwrap();
+        }
+    }
+
+    #[test]
+    fn name_matched_without_a_tweak_is_error() {
+        let c = contract_with(&["claim"], vec![]);
+        // Bare `operator` is never tweaked implicitly, even on a leaf named after a function.
+        for keys in [
+            vec![ident("operator")],
+            vec![ident("operator"), ident("owner")],
+        ] {
+            let err = resolve_binding(&c, &named("claim", keys)).unwrap_err();
+            assert!(err.contains("must tweak a key to `claim`"), "got: {err}");
+        }
+    }
+
+    #[test]
+    fn name_matched_with_a_tweak_to_another_function_is_error() {
+        let c = contract_with(&["claim", "refund"], vec![]);
+        let err =
+            resolve_binding(&c, &named("claim", vec![tweak("operator", "refund")])).unwrap_err();
+        assert!(
+            err.contains("may tweak keys only to `claim`, not `refund`"),
+            "got: {err}"
+        );
+    }
+
+    #[test]
+    fn bare_operator_pushes_the_untweaked_key() {
+        let leaf = named("weird", vec![ident("operator"), ident("owner")]);
         let c = contract_with(&["claim"], vec![leaf.clone()]);
         resolve_binding(&c, &leaf).unwrap();
-    }
-
-    #[test]
-    fn name_matched_without_emulator_is_error() {
-        let leaf = NamedTapscript {
-            span: Default::default(),
-            declaration: Default::default(),
-            attributes: vec![],
-            name: "claim".into(),
-            inputs: vec![],
-            items: vec![sig(vec![ident("server"), ident("owner")])],
-        };
-        let c = contract_with(&["claim"], vec![leaf.clone()]);
-        let err = resolve_binding(&c, &leaf).unwrap_err();
-        assert!(err.contains("must include `emulator`"), "got: {err}");
-    }
-
-    #[test]
-    fn standalone_with_bare_emulator_is_error() {
-        let leaf = NamedTapscript {
-            span: Default::default(),
-            declaration: Default::default(),
-            attributes: vec![],
-            name: "weird".into(),
-            inputs: vec![],
-            items: vec![sig(vec![ident("server"), ident("emulator")])],
-        };
-        let c = contract_with(&["claim"], vec![leaf.clone()]);
-        let err = resolve_binding(&c, &leaf).unwrap_err();
-        assert!(err.contains("not allowed in standalone"), "got: {err}");
+        assert_eq!(
+            shared_tweak_func(&leaf.name, &closure_of(&leaf).keys),
+            Ok(None)
+        );
+        let asm = emit_leaf_asm(&validate_arkd_rules(&c, &leaf, &closure_of(&leaf)).unwrap());
+        assert_eq!(
+            asm,
+            [
+                "<OPERATOR_KEY>",
+                "OP_CHECKSIGVERIFY",
+                "<owner>",
+                "OP_CHECKSIG"
+            ]
+        );
     }
 
     #[test]
     fn standalone_tweak_groups_under_target() {
-        let leaf = NamedTapscript {
-            span: Default::default(),
-            declaration: Default::default(),
-            attributes: vec![],
-            name: "direct".into(),
-            inputs: vec![],
-            items: vec![sig(vec![KeyExpr::Tweak {
-                base: "emulator".into(),
-                func: "claim".into(),
-            }])],
-        };
+        let leaf = named("direct", vec![tweak("operator", "claim")]);
         let c = contract_with(&["claim"], vec![leaf.clone()]);
         resolve_binding(&c, &leaf).unwrap();
         assert_eq!(
             shared_tweak_func(&leaf.name, &closure_of(&leaf).keys).unwrap(),
             Some("claim".into())
         );
-    }
-
-    #[test]
-    fn name_matched_with_explicit_tweak_is_error() {
-        let leaf = NamedTapscript {
-            span: Default::default(),
-            declaration: Default::default(),
-            attributes: vec![],
-            name: "claim".into(),
-            inputs: vec![],
-            items: vec![sig(vec![KeyExpr::Tweak {
-                base: "emulator".into(),
-                func: "claim".into(),
-            }])],
-        };
-        let c = contract_with(&["claim"], vec![leaf.clone()]);
-        let err = resolve_binding(&c, &leaf).unwrap_err();
-        assert!(err.contains("not allowed in name-matched"), "got: {err}");
+        let asm = emit_leaf_asm(&validate_arkd_rules(&c, &leaf, &closure_of(&leaf)).unwrap());
+        assert_eq!(asm, ["<OPERATOR_KEY:claim>", "OP_CHECKSIG"]);
     }
 
     #[test]
     fn tweak_to_missing_function_is_error() {
-        let leaf = NamedTapscript {
-            span: Default::default(),
-            declaration: Default::default(),
-            attributes: vec![],
-            name: "direct".into(),
-            inputs: vec![],
-            items: vec![sig(vec![KeyExpr::Tweak {
-                base: "emulator".into(),
-                func: "nope".into(),
-            }])],
-        };
+        let leaf = named("direct", vec![tweak("operator", "nope")]);
         let c = contract_with(&["claim"], vec![leaf.clone()]);
-        assert!(resolve_binding(&c, &leaf).is_err());
+        let err = validate_arkd_rules(&c, &leaf, &closure_of(&leaf)).unwrap_err();
+        assert!(err.contains("no function named `nope`"), "got: {err}");
     }
 
     #[test]
     fn ambiguous_tweak_targets_are_error() {
-        let leaf = NamedTapscript {
-            span: Default::default(),
-            declaration: Default::default(),
-            attributes: vec![],
-            name: "direct".into(),
-            inputs: vec![],
-            items: vec![sig(vec![
-                KeyExpr::Tweak {
-                    base: "emulator".into(),
-                    func: "claim".into(),
-                },
-                KeyExpr::Tweak {
-                    base: "emulator".into(),
-                    func: "refund".into(),
-                },
-            ])],
-        };
+        let leaf = named(
+            "direct",
+            vec![tweak("operator", "claim"), tweak("operator", "refund")],
+        );
         let c = contract_with(&["claim", "refund"], vec![leaf.clone()]);
-        let err = resolve_binding(&c, &leaf).unwrap_err();
-        assert!(err.contains("ambiguous"), "got: {err}");
+        let err = validate_arkd_rules(&c, &leaf, &closure_of(&leaf)).unwrap_err();
+        assert!(
+            err.contains("keys may be tweaked to only one Arkade Script function"),
+            "got: {err}"
+        );
     }
 
     #[test]
-    fn pure_standalone_has_no_emulator_no_tweak() {
+    fn pure_standalone_tweaks_nothing() {
         let leaf = NamedTapscript {
             span: Default::default(),
             declaration: Default::default(),
@@ -1182,7 +1123,7 @@ mod tests {
 
     /// The leaf's assembly, resolved against a contract with these constructor parameters.
     fn leaf_asm(params: &[(&str, &str)], leaf: &NamedTapscript) -> Vec<String> {
-        let mut c = contract_with(&[], vec![leaf.clone()]);
+        let mut c = contract_with(&[leaf.name.as_str()], vec![leaf.clone()]);
         c.parameters = params
             .iter()
             .map(|(name, param_type)| Parameter {
@@ -1195,7 +1136,7 @@ mod tests {
     }
 
     #[test]
-    fn forfeit_without_server_is_rejected() {
+    fn forfeit_without_operator_is_rejected() {
         let leaf = NamedTapscript {
             span: Default::default(),
             declaration: Default::default(),
@@ -1208,11 +1149,24 @@ mod tests {
         let cl = closure_of(&leaf);
         resolve_binding(&c, &leaf).unwrap();
         let err = validate_arkd_rules(&c, &leaf, &cl).unwrap_err();
-        assert!(err.contains("server"), "got: {err}");
+        assert!(
+            err.contains("must include `operator` or `tweak(operator, fn)`"),
+            "got: {err}"
+        );
     }
 
     #[test]
-    fn csv_exit_without_server_is_accepted() {
+    fn forfeit_with_a_tweaked_operator_is_accepted() {
+        let leaf = named(
+            "liquidate",
+            vec![tweak("operator", "claim"), ident("owner")],
+        );
+        let c = contract_with(&["claim"], vec![leaf.clone()]);
+        assert!(validate_arkd_rules(&c, &leaf, &closure_of(&leaf)).is_ok());
+    }
+
+    #[test]
+    fn csv_exit_without_operator_is_accepted() {
         let leaf = NamedTapscript {
             span: Default::default(),
             declaration: Default::default(),
@@ -1241,7 +1195,7 @@ mod tests {
             attributes: vec![],
             name: "x".into(),
             inputs: vec![],
-            items: vec![sig(vec![ident("server"), ident("ghost")])],
+            items: vec![sig(vec![ident("operator"), ident("ghost")])],
         };
         let c = contract_with(&[], vec![leaf.clone()]);
         let cl = closure_of(&leaf);
@@ -1288,10 +1242,10 @@ mod tests {
                 Some(Seconds),
                 Some("33553920"),
             ),
-            (true, "serverExitDelay", None, None),
+            (true, "operatorExitDelay", None, None),
             (
                 true,
-                "serverExitDelay",
+                "operatorExitDelay",
                 Some(Seconds),
                 Some("has its own unit"),
             ),
@@ -1351,7 +1305,7 @@ mod tests {
                 attributes: vec![],
                 name: "exit".into(),
                 inputs: sig_params(2),
-                items: vec![timelock, sig(vec![ident("server"), ident("owner")])],
+                items: vec![timelock, sig(vec![ident("operator"), ident("owner")])],
             };
             let c = contract_with(&[], vec![leaf.clone()]);
             match (validate_arkd_rules(&c, &leaf, &closure_of(&leaf)), expected) {
@@ -1371,7 +1325,10 @@ mod tests {
         assert_eq!(asm("144", Some(Blocks), true), "144");
         assert_eq!(asm("144", None, true), "144");
         assert_eq!(asm("exitDelay", None, true), "<exitDelay>");
-        assert_eq!(asm("serverExitDelay", None, true), "<SERVER_EXIT_DELAY>");
+        assert_eq!(
+            asm("operatorExitDelay", None, true),
+            "<OPERATOR_EXIT_DELAY>"
+        );
         assert_eq!(asm("1700000000", Some(Seconds), false), "1700000000");
     }
 
@@ -1385,12 +1342,12 @@ mod tests {
             name: "x".into(),
             inputs: vec![Parameter {
                 span: Default::default(),
-                name: "serverSig".into(),
+                name: "operatorSig".into(),
                 param_type: "signature".into(),
             }],
             items: vec![TapItem::Sig {
-                keys: vec![ident("server"), ident("emulator")],
-                sigs: vec!["serverSig".into()],
+                keys: vec![ident("operator"), tweak("operator", "x")],
+                sigs: vec!["operatorSig".into()],
             }],
         };
         let c = contract_with(&["x"], vec![leaf.clone()]);
@@ -1410,7 +1367,7 @@ mod tests {
             name: "x".into(),
             inputs: vec![],
             items: vec![TapItem::Sig {
-                keys: vec![ident("server")],
+                keys: vec![ident("operator")],
                 sigs: vec!["ghostSig".into()],
             }],
         };
@@ -1464,7 +1421,7 @@ mod tests {
                 },
                 Parameter {
                     span: Default::default(),
-                    name: "serverSig".into(),
+                    name: "operatorSig".into(),
                     param_type: "signature".into(),
                 },
             ],
@@ -1475,8 +1432,8 @@ mod tests {
                     hash: TapOperand::Name("typoHash".into()),
                 },
                 TapItem::Sig {
-                    keys: vec![ident("server")],
-                    sigs: vec!["serverSig".into()],
+                    keys: vec![ident("operator")],
+                    sigs: vec!["operatorSig".into()],
                 },
             ],
         };
@@ -1488,13 +1445,13 @@ mod tests {
     }
 
     use crate::opcodes::{
-        OP_CHECKLOCKTIMEVERIFY, OP_CHECKSEQUENCEVERIFY, OP_CHECKSIG, OP_CHECKSIGVERIFY, OP_DROP,
-        OP_EQUAL, OP_HASH160, OP_VERIFY,
+        OP_CHECKLOCKTIMEVERIFY, OP_CHECKSEQUENCEVERIFY, OP_CHECKSIG, OP_DROP, OP_EQUAL, OP_HASH160,
+        OP_VERIFY,
     };
 
     #[test]
     fn emits_condition_multisig_like_golden_htlc_claim() {
-        // ConditionMultisigClosure { HASH160 <preimageHash> EQUAL, [server, emulator(claim)] }
+        // ConditionMultisigClosure { HASH160 <preimageHash> EQUAL, [operator(claim)] }
         let leaf = NamedTapscript {
             span: Default::default(),
             declaration: Default::default(),
@@ -1508,12 +1465,7 @@ mod tests {
                 },
                 Parameter {
                     span: Default::default(),
-                    name: "serverSig".into(),
-                    param_type: "signature".into(),
-                },
-                Parameter {
-                    span: Default::default(),
-                    name: "emulatorSig".into(),
+                    name: "operatorSig".into(),
                     param_type: "signature".into(),
                 },
             ],
@@ -1524,8 +1476,8 @@ mod tests {
                     hash: TapOperand::Name("preimageHash".into()),
                 },
                 TapItem::Sig {
-                    keys: vec![ident("server"), ident("emulator")],
-                    sigs: vec!["serverSig".into(), "emulatorSig".into()],
+                    keys: vec![tweak("operator", "claim")],
+                    sigs: vec!["operatorSig".into()],
                 },
             ],
         };
@@ -1537,9 +1489,7 @@ mod tests {
                 "<preimageHash>".to_string(),
                 OP_EQUAL.to_string(),
                 OP_VERIFY.to_string(),
-                "<SERVER_KEY>".to_string(),
-                OP_CHECKSIGVERIFY.to_string(),
-                "<EMULATOR_KEY:claim>".to_string(),
+                "<OPERATOR_KEY:claim>".to_string(),
                 OP_CHECKSIG.to_string(),
             ]
         );
@@ -1547,7 +1497,8 @@ mod tests {
         assert!(!asm.iter().any(|t| t.contains("Sig")));
         let w = leaf_witness(&leaf);
         let names: Vec<_> = w.iter().map(|e| e.name.clone()).collect();
-        assert_eq!(names, vec!["preimage", "serverSig", "emulatorSig"]);
+        assert_eq!(names, vec!["preimage", "operatorSig"]);
+        assert!(w[1].injected, "the operator's signature is injected");
     }
 
     #[test]
@@ -1557,13 +1508,13 @@ mod tests {
             declaration: Default::default(),
             attributes: vec![],
             name: "refund".into(),
-            inputs: sig_params(2),
+            inputs: sig_params(1),
             items: vec![
                 TapItem::After {
                     value: TapOperand::Name("refundTime".into()),
                     unit: None,
                 },
-                sig(vec![ident("server"), ident("emulator")]),
+                sig(vec![tweak("operator", "refund")]),
             ],
         };
         let asm = leaf_asm(&[("refundTime", "int")], &leaf);
@@ -1573,9 +1524,7 @@ mod tests {
                 "<refundTime>".to_string(),
                 OP_CHECKLOCKTIMEVERIFY.to_string(),
                 OP_DROP.to_string(),
-                "<SERVER_KEY>".to_string(),
-                OP_CHECKSIGVERIFY.to_string(),
-                "<EMULATOR_KEY:refund>".to_string(),
+                "<OPERATOR_KEY:refund>".to_string(),
                 OP_CHECKSIG.to_string(),
             ]
         );
@@ -1618,89 +1567,97 @@ mod tests {
         );
     }
 
-    /// `tweak(constructorPubkey, func)` binds that key to `func` on any leaf.
-    /// A forfeit leaf includes `server` as well.
+    /// `tweak(constructorPubkey, func)` binds that key to `func` on any leaf. A CSV leaf sits
+    /// beside the default leaf; a forfeit leaf, which includes the operator key, replaces it.
     #[test]
-    fn second_emulator_tweak_binds_the_constructor_key() {
-        let src = r#"
-pragma arkade ^0.1.0;
-contract Demo(pubkey insurer) {
-  function claim() {
-    require(tx.input.current.value >= 1, "funded");
-  }
+    fn constructor_tweak_binds_the_key_and_only_a_forfeit_leaf_replaces_the_default() {
+        let late = r#"
   function late(signature insurerSig) tapscript {
     require(older(512));
     require(checkSig(insurerSig, tweak(insurer, claim)));
-  }
-  function race(signature serverSig, signature insurerSig) tapscript {
-    require(checkMultisig([server, tweak(insurer, claim)], [serverSig, insurerSig]));
-  }
-}
-"#;
-        let output = super::super::compile(src).expect("second emulator");
-        assert!(
-            output.functions.iter().all(|g| g.name == "claim"),
-            "constructor tweaks are leaves of claim, not their own groups"
-        );
-        let claim = output
-            .functions
-            .iter()
-            .find(|g| g.name == "claim")
-            .expect("claim");
-        assert!(claim.arkade.is_some());
-        assert_eq!(
-            claim
-                .leaves
-                .iter()
-                .map(|leaf| leaf.name.as_str())
-                .collect::<Vec<_>>(),
-            vec!["claim", "late", "race"]
-        );
-        let emulator = claim.leaves[0].asm.join(" ");
-        assert!(
-            emulator.contains("<SERVER_KEY>") && emulator.contains("<EMULATOR_KEY:claim>"),
-            "the default emulator leaf stays: {emulator}"
-        );
-        assert!(
-            !emulator.contains("TWEAK:insurer"),
-            "the emulator leaf is not the constructor tweak: {emulator}"
-        );
-        for name in ["late", "race"] {
-            let leaf = claim
-                .leaves
-                .iter()
-                .find(|leaf| leaf.name == name)
-                .expect(name);
-            let asm = leaf.asm.join(" ");
-            assert!(
-                asm.contains("<TWEAK:insurer:claim>"),
-                "{name} binds the insurer key to claim: {asm}"
+  }"#;
+        let race = r#"
+  function race(signature operatorSig, signature insurerSig) tapscript {
+    require(checkMultisig([operator, tweak(insurer, claim)], [operatorSig, insurerSig]));
+  }"#;
+        let claim = |leaves: &str| {
+            let src = format!(
+                r#"
+pragma arkade ^0.1.0;
+contract Demo(pubkey insurer) {{
+  function claim() {{ require(tx.input.current.value >= 1, "funded"); }}{leaves}
+}}
+"#
             );
-            assert!(
-                !asm.contains("EMULATOR_KEY"),
-                "{name} is not an emulator leaf: {asm}"
-            );
-            assert!(
-                leaf.witness
+            let output = super::super::compile(&src).expect("constructor tweak");
+            assert_eq!(
+                output
+                    .functions
                     .iter()
-                    .any(|w| w.name == "insurerSig" && !w.injected),
-                "{name}: insurerSig must not be injected"
+                    .map(|g| g.name.as_str())
+                    .collect::<Vec<_>>(),
+                ["claim"],
+                "constructor tweaks are leaves of claim, not their own groups"
             );
+            output.functions.into_iter().next().expect("claim")
+        };
+        let names = |group: &AbiFunctionGroup| {
+            group
+                .leaves
+                .iter()
+                .map(|leaf| leaf.name.clone())
+                .collect::<Vec<_>>()
+        };
+
+        let csv_only = claim(late);
+        assert!(csv_only.arkade.is_some());
+        assert_eq!(names(&csv_only), ["claim", "late"]);
+        assert_eq!(
+            csv_only.leaves[0].asm,
+            ["<OPERATOR_KEY:claim>", "OP_CHECKSIG"]
+        );
+
+        let with_forfeit = claim(&format!("{late}{race}"));
+        assert_eq!(names(&with_forfeit), ["late", "race"]);
+        assert_eq!(
+            with_forfeit.leaves[1].asm,
+            [
+                "<OPERATOR_KEY>",
+                "OP_CHECKSIGVERIFY",
+                "<TWEAK:insurer:claim>",
+                "OP_CHECKSIG"
+            ]
+        );
+        for leaf in &with_forfeit.leaves {
+            assert!(
+                leaf.asm.contains(&"<TWEAK:insurer:claim>".to_string()),
+                "{} binds the insurer key to claim: {:?}",
+                leaf.name,
+                leaf.asm
+            );
+            for w in &leaf.witness {
+                assert_eq!(
+                    w.injected,
+                    w.name == "operatorSig",
+                    "{}: only the operator's signature is injected",
+                    leaf.name
+                );
+            }
         }
     }
 
-    /// An author-written emulator leaf stays the emulator path. The constructor
-    /// tweak is another leaf of the same function, and no second default is added.
+    /// An author-written forfeit leaf replaces the default leaf. A CSV constructor tweak is
+    /// another leaf of the same function, and no default is added back.
     #[test]
-    fn constructor_tweak_keeps_an_author_emulator_leaf() {
+    fn an_author_leaf_replaces_the_default_and_a_csv_tweak_joins_it() {
         let src = r#"
 pragma arkade ^0.1.0;
 contract Demo(pubkey insurer) {
   function claim() {
     require(tx.input.current.value >= 1, "funded");
   }
-  function claim(signature serverSig, signature emulatorSig) tapscript {
-    require(checkMultisig([server, emulator], [serverSig, emulatorSig]));
+  function claim(signature operatorSig, signature insurerSig) tapscript {
+    require(checkMultisig([tweak(operator, claim), insurer], [operatorSig, insurerSig]));
   }
   function late(signature insurerSig) tapscript {
     require(older(512));
@@ -1708,17 +1665,22 @@ contract Demo(pubkey insurer) {
   }
 }
 "#;
-        let output = super::super::compile(src).expect("author emulator leaf");
+        let output = super::super::compile(src).expect("author leaf");
         let claim = output
             .functions
             .iter()
             .find(|g| g.name == "claim")
             .expect("claim");
         assert_eq!(claim.leaves.len(), 2);
-        assert!(claim.leaves[0]
-            .asm
-            .iter()
-            .any(|t| t == "<EMULATOR_KEY:claim>"));
+        assert_eq!(
+            claim.leaves[0].asm,
+            [
+                "<OPERATOR_KEY:claim>",
+                "OP_CHECKSIGVERIFY",
+                "<insurer>",
+                "OP_CHECKSIG"
+            ]
+        );
         assert_eq!(claim.leaves[1].name, "late");
         assert!(claim.leaves[1]
             .asm
@@ -1733,7 +1695,16 @@ pragma arkade ^0.1.0;
 contract Demo(pubkey insurer) {
   function claim() { require(tx.input.current.value >= 1, "funded"); }
   function race(signature ownerSig, signature insurerSig) tapscript {
-    require(checkMultisig([server, tweak(owner, claim)], [ownerSig, insurerSig]));
+    require(checkMultisig([operator, tweak(owner, claim)], [ownerSig, insurerSig]));
+  }
+}
+"#;
+        let no_emulator_role = r#"
+pragma arkade ^0.1.0;
+contract Demo(pubkey insurer) {
+  function claim() { require(tx.input.current.value >= 1, "funded"); }
+  function race(signature operatorSig, signature emulatorSig) tapscript {
+    require(checkMultisig([operator, tweak(emulator, claim)], [operatorSig, emulatorSig]));
   }
 }
 "#;
@@ -1741,8 +1712,8 @@ contract Demo(pubkey insurer) {
 pragma arkade ^0.1.0;
 contract Demo(pubkey insurer) {
   function claim() { require(tx.input.current.value >= 1, "funded"); }
-  function race(signature serverSig, signature insurerSig) tapscript {
-    require(checkMultisig([server, tweak(insurer, missing)], [serverSig, insurerSig]));
+  function race(signature operatorSig, signature insurerSig) tapscript {
+    require(checkMultisig([operator, tweak(insurer, missing)], [operatorSig, insurerSig]));
   }
 }
 "#;
@@ -1767,8 +1738,13 @@ contract Demo(pubkey insurer) {
   }
 }
 "#;
-        let err = super::super::compile(unknown_base).unwrap_err();
-        assert!(err.contains("not a constructor pubkey"), "{err}");
+        for src in [unknown_base, no_emulator_role] {
+            let err = super::super::compile(src).unwrap_err();
+            assert!(
+                err.contains("is not `operator` or a constructor pubkey"),
+                "{err}"
+            );
+        }
         let err = super::super::compile(missing_fn).unwrap_err();
         assert!(err.contains("no function named `missing`"), "{err}");
         let err = super::super::compile(tapscript_fn).unwrap_err();
@@ -1790,14 +1766,14 @@ contract Demo(pubkey insurer, pubkey backup) {
   }
 }
 "#;
-        let emulator_and_constructor = r#"
+        let operator_and_constructor = r#"
 pragma arkade ^0.1.0;
 contract Demo(pubkey insurer) {
   function claim() { require(tx.input.current.value >= 1, "funded"); }
   function refund() { require(tx.input.current.value >= 1, "funded"); }
-  function race(signature emulatorSig, signature insurerSig) tapscript {
+  function race(signature operatorSig, signature insurerSig) tapscript {
     require(older(512));
-    require(checkMultisig([tweak(emulator, claim), tweak(insurer, refund)], [emulatorSig, insurerSig]));
+    require(checkMultisig([tweak(operator, claim), tweak(insurer, refund)], [operatorSig, insurerSig]));
   }
 }
 "#;
@@ -1806,15 +1782,15 @@ pragma arkade ^0.1.0;
 contract Demo(pubkey insurer) {
   function claim() { require(tx.input.current.value >= 1, "funded"); }
   function refund() { require(tx.input.current.value >= 1, "funded"); }
-  function claim(signature serverSig, signature emulatorSig, signature insurerSig) tapscript {
+  function claim(signature operatorSig, signature insurerSig) tapscript {
     require(checkMultisig(
-      [server, emulator, tweak(insurer, refund)],
-      [serverSig, emulatorSig, insurerSig]
+      [tweak(operator, claim), tweak(insurer, refund)],
+      [operatorSig, insurerSig]
     ));
   }
 }
 "#;
-        for src in [two_keys, emulator_and_constructor, name_matched] {
+        for src in [two_keys, operator_and_constructor, name_matched] {
             let err = super::super::compile(src).unwrap_err();
             assert!(
                 err.contains("keys may be tweaked to only one Arkade Script function"),

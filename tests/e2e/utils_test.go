@@ -14,7 +14,9 @@ import (
 	"strings"
 	"testing"
 
+	arklib "github.com/arkade-os/arkd/pkg/ark-lib"
 	"github.com/arkade-os/arkd/pkg/ark-lib/extension"
+	"github.com/arkade-os/arkd/pkg/ark-lib/script"
 	"github.com/arkade-os/arkd/pkg/ark-lib/txutils"
 	"github.com/arkade-os/emulator/pkg/arkade"
 	"github.com/btcsuite/btcd/btcec/v2"
@@ -149,11 +151,19 @@ func instantiateGroup(
 	for key, value := range values {
 		leafValues[key] = value
 	}
-	leafValues["SERVER_KEY"] = schnorr.SerializePubKey(serverKey)
+	leafValues["OPERATOR_KEY"] = schnorr.SerializePubKey(serverKey)
 	leafValues["EMULATOR_KEY:"+name] = schnorr.SerializePubKey(
 		arkade.ComputeArkadeScriptPublicKey(emulatorKey, arkade.ArkadeScriptHash(arkadeScript)),
 	)
-	leafScript := assemble(t, leaf.ASM, leafValues)
+	leafScript := assemble(t, legacyOperatorLeaf(leaf.ASM), leafValues)
+	// Today's arkd accepts the expanded leaf.
+	vtxoScript := &script.TapscriptsVtxoScript{}
+	if err := vtxoScript.Decode([]string{hex.EncodeToString(leafScript)}); err != nil {
+		t.Fatalf("decode %s.%s leaf: %v", contract.Name, name, err)
+	}
+	if err := vtxoScript.Validate(serverKey, arklib.RelativeLocktime{}, true); err != nil {
+		t.Fatalf("arkd rejects %s.%s leaf: %v", contract.Name, name, err)
+	}
 	pkScript, tapLeafScript := taprootLeaf(t, leafScript)
 
 	return instantiatedGroup{
@@ -163,8 +173,24 @@ func instantiateGroup(
 	}
 }
 
+// legacyOperatorLeaf expands each <OPERATOR_KEY:f> into <OPERATOR_KEY> OP_CHECKSIGVERIFY
+// <EMULATOR_KEY:f>: the untweaked server key and the emulator key tweaked by f's Arkade Script.
+// ponytail: emulates today's separate arkd and emulator stack, whose arkd requires the untweaked
+// server key in every non-CSV leaf; delete it once they merge into one operator.
+func legacyOperatorLeaf(tokens []string) []string {
+	expanded := make([]string, 0, len(tokens)+2)
+	for _, token := range tokens {
+		if function, ok := strings.CutPrefix(token, "<OPERATOR_KEY:"); ok {
+			expanded = append(expanded, "<OPERATOR_KEY>", "OP_CHECKSIGVERIFY", "<EMULATOR_KEY:"+function)
+			continue
+		}
+		expanded = append(expanded, token)
+	}
+	return expanded
+}
+
 // instantiateLeaf builds a spend group that is only an L1 leaf, with no
-// Arkade Script to tweak the emulator key against — the shape unilateral exits use.
+// Arkade Script to tweak the operator key against — the shape unilateral exits use.
 func instantiateLeaf(
 	t *testing.T,
 	contract artifact,
@@ -198,7 +224,7 @@ func instantiateLeaf(
 	for key, value := range values {
 		leafValues[key] = value
 	}
-	leafValues["SERVER_KEY"] = schnorr.SerializePubKey(serverKey)
+	leafValues["OPERATOR_KEY"] = schnorr.SerializePubKey(serverKey)
 	pkScript, tapLeafScript := taprootLeaf(t, assemble(t, leaf.ASM, leafValues))
 
 	return instantiatedGroup{pkScript: pkScript, tapLeafScript: tapLeafScript}

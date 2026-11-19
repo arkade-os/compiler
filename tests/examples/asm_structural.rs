@@ -79,11 +79,10 @@ fn local_check_placeholder_consistency(
         }
         let inner = &tok[1..tok.len() - 1];
         // Built-in / runtime-injected names that are always resolved.
-        if inner == "SERVER_KEY"
-            || inner == "SERVER_EXIT_DELAY"
-            || inner == "serverSig"
-            || inner == "emulatorSig"
-            || inner.starts_with("EMULATOR_KEY:")
+        if inner == "OPERATOR_KEY"
+            || inner == "OPERATOR_EXIT_DELAY"
+            || inner == "operatorSig"
+            || inner.starts_with("OPERATOR_KEY:")
             || inner.starts_with("CONTRACT:")
             || inner.starts_with("checkMultisig(")
         {
@@ -495,23 +494,23 @@ fn orphaned_placeholder_is_warned() {
 }
 
 #[test]
-fn server_key_placeholder_is_always_resolved() {
-    // <SERVER_KEY> is injected at runtime by the Arkade operator — it must not be
+fn operator_key_placeholder_is_always_resolved() {
+    // <OPERATOR_KEY> is injected at runtime by the Arkade operator — it must not be
     // flagged as unresolvable even though it is not in any schema.
     let asm = vec![
-        "<SERVER_KEY>".to_string(),
-        "<serverSig>".to_string(),
+        "<OPERATOR_KEY>".to_string(),
+        "<operatorSig>".to_string(),
         "OP_CHECKSIG".to_string(),
     ];
     let warnings = local_check_placeholder_consistency(&asm, &[], &[]);
-    // SERVER_KEY and serverSig are both special-cased
+    // OPERATOR_KEY and operatorSig are both special-cased
     let orphan: Vec<_> = warnings
         .iter()
-        .filter(|w| w.contains("SERVER_KEY"))
+        .filter(|w| w.contains("OPERATOR_KEY"))
         .collect();
     assert!(
         orphan.is_empty(),
-        "<SERVER_KEY> must never be flagged as unresolvable"
+        "<OPERATOR_KEY> must never be flagged as unresolvable"
     );
 }
 

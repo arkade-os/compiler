@@ -41,7 +41,7 @@ contract FeeAdapter(
 
   // Unilateral exit (CSV): sender recovers after exit delay.
   function unilateral(signature senderSig) tapscript {
-    require(older(serverExitDelay));
+    require(older(operatorExitDelay));
     require(checkSig(senderSig, senderPk));
   }
 }

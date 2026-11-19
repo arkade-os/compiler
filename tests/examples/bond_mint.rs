@@ -226,7 +226,7 @@ fn test_unilateral_exit_is_csv_timelocked() {
         !asm.contains(OP_INSPECTASSETGROUPSUM),
         "exit leaf must carry no asset-group-sum introspection"
     );
-    // The leaf witness is borrowerSig only — no serverSig/emulatorSig on a tapscript.
+    // The leaf witness is borrowerSig only — no operatorSig on a tapscript.
     let ws = crate::common::witness_names(&output, "unilateral", "unilateral");
     assert_eq!(
         ws,

@@ -146,7 +146,7 @@ contract StabilityOffer(
   // Provider recovers locked collateral after exit delay (Arkade operator offline).
   // -------------------------------------------------------------------------
   function unilateral(signature providerSig) tapscript {
-    require(older(serverExitDelay));
+    require(older(operatorExitDelay));
     require(checkSig(providerSig, providerPk));
   }
 }

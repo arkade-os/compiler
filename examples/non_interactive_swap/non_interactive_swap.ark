@@ -4,8 +4,8 @@ pragma arkade ^0.1.0;
 // Allows users to exchange assets without requiring both parties to be online simultaneously.
 //
 // Paths:
-// - swap cooperative: serverSig + OP_INSPECT* (trustless via introspection)
-// - cancel cooperative: makerSig + serverSig + checkTime(expirationTime)
+// - swap cooperative: operatorSig + OP_INSPECT* (trustless via introspection)
+// - cancel cooperative: makerSig + operatorSig + checkTime(expirationTime)
 // - unilateral: makerSig + CSV (maker recovers if no taker)
 
 import "../single_sig/single_sig.ark";
@@ -59,7 +59,7 @@ contract NonInteractiveSwap(
 
   // Unilateral exit (CSV): maker recovers after exit delay.
   function unilateral(signature makerSig) tapscript {
-    require(older(serverExitDelay));
+    require(older(operatorExitDelay));
     require(checkSig(makerSig, makerPk));
   }
 }

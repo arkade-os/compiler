@@ -48,13 +48,7 @@
               "encoding": "raw"
             },
             {
-              "name": "serverSig",
-              "type": "signature",
-              "encoding": "schnorr-64",
-              "injected": true
-            },
-            {
-              "name": "emulatorSig",
+              "name": "operatorSig",
               "type": "signature",
               "encoding": "schnorr-64",
               "injected": true
@@ -65,9 +59,7 @@
             "<preimageHash>",
             "OP_EQUAL",
             "OP_VERIFY",
-            "<SERVER_KEY>",
-            "OP_CHECKSIGVERIFY",
-            "<EMULATOR_KEY:claim>",
+            "<OPERATOR_KEY:claim>",
             "OP_CHECKSIG"
           ]
         }
@@ -92,13 +84,7 @@
           "name": "refund",
           "witness": [
             {
-              "name": "serverSig",
-              "type": "signature",
-              "encoding": "schnorr-64",
-              "injected": true
-            },
-            {
-              "name": "emulatorSig",
+              "name": "operatorSig",
               "type": "signature",
               "encoding": "schnorr-64",
               "injected": true
@@ -108,9 +94,7 @@
             "<refundTime>",
             "OP_CHECKLOCKTIMEVERIFY",
             "OP_DROP",
-            "<SERVER_KEY>",
-            "OP_CHECKSIGVERIFY",
-            "<EMULATOR_KEY:refund>",
+            "<OPERATOR_KEY:refund>",
             "OP_CHECKSIG"
           ]
         }
@@ -142,7 +126,7 @@
   "source": {
     "entry": "htlc.ark",
     "files": {
-      "htlc.ark": "contract HTLC(\n  pubkey sender,\n  pubkey receiver,\n  bytes20 preimageHash,\n  int refundTime,\n  int exit\n) {\n  function claim() {\n    require(tx.outputs[0].value >= tx.inputs[0].value);\n  }\n  function refund() {\n    require(tx.outputs[0].value >= tx.inputs[0].value);\n  }\n\n  function claim(bytes preimage, signature serverSig, signature emulatorSig) tapscript {\n    require(hash160(preimage) == preimageHash);\n    require(checkMultisig([server, emulator], [serverSig, emulatorSig], 2));\n  }\n  function refund(signature serverSig, signature emulatorSig) tapscript {\n    require(after(refundTime));\n    require(checkMultisig([server, emulator], [serverSig, emulatorSig], 2));\n  }\n\n  function unilateral(signature senderSig) tapscript {\n    require(older(exit));\n    require(checkSig(senderSig, sender));\n  }\n}"
+      "htlc.ark": "contract HTLC(\n  pubkey sender,\n  pubkey receiver,\n  bytes20 preimageHash,\n  int refundTime,\n  int exit\n) {\n  function claim() {\n    require(tx.outputs[0].value >= tx.inputs[0].value);\n  }\n  function refund() {\n    require(tx.outputs[0].value >= tx.inputs[0].value);\n  }\n\n  function claim(bytes preimage, signature operatorSig) tapscript {\n    require(hash160(preimage) == preimageHash);\n    require(checkSig(operatorSig, tweak(operator, claim)));\n  }\n  function refund(signature operatorSig) tapscript {\n    require(after(refundTime));\n    require(checkSig(operatorSig, tweak(operator, refund)));\n  }\n\n  function unilateral(signature senderSig) tapscript {\n    require(older(exit));\n    require(checkSig(senderSig, sender));\n  }\n}"
     }
   },
   "compiler": {

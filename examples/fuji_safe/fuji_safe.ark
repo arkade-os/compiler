@@ -87,7 +87,7 @@ contract FujiSafe(
 
   // Unilateral exit (CSV): borrower recovers after exit delay.
   function unilateral(signature borrowerSig) tapscript {
-    require(older(serverExitDelay));
+    require(older(operatorExitDelay));
     require(checkSig(borrowerSig, borrowerPk));
   }
 }

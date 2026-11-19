@@ -21,13 +21,10 @@ contract C() {
         ["points", "index", "expected"]
     );
     assert_eq!(group(&output, "spend").leaves.len(), 1);
-    assert_eq!(
-        witness_names(&output, "spend", "spend"),
-        ["serverSig", "emulatorSig"]
-    );
+    assert_eq!(witness_names(&output, "spend", "spend"), ["operatorSig"]);
     assert_eq!(
         leaf_asm(&output, "spend", "spend"),
-        "<SERVER_KEY> OP_CHECKSIGVERIFY <EMULATOR_KEY:spend> OP_CHECKSIG"
+        "<OPERATOR_KEY:spend> OP_CHECKSIG"
     );
     let asm = arkade_asm_tokens(&output, "spend");
     assert!(asm.iter().any(|op| op == "OP_MUL"));

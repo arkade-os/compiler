@@ -1,8 +1,8 @@
 //! Golden-parity: the §6.1 HTLC tapscript leaves must assemble to the exact
 //! closures arkd recognizes (`../arkd/pkg/ark-lib/script/closure.go`) and the
 //! introspector funds (`../introspector/test/htlc_test.go`):
-//!   claim    → ConditionMultisigClosure{ HASH160 <h> EQUAL, [server, emulator(claim)] }
-//!   refund   → CLTVMultisigClosure{ refundTime, [server, emulator(refund)] }
+//!   claim    → ConditionMultisigClosure{ HASH160 <h> EQUAL, [operator(claim)] }
+//!   refund   → CLTVMultisigClosure{ refundTime, [operator(refund)] }
 //!   unilateral → CSVMultisigClosure{ exit, [sender] }
 //!
 //! These assert the LEAF asm only; the Arkade Script function bodies just need to compile
@@ -18,13 +18,13 @@ contract HTLC(pubkey receiver, pubkey sender, bytes20 preimageHash, int refundTi
     function refund() {
         require(tx.outputs[0].value >= tx.inputs[0].value);
     }
-    function claim(bytes preimage, signature serverSig, signature emulatorSig) tapscript {
+    function claim(bytes preimage, signature operatorSig) tapscript {
         require(hash160(preimage) == preimageHash);
-        require(checkMultisig([server, emulator], [serverSig, emulatorSig]));
+        require(checkSig(operatorSig, tweak(operator, claim)));
     }
-    function refund(signature serverSig, signature emulatorSig) tapscript {
+    function refund(signature operatorSig) tapscript {
         require(after(refundTime));
-        require(checkMultisig([server, emulator], [serverSig, emulatorSig]));
+        require(checkSig(operatorSig, tweak(operator, refund)));
     }
     function unilateral(signature senderSig) tapscript {
         require(older(exit));
@@ -39,7 +39,7 @@ fn claim_matches_condition_multisig_closure() {
     assert_eq!(
         crate::common::leaf_asm(&out, "claim", "claim"),
         "OP_HASH160 <preimageHash> OP_EQUAL OP_VERIFY \
-         <SERVER_KEY> OP_CHECKSIGVERIFY <EMULATOR_KEY:claim> OP_CHECKSIG"
+         <OPERATOR_KEY:claim> OP_CHECKSIG"
     );
 }
 
@@ -49,7 +49,7 @@ fn refund_matches_cltv_multisig_closure() {
     assert_eq!(
         crate::common::leaf_asm(&out, "refund", "refund"),
         "<refundTime> OP_CHECKLOCKTIMEVERIFY OP_DROP \
-         <SERVER_KEY> OP_CHECKSIGVERIFY <EMULATOR_KEY:refund> OP_CHECKSIG"
+         <OPERATOR_KEY:refund> OP_CHECKSIG"
     );
 }
 
@@ -62,38 +62,38 @@ fn unilateral_matches_csv_multisig_closure() {
     );
 }
 
-const SERVER_EXIT: &str = r#"
+const OPERATOR_EXIT: &str = r#"
 contract Exit(pubkey owner) {
     function exit(signature ownerSig) tapscript {
-        require(older(serverExitDelay));
+        require(older(operatorExitDelay));
         require(checkSig(ownerSig, owner));
     }
 }
 "#;
 
 #[test]
-fn server_exit_delay_lowers_to_reserved_placeholder() {
-    let out = compile(SERVER_EXIT).unwrap();
+fn operator_exit_delay_lowers_to_reserved_placeholder() {
+    let out = compile(OPERATOR_EXIT).unwrap();
     assert_eq!(
         crate::common::leaf_asm(&out, "exit", "exit"),
-        "<SERVER_EXIT_DELAY> OP_CHECKSEQUENCEVERIFY OP_DROP <owner> OP_CHECKSIG"
+        "<OPERATOR_EXIT_DELAY> OP_CHECKSEQUENCEVERIFY OP_DROP <owner> OP_CHECKSIG"
     );
     let inputs: Vec<_> = out.parameters.iter().map(|p| p.name.as_str()).collect();
     assert_eq!(inputs, ["owner"]);
 }
 
 #[test]
-fn server_exit_delay_is_not_an_absolute_locktime() {
-    let source = SERVER_EXIT.replace("older(serverExitDelay)", "after(serverExitDelay)");
+fn operator_exit_delay_is_not_an_absolute_locktime() {
+    let source = OPERATOR_EXIT.replace("older(operatorExitDelay)", "after(operatorExitDelay)");
     let error = compile(&source).unwrap_err().to_string();
-    assert!(error.contains("serverExitDelay"), "got: {error}");
+    assert!(error.contains("operatorExitDelay"), "got: {error}");
 }
 
 #[test]
 fn timelock_units_encode_literals_and_constants() {
     let leaf = |timelock: &str| {
         let source = format!(
-            "contract C(pubkey owner) {{ const int DELAY = 1024; function exit(signature serverSig, signature sig) tapscript {{ require({timelock}); require(checkMultisig([server, owner], [serverSig, sig])); }} }}"
+            "contract C(pubkey owner) {{ const int DELAY = 1024; function exit(signature operatorSig, signature sig) tapscript {{ require({timelock}); require(checkMultisig([operator, owner], [operatorSig, sig])); }} }}"
         );
         let out = compile(&source).unwrap();
         (crate::common::leaf_asm(&out, "exit", "exit"), out.warnings)
@@ -129,22 +129,22 @@ fn sized_hashlock_preimages_emit_runtime_width_checks() {
             ("hash256", "bytes32", "OP_HASH256"),
         ] {
             for (arkade_script_function, timelock, keys, signatures) in [
-                ("", "", "server, owner", "serverSig, sig"),
+                ("", "", "operator, owner", "operatorSig, sig"),
                 (
                     "",
                     "require(older(144));",
-                    "server, owner",
-                    "serverSig, sig",
+                    "operator, owner",
+                    "operatorSig, sig",
                 ),
                 (
                     "function claim() { require(tx.outputs[0].value >= 1); }",
                     "",
-                    "server, emulator",
-                    "serverSig, sig",
+                    "tweak(operator, claim), owner",
+                    "operatorSig, sig",
                 ),
             ] {
                 let source = format!(
-                    "contract C(pubkey owner, {digest_type} digest) {{ {arkade_script_function} function claim({preimage_type} preimage, signature serverSig, signature sig) tapscript {{ require({hash}(preimage) == digest); {timelock} require(checkMultisig([{keys}], [{signatures}])); }} }}"
+                    "contract C(pubkey owner, {digest_type} digest) {{ {arkade_script_function} function claim({preimage_type} preimage, signature operatorSig, signature sig) tapscript {{ require({hash}(preimage) == digest); {timelock} require(checkMultisig([{keys}], [{signatures}])); }} }}"
                 );
                 for optimize in [false, true] {
                     let output = arkade_compiler::compile_sources_with_options(
@@ -179,7 +179,7 @@ fn unsized_hashlock_preimage_preserves_existing_leaf() {
         .unwrap();
         assert_eq!(
             crate::common::leaf_asm(&output, "claim", "claim"),
-            "OP_HASH160 <preimageHash> OP_EQUAL OP_VERIFY <SERVER_KEY> OP_CHECKSIGVERIFY <EMULATOR_KEY:claim> OP_CHECKSIG"
+            "OP_HASH160 <preimageHash> OP_EQUAL OP_VERIFY <OPERATOR_KEY:claim> OP_CHECKSIG"
         );
     }
 }

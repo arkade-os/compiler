@@ -50,7 +50,7 @@ fn deferred_declarations_allocate_on_assignment_and_reduce_assembly() {
             assert!(asm.len() < filled_asm.len(), "{deferred}: {asm:?} vs {filled_asm:?}");
             assert!(!asm.iter().any(|token| token == "OP_PUT"), "{asm:?}");
             assert_eq!(crate::common::arkade_inputs(&output, "spend"), crate::common::arkade_inputs(&filled, "spend"));
-            assert_eq!(crate::common::witness_names(&output, "spend", "spend"), ["serverSig", "emulatorSig"]);
+            assert_eq!(crate::common::witness_names(&output, "spend", "spend"), ["operatorSig"]);
             assert_eq!(crate::common::group(&output, "spend").leaves.len(), 1);
         }
         let output = artifact("int x; x = 7; require(x == 7);", optimize);

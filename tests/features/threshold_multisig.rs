@@ -1,7 +1,7 @@
 use crate::common::compile_unoptimized as compile;
 use arkade_compiler::opcodes::{
-    OP_1, OP_2, OP_3, OP_5, OP_CHECKSIG, OP_CHECKSIGADD, OP_CHECKSIGVERIFY, OP_GREATERTHANOREQUAL,
-    OP_NUMEQUAL, OP_VERIFY,
+    OP_1, OP_2, OP_3, OP_5, OP_CHECKSIG, OP_CHECKSIGADD, OP_GREATERTHANOREQUAL, OP_NUMEQUAL,
+    OP_VERIFY,
 };
 use serde_json::Value;
 use std::fs;
@@ -86,20 +86,9 @@ fn test_threshold_multisig() {
         .windows(3)
         .any(|tokens| { tokens[0] == OP_2 && tokens[1] == OP_NUMEQUAL && tokens[2] == OP_VERIFY }));
 
-    // Default leaf: synthesized SERVER_KEY + EMULATOR_KEY cosig guard.
+    // Default leaf: the operator key tweaked by twoOfTwo.
     let tof_leaf = leaf_asm(&output, "twoOfTwo", "twoOfTwo");
-    assert!(
-        tof_leaf.contains("<SERVER_KEY>"),
-        "twoOfTwo leaf: missing <SERVER_KEY>"
-    );
-    assert!(
-        tof_leaf.contains(OP_CHECKSIGVERIFY),
-        "twoOfTwo leaf: missing OP_CHECKSIGVERIFY"
-    );
-    assert!(
-        tof_leaf.contains(OP_CHECKSIG),
-        "twoOfTwo leaf: missing OP_CHECKSIG"
-    );
+    assert_eq!(tof_leaf, format!("<OPERATOR_KEY:twoOfTwo> {OP_CHECKSIG}"));
 
     // ── fiveOfFive group ──────────────────────────────────────────────────────
     // Arkade Script inputs: all 5 signer signatures
@@ -131,20 +120,9 @@ fn test_threshold_multisig() {
         .windows(3)
         .any(|tokens| { tokens[0] == OP_5 && tokens[1] == OP_NUMEQUAL && tokens[2] == OP_VERIFY }));
 
-    // Default leaf: synthesized SERVER_KEY + EMULATOR_KEY cosig guard.
+    // Default leaf: the operator key tweaked by fiveOfFive.
     let fof_leaf = leaf_asm(&output, "fiveOfFive", "fiveOfFive");
-    assert!(
-        fof_leaf.contains("<SERVER_KEY>"),
-        "fiveOfFive leaf: missing <SERVER_KEY>"
-    );
-    assert!(
-        fof_leaf.contains(OP_CHECKSIGVERIFY),
-        "fiveOfFive leaf: missing OP_CHECKSIGVERIFY"
-    );
-    assert!(
-        fof_leaf.contains(OP_CHECKSIG),
-        "fiveOfFive leaf: missing OP_CHECKSIG"
-    );
+    assert_eq!(fof_leaf, format!("<OPERATOR_KEY:fiveOfFive> {OP_CHECKSIG}"));
 
     // ── threeOfFive group ─────────────────────────────────────────────────────
     // Arkade Script inputs: all 5 signer signatures
@@ -179,19 +157,11 @@ fn test_threshold_multisig() {
         "only frame cleanup may follow the success result: {three_tokens:?}"
     );
 
-    // Default leaf: synthesized SERVER_KEY + EMULATOR_KEY cosig guard.
+    // Default leaf: the operator key tweaked by threeOfFive.
     let three_leaf = leaf_asm(&output, "threeOfFive", "threeOfFive");
-    assert!(
-        three_leaf.contains("<SERVER_KEY>"),
-        "threeOfFive leaf: missing <SERVER_KEY>"
-    );
-    assert!(
-        three_leaf.contains(OP_CHECKSIGVERIFY),
-        "threeOfFive leaf: missing OP_CHECKSIGVERIFY"
-    );
-    assert!(
-        three_leaf.contains(OP_CHECKSIG),
-        "threeOfFive leaf: missing OP_CHECKSIG"
+    assert_eq!(
+        three_leaf,
+        format!("<OPERATOR_KEY:threeOfFive> {OP_CHECKSIG}")
     );
 
     // ThresholdMultisig has no explicit exit leaf; each function gets the default cosig leaf.

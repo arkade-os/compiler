@@ -91,11 +91,11 @@ fn test_fee_adapter_contract() {
         "missing {OP_CHECKSIG} in execute: {execute_asm}"
     );
 
-    // execute leaf carries server + emulator cosig
+    // execute leaf carries the operator cosig
     let execute_leaf = crate::common::leaf_asm(&output, "execute", "execute");
     assert!(
-        execute_leaf.contains("<SERVER_KEY>"),
-        "execute leaf should have SERVER_KEY: {execute_leaf}"
+        execute_leaf.contains("<OPERATOR_KEY:execute>"),
+        "execute leaf should have OPERATOR_KEY:execute: {execute_leaf}"
     );
 
     // Verify adjust function

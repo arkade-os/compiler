@@ -217,8 +217,8 @@ pub(crate) fn validate_ast(contract: &Contract, require_entrypoint: bool) -> Vec
         }
     }
 
-    // Reserved arkd names (`server`, `emulator`, `serverExitDelay`) are
-    // supplied by the server, never by constructor parameters.
+    // Reserved names (`operator`, `operatorExitDelay`) are supplied by the
+    // operator, never by constructor parameters.
     for p in &contract.parameters {
         if crate::models::RESERVED_NAMES.contains(&p.name.as_str()) {
             issues.push(
@@ -1059,8 +1059,8 @@ contract Demo() {
     #[test]
     fn signature_placeholder_in_leaf_asm_is_output_error() {
         // The sig-leak self-check must fire regardless of placeholder casing:
-        // <serverSig>, <ownersig>, and <sig> are all signature placeholders.
-        for leaked in ["<serverSig>", "<ownersig>", "<sig>"] {
+        // <operatorSig>, <ownersig>, and <sig> are all signature placeholders.
+        for leaked in ["<operatorSig>", "<ownersig>", "<sig>"] {
             let mut output = make_output("Leak");
             output.functions[0].leaves[0].asm = vec![leaked.to_string()];
             let issues = validate_output(&output);
