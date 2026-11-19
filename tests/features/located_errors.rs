@@ -286,3 +286,126 @@ fn a_word_left_on_its_own_is_reported_at_the_word() {
     let message = at_line(&body("    require(checkSig(s, o));\n    héllo", "")).2;
     assert!(!message.contains("on its own"), "{message}");
 }
+
+#[test]
+fn declaration_errors_are_located_at_the_declared_name() {
+    // Each span must end the `context` occurrence and cover only `name`.
+    for (source, expected_message, context, name) in [
+        (
+            "contract C(pubkey o) { function f(signature server) tapscript { require(checkSig(server, o)); } }",
+            "tapscript 'f' input 'server' collides with a reserved arkd name",
+            "f(signature server",
+            "server",
+        ),
+        (
+            "contract C(pubkey o) { function f(signature s, signature s) tapscript { require(checkSig(s, o)); } }",
+            "duplicate input 's' in tapscript 'f'",
+            "signature s, signature s",
+            "s",
+        ),
+        (
+            "contract C(pubkey o) { function f(signature s, int[2] xs) tapscript { require(checkSig(s, o)); } }",
+            "tapscript 'f' input 'xs' has array type 'int[2]'; array witnesses are not supported in tapscript functions",
+            "int[2] xs",
+            "xs",
+        ),
+        (
+            "contract C(pubkey o) { function f(signature o) tapscript { require(checkSig(o, o)); } }",
+            "input 'o' in tapscript 'f' shadows constructor parameter 'o'",
+            "f(signature o",
+            "o",
+        ),
+        (
+            "contract C(pubkey o) { function f(signature s) tapscript { require(checkSig(s, o)); } function f(signature t) tapscript { require(checkSig(t, o)); } }",
+            "duplicate tapscript name 'f'; each tapscript must have a unique name",
+            "} function f",
+            "f",
+        ),
+        (
+            "contract C(pubkey emulator) { function f(signature s) { require(checkSig(s, emulator)); } }",
+            "constructor parameter 'emulator' collides with a reserved arkd name",
+            "C(pubkey emulator",
+            "emulator",
+        ),
+        (
+            "contract C(pubkey o, pubkey o) { function f(signature s) { require(checkSig(s, o)); } }",
+            "duplicate constructor parameter 'o'",
+            "pubkey o, pubkey o",
+            "o",
+        ),
+        (
+            "contract C(pubkey SERVER_KEY) { function f(signature s) { require(checkSig(s, SERVER_KEY)); } }",
+            "constructor parameter 'SERVER_KEY' uses a compiler-reserved placeholder name",
+            "C(pubkey SERVER_KEY",
+            "SERVER_KEY",
+        ),
+        (
+            "struct AssetId { int x; } contract C() { function f() { require(true); } }",
+            "struct 'AssetId' collides with a built-in type",
+            "struct AssetId",
+            "AssetId",
+        ),
+        (
+            "struct S { int x; bool x; } contract C() { function f() { require(true); } }",
+            "duplicate field 'x' in struct 'S'",
+            "bool x",
+            "x",
+        ),
+        (
+            "struct A { B b; } struct B { A a; } contract C() { function f() { require(true); } }",
+            "recursive struct layout: A -> B -> A",
+            "struct A",
+            "A",
+        ),
+        (
+            "contract C() {}",
+            "contract must declare at least one covenant or tapscript function",
+            "contract C",
+            "C",
+        ),
+    ] {
+        let files = BTreeMap::from([("main.ark".to_string(), source.to_string())]);
+        let diagnostics = arkade_compiler::check("main.ark", &files);
+        let error = diagnostics
+            .iter()
+            .find(|d| d.message == expected_message)
+            .unwrap_or_else(|| panic!("{source}: {diagnostics:?}"));
+        let span = error.span.unwrap_or_else(|| panic!("{source}: unlocated"));
+        assert_eq!(&source[span.start..span.end], name, "{source}");
+        assert!(source[..span.end].ends_with(context), "{source}: {span:?}");
+    }
+}
+
+#[test]
+fn struct_errors_never_take_a_span_from_an_imported_file() {
+    // `AssetId` in lib.ark is the built-in struct, so no cycle runs through main.ark's `AssetId`.
+    let main = "import \"lib.ark\";\nstruct Z { P p; }\nstruct AssetId { P p; }\ncontract C(pubkey o) { function f(signature s) { require(checkSig(s, o)); } }";
+    let files = BTreeMap::from([
+        ("main.ark".to_string(), main.to_string()),
+        (
+            "lib.ark".to_string(),
+            "// pad\nstruct P { AssetId a; }".to_string(),
+        ),
+    ]);
+    let diagnostics = arkade_compiler::check("main.ark", &files);
+    let [error] = diagnostics.as_slice() else {
+        panic!("{diagnostics:?}");
+    };
+    assert_eq!(
+        error.message,
+        "struct 'AssetId' collides with a built-in type"
+    );
+    let span = error.span.expect("located");
+    assert!(main[..span.end].ends_with("struct AssetId"), "{span:?}");
+}
+
+#[test]
+fn a_file_without_a_contract_reports_it_unlocated() {
+    let files = BTreeMap::from([("main.ark".to_string(), "struct S { int x; }".to_string())]);
+    let diagnostics = arkade_compiler::check("main.ark", &files);
+    let error = diagnostics
+        .iter()
+        .find(|d| d.message == "contract must declare at least one covenant or tapscript function")
+        .unwrap_or_else(|| panic!("{diagnostics:?}"));
+    assert_eq!(error.span, None);
+}
