@@ -709,6 +709,80 @@ contract C(int base) {
 }
 
 #[test]
+fn readonly_struct_and_field_arguments_alias_caller_slots() {
+    let source = |call: &str, parameters: &str, id: &str| {
+        format!(
+            r#"
+contract C(AssetId id) {{
+    function spend() {{
+        require({call} > 0);
+        require(tx.outputs[0].assets.lookup(id) > 0);
+    }}
+    private function held(int index, {parameters}) int {{
+        let row = tx.inputs[index].assets.tryLookup({id});
+        if (row.found) {{ return row.amount; }}
+        return 0;
+    }}
+}}
+"#
+        )
+    };
+    let whole = covenant(&source("held(0, id)", "AssetId a", "a"), "spend");
+    let fields = covenant(
+        &source(
+            "held(0, id.txid, id.gidx)",
+            "bytes32 txid, int gidx",
+            "AssetId { txid: txid, gidx: gidx }",
+        ),
+        "spend",
+    );
+
+    assert_eq!(whole.asm, fields.asm);
+    assert_eq!(
+        &whole.asm[..12],
+        [
+            "<id.gidx>",
+            "<id.txid>",
+            "0",
+            "OP_0",
+            "OP_0",
+            "OP_2",
+            OP_ROLL,
+            "OP_3",
+            OP_PICK,
+            "OP_5",
+            OP_PICK,
+            "OP_INSPECTINASSETLOOKUP"
+        ]
+    );
+}
+
+#[test]
+fn helpers_writing_a_struct_field_copy_the_argument() {
+    let covenant = covenant(
+        r#"
+contract C() {
+    function spend(AssetId id, int expected) {
+        require(bump(id) == expected);
+        require(id.gidx == expected - 1);
+    }
+    private function bump(AssetId a) int {
+        a.gidx = a.gidx + 1;
+        return a.gidx;
+    }
+}
+"#,
+        "spend",
+    );
+
+    // Both leaves are copied into the frame and the write lands on the copy.
+    assert!(contains_tokens(
+        &covenant.asm,
+        &["OP_1", OP_PICK, "OP_1", OP_PICK, "OP_1", OP_PICK, "1", OP_ADD, "OP_1", OP_PUT]
+    ));
+}
+
+#[test]
 fn caller_top_slot_rebinding_ignores_same_named_helper_locals() {
     let covenant = covenant(
         r#"

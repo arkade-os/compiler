@@ -212,28 +212,52 @@ impl Generator {
         let mut arguments = Vec::new();
         let mut aliases = std::collections::HashMap::new();
         for (index, (argument, parameter)) in args.iter().zip(&function.parameters).enumerate() {
-            if parameter.param_type.is_builtin() && !assigns(&function.statements, &parameter.name)
+            if !matches!(parameter.param_type, TypeName::Array(..))
+                && !assigns(&function.statements, &parameter.name)
             {
                 let source = match &argument.kind {
-                    ExprKind::Name(path) if path.segments.is_empty() => Some(path.clone()),
+                    ExprKind::Name(path) => Some(path.clone()),
                     ExprKind::ArrayIndex { array, index } => index
                         .literal_index()
                         .map(|index| array.clone().index(index)),
                     _ => None,
                 };
-                if let Some(source) = source {
-                    if let Some(source_index) =
-                        self.binding_index(&source).filter(|&i| i < baseline)
-                    {
+                let targets =
+                    self.value_leaves(&Path::new(&parameter.name), &parameter.param_type)?;
+                // Runtime indexes address leaves by contiguous slots, which an alias would not keep.
+                let slots = source
+                    .filter(|_| {
+                        targets.iter().all(|leaf| {
+                            !leaf
+                                .access
+                                .segments
+                                .iter()
+                                .any(|segment| matches!(segment, Segment::Index(_)))
+                        })
+                    })
+                    .map(|source| self.value_leaves(&source, &parameter.param_type))
+                    .transpose()?
+                    .and_then(|sources| {
+                        sources
+                            .into_iter()
+                            .map(|leaf| {
+                                self.binding_index(&leaf.access)
+                                    .filter(|&i| i < baseline)
+                                    .map(|i| (leaf.access, i))
+                            })
+                            .collect::<Option<Vec<_>>>()
+                    });
+                if let Some(slots) = slots {
+                    for (target, (source, source_index)) in targets.into_iter().zip(slots) {
                         self.count_constructor_reads(source_index, 1);
                         if self.read_cursor.is_none() {
                             if let Some(previous) = self.last_reads.get(&(source, source_index)) {
                                 self.final_reads[*previous] = false;
                             }
                         }
-                        aliases.insert(Path::new(&parameter.name), source_index);
-                        continue;
+                        aliases.insert(target.access, source_index);
                     }
+                    continue;
                 }
             }
             let start = self.stack.len();
