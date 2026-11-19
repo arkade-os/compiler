@@ -14,10 +14,10 @@ export function builtin_docs(): string;
 export function check_sources(entry: string, files: string, optimize?: boolean | null): string;
 
 /**
- * Compile Arkade Script source code to JSON
+ * Compile Arkade Language source code to JSON
  *
  * # Arguments
- * * `source` - The Arkade Script source code
+ * * `source` - The Arkade Language source code
  *
  * # Returns
  * A JSON string containing the compiled contract, or an error message
@@ -62,10 +62,10 @@ export function init(): void;
 export function symbol_at(entry: string, files: string, line: number, column: number): string;
 
 /**
- * Validate Arkade Script source code without generating output
+ * Validate Arkade Language source code without generating output
  *
  * # Arguments
- * * `source` - The Arkade Script source code
+ * * `source` - The Arkade Language source code
  *
  * # Returns
  * `true` if the source is valid, otherwise returns an error message

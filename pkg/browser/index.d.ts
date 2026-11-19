@@ -68,10 +68,12 @@ export interface WitnessElement extends Parameter {
     encoding: string;
     injected?: boolean;
 }
-export interface ArkadeCovenant {
+export interface ArkadeScript {
     inputs: Parameter[];
     asm: string[];
 }
+/** @deprecated Use `ArkadeScript`. */
+export type ArkadeCovenant = ArkadeScript;
 export interface TapLeaf {
     name: string;
     witness: WitnessElement[];
@@ -79,7 +81,7 @@ export interface TapLeaf {
 }
 export interface SpendGroup {
     name: string;
-    arkade?: ArkadeCovenant;
+    arkade?: ArkadeScript;
     leaves: TapLeaf[];
 }
 export interface SourceBundle {
@@ -109,14 +111,14 @@ export interface CompilerArtifact {
     fingerprint?: string;
 }
 export interface SourceRange {
-    /** Half-open range of indexes into the covenant's `asm`. */
+    /** Half-open range of indexes into the Arkade Script's `asm`. */
     asm: [number, number];
     /** 1-based `[line, column]` in the artifact's entry file, with UTF-16 columns. */
     start: [number, number];
     end: [number, number];
     message?: string;
 }
-/** Covenant source maps, linked to their artifact by its fingerprint. */
+/** Arkade Script source maps, linked to their artifact by its fingerprint. */
 export interface DebugInfo {
     formatVersion: number;
     artifactFingerprint?: string;

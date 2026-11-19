@@ -1600,8 +1600,8 @@ function displayAsm(artifact, debug) {
     asmRuns = [];
     for (const group of artifact.functions) {
         if (group.arkade?.asm.length) {
-            html += `<span class="asm-function">${group.name} <span class="asm-variant">(arkade covenant)</span></span>\n`;
-            html += covenantListing(group.arkade.asm, debug.functions[group.name]?.sourceMap) + '\n';
+            html += `<span class="asm-function">${group.name} <span class="asm-variant">(arkade script)</span></span>\n`;
+            html += arkadeScriptListing(group.arkade.asm, debug.functions[group.name]?.sourceMap) + '\n';
         }
         for (const leaf of group.leaves) {
             const label = leaf.name === group.name ? group.name : `${group.name}/${leaf.name}`;
@@ -1661,7 +1661,7 @@ function escapeHtml(text) {
     return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
-// The covenant source map ranges shown in the assembly tab, indexed by their `data-run`.
+// The Arkade Script source map ranges shown in the assembly tab, indexed by their `data-run`.
 let asmRuns = [];
 // They locate source only while the editor shows the source they were compiled from.
 const sourceRuns = () => (editor?.getValue() === lastCompiledSource ? asmRuns : []);
@@ -1680,9 +1680,9 @@ function highlightAsm(asm) {
     return tokens.map(highlightToken).join(' ');
 }
 
-// The covenant one source statement per line: its line number, its tokens and its
+// The Arkade Script one source statement per line: its line number, its tokens and its
 // `require` message. Tokens the compiler adds itself get a line without a number.
-function covenantListing(asm, sourceMap = []) {
+function arkadeScriptListing(asm, sourceMap = []) {
     const lines = [];
     let next = 0;
     const unmapped = end => {
