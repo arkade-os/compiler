@@ -270,7 +270,7 @@ pub(super) fn optimize(mut asm: Vec<Spanned>) -> (Vec<Spanned>, usize) {
     asm.push((Int1.into(), None));
 
     let (kept, dropped) = (rewrite(kept), rewrite(asm));
-    // A covenant that only leaves its witness for the final check would be empty.
+    // An Arkade Script that only leaves its witness for the final check would be empty.
     if dropped.0.len() < kept.0.len() || kept.0.is_empty() {
         dropped
     } else {

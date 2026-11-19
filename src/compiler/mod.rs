@@ -1,6 +1,6 @@
 use crate::diagnostics::{CompileError, Diagnostic, Span};
 use crate::models::{
-    ArkadeCovenant, AssignmentTarget, CompilerInfo, Contract, ContractJson, ExprKind, Expression,
+    ArkadeScript, AssignmentTarget, CompilerInfo, Contract, ContractJson, ExprKind, Expression,
     Function, FunctionInput, LocatedStatement, Parameter, Path, Segment, SourceRange, Statement,
     TypeName,
 };
@@ -397,7 +397,7 @@ impl Generator {
         Ok(())
     }
 
-    /// The covenant's instructions, each with its statement's span, and its stack peak.
+    /// The Arkade Script's instructions, each with its statement's span, and its stack peak.
     fn finish(mut self) -> Result<(Vec<Spanned>, usize)> {
         if !self.scopes.is_empty() {
             return Err(CompileError::internal("unbalanced generator scope"));
@@ -408,22 +408,24 @@ impl Generator {
             self.nip()?;
         }
         if self.stack != vec![StackItem::Temporary] {
-            return Err(CompileError::internal("covenant did not finish cleanly"));
+            return Err(CompileError::internal(
+                "Arkade Script did not finish cleanly",
+            ));
         }
         Ok((self.asm.into_spanned(), self.max_depth))
     }
 }
 
-/// Compiles an Arkade Script contract into a JSON-serializable structure.
+/// Compiles an Arkade Language contract into a JSON-serializable structure.
 ///
 /// Takes source code, parses it into an AST, and transforms it into a ContractJson
 /// structure. The output includes contract name, constructor inputs (with asset ID
-/// decomposition for lookup parameters), spend groups, optional arkade covenants,
+/// decomposition for lookup parameters), spend groups, optional Arkade Scripts,
 /// and L1 tapleaf assemblies.
 ///
 /// # Arguments
 ///
-/// * `source_code` - The Arkade Script source code
+/// * `source_code` - The Arkade Language source code
 ///
 /// # Returns
 ///
@@ -531,20 +533,20 @@ pub(crate) fn emit(
         warnings,
     };
 
-    // Build covenant objects for public functions.
-    let mut covenants: std::collections::HashMap<String, ArkadeCovenant> =
+    // Build the Arkade Script of each public function.
+    let mut scripts: std::collections::HashMap<String, ArkadeScript> =
         std::collections::HashMap::new();
     for function in contract.functions.iter().filter(|f| !f.is_private) {
-        covenants.insert(
+        scripts.insert(
             function.name.clone(),
-            covenant_for(
+            arkade_script_for(
                 function,
                 &contract.parameters,
                 &contract.structs,
                 &contract.functions,
                 options.optimize,
             )
-            .map(|(inputs, ops, costs)| ArkadeCovenant {
+            .map(|(inputs, ops, costs)| ArkadeScript {
                 inputs,
                 asm: ops.iter().map(|(op, _)| op.spell()).collect(),
                 source_map: source_map(&ops, &entry_source, &messages),
@@ -554,7 +556,7 @@ pub(crate) fn emit(
         );
     }
 
-    json.functions = tapscript::build_function_groups(contract, leaves, covenants)?;
+    json.functions = tapscript::build_function_groups(contract, leaves, scripts)?;
 
     // ── Output invariant check ─────────────────────────────────────────────
     // Self-check the emitted JSON for structural invariants.
@@ -620,10 +622,10 @@ pub(crate) fn expanded_placeholder_params(
     Ok(result)
 }
 
-/// Build an `ArkadeCovenant` for a public function.
+/// Build an `ArkadeScript` for a public function.
 /// Compute budgets are deployment-configurable; compare the reported counts with the target
 /// emulator's limits rather than enforcing defaults here.
-fn covenant_for(
+fn arkade_script_for(
     function: &Function,
     constructor_parameters: &[Parameter],
     structs: &[crate::models::StructDefinition],

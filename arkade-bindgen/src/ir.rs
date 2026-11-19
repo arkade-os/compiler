@@ -30,8 +30,8 @@ impl Encoding {
         }
     }
 
-    /// Infer encoding from an Arkade Script type string. Constructor parameters
-    /// and covenant inputs carry only a type, not an explicit encoding.
+    /// Infer encoding from an Arkade Language type string. Constructor parameters
+    /// and function inputs carry only a type, not an explicit encoding.
     pub fn from_ark_type(type_str: &str) -> Self {
         match type_str {
             "signature" => Encoding::Schnorr64,
@@ -56,12 +56,12 @@ impl Encoding {
     }
 }
 
-/// A typed field in the IR (constructor param, covenant input, or witness element).
+/// A typed field in the IR (constructor param, function input, or witness element).
 #[derive(Debug, Clone)]
 pub struct Field {
     /// Flattened scalar path used by assembly placeholders and witness entries.
     pub name: String,
-    /// Arkade Script type string (e.g., "pubkey", "signature").
+    /// Arkade Language type string (e.g., "pubkey", "signature").
     pub ark_type: String,
     /// Wire encoding descriptor.
     pub encoding: Encoding,
@@ -72,7 +72,8 @@ pub struct Field {
 /// One L1 tapleaf spend path within a group.
 #[derive(Debug, Clone)]
 pub struct LeafIR {
-    /// Leaf name (source tapscript name, or covenant name for a synthesized default).
+    /// Leaf name (source tapscript name, or the Arkade Script function's name for a synthesized
+    /// default).
     pub name: String,
     /// Witness stack the caller supplies, in order. Injected fields are marked.
     pub witness_fields: Vec<Field>,
@@ -90,22 +91,22 @@ impl LeafIR {
     }
 }
 
-/// The emulator-run covenant attached to a function-backed group.
+/// The Arkade Script that the operator runs for an Arkade Script function's group.
 #[derive(Debug, Clone)]
-pub struct CovenantIR {
-    /// Covenant inputs (function parameters, array-expanded).
+pub struct ArkadeScriptIR {
+    /// Function inputs (function parameters, array-expanded).
     pub inputs: Vec<Field>,
-    /// Covenant assembly.
+    /// Arkade Script assembly.
     pub asm: Vec<String>,
 }
 
-/// A spend group: an optional covenant plus its L1 leaves.
+/// A spend group: an optional Arkade Script plus its L1 leaves.
 #[derive(Debug, Clone)]
 pub struct GroupIR {
-    /// Group name (covenant function name, or a standalone leaf's own name).
+    /// Group name (Arkade Script function name, or a standalone leaf's own name).
     pub name: String,
-    /// Emulator covenant; absent for groups of standalone leaves.
-    pub covenant: Option<CovenantIR>,
+    /// Absent for groups of standalone leaves.
+    pub arkade: Option<ArkadeScriptIR>,
     /// L1 tapleaves grouped under this entry.
     pub leaves: Vec<LeafIR>,
 }
@@ -128,7 +129,7 @@ pub struct ContractIR {
 /// Expand one artifact entry into generated fields.
 ///
 /// The artifact keeps one entry per source parameter, so arrays and structs
-/// expand into the scalar fields the covenant asm and witness stack carry.
+/// expand into the scalar fields the Arkade Script asm and witness stack carry.
 fn fields_from_ark_type(
     name: &str,
     ark_type: &str,
@@ -174,12 +175,12 @@ pub fn build_ir(artifact: &ContractJson) -> Result<ContractIR, String> {
         .functions
         .iter()
         .map(|group| {
-            let covenant = group
+            let arkade = group
                 .arkade
                 .as_ref()
-                .map(|cov| -> Result<CovenantIR, String> {
-                    Ok(CovenantIR {
-                        inputs: cov
+                .map(|script| -> Result<ArkadeScriptIR, String> {
+                    Ok(ArkadeScriptIR {
+                        inputs: script
                             .inputs
                             .iter()
                             .map(|input| {
@@ -194,7 +195,7 @@ pub fn build_ir(artifact: &ContractJson) -> Result<ContractIR, String> {
                             .into_iter()
                             .flatten()
                             .collect(),
-                        asm: cov.asm.clone(),
+                        asm: script.asm.clone(),
                     })
                 })
                 .transpose()?;
@@ -225,7 +226,7 @@ pub fn build_ir(artifact: &ContractJson) -> Result<ContractIR, String> {
                 .collect::<Result<Vec<_>, String>>()?;
             Ok(GroupIR {
                 name: group.name.clone(),
-                covenant,
+                arkade,
                 leaves,
             })
         })

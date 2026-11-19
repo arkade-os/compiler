@@ -4,7 +4,7 @@ use arkade_compiler::opcodes::{
     OP_MUL, OP_PICK, OP_PUT, OP_ROLL, OP_VERIFY,
 };
 
-fn covenant(source: &str, function: &str) -> arkade_compiler::models::ArkadeCovenant {
+fn covenant(source: &str, function: &str) -> arkade_compiler::models::ArkadeScript {
     let output = compile(source).unwrap_or_else(|error| panic!("compile failed: {error}"));
     crate::common::group(&output, function)
         .arkade

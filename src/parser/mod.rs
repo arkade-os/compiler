@@ -525,7 +525,7 @@ fn parse_contract(contract: &mut Contract, pair: Pair<Rule>) -> Result<(), Compi
             }),
     );
 
-    // Functions (covenant) and tapscript declarations share the `function` rule;
+    // Arkade Script and tapscript functions share the `function` rule;
     // a tapscript carries a `tapscript_block` body.
     let mut attributes = Vec::new();
     for func_pair in inner_pairs {

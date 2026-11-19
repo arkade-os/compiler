@@ -1,7 +1,7 @@
-/// Type system for Arkade Script.
+/// Type system for Arkade Language.
 ///
 /// Provides:
-/// - `ArkType`: the canonical type enum for all Arkade Script values,
+/// - `ArkType`: the canonical type enum for all Arkade Language values,
 ///   including wire-encoding metadata used by client stub generators
 /// - `annotate`: stores every expression's type on it before validation;
 ///   the validator and code generation read `Expression::ty`
@@ -15,7 +15,7 @@ use crate::properties::{GroupIoProperty, GroupProperty};
 
 // ─── Type Enum ────────────────────────────────────────────────────────────────
 
-/// All possible types in Arkade Script.
+/// All possible types in Arkade Language.
 ///
 /// Declared types map directly to the grammar's `data_type` rule.
 /// Internal types are produced by introspection expressions; they never appear
@@ -94,7 +94,7 @@ impl ArkType {
         }
     }
 
-    /// Canonical string form matching Arkade Script syntax.
+    /// Canonical string form matching Arkade Language syntax.
     pub fn as_str(&self) -> String {
         match self {
             ArkType::Signature => "signature".to_string(),

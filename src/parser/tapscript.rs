@@ -76,13 +76,13 @@ pub(crate) fn parse_named_tapscript(
                         }
                         format!("{callee}(...)")
                     }
-                    Rule::primary_expr => match covenant_member(&part) {
+                    Rule::primary_expr => match arkade_script_member(&part) {
                         Some(name) => name,
                         None => continue,
                     },
                     _ => continue,
                 };
-                let message = format!("`{name}` is only available in covenant functions");
+                let message = format!("`{name}` is only available in Arkade Script functions");
                 return Err(CompileError::from(message).at(part.as_span().into()));
             }
             let at = expr.as_span().into();
@@ -102,9 +102,9 @@ pub(crate) fn parse_named_tapscript(
     })
 }
 
-/// The covenant-only member a `primary_expr` starts with: `this.expiry`, `this.tunnel(...)`,
+/// The Arkade-Script-only member a `primary_expr` starts with: `this.expiry`, `this.tunnel(...)`,
 /// `tx.intent.field(...)` or `tx.intent.has(...)`.
-fn covenant_member(pair: &Pair<Rule>) -> Option<String> {
+fn arkade_script_member(pair: &Pair<Rule>) -> Option<String> {
     let mut inner = pair.clone().into_inner();
     let mut name = inner
         .next()
@@ -181,7 +181,7 @@ pub(crate) fn parse_tap_item(
             })
         }
         Rule::time_comparison => Err(
-            "`tx.locktime` is only available in covenant functions; use `after(...)` in tapscript functions"
+            "`tx.locktime` is only available in Arkade Script functions; use `after(...)` in tapscript functions"
                 .to_string(),
         ),
         Rule::check_sig => {
@@ -426,7 +426,11 @@ contract Demo(pubkey owner) {
 }
 "#;
         let c = parse(src);
-        assert_eq!(c.functions.len(), 1, "covenant function stays in functions");
+        assert_eq!(
+            c.functions.len(),
+            1,
+            "Arkade Script function stays in functions"
+        );
         assert_eq!(c.functions[0].name, "claim");
         assert_eq!(c.tapscripts.len(), 1, "tapscript routed into tapscripts");
         let ts = &c.tapscripts[0];

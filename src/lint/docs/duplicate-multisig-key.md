@@ -1,4 +1,4 @@
-A key listed more than once in `checkMultisig`, in a covenant or a tapscript.
+A key listed more than once in `checkMultisig`, in an Arkade Script function or a tapscript function.
 
 One signature then counts once for each listing, so its holder alone can reach a higher threshold than intended.
 

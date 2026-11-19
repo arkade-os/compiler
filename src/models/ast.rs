@@ -1,4 +1,4 @@
-//! The abstract syntax tree of an Arkade Script contract.
+//! The abstract syntax tree of an Arkade Language contract.
 
 use super::*;
 
@@ -364,7 +364,7 @@ pub enum KeyExpr {
     Ident(Path),
     /// A 32-byte x-only key from a `pubkey` constant, as `0x`-prefixed hex.
     Literal(String),
-    /// `tweak(base, func)`: `base` tweaked by `func`'s covenant hash.
+    /// `tweak(base, func)`: `base` tweaked by `func`'s Arkade Script hash.
     /// `base` is `emulator` or a constructor pubkey (a second enclave).
     Tweak { base: String, func: String },
 }
@@ -556,7 +556,7 @@ pub enum ExprKind {
     Name(Path),
     /// Decimal integer, boolean, or 0x-prefixed byte data (including empty 0x).
     Literal(String),
-    /// A value the covenant generator takes out of an expression to emit itself.
+    /// A value the Arkade Script generator takes out of an expression to emit itself.
     #[doc(hidden)]
     Extracted(usize),
     /// Query a hex-encoded UTF-8 intent path; presence-only queries return bool.

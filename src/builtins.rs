@@ -425,7 +425,7 @@ const SPELLED: &[Spelled] = &[
             "tweak",
             &["pubkey base", "function name"],
             "pubkey",
-            "base (emulator or a constructor pubkey) tweaked by the named covenant's hash. A \
+            "base (emulator or a constructor pubkey) tweaked by the named function's Arkade Script hash. A \
              tapscript-only key expression inside checkSig or checkMultisig.",
         )
     },
@@ -652,8 +652,8 @@ const SPELLED: &[Spelled] = &[
         ],
         "bool",
         "True when the output keeps this input's scriptPubKey, value and exact assets, or those \
-         the policy selects, apart from the excepted assets; otherwise fails the spend. Covenant \
-         only.",
+         the policy selects, apart from the excepted assets; otherwise fails the spend. Only in \
+         Arkade Script functions.",
     ),
 ];
 

@@ -1,4 +1,4 @@
-//! Semantic validation for Arkade Script contracts.
+//! Semantic validation for Arkade Language contracts.
 //!
 //! This module provides two validation passes:
 //!
@@ -9,7 +9,7 @@
 //! 2. **Output validation** (`validate_output`) — runs after compilation.
 //!    Asserts structural invariants on the emitted `ContractJson`, catching compiler
 //!    bugs before the output reaches callers: every spend group has at least one
-//!    leaf, each leaf has non-empty `asm`, each present `arkade` covenant has
+//!    leaf, each leaf has non-empty `asm`, each present `arkade` script has
 //!    non-empty `asm`, and no leaf `asm` carries a signature placeholder
 //!    (signatures are witness-only). Tapscript-source-level operand scope checks
 //!    live in `compiler::tapscript::validate_arkd_rules`.
@@ -115,7 +115,7 @@ fn locate(issues: &mut [ValidationIssue], span: crate::diagnostics::Span) {
 ///
 /// Checks performed:
 /// - Contract name is non-empty.
-/// - At least one covenant or tapscript function is declared.
+/// - At least one Arkade Script or tapscript function is declared.
 /// - Function names are unique within the contract.
 /// - Tapscript names are unique within the contract.
 /// - Constructor parameter names are unique.
@@ -135,14 +135,14 @@ pub(crate) fn validate_ast(contract: &Contract, require_entrypoint: bool) -> Vec
         issues.push(ValidationIssue::error("contract name must not be empty"));
     }
 
-    // ── At least one covenant or tapscript function ──────────────────
+    // ── At least one Arkade Script or tapscript function ─────────────
     let public_count = contract.functions.iter().filter(|f| !f.is_private).count();
     if require_entrypoint && public_count == 0 && contract.tapscripts.is_empty() {
         // A file with no contract has no name to locate this at.
         issues.push(ValidationIssue {
             span: (!contract.name.is_empty()).then_some(contract.span),
             ..ValidationIssue::error(
-                "contract must declare at least one covenant or tapscript function",
+                "contract must declare at least one Arkade Script or tapscript function",
             )
         });
     }
@@ -922,7 +922,7 @@ contract Demo() {
         assert!(!issues.is_empty());
         assert!(issues
             .iter()
-            .any(|i| i.message.contains("at least one covenant")));
+            .any(|i| i.message.contains("at least one Arkade Script")));
     }
 
     #[test]

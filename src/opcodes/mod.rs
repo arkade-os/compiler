@@ -1,5 +1,5 @@
 //! Script opcodes. Each one is listed once, with the items it pops and pushes; the
-//! covenant generator models the stack from these.
+//! Arkade Script generator models the stack from these.
 
 macro_rules! opcodes {
     ($($variant:ident = $name:ident $(=> ($pops:literal, $pushes:literal))?),* $(,)?) => {

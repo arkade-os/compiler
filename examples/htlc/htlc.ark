@@ -8,7 +8,7 @@ contract HTLC(
   bytes20 preimageHash,
   int refundTime
 ) {
-  // Covenants (emulator): pin the payout to the right party for >= input value.
+  // Covenants (operator-enforced): pin the payout to the right party for >= input value.
   @allow(unsigned-spend-path, "the claim leaf needs the preimage, and the output pays the receiver")
   function claim() {
     require(tx.outputs[this.activeInputIndex].script == new SingleSig(receiver));

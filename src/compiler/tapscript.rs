@@ -2,8 +2,8 @@
 //! emission. Pure functions over `NamedTapscript`; ABI wiring lives in mod.rs.
 
 use crate::models::{
-    AbiFunctionGroup, AbiLeaf, ArkadeCovenant, Contract, HashFn, KeyExpr, NamedTapscript,
-    Parameter, TapItem, TapOperand, TimeUnit, WitnessElement,
+    AbiFunctionGroup, AbiLeaf, ArkadeScript, Contract, HashFn, KeyExpr, NamedTapscript, Parameter,
+    TapItem, TapOperand, TimeUnit, WitnessElement,
 };
 use crate::models::{EMULATOR, SERVER, SERVER_EXIT_DELAY};
 use crate::opcodes::{
@@ -46,12 +46,12 @@ pub enum Pushed {
     /// Assembled as written: a number or a hex string.
     Literal(String),
     Constructor(String),
-    /// A constructor pubkey tweaked by `func`'s covenant hash.
+    /// A constructor pubkey tweaked by `func`'s Arkade Script hash.
     TweakedConstructor {
         base: String,
         func: String,
     },
-    /// The emulator key tweaked by `func`'s covenant hash.
+    /// The emulator key tweaked by `func`'s Arkade Script hash.
     Emulator(String),
     /// A value the server supplies, by its placeholder.
     Server(&'static str),
@@ -194,9 +194,9 @@ pub fn validate_closure_shape(c: &Closure, ts_name: &str) -> Result<(), String> 
     Ok(())
 }
 
-/// Enforce the `emulator` binding rule (§5.3): a leaf named after a covenant
-/// function includes bare `emulator`; any other leaf tweaks at most one
-/// function's emulator key. `contract` supplies the covenant function names.
+/// Enforce the `emulator` binding rule (§5.3): a leaf named after an Arkade
+/// Script function includes bare `emulator`; any other leaf tweaks at most one
+/// function's emulator key. `contract` supplies the Arkade Script function names.
 pub fn resolve_binding(contract: &Contract, ts: &NamedTapscript) -> Result<(), String> {
     if contract
         .functions
@@ -280,7 +280,7 @@ pub fn resolve_binding(contract: &Contract, ts: &NamedTapscript) -> Result<(), S
     }
 }
 
-/// The one arkade function this leaf tweaks a key to.
+/// The one Arkade Script function this leaf tweaks a key to.
 ///
 /// Bare `emulator` names the tapscript itself. `tweak(base, func)` names `func`.
 /// A leaf can name only one function, so it has one `leaves` array to join.
@@ -295,7 +295,7 @@ pub(crate) fn shared_tweak_func(ts_name: &str, keys: &[KeyExpr]) -> Result<Optio
         if let Some(prev) = &target {
             if prev != func {
                 return Err(format!(
-                    "tapscript `{ts_name}`: keys may be tweaked to only one arkade function"
+                    "tapscript `{ts_name}`: keys may be tweaked to only one Arkade Script function"
                 ));
             }
         } else {
@@ -708,18 +708,18 @@ pub(crate) fn check_tapscript(
     Ok(CheckedLeaf { script, group_key })
 }
 
-/// Build the unified `functions[]` ABI: one group per covenant function plus
+/// Build the unified `functions[]` ABI: one group per Arkade Script function plus
 /// one group per pure-standalone leaf. `leaves` are the contract's tapscripts as
-/// `prepare` checked them, in declaration order. `covenants`
-/// holds each function's emulator covenant (built by mod.rs to avoid a cycle);
+/// `prepare` checked them, in declaration order. `scripts`
+/// holds each function's Arkade Script (built by mod.rs to avoid a cycle);
 /// it is consumed as groups are assembled.
 pub(crate) fn build_function_groups(
     contract: &Contract,
     leaves: &[CheckedLeaf],
-    mut covenants: std::collections::HashMap<String, ArkadeCovenant>,
+    mut scripts: std::collections::HashMap<String, ArkadeScript>,
 ) -> Result<Vec<AbiFunctionGroup>, String> {
     // Resolve + validate every author-written tapscript; bucket by group key.
-    // A tweak joins that covenant. A leaf that tweaks nothing keeps its own name.
+    // A tweak joins that function's group. A leaf that tweaks nothing keeps its own name.
     use std::collections::BTreeMap;
     let mut grouped: BTreeMap<String, Vec<AbiLeaf>> = BTreeMap::new();
 
@@ -742,9 +742,9 @@ pub(crate) fn build_function_groups(
 
     let mut groups = Vec::new();
 
-    // One group per covenant function, in declaration order.
+    // One group per Arkade Script function, in declaration order.
     for f in contract.functions.iter().filter(|f| !f.is_private) {
-        let arkade = covenants.remove(&f.name);
+        let arkade = scripts.remove(&f.name);
         let mut leaves = grouped.remove(&f.name).unwrap_or_default();
         // A constructor-pubkey tweak is an extra leaf. It does not replace the emulator path.
         if !leaves.iter().any(leaf_signs_emulator) {
@@ -757,7 +757,7 @@ pub(crate) fn build_function_groups(
         });
     }
 
-    // Standalone groups follow covenant groups, in tapscript declaration order.
+    // Standalone groups follow Arkade Script function groups, in tapscript declaration order.
     for ts in &contract.tapscripts {
         if let Some((name, leaves)) = grouped.remove_entry(&ts.name) {
             groups.push(AbiFunctionGroup {
@@ -1039,7 +1039,7 @@ mod tests {
 
     #[test]
     fn name_matched_requires_bare_emulator() {
-        // claim covenant exists; leaf named claim with bare emulator → accepted
+        // claim function exists; leaf named claim with bare emulator → accepted
         let leaf = NamedTapscript {
             span: Default::default(),
             declaration: Default::default(),
@@ -1618,7 +1618,7 @@ mod tests {
         );
     }
 
-    /// `tweak(constructorPubkey, func)` binds that key to the covenant on any leaf.
+    /// `tweak(constructorPubkey, func)` binds that key to `func` on any leaf.
     /// A forfeit leaf includes `server` as well.
     #[test]
     fn second_emulator_tweak_binds_the_constructor_key() {
@@ -1817,7 +1817,7 @@ contract Demo(pubkey insurer) {
         for src in [two_keys, emulator_and_constructor, name_matched] {
             let err = super::super::compile(src).unwrap_err();
             assert!(
-                err.contains("keys may be tweaked to only one arkade function"),
+                err.contains("keys may be tweaked to only one Arkade Script function"),
                 "{err}"
             );
         }

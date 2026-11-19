@@ -110,7 +110,7 @@ impl Facts {
 }
 
 pub(super) fn check(contract: &Contract, findings: &mut Vec<Finding>) {
-    let mut covenants = Vec::new();
+    let mut functions = Vec::new();
     for function in contract
         .functions
         .iter()
@@ -125,19 +125,19 @@ pub(super) fn check(contract: &Contract, findings: &mut Vec<Finding>) {
         find_witness_choices(&function.statements, &witness, &mut facts);
         Walk::into_helpers(contract).statements(&function.statements, &mut facts);
         report(function, &facts, findings);
-        covenants.push((function, facts.path));
+        functions.push((function, facts.path));
     }
-    unsigned_spend_path(&covenants, &spending_paths(contract, &covenants), findings);
+    unsigned_spend_path(&functions, &spending_paths(contract, &functions), findings);
 }
 
-/// A tapscript leaf, or the synthesized leaf of a covenant that no leaf signs for with the
-/// emulator: whether it needs a constructor key's signature, and the covenant whose tweaked
-/// key it signs with, which must then pass too.
+/// A tapscript leaf, or the synthesized leaf of an Arkade Script function that no leaf signs
+/// for with the emulator: whether it needs a constructor key's signature, and the Arkade Script
+/// function whose tweaked key it signs with, which must then pass too.
 type SpendingPath<'a> = (bool, Option<(&'a Function, Path)>);
 
 fn spending_paths<'a>(
     contract: &Contract,
-    covenants: &[(&'a Function, Path)],
+    functions: &[(&'a Function, Path)],
 ) -> Vec<SpendingPath<'a>> {
     let mut paths = Vec::new();
     let mut emulated = HashSet::new();
@@ -157,33 +157,33 @@ fn spending_paths<'a>(
             emulated.extend(bound.clone());
         }
         // Every key of a leaf signs. The server and emulator co-sign every offchain spend, and a
-        // tweaked key's enclave signs whatever its covenant passes, so only a constructor or
+        // tweaked key's enclave signs whatever its function passes, so only a constructor or
         // constant key authorizes the spend.
         let signed = keys.iter().any(|key| {
             matches!(key, KeyExpr::Literal(_))
                 || matches!(key, KeyExpr::Ident(path) if contract.parameters.iter().any(|p| p.name == path.root))
         });
-        let covenant = bound.and_then(|name| covenants.iter().find(|(f, _)| f.name == name));
-        paths.push((signed, covenant.copied()));
+        let function = bound.and_then(|name| functions.iter().find(|(f, _)| f.name == name));
+        paths.push((signed, function.copied()));
     }
     paths.extend(
-        covenants
+        functions
             .iter()
             .filter(|(f, _)| !emulated.contains(&f.name))
-            .map(|&covenant| (false, Some(covenant))),
+            .map(|&function| (false, Some(function))),
     );
     paths
 }
 
-/// Reports each covenant with a path that checks no transaction signature, through a leaf
-/// that needs no constructor key's signature either. Introspection does not count: such a
-/// path may still be sound, as a hash lock or a stateful covenant is.
+/// Reports each Arkade Script function with a path that checks no transaction signature,
+/// through a leaf that needs no constructor key's signature either. Introspection does not
+/// count: such a path may still be sound, as a hash lock or a stateful covenant is.
 fn unsigned_spend_path(
-    covenants: &[(&Function, Path)],
+    functions: &[(&Function, Path)],
     paths: &[SpendingPath],
     findings: &mut Vec<Finding>,
 ) {
-    for &(function, path) in covenants {
+    for &(function, path) in functions {
         let unsigned_leaf = paths
             .iter()
             .any(|&(signed, c)| !signed && c.is_some_and(|(f, _)| f.name == function.name));

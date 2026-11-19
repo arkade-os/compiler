@@ -32,7 +32,9 @@ fn covenant_opcodes_report_their_context_in_tapscript() {
             format!("contract C() {{ function spend() tapscript {{ require({expression}); }} }}");
         let error = compile(&source).unwrap_err().to_string();
         assert!(
-            error.contains(&format!("`{name}` is only available in covenant functions")),
+            error.contains(&format!(
+                "`{name}` is only available in Arkade Script functions"
+            )),
             "{expression}: {error}"
         );
     }
@@ -86,12 +88,12 @@ fn tapscript_opcodes_report_their_context_in_covenants() {
         (
             "older(1)",
             "older",
-            "covenant functions use `checkTime(timestamp)`",
+            "Arkade Script functions use `checkTime(timestamp)`",
         ),
         (
             "after(t)",
             "after",
-            "covenant functions use `checkTime(timestamp)`",
+            "Arkade Script functions use `checkTime(timestamp)`",
         ),
         ("blocks(1) > 0", "blocks", "inside older(...) or after(...)"),
         (
@@ -481,9 +483,9 @@ fn check_time_uses_the_emulator_clock_and_preserves_operand_order() {
         .to_string()
     };
     assert!(tapscript("require(checkTime(0));")
-        .contains("`checkTime(...)` is only available in covenant functions"));
+        .contains("`checkTime(...)` is only available in Arkade Script functions"));
     assert!(tapscript("require(cat(a, a) == a);")
-        .contains("`cat(...)` is only available in covenant functions"));
+        .contains("`cat(...)` is only available in Arkade Script functions"));
 }
 
 #[test]

@@ -124,7 +124,7 @@ contract C() {
         "contract C() { function spend(bytes data, bytes20 hash, signature sig) tapscript { require(sha1(data) == hash); require(checkSig(sig, server)); } }"
     ).unwrap_err().to_string();
     assert!(
-        error.contains("`sha1(...)` is only available in covenant functions"),
+        error.contains("`sha1(...)` is only available in Arkade Script functions"),
         "{error}"
     );
 }
