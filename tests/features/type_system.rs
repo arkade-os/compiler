@@ -435,7 +435,10 @@ contract HexCasts(pubkey owner) {
     let error = compile_error(
         "contract F() { function spend(int n) { require(n == n); } private function int(int a) int { return a; } }",
     );
-    assert!(error.contains("function name 'int' is reserved"), "{error}");
+    assert!(
+        error.contains("function 'int' uses a reserved keyword or type name"),
+        "{error}"
+    );
     let asm = crate::common::arkade_asm(
         &compile_ok(
             "contract G() { const int BIG = int(0x8000000000000000); function spend(int n) { require(n < BIG); } }",
@@ -495,7 +498,7 @@ contract BytesCasts(pubkey owner) {
         "contract C() { function spend() { require(true); } private function bytes(int n) bytes { return int2bytes(n, 1); } }",
     );
     assert!(
-        error.contains("function name 'bytes' is reserved"),
+        error.contains("function 'bytes' uses a reserved keyword or type name"),
         "{error}"
     );
 }
