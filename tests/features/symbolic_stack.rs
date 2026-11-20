@@ -1,7 +1,7 @@
 use crate::common::compile_unoptimized as compile;
 use arkade_compiler::opcodes::{
-    OP_ADD, OP_DUP, OP_ELSE, OP_ENDIF, OP_GREATERTHAN, OP_GREATERTHANOREQUAL, OP_IF, OP_LESSTHAN,
-    OP_MUL, OP_PICK, OP_PUT, OP_ROLL, OP_VERIFY,
+    OP_ADD, OP_DUP, OP_ELSE, OP_ENDIF, OP_GREATERTHAN, OP_GREATERTHANOREQUAL, OP_IF, OP_MUL,
+    OP_PICK, OP_PUT, OP_ROLL, OP_VERIFY, OP_WITHIN,
 };
 
 fn arkade_script(source: &str, function: &str) -> arkade_compiler::models::ArkadeScript {
@@ -264,7 +264,7 @@ contract RuntimeIndex() {
         ["values", "index"]
     );
 
-    for opcode in [OP_GREATERTHANOREQUAL, OP_LESSTHAN, OP_DUP, OP_PICK] {
+    for opcode in [OP_WITHIN, OP_DUP, OP_PICK] {
         assert!(
             script.asm.iter().any(|token| token == opcode),
             "runtime index must emit {opcode}: {:?}",
@@ -278,11 +278,8 @@ contract RuntimeIndex() {
             OP_ROLL,
             OP_DUP,
             "OP_0",
-            OP_GREATERTHANOREQUAL,
-            "OP_VERIFY",
-            OP_DUP,
             "OP_3",
-            OP_LESSTHAN,
+            OP_WITHIN,
             "OP_VERIFY",
             OP_PICK,
         ],
@@ -305,9 +302,8 @@ contract ExpressionIndex() {
     assert!(contains_tokens(&script.asm, &[OP_MUL, "3", OP_ADD]));
     assert!(contains_tokens(
         &script.asm,
-        &[OP_GREATERTHANOREQUAL, "OP_VERIFY"]
+        &[OP_DUP, "OP_0", "OP_3", OP_WITHIN, "OP_VERIFY"]
     ));
-    assert!(contains_tokens(&script.asm, &[OP_LESSTHAN, "OP_VERIFY"]));
 }
 
 #[test]
@@ -323,11 +319,7 @@ contract StaticIndex() {
         "spend",
     );
 
-    assert!(!script.asm.iter().any(|token| token == OP_LESSTHAN));
-    assert!(!script
-        .asm
-        .iter()
-        .any(|token| token == OP_GREATERTHANOREQUAL));
+    assert!(!script.asm.iter().any(|token| token == OP_WITHIN));
 }
 
 #[test]

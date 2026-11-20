@@ -98,13 +98,12 @@ pub(crate) const BUILTINS: &[Builtin] = &[
         "Script-number bytes as an int: little-endian, with the top bit of the last byte as the \
          sign.",
     ),
-    // ponytail: OP_0 OP_1 OP_NUM2BIN builds the 0x00 byte because table lowerings carry no
-    // data pushes; a direct 0x00 push would save one byte per call.
+    // Code generation pushes the 0x00 byte before CAT: table lowerings carry no data pushes.
     builtin(
         "bytes2uint",
         &[("data", "bytes")],
         "int",
-        &[Int0, Int1, Num2Bin, Cat, Bin2Num],
+        &[Cat, Bin2Num],
         "Unsigned little-endian bytes as a non-negative int, the same as bytes2int(data + 0x00). \
          Data over 519 bytes fails the spend.",
     ),
