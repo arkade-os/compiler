@@ -1235,8 +1235,12 @@ mod tests {
 
     #[test]
     fn keywords_end_at_a_word_boundary() {
+        // One glued keyword per source. The `if`, `for`, `tapscript` and `new` boundaries change no
+        // parse: `(` or `{` follows the first three, and a glued `new` call reads as a call.
         for source in [
-            "structPoint { int x; } contractC(pubkey pk, Point p) { functionspend(signature s) { require(checkSig(s, pk)); require(p.x == 1); } }",
+            "structPoint { int x; } contract C(pubkey pk) { function spend(signature s) { require(checkSig(s, pk)); } }",
+            "contractC(pubkey pk) { function spend(signature s) { require(checkSig(s, pk)); } }",
+            "contract C(pubkey pk) { functionspend(signature s) { require(checkSig(s, pk)); } }",
             "libraryL { function f() int { return 1; } }",
             "contract C() { private functionf() int { return 1; } function g() { require(true); } }",
             "contract C(pubkey pk, int[2] xs) { function spend(signature s) { require(checkSig(s, pk)); for (i, v) inxs { require(v > 0); } } }",
