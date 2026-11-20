@@ -21,7 +21,7 @@ The first stable release of Arkade Language and its toolchain.
 - `ArkadeCovenant` is now `ArkadeScript` in Rust and npm; only npm keeps `ArkadeCovenant` as a deprecated alias. The artifact JSON is unchanged (#282).
 - `require` holds one boolean expression: the Rust `Requirement` enum is gone and `Statement::Require` holds an `Expression` (#272). `ArkType` gains `Void` (#276), and `ContractJson::format_version` is a required `u32` (#263).
 - `bin2num` and `num2bin` are now `bytes2int` and `int2bytes` (#252).
-- `merkleRoot` emits `OP_MERKLEBRANCHROOT`, the Arkade VM's name for `0xb3`, instead of `OP_MERKLEBRANCHVERIFY`, and the Rust `Opcode::MerkleBranchVerify` and `opcodes::OP_MERKLEBRANCHVERIFY` are now `Opcode::MerkleBranchRoot` and `opcodes::OP_MERKLEBRANCHROOT`.
+- `merkleRoot` emits `OP_MERKLEBRANCHROOT`, the Arkade VM's name for `0xb3`, instead of `OP_MERKLEBRANCHVERIFY`, and the Rust `Opcode::MerkleBranchVerify` and `opcodes::OP_MERKLEBRANCHVERIFY` are now `Opcode::MerkleBranchRoot` and `opcodes::OP_MERKLEBRANCHROOT` (#309).
 - `sha256Initialize` and `sha256Update` return a `bytes` context instead of `bytes32`, so `bytes32 ctx = sha256Initialize(data);` no longer compiles (#215).
 - Asset APIs take one `AssetId` operand instead of a `(txid, gidx)` pair, and `tx.assetGroups.find` is now `tx.assetGroups.lookup` (#266).
 - A contract that instantiates itself is rejected, and a contract instantiated with `new` must compile as an entry file would, its own lint attributes included. The artifact pins each instantiated contract's code hash in `contracts` (#253).
