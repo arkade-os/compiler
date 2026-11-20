@@ -2,7 +2,7 @@
 
 All notable changes to the Arkade Compiler are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html). `arkade-compiler` and `@arkade-os/compiler` share one version.
 
-## [0.1.0] - Unreleased
+## [0.1.0] - 2026-11-20
 
 The first stable release of Arkade Language and its toolchain.
 
@@ -30,6 +30,7 @@ The first stable release of Arkade Language and its toolchain.
 - Every expression must have a type, and asset group records `g.inputs[j]` and `g.outputs[j]` are `AssetGroupInput` and `AssetGroupOutput` struct values (#276).
 - Version pragmas are checked against the compiler version (#257), the `offchain-locktime` lint denies by default (#254), and Arkade Script functions reject non-canonical `bool` witnesses at entry (#214).
 - Hex literals are emitted in lowercase (#251).
+- Optimized Arkade Scripts are smaller, so a contract can compile to a different script than under 0.1.0-rc.1: runtime index and multisig threshold checks use `OP_WITHIN` (#295), never-reassigned narrow literal locals and helper parameters fold (#297), a repeated literal of 4 or more bytes is pushed once (#305), and read-only struct arguments of inlined helpers are not copied (#279).
 
 **Stricter validation and API**
 
@@ -37,6 +38,7 @@ The first stable release of Arkade Language and its toolchain.
 - A raw `older(n)` may set only the 16 value bits and the type flag that BIP68 reads, and the error points to `blocks(n)` and `seconds(n)` (#287).
 - Keywords end at a word boundary, so glued forms such as `functionspend(` no longer parse (#291).
 - Reserved keywords and type names are rejected for every declared name, and a function of any kind named after a builtin call is rejected (#291).
+- A loop that runs zero times is rejected, since its body's checks would be dropped, and so is a loop that unrolls more than 10,000 iterations, counting the loops nested in it and in the helpers it calls (#303).
 - Most public Rust enums, `CompileOptions` and several AST and symbol structs are `#[non_exhaustive]`, so `CompileOptions` is built from `CompileOptions::default()`. The `operators` and `properties` modules are crate-private, and the `compile*` functions return `arkade_compiler::Error`, a `Send + Sync` newtype, instead of `Box<dyn Error>` (#288).
 - The TypeScript `Diagnostic` declares `suggestions: Suggestion[]`, with a new exported `Suggestion` type (#288).
 - A leaf's `witness` is documented as its inputs in declaration order, not the stack order; clients build the stack from the leaf script (#289).
@@ -48,6 +50,7 @@ The first stable release of Arkade Language and its toolchain.
 - Builtin and transaction member docs for hover, completion and go to definition, printed by `arkadec --builtins` (#197).
 - `else if` chains (#240), block comments, trailing commas and digit separators (#264), named struct literals (#266), `.length` everywhere a length exists (#262), `pubkey`, `bytes20` and `bytes32` constants (#259), and `bytes2uint` (#252).
 - Field and index access on computed results (`make().value`, `getArray()[i]`), `for ... in` over array expressions, and computed arrays in `ecPairing` (#239).
+- Counted loops `for (i) in START..END`, whose index is a literal in each unrolled copy (#298), and nested fixed-size arrays such as `int[2][3]` wherever arrays work (#308).
 - The verify builtins return `true`, so they work anywhere a `bool` does (#265).
 - `compile(input, { debug: false })` in npm skips the debug file (#231).
 - The README is split into focused pages under `docs/`: the tour, playground, CLI, API, artifact format, lints, development and the language reference (#284).
@@ -55,11 +58,13 @@ The first stable release of Arkade Language and its toolchain.
 **Removed**
 
 - `arkade-bindgen` and the playground Bindings tab; clients generate typed code from the artifact and its stack ABI in `docs/artifact.md` (#285).
+- The unused `arkd-integration` Cargo feature (#299).
 
 **Fixed**
 
 - `controlIs` compares `gidx` as a number (#273), runtime-indexed arrays are bound once (#277), and unrolled indexes past an array's end fail at runtime in unoptimized builds (#281).
 - Struct and array literals, bindings and comparisons work as builtin operands, copy initializers and boolean operands, typed from what they are compared with (#201, #216, #217, #220, #224, #232, #245), and tapscript operands resolve by binding time and parse as access paths (#199, #237).
 - Diagnostics report tapscript-only and Arkade Script-only calls by context (#258) and unknown `tx` and `this` members in validation (#268), and validator errors on parameters, tapscript inputs, structs and empty contracts carry source locations (#280).
+- The script size check and `--report` count wide integer literals and one-byte data pushes at their assembled size (#296), and `--report` aligns its counts to the longest cost name (#300).
 
 [0.1.0]: https://github.com/arkade-os/compiler/compare/v0.1.0-rc.1...v0.1.0
