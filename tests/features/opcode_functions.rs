@@ -1518,7 +1518,7 @@ fn merkle_root_pushes_operands_in_vm_order() {
     let asm = crate::common::arkade_asm_tokens(&output, "spend");
     assert_eq!(
         asm,
-        "0x6c656166 0x6272616e6368 OP_3 OP_ROLL OP_3 OP_ROLL OP_MERKLEBRANCHVERIFY <root> OP_EQUAL OP_VERIFY OP_1"
+        "0x6c656166 0x6272616e6368 OP_3 OP_ROLL OP_3 OP_ROLL OP_MERKLEBRANCHROOT <root> OP_EQUAL OP_VERIFY OP_1"
             .split_whitespace().collect::<Vec<_>>()
     );
 
