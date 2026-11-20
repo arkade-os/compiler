@@ -91,6 +91,8 @@ This holds regardless of how the declarations are interleaved. Within an Arkade 
 
 Reordering leaves can change the output key and address. Retain the original artifact to spend existing outputs.
 
+A leaf's `witness` is not its stack order. The leaf script consumes the preimage first, if the tapscript has a condition, then a signature for each key in the order the keys are written in `checkSig` or `checkMultisig`, so a client builds the stack from the closure: the signatures by key, the last key's at the bottom, and the preimage on top.
+
 ## Source bundle
 
 The `source` bundle contains the entry file and every loaded dependency, preserving their text verbatim, including comments.
