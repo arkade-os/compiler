@@ -83,6 +83,28 @@ impl Generator {
     }
 }
 
+/// Emit a public function's `body` after binding each `hoisted` literal, so every push of it
+/// reads the binding instead. A binding serves several statements, so, like the prologue, it
+/// maps to no statement.
+// ponytail: only Arkade Scripts hoist; tapscript leaves are assembled elsewhere in the fixed
+// closure shapes arkd matches.
+pub(super) fn emit_function(
+    body: &[Lowered],
+    generator: &mut Generator,
+    hoisted: &[String],
+) -> Result<()> {
+    for literal in hoisted {
+        generator.push_temporary(Op::Push(literal.clone()));
+        generator.stack.pop();
+        generator.stack.push(StackItem::Binding {
+            name: Path::new(literal.as_str()),
+            kind: BindingKind::Constant,
+        });
+    }
+    emit_body(body, generator)?;
+    Ok(())
+}
+
 /// Emit `body` and report whether an emitted path falls through.
 pub(super) fn emit_body(body: &[Lowered], generator: &mut Generator) -> Result<bool> {
     let outer = generator.asm.span();

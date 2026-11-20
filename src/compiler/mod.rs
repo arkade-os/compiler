@@ -44,7 +44,7 @@ mod optimization;
 mod stack;
 mod statements;
 use lowering::Lowered;
-use statements::emit_body;
+use statements::{emit_body, emit_function};
 
 pub(crate) use asset::*;
 pub(crate) use expr::*;
@@ -56,6 +56,9 @@ enum BindingKind {
     Constructor,
     FunctionInput,
     Local,
+    /// A wide literal bound once and read wherever the function would push it, static helpers
+    /// included; it is named by the literal, which no source name can be.
+    Constant,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -117,6 +120,8 @@ struct Generator {
     pinned_stack_len: usize,
     // Rebinding the top slot can consume its old value without changing a branch join.
     replacement: Option<(Path, BindingKind, usize)>,
+    /// How often each literal that takes 4 or more bytes is pushed.
+    wide_pushes: std::collections::BTreeMap<String, usize>,
 }
 
 impl Generator {
@@ -225,6 +230,7 @@ impl Generator {
             preserve_bindings: false,
             pinned_stack_len: 0,
             replacement: None,
+            wide_pushes: Default::default(),
         })
     }
 
@@ -259,7 +265,15 @@ impl Generator {
         match op {
             Op::Opcode(opcode) => self.lower_raw_opcode(opcode),
             Op::Push(value) => {
-                self.push_temporary(Op::Push(value));
+                let op = Op::Push(value.clone());
+                if op.pushes_more_than(3) {
+                    let hoisted = Path::new(value.as_str());
+                    if self.binding_index(&hoisted).is_some() {
+                        return self.read_static_binding(&hoisted, false);
+                    }
+                    *self.wide_pushes.entry(value).or_default() += 1;
+                }
+                self.push_temporary(op);
                 Ok(())
             }
             Op::Read(path) => self.read_binding(&path),
@@ -642,14 +656,14 @@ fn arkade_script_for(
         .filter(|parameter| references.contains(parameter.name.as_str()))
         .cloned()
         .collect::<Vec<_>>();
-    let mut counting = Generator::new(
-        &function.parameters,
-        &retained_parameters,
-        structs,
-        &Default::default(),
-    )?;
-    counting.optimize = optimize;
-    counting.functions = functions.to_vec();
+    let new = |inlined: &std::collections::HashSet<Path>| -> Result<Generator> {
+        let mut generator =
+            Generator::new(&function.parameters, &retained_parameters, structs, inlined)?;
+        generator.optimize = optimize;
+        generator.functions = functions.to_vec();
+        Ok(generator)
+    };
+    let mut counting = new(&Default::default())?;
     if !optimize {
         let mut checked = std::collections::HashSet::new();
         lowering::check_folded(
@@ -678,50 +692,44 @@ fn arkade_script_for(
             }
         })?;
     }
+    // A wide literal is bound once when its pushes cost more than one push, a 3-byte read per
+    // use and a final drop.
+    let hoisted: Vec<_> = counting
+        .wide_pushes
+        .iter()
+        .filter(|&(literal, &uses)| {
+            let width = Op::Push(literal.to_string()).min_size(&|_| 0);
+            optimize && uses * width > width + 3 * uses + 1
+        })
+        .map(|(literal, _)| literal.clone())
+        .collect();
+    let emit = |analysis: Generator, hoisted: &[String]| -> Result<(Vec<Spanned>, usize)> {
+        let mut generator = new(&inlined)?;
+        generator.final_reads = analysis.final_reads;
+        generator.read_cursor = Some(0);
+        emit_function(&body, &mut generator, hoisted)?;
+        if generator.read_cursor != Some(generator.final_reads.len()) {
+            return Err(CompileError::internal(
+                "final-use analysis diverged from emission",
+            ));
+        }
+        let (mut ops, mut peak) = generator.finish()?;
+        if optimize {
+            let (optimized, raise) = optimization::optimize(ops);
+            ops = optimized;
+            peak += raise;
+        }
+        Ok((ops, peak))
+    };
     // Without inlined leaves the counting pass already has the emission layout.
     let analysis = if inlined.is_empty() {
         counting
     } else {
-        let mut analysis = Generator::new(
-            &function.parameters,
-            &retained_parameters,
-            structs,
-            &inlined,
-        )?;
-        analysis.optimize = optimize;
-        analysis.functions = functions.to_vec();
+        let mut analysis = new(&inlined)?;
         emit_body(&body, &mut analysis)?;
         analysis
     };
-    let mut generator = Generator::new(
-        &function.parameters,
-        &retained_parameters,
-        structs,
-        &inlined,
-    )?;
-    generator.optimize = optimize;
-    generator.functions = functions.to_vec();
-    generator.final_reads = analysis.final_reads;
-    generator.read_cursor = Some(0);
-    emit_body(&body, &mut generator)?;
-    if generator.read_cursor != Some(generator.final_reads.len()) {
-        return Err(CompileError::internal(
-            "final-use analysis diverged from emission",
-        ));
-    }
-    let (mut ops, mut peak) = generator.finish()?;
-    if optimize {
-        let (optimized, raise) = optimization::optimize(ops);
-        ops = optimized;
-        peak += raise;
-    }
-    if peak > MAX_STACK_ITEMS {
-        return Err(format!(
-            "function '{}' can hold {peak} stack items, above the VM limit of {MAX_STACK_ITEMS}",
-            function.name
-        )
-        .into());
-    }
+    let (mut ops, mut peak) = emit(analysis, &[])?;
     let mut widths = std::collections::HashMap::new();
     for parameter in &retained_parameters {
         for leaf in crate::models::flatten_parameter(parameter, structs)? {
@@ -737,7 +745,27 @@ fn arkade_script_for(
     let width = |name: &str| widths.get(name).copied().unwrap_or(0);
     // A lower bound: a variable-width parameter counts as its shortest push, so an instance
     // with long values can still exceed the limit.
-    let size: usize = ops.iter().map(|(op, _)| op.min_size(&width)).sum();
+    let size_of =
+        |ops: &[Spanned]| -> usize { ops.iter().map(|(op, _)| op.min_size(&width)).sum() };
+    // Bound at the start, the literals sit below every local, so assigning the top local still
+    // replaces it in place. They deepen reads of the inputs below them, so they are kept only
+    // when the script gets smaller.
+    if !hoisted.is_empty() {
+        let mut analysis = new(&inlined)?;
+        emit_function(&body, &mut analysis, &hoisted)?;
+        let (hoisted_ops, hoisted_peak) = emit(analysis, &hoisted)?;
+        if size_of(&hoisted_ops) < size_of(&ops) && hoisted_peak <= MAX_STACK_ITEMS {
+            (ops, peak) = (hoisted_ops, hoisted_peak);
+        }
+    }
+    if peak > MAX_STACK_ITEMS {
+        return Err(format!(
+            "function '{}' can hold {peak} stack items, above the VM limit of {MAX_STACK_ITEMS}",
+            function.name
+        )
+        .into());
+    }
+    let size = size_of(&ops);
     if size > MAX_SCRIPT_SIZE {
         return Err(format!(
             "function '{}' assembles to at least {size} bytes, above the VM limit of {MAX_SCRIPT_SIZE}",
