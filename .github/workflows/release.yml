@@ -170,7 +170,7 @@ jobs:
             cargo publish --locked -p arkade-compiler
           fi
 
-  # The first publish of a package name is manual; trusted publishing needs the package to exist.
+  # Authenticates through the npm trusted publisher configured for this workflow and environment.
   publish-npm:
     needs: release
     runs-on: ubuntu-latest

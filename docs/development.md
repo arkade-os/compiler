@@ -52,7 +52,7 @@ To release:
 - checks the tag against both versions;
 - builds binaries for five targets and the tested npm tarball;
 - creates a GitHub release with them and `SHA256SUMS`;
-- publishes the crate to crates.io and the package to npm through trusted publishing.
+- publishes the crate to crates.io and the package to npm as the tag allows (see [Tags](#tags)), through [trusted publishing](#trusted-publishing).
 
 ### Tags
 
@@ -64,21 +64,6 @@ To release:
 
 Release candidates use `-rc.N` versions. Install one with `npm install @arkade-os/compiler@next`. Remove a test tag with `gh release delete <tag> --cleanup-tag`.
 
-### First publish
+### Trusted publishing
 
-Trusted publishing can only be configured on an existing crate or package, so the first release to each registry is manual. Later releases publish from the workflow with provenance.
-
-**crates.io.** From the commit to be tagged, a crate owner:
-
-1. runs `cargo publish --locked -p arkade-compiler`;
-2. enables trusted publishing for the crate (repository `arkade-os/compiler`, workflow `release.yml`, environment `crates-io`);
-3. pushes the tag.
-
-The workflow skips the crate when its version is already published.
-
-**npm.** After the tag's workflow attaches the tarball to the GitHub release, an `@arkade-os` npm owner:
-
-1. downloads it;
-2. runs `npm publish arkade-os-compiler-<version>.tgz --access public --tag next`, or `--tag latest` for a final version;
-3. adds a trusted publisher to the package (repository `arkade-os/compiler`, workflow `release.yml`, environment `npm`);
-4. re-runs the failed `publish-npm` job, which then skips the published version.
+The crate and the npm package trust `release.yml` in `arkade-os/compiler` as their publisher, so the workflow publishes without a stored token. For a final tag, the `publish` job publishes the crate from the `crates-io` environment. For a final or pre-release version tag, the `publish-npm` job publishes the tarball from the `npm` environment. Each job skips a version that is already published, so a failed job can be re-run.
