@@ -169,3 +169,31 @@ contract P(pubkey owner, bytes32 pre, bytes32 h) {
         "got: {err}"
     );
 }
+
+#[test]
+fn a_tapscript_input_is_consumed_at_most_once() {
+    for (body, location) in [
+        (
+            "require(checkMultisig([operator, owner], [s, s]));",
+            "line 3, column 50",
+        ),
+        (
+            "require(sha256(s) == h); require(older(blocks(144))); require(checkSig(s, owner));",
+            "line 3, column 76",
+        ),
+    ] {
+        let src = format!(
+            "contract K(pubkey owner, bytes32 h) {{\n  function claim(signature s) tapscript {{\n    \
+             {body}\n  }}\n}}"
+        );
+        let err = compile(&src)
+            .expect_err("a leaf consuming one input twice must fail")
+            .to_string();
+        assert!(
+            err.contains(&format!(
+                "{location}: tapscript `claim`: input `s` is used more than once"
+            )),
+            "{body}: {err}"
+        );
+    }
+}
