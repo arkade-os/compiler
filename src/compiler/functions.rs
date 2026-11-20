@@ -306,20 +306,28 @@ impl Generator {
                 self.value_leaves(&Path::new(&parameter.name), &parameter.param_type)?,
             ));
         }
-        // Static calls hide all caller bindings; instance helpers retain constructor state.
+        // Calls hide caller bindings except hoisted constants; instance helpers also retain
+        // constructor state.
         let caller_inlined = function
             .is_static
             .then(|| std::mem::take(&mut self.inlined));
         for (index, item) in self.stack[..baseline].iter_mut().enumerate() {
-            if function.is_static
-                || !matches!(
-                    item,
+            if !matches!(
+                (&*item, function.is_static),
+                (
+                    StackItem::Binding {
+                        kind: BindingKind::Constant,
+                        ..
+                    },
+                    _
+                ) | (
                     StackItem::Binding {
                         kind: BindingKind::Constructor,
                         ..
-                    }
+                    },
+                    false
                 )
-            {
+            ) {
                 *item = StackItem::Binding {
                     name: Path::new(format!("$caller:{index}")),
                     kind: BindingKind::Local,

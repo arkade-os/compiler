@@ -261,6 +261,10 @@ func (g *generator) int(s *scope, depth int) intExpr {
 	switch {
 	case choice == 0 || len(ints) == 0 && len(arrays) == 0:
 		n := int64(g.r.Intn(21) - 10)
+		// One 4-byte literal recurs, so optimized builds bind it once and read it.
+		if g.r.Intn(4) == 0 {
+			n = 1 << 23
+		}
 		return intExpr{strconv.FormatInt(n, 10), func(env) int64 { return n }}
 	case choice <= 2 && len(ints) > 0:
 		name := s.read(g.pick(ints))
@@ -508,6 +512,8 @@ func tryProgram(r *rand.Rand) (program, bool) {
 	if g.helper {
 		g.line(1, "private function helper(int a, int b) int {")
 		g.line(2, "if (a %s b) {", g.helperOp)
+		// Always holds; it reads the recurring literal before an early return.
+		g.line(3, "require(a + %d > a);", 1<<23)
 		g.line(3, "return a - b;")
 		g.line(2, "}")
 		g.line(2, "return (b * %d) + a;", g.helperMult)

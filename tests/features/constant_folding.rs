@@ -165,6 +165,29 @@ fn reassigned_locals_and_parameters_stay_bound() {
 }
 
 #[test]
+fn repeated_wide_literals_are_pushed_once_when_optimizing() {
+    const Q: &str = "21888242871839275222246405745257275088548364400416034343698204186575808495617";
+    // Eight squarings take 290 bytes with a push of Q in each, and 69 with Q bound below `a`.
+    let source = format!("contract C() {{ const int Q = {Q}; function spend(int x, int y) {{ int a = x; for (8) {{ a = a * a % Q; }} require(a == y); }} }}");
+    let mut expected = vec![Q, "OP_SWAP"];
+    expected.extend(["OP_DUP", "OP_MUL", "OP_OVER", "OP_MOD"].repeat(8));
+    expected.extend(["OP_ROT", "OP_NUMEQUAL", "OP_NIP"]);
+    assert_eq!(asm(&source), expected);
+    let unoptimized = arkade_asm_tokens(&compile_unoptimized(&source).unwrap(), "spend");
+    assert_eq!(unoptimized.iter().filter(|token| *token == Q).count(), 8);
+    // Static helpers, which include library functions, read the binding too.
+    let tokens = asm(&format!("contract C() {{ const int Q = {Q}; static function square(int a) int {{ return a * a % Q; }} function spend(int x, int y) {{ require(square(square(x)) == y); require(square(y) != Q); }} }}"));
+    assert_eq!(
+        tokens.iter().filter(|token| *token == Q).count(),
+        1,
+        "{tokens:?}"
+    );
+    // A binding that would take the stack past the VM limit is left out.
+    let tokens = asm(&format!("contract C() {{ function spend(int[998] xs) {{ require(xs[0] == {Q}); require(xs[1] == {Q}); require(xs[2] == {Q}); }} }}"));
+    assert_eq!(tokens.iter().filter(|token| *token == Q).count(), 3);
+}
+
+#[test]
 fn int2bytes_preserves_sign_padding_and_boundaries() {
     for (value, width, bytes) in [
         ("0", 0, ""),
@@ -679,6 +702,8 @@ fn optimization_preserves_numeric_execution_across_scopes_and_returns() {
         "let k = 2; int n = input; for (i) in 1..3 { n = n + i * k; } require(n == input + 6);",
         "require(helper(input, true) == input + 1); require(helper(input, false) == input + 2);",
         "int[3] values = [7, 9, 11]; let n = input; for (i, v) in values { let j = i + 1; if (choose && j < 3 && values[j] > 8) { n = n + values[j]; } else { n = n + 1; } } require(n > input);",
+        "if (choose) { require(input + 100000000000000000 > 99999999999999990); } else { require(100000000000000000 - input > 99999999999999990); } require(input + 100000000000000000 < 100000000000000010);",
+        "int n = input; for (i) in 0..3 { if (choose) { n = n + 100000000000000000; } else { n = n - 100000000000000000; } } if (choose) { require(n - input == 300000000000000000); } else { require(input - n == 300000000000000000); }",
     ].map(|body| (body, r#"
                 int[2] values = [7, 9];
                 for (i, v) in values { for (j, w) in values {
@@ -691,6 +716,7 @@ fn optimization_preserves_numeric_execution_across_scopes_and_returns() {
         ("require(helper(input, choose) == input);", "int n; if (choose) { for (2) { if (true) { return input; } else { n = 9; } } } else { n = input; } return n;"),
         ("require(helper(input, choose) == input);", "int n; int[2] values = [7, 9]; if (choose) { for (i, v) in values { if (i == 1) { return input; } else { n = input; } } } else { n = input; } return n;"),
         ("require(helper(input, choose) == input);", "ECPoint n; if (choose) { if (true) { return input; } else { n = {x: input, y: 9}; } } else { n = {x: input, y: 9}; } return n.x;"),
+        ("require(helper(input, choose) - input + 1 == 100000000000000001);", "if (choose) { return input + 100000000000000000; } int[2] values = [7, 9]; for (i, v) in values { if (i == 1) { return 100000000000000000 + input; } } return 0;"),
     ]) {
         let source = format!(r#"contract C() {{
             private function helper(int input, bool choose) int {{

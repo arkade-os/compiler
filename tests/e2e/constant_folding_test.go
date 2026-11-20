@@ -11,6 +11,8 @@ import (
 
 func TestConstantFolding(t *testing.T) {
 	serverKey, emulatorKey := fixedPrivateKey(1), fixedPrivateKey(2)
+	q, _ := new(big.Int).SetString("21888242871839275222246405745257275088548364400416034343698204186575808495617", 10)
+	squared := new(big.Int).Exp(big.NewInt(3), big.NewInt(256), q)
 	for _, tc := range []struct {
 		name, parameters, body, helpers string
 		values                          map[string][]byte
@@ -85,6 +87,33 @@ func TestConstantFolding(t *testing.T) {
 			map[string][]byte{"expected": nil}, ""},
 		{"arithmetic right shift", "int expected", "require(-7 >> 1 == expected);", "",
 			map[string][]byte{"expected": scriptInt(t, -4)}, ""},
+		{"wide literal read in branches and after them", "int input, bool choose", `
+            if (choose) { require(input + 100000000000000000 > 0); }
+            else { require(input - 100000000000000000 < 0); }
+            require(input * 100000000000000000 == 300000000000000000);`, "",
+			map[string][]byte{"input": scriptInt(t, 3), "choose": {1}}, ""},
+		{"wide literal read only in a loop", "int input, bool choose", `
+            int n = input;
+            for (i) in 0..3 { if (choose) { n = n + 100000000000000000; } else { n = n - 100000000000000000; } }
+            require(n == 300000000000000003);`, "",
+			map[string][]byte{"input": scriptInt(t, 3), "choose": {1}}, ""},
+		{"wide literal read in helpers that return early", "int input, bool choose", `
+            require(shift(input, choose) == 100000000000000003);
+            require(scale(input, choose) == 300000000000000000);`, `
+            static function shift(int x, bool up) int { if (up) { return x + 100000000000000000; } return 100000000000000000 + x; }
+            private function scale(int x, bool up) int {
+                int[2] values = [7, 9];
+                for (i, v) in values { if (up && i == 1) { return x * 100000000000000000; } }
+                return 100000000000000000 * x;
+            }`, map[string][]byte{"input": scriptInt(t, 3), "choose": {1}}, ""},
+		{"squarings modulo a 254-bit constant", "int x, int y", `
+            int a = x;
+            for (8) { a = a * a % 21888242871839275222246405745257275088548364400416034343698204186575808495617; }
+            require(a == y);`, "", map[string][]byte{"x": scriptInt(t, 3), "y": scriptBigInt(t, squared)}, ""},
+		{"wrong square modulo a 254-bit constant", "int x, int y", `
+            int a = x;
+            for (8) { a = a * a % 21888242871839275222246405745257275088548364400416034343698204186575808495617; }
+            require(a == y);`, "", map[string][]byte{"x": scriptInt(t, 3), "y": scriptBigInt(t, new(big.Int).Add(squared, big.NewInt(1)))}, "false stack entry"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			source := filepath.Join(t.TempDir(), "folding.ark")
