@@ -83,28 +83,25 @@ impl Generator {
     }
 }
 
-/// Emit a public function's `body`, binding each `hoisted` literal just before the top-level
-/// item at its index, so every later push of it reads the binding instead. A binding serves
-/// several statements, so, like the prologue, it maps to no statement.
+/// Emit a public function's `body` after binding each `hoisted` literal, so every push of it
+/// reads the binding instead. A binding serves several statements, so, like the prologue, it
+/// maps to no statement.
 // ponytail: only Arkade Scripts hoist; tapscript leaves are assembled elsewhere in the fixed
 // closure shapes arkd matches.
 pub(super) fn emit_function(
     body: &[Lowered],
     generator: &mut Generator,
-    hoisted: &[(usize, String)],
+    hoisted: &[String],
 ) -> Result<()> {
-    for (index, item) in body.iter().enumerate() {
-        generator.item = index;
-        for (_, literal) in hoisted.iter().filter(|(at, _)| *at == index) {
-            generator.push_temporary(Op::Push(literal.clone()));
-            generator.stack.pop();
-            generator.stack.push(StackItem::Binding {
-                name: Path::new(literal.as_str()),
-                kind: BindingKind::Constant,
-            });
-        }
-        emit_body(std::slice::from_ref(item), generator)?;
+    for literal in hoisted {
+        generator.push_temporary(Op::Push(literal.clone()));
+        generator.stack.pop();
+        generator.stack.push(StackItem::Binding {
+            name: Path::new(literal.as_str()),
+            kind: BindingKind::Constant,
+        });
     }
+    emit_body(body, generator)?;
     Ok(())
 }
 

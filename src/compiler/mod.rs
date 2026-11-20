@@ -120,11 +120,8 @@ struct Generator {
     pinned_stack_len: usize,
     // Rebinding the top slot can consume its old value without changing a branch join.
     replacement: Option<(Path, BindingKind, usize)>,
-    /// The top-level item of the public function being emitted.
-    item: usize,
-    /// Each literal pushed that takes 4 or more bytes: the top-level item of its first push,
-    /// and how often it is pushed.
-    wide_pushes: std::collections::BTreeMap<String, (usize, usize)>,
+    /// How often each literal that takes 4 or more bytes is pushed.
+    wide_pushes: std::collections::BTreeMap<String, usize>,
 }
 
 impl Generator {
@@ -233,7 +230,6 @@ impl Generator {
             preserve_bindings: false,
             pinned_stack_len: 0,
             replacement: None,
-            item: 0,
             wide_pushes: Default::default(),
         })
     }
@@ -275,7 +271,7 @@ impl Generator {
                     if self.binding_index(&hoisted).is_some() {
                         return self.read_static_binding(&hoisted, false);
                     }
-                    self.wide_pushes.entry(value).or_insert((self.item, 0)).1 += 1;
+                    *self.wide_pushes.entry(value).or_default() += 1;
                 }
                 self.push_temporary(op);
                 Ok(())
@@ -680,7 +676,7 @@ fn arkade_script_for(
         )?;
     }
     let body = counting.lower(&function.statements)?;
-    emit_function(&body, &mut counting, &[])?;
+    emit_body(&body, &mut counting)?;
     // A leaf read once costs no more as an inline push than as a prologue slot; an unread leaf is never pushed.
     let mut inlined = std::collections::HashSet::new();
     for parameter in &retained_parameters {
@@ -698,40 +694,39 @@ fn arkade_script_for(
     }
     // A wide literal is bound once when its pushes cost more than one push, a 3-byte read per
     // use and a final drop.
-    let first_uses: Vec<_> = counting
+    let hoisted: Vec<_> = counting
         .wide_pushes
         .iter()
-        .filter(|(literal, (_, uses))| {
+        .filter(|&(literal, &uses)| {
             let width = Op::Push(literal.to_string()).min_size(&|_| 0);
             optimize && uses * width > width + 3 * uses + 1
         })
-        .map(|(literal, (item, _))| (*item, literal.clone()))
+        .map(|(literal, _)| literal.clone())
         .collect();
-    let emit =
-        |analysis: Generator, hoisted: &[(usize, String)]| -> Result<(Vec<Spanned>, usize)> {
-            let mut generator = new(&inlined)?;
-            generator.final_reads = analysis.final_reads;
-            generator.read_cursor = Some(0);
-            emit_function(&body, &mut generator, hoisted)?;
-            if generator.read_cursor != Some(generator.final_reads.len()) {
-                return Err(CompileError::internal(
-                    "final-use analysis diverged from emission",
-                ));
-            }
-            let (mut ops, mut peak) = generator.finish()?;
-            if optimize {
-                let (optimized, raise) = optimization::optimize(ops);
-                ops = optimized;
-                peak += raise;
-            }
-            Ok((ops, peak))
-        };
+    let emit = |analysis: Generator, hoisted: &[String]| -> Result<(Vec<Spanned>, usize)> {
+        let mut generator = new(&inlined)?;
+        generator.final_reads = analysis.final_reads;
+        generator.read_cursor = Some(0);
+        emit_function(&body, &mut generator, hoisted)?;
+        if generator.read_cursor != Some(generator.final_reads.len()) {
+            return Err(CompileError::internal(
+                "final-use analysis diverged from emission",
+            ));
+        }
+        let (mut ops, mut peak) = generator.finish()?;
+        if optimize {
+            let (optimized, raise) = optimization::optimize(ops);
+            ops = optimized;
+            peak += raise;
+        }
+        Ok((ops, peak))
+    };
     // Without inlined leaves the counting pass already has the emission layout.
     let analysis = if inlined.is_empty() {
         counting
     } else {
         let mut analysis = new(&inlined)?;
-        emit_function(&body, &mut analysis, &[])?;
+        emit_body(&body, &mut analysis)?;
         analysis
     };
     let (mut ops, mut peak) = emit(analysis, &[])?;
@@ -752,22 +747,10 @@ fn arkade_script_for(
     // with long values can still exceed the limit.
     let size_of =
         |ops: &[Spanned]| -> usize { ops.iter().map(|(op, _)| op.min_size(&width)).sum() };
-    // A binding deepens the reads below it, and one above a local stops assignments from
-    // replacing that local in place, so the literals are bound before the statements of their
-    // first uses or at the start, whichever is smaller, and only when that beats pushing them.
-    let at_start: Vec<_> = first_uses
-        .iter()
-        .map(|(_, literal)| (0, literal.clone()))
-        .collect();
-    let at_start = if at_start == first_uses {
-        Vec::new()
-    } else {
-        at_start
-    };
-    for hoisted in [first_uses, at_start]
-        .into_iter()
-        .filter(|hoisted| !hoisted.is_empty())
-    {
+    // Bound at the start, the literals sit below every local, so assigning the top local still
+    // replaces it in place. They deepen reads of the inputs below them, so they are kept only
+    // when the script gets smaller.
+    if !hoisted.is_empty() {
         let mut analysis = new(&inlined)?;
         emit_function(&body, &mut analysis, &hoisted)?;
         let (hoisted_ops, hoisted_peak) = emit(analysis, &hoisted)?;
