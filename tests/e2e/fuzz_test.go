@@ -512,8 +512,10 @@ func tryProgram(r *rand.Rand) (program, bool) {
 	if g.helper {
 		g.line(1, "private function helper(int a, int b) int {")
 		g.line(2, "if (a %s b) {", g.helperOp)
-		// Always holds; it reads the recurring literal before an early return.
-		g.line(3, "require(a + %d > a);", 1<<23)
+		// Half the helpers read the recurring literal before their early return; it always holds.
+		if r.Intn(2) == 0 {
+			g.line(3, "require(a + %d > a);", 1<<23)
+		}
 		g.line(3, "return a - b;")
 		g.line(2, "}")
 		g.line(2, "return (b * %d) + a;", g.helperMult)
