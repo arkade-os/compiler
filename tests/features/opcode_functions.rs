@@ -1394,11 +1394,8 @@ contract C(pubkey first, pubkey second) {
         &[
             "OP_DUP",
             "OP_1",
-            "OP_GREATERTHANOREQUAL",
-            "OP_VERIFY",
-            "OP_DUP",
-            "OP_2",
-            "OP_LESSTHANOREQUAL",
+            "OP_3",
+            "OP_WITHIN",
             "OP_VERIFY",
             "OP_GREATERTHANOREQUAL"
         ]
@@ -1568,4 +1565,17 @@ fn merkle_root_pushes_operands_in_vm_order() {
         let error = compile(&source).expect_err(args).to_string();
         assert!(error.contains(expected), "{args}: {error}");
     }
+}
+
+#[test]
+fn bytes2uint_appends_a_pushed_zero_byte() {
+    let output = compile(
+        "contract U() { function spend(bytes data, int n) { require(bytes2uint(data) == n); } }",
+    )
+    .unwrap();
+    let asm = crate::common::arkade_asm_tokens(&output, "spend");
+    assert!(
+        contains_tokens(&asm, &["0x00", "OP_CAT", "OP_BIN2NUM"]),
+        "{asm:?}"
+    );
 }

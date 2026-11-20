@@ -22,7 +22,7 @@ fn one_analysis_gives_diagnostics_the_typed_ast_and_the_artifact() {
     assert_eq!(condition.ty(), &arkade_compiler::ArkType::Bool);
     assert_eq!(left.ty(), &arkade_compiler::ArkType::Int);
     for optimize in [true, false] {
-        let options = CompileOptions { optimize };
+        let options = crate::common::options(optimize);
         let mut staged = analysis.compile(options).unwrap();
         let mut direct = compile_sources_with_options("main.ark", &files(source), options).unwrap();
         staged.updated_at = None;
@@ -99,4 +99,36 @@ fn a_syntax_error_in_an_import_is_located_in_that_file() {
         .unwrap_err()
         .to_string();
     assert!(message.starts_with("fees.ark: Parse error:"), "{message}");
+}
+
+#[test]
+fn a_compile_error_crosses_threads_and_converts_with_question_mark() {
+    type Shared = Box<dyn std::error::Error + Send + Sync>;
+    fn compile(source: &str) -> Result<arkade_compiler::ContractJson, Shared> {
+        let artifact = arkade_compiler::compile(source)?;
+        Ok(artifact)
+    }
+    let error = std::thread::spawn(|| compile("contract Broken("))
+        .join()
+        .unwrap()
+        .unwrap_err();
+    assert!(
+        error.to_string().starts_with("main.ark: Parse error:"),
+        "{error}"
+    );
+    let local: Box<dyn std::error::Error> = arkade_compiler::compile("contract Broken(")
+        .unwrap_err()
+        .into();
+    assert_eq!(local.to_string(), error.to_string());
+    assert_eq!(format!("{local:?}"), format!("{:?}", local.to_string()));
+}
+
+#[test]
+fn options_missing_a_field_take_its_default() {
+    let options: CompileOptions = serde_json::from_str("{}").unwrap();
+    assert!(options.optimize);
+    assert_eq!(
+        serde_json::to_string(&CompileOptions::default()).unwrap(),
+        r#"{"optimize":true}"#
+    );
 }

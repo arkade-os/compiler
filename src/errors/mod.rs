@@ -4,6 +4,7 @@
 macro_rules! errors {
     ($($variant:ident: $id:literal, $summary:literal;)*) => {
         #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+        #[non_exhaustive]
         pub enum ErrorCode {
             $($variant),*
         }

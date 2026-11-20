@@ -10,7 +10,7 @@ macro_rules! properties {
         }
 
         impl $name {
-            pub const ALL: &'static [Self] = &[$(Self::$variant),*];
+            pub(crate) const ALL: &'static [Self] = &[$(Self::$variant),*];
 
             /// Source name, value type and documentation.
             pub(crate) fn describe(self) -> (&'static str, &'static str, &'static str) {
@@ -23,11 +23,11 @@ macro_rules! properties {
                 self.describe().0
             }
 
-            pub fn value_type(self) -> &'static str {
+            pub(crate) fn value_type(self) -> &'static str {
                 self.describe().1
             }
 
-            pub fn from_name(name: &str) -> Option<Self> {
+            pub(crate) fn from_name(name: &str) -> Option<Self> {
                 Self::ALL.iter().copied().find(|property| property.name() == name)
             }
         }

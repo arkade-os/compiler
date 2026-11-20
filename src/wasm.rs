@@ -67,9 +67,9 @@ pub fn compile_sources(entry: &str, files: &str, optimize: Option<bool>) -> Resu
 /// errors are diagnostics, not a thrown error: the result is
 /// `{ artifact: string | null, debug: string | null, diagnostics: Diagnostic[] }`,
 /// where `debug` is the debug file JSON (`ContractJson::debug_info`), built unless `debug` is
-/// `false`, and each diagnostic has `severity`, `code`, `message`, `file` and, when located,
-/// 1-based `start` and `end` `{ line, column }` with columns counted in UTF-16 units, as editors
-/// count them.
+/// `false`, and each diagnostic has `severity`, `code`, `message`, `file`, `suggestions` and, when
+/// located, 1-based `start` and `end` `{ line, column }` with columns counted in UTF-16 units, as
+/// editors count them.
 #[wasm_bindgen]
 pub fn compile_sources_with_diagnostics(
     entry: &str,

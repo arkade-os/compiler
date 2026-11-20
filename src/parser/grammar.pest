@@ -24,21 +24,24 @@ attribute = { "@" ~ identifier ~ "(" ~ attribute_arg ~ ("," ~ attribute_arg)* ~ 
 attribute_arg = _{ string_literal | attribute_name }
 attribute_name = @{ ASCII_ALPHA ~ (ASCII_ALPHANUMERIC | "-" | "_")* }
 
+struct_keyword = @{ "struct" ~ !(ASCII_ALPHANUMERIC | "_") }
 struct_definition = {
-    "struct" ~ identifier ~ "{" ~ struct_field+ ~ "}"
+    &struct_keyword ~ "struct" ~ identifier ~ "{" ~ struct_field+ ~ "}"
 }
 
 struct_field = { data_type ~ identifier ~ ";" }
 
 // Contract definition
+contract_keyword = @{ "contract" ~ !(ASCII_ALPHANUMERIC | "_") }
 contract = {
-    "contract" ~ identifier ~
+    &contract_keyword ~ "contract" ~ identifier ~
     "(" ~ param_list ~ ")" ~
     "{" ~ (const_decl | attribute* ~ function)* ~ "}"
 }
 
+library_keyword = @{ "library" ~ !(ASCII_ALPHANUMERIC | "_") }
 library = {
-    "library" ~ identifier ~ "{" ~ (const_decl | attribute* ~ function)* ~ "}"
+    &library_keyword ~ "library" ~ identifier ~ "{" ~ (const_decl | attribute* ~ function)* ~ "}"
 }
 
 // Compile-time constant: const int NAME = 144;
@@ -61,12 +64,14 @@ data_type = { identifier ~ ("[" ~ array_size ~ "]")? }
 
 // A function without a modifier is public. Tapscript declarations have no return type.
 function = {
-    function_visibility? ~ "function" ~ identifier ~
+    function_visibility? ~ &function_keyword ~ "function" ~ identifier ~
     "(" ~ param_list ~ ")" ~
-    ( "tapscript" ~ tapscript_block
+    ( &tapscript_keyword ~ "tapscript" ~ tapscript_block
     | data_type? ~ "{" ~ statement* ~ "}" )
 }
 function_visibility = @{ ("private" | "static") ~ !(ASCII_ALPHANUMERIC | "_") }
+function_keyword = @{ "function" ~ !(ASCII_ALPHANUMERIC | "_") }
+tapscript_keyword = @{ "tapscript" ~ !(ASCII_ALPHANUMERIC | "_") }
 tapscript_block = { "{" ~ tap_require_stmt* ~ "}" }
 tap_require_stmt = { "require" ~ "(" ~ tap_require_expression ~ ("," ~ string_literal)? ~ ","? ~ ")" ~ ";" }
 tap_require_expression = _{
@@ -90,18 +95,21 @@ statement_kind = _{
 }
 
 // If statement with optional else; `else if` is an else block holding one `if`.
+if_keyword = @{ "if" ~ !(ASCII_ALPHANUMERIC | "_") }
 if_stmt = {
-    "if" ~ "(" ~ general_expression ~ ")" ~ block ~ (else_keyword ~ (if_stmt | block))?
+    &if_keyword ~ "if" ~ "(" ~ general_expression ~ ")" ~ block ~ (else_keyword ~ (if_stmt | block))?
 }
 else_keyword = @{ "else" ~ !(ASCII_ALPHANUMERIC | "_") }
 
 // For loop statement (compile-time unrolled)
 for_stmt = { for_in_stmt | for_count_stmt }
+for_keyword = @{ "for" ~ !(ASCII_ALPHANUMERIC | "_") }
+in_keyword = @{ "in" ~ !(ASCII_ALPHANUMERIC | "_") }
 for_in_stmt = {
-    "for" ~ "(" ~ identifier ~ "," ~ identifier ~ ")" ~ "in" ~ general_expression ~ block
+    &for_keyword ~ "for" ~ "(" ~ identifier ~ "," ~ identifier ~ ")" ~ &in_keyword ~ "in" ~ general_expression ~ block
 }
 for_count_stmt = {
-    "for" ~ "(" ~ general_expression ~ ")" ~ block
+    &for_keyword ~ "for" ~ "(" ~ general_expression ~ ")" ~ block
 }
 
 // Block of statements
@@ -239,8 +247,9 @@ hash_comparison = {
 }
 
 // Constructor expression: new ContractName(args)
+new_keyword = @{ "new" ~ !(ASCII_ALPHANUMERIC | "_") }
 constructor = {
-    "new" ~ identifier ~ "(" ~ constructor_args ~ ")"
+    &new_keyword ~ "new" ~ identifier ~ "(" ~ constructor_args ~ ")"
 }
 
 // Arguments for constructor (optional - allows zero-arg constructors)

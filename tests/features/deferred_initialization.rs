@@ -1,4 +1,4 @@
-use arkade_compiler::{compile, compile_sources_with_options, CompileOptions};
+use arkade_compiler::{compile, compile_sources_with_options};
 
 fn source(body: &str) -> String {
     let parameters = [("bool", "choose"), ("int", "input"), ("int", "index")]
@@ -17,7 +17,7 @@ fn artifact(body: &str, optimize: bool) -> arkade_compiler::ContractJson {
     compile_sources_with_options(
         "main.ark",
         &[("main.ark".into(), source(body))].into_iter().collect(),
-        CompileOptions { optimize },
+        crate::common::options(optimize),
     )
     .unwrap()
 }
@@ -136,7 +136,7 @@ fn deferred_initialization_supports_helpers_returns_and_constant_array_sizes() {
         compile_sources_with_options(
             "main.ark",
             &[("main.ark".into(), source.into())].into_iter().collect(),
-            CompileOptions { optimize },
+            crate::common::options(optimize),
         )
         .unwrap();
     }
@@ -167,7 +167,7 @@ fn deferred_initialization_after_conditional_return_in_loops() {
         compile_sources_with_options(
             "main.ark",
             &[("main.ark".into(), source.into())].into_iter().collect(),
-            CompileOptions { optimize },
+            crate::common::options(optimize),
         )
         .unwrap();
     }
@@ -180,6 +180,6 @@ fn imported_helpers_can_initialize_deferred_composites() {
         ("values.ark".into(), "library Values { const int SIZE = 2; function make(int input) int[SIZE] { int[SIZE] result; result = [input, input + 1]; return result; } }".into()),
     ].into_iter().collect();
     for optimize in [false, true] {
-        compile_sources_with_options("main.ark", &files, CompileOptions { optimize }).unwrap();
+        compile_sources_with_options("main.ark", &files, crate::common::options(optimize)).unwrap();
     }
 }

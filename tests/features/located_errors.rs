@@ -20,14 +20,8 @@ fn located(main: &str, others: &[(&str, &str)]) -> (String, String, String) {
 fn errors_outside_the_validator_are_located() {
     for (main, others, expected_text, expected_message) in [
         (
-            "contract C() { private function require() { require(true); } function f() { require(true); } }",
-            &[][..],
-            "require",
-            "function name 'require' is reserved",
-        ),
-        (
             "contract C() { function f(bytes d) { sha256(d); } }",
-            &[],
+            &[][..],
             "sha256(d);",
             "cannot be a statement",
         ),
@@ -326,6 +320,60 @@ fn declaration_errors_are_located_at_the_declared_name() {
             "constructor parameter 'operator' collides with a reserved arkd name",
             "C(pubkey operator",
             "operator",
+        ),
+        (
+            "contract C(int new) { function f() { require(new == 1); } }",
+            "constructor parameter 'new' uses a reserved keyword or type name",
+            "C(int new",
+            "new",
+        ),
+        (
+            "contract if() { function f() { require(true); } }",
+            "contract 'if' uses a reserved keyword or type name",
+            "contract if",
+            "if",
+        ),
+        (
+            "struct if { int x; } contract C() { function f() { require(true); } }",
+            "struct 'if' uses a reserved keyword or type name",
+            "struct if",
+            "if",
+        ),
+        (
+            "struct S { int new; } contract C(S s) { function f() { require(s.new == 1); } }",
+            "struct 'S' field 'new' uses a reserved keyword or type name",
+            "int new",
+            "new",
+        ),
+        (
+            "contract C() { const int tx = 1; function f(int x) { require(x == tx); } }",
+            "constant 'tx' uses a reserved keyword or type name",
+            "const int tx",
+            "tx",
+        ),
+        (
+            "contract C() { function if() { require(true); } }",
+            "function 'if' uses a reserved keyword or type name",
+            "function if",
+            "if",
+        ),
+        (
+            "contract C() { private function require() { require(true); } function f() { require(true); } }",
+            "function 'require' uses a reserved keyword or type name",
+            "function require",
+            "require",
+        ),
+        (
+            "contract C(pubkey o) { function checkSig(signature s) { require(checkSig(s, o)); } }",
+            "function name 'checkSig' is reserved",
+            "function checkSig",
+            "checkSig",
+        ),
+        (
+            "contract C() { function older(signature s) tapscript { require(checkSig(s, operator)); } }",
+            "function name 'older' is reserved",
+            "function older",
+            "older",
         ),
         (
             "contract C(pubkey o, pubkey o) { function f(signature s) { require(checkSig(s, o)); } }",
