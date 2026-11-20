@@ -676,6 +676,7 @@ fn optimization_preserves_numeric_execution_across_scopes_and_returns() {
         "int total = 0; int[3] values = [1, 2, 3]; for (i, v) in values { for (j, unused) in values { if (i == 0) { total = total + input; } else { total = total + v; } require(j + 1 < 4); } } require(total == 3 * input + 15);",
         "if (choose) { require(helper(input, choose) == input + 1); } else { require(helper(input, choose) == input + 2); }",
         "let k = 2; int n = input; if (choose) { n = n + k; } else { n = n + k * k; } require(n > input);",
+        "let k = 2; int n = input; for (i) in 1..3 { n = n + i * k; } require(n == input + 6);",
         "require(helper(input, true) == input + 1); require(helper(input, false) == input + 2);",
         "int[3] values = [7, 9, 11]; let n = input; for (i, v) in values { let j = i + 1; if (choose && j < 3 && values[j] > 8) { n = n + values[j]; } else { n = n + 1; } } require(n > input);",
     ].map(|body| (body, r#"
