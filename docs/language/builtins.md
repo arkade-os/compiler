@@ -90,10 +90,10 @@ Wrap a literal or constant in `blocks(n)` or `seconds(n)` to state its unit:
 | `older(seconds(n))` | A multiple of 512 seconds, from 512 to 33553920 | The BIP68 time-based sequence, so `older(seconds(1024))` pushes `4194306` |
 | `after(blocks(n))` | A block height from 1 to 499999999 | `n` |
 | `after(seconds(n))` | A Unix timestamp from 500000000 to 4294967295 | `n` |
-| `older(n)` | A raw BIP68 sequence from 0 to 4294967295, without bit 31 set | `n` |
+| `older(n)` | A raw BIP68 sequence that sets only the 16 value bits and the type flag (bit 22) | `n` |
 | `after(n)` | A raw nLockTime from 0 to 4294967295 | `n` |
 
-A parameter, or a literal without a unit, is pushed as the raw BIP68 sequence or nLockTime. The compiler warns on a literal or constant without a unit.
+A parameter, or a literal without a unit, is pushed as the raw BIP68 sequence or nLockTime. The compiler warns on a literal or constant without a unit, and rejects a raw `older(n)` literal or constant that sets any bit besides the 16 value bits and the type flag (bit 22).
 
 arkd rejects block-based timelocks unless the operator allows them, so arkd exit leaves should use `older(operatorExitDelay)`.
 

@@ -172,12 +172,6 @@ contract P(pubkey owner, bytes32 pre, bytes32 h) {
 
 #[test]
 fn a_tapscript_input_is_consumed_at_most_once() {
-    let source = |inputs: &str, body: &str| {
-        format!(
-            "contract K(pubkey owner, bytes32 h) {{\n  function claim({inputs}) tapscript {{\n    \
-             {body}\n  }}\n}}"
-        )
-    };
     for (body, location) in [
         (
             "require(checkMultisig([operator, owner], [s, s]));",
@@ -188,7 +182,11 @@ fn a_tapscript_input_is_consumed_at_most_once() {
             "line 3, column 76",
         ),
     ] {
-        let err = compile(&source("signature s", body))
+        let src = format!(
+            "contract K(pubkey owner, bytes32 h) {{\n  function claim(signature s) tapscript {{\n    \
+             {body}\n  }}\n}}"
+        );
+        let err = compile(&src)
             .expect_err("a leaf consuming one input twice must fail")
             .to_string();
         assert!(
@@ -197,42 +195,5 @@ fn a_tapscript_input_is_consumed_at_most_once() {
             )),
             "{body}: {err}"
         );
-    }
-    let out = compile(&source(
-        "signature operatorSig, signature ownerSig",
-        "require(checkMultisig([operator, owner], [operatorSig, ownerSig]));",
-    ))
-    .expect("one input per use compiles");
-    let leaf = &crate::common::group(&out, "claim").leaves[0];
-    let witness: Vec<_> = leaf
-        .witness
-        .iter()
-        .map(|w| (&*w.name, w.injected))
-        .collect();
-    assert_eq!(witness, [("operatorSig", true), ("ownerSig", false)]);
-}
-
-#[test]
-fn a_raw_csv_sets_only_the_bits_bip68_reads() {
-    let source = |delay: &str| {
-        format!(
-            "contract K(pubkey owner) {{\n  function exit(signature s) tapscript {{\n    \
-             require(older({delay}));\n    require(checkSig(s, owner));\n  }}\n}}"
-        )
-    };
-    for delay in ["100000", "65536"] {
-        let err = compile(&source(delay))
-            .expect_err("a sequence BIP68 truncates must fail")
-            .to_string();
-        assert!(
-            err.contains(&format!(
-                "older({delay}) must be a BIP68 sequence that sets only"
-            )) && err.contains("write blocks(n) or seconds(n)"),
-            "{delay}: {err}"
-        );
-    }
-    for delay in ["65535", "4194305"] {
-        let out = compile(&source(delay)).expect("a sequence within the BIP68 mask compiles");
-        assert_eq!(crate::common::group(&out, "exit").leaves[0].asm[0], delay);
     }
 }

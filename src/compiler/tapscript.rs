@@ -512,7 +512,7 @@ pub fn validate_arkd_rules(
                 };
                 const MAX: i128 = u32::MAX as i128;
                 let (valid, expected) = match (csv, unit) {
-                    // BIP68 ignores the other bits, and arkd's decode drops them.
+                    // BIP68 ignores bits 16-21 and 23-30, and bit 31 disables the lock.
                     (true, None) => (
                         n & !(0xffff | 1 << 22) == 0,
                         "a BIP68 sequence that sets only the 16 value bits and the type flag \
@@ -1226,6 +1226,7 @@ mod tests {
         for (csv, value, unit, expected) in [
             (true, "144", None, None),
             (true, "4194305", None, None),
+            (true, "65536", None, Some("sets only the 16 value bits")),
             (
                 true,
                 "2147483648",
