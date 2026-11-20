@@ -82,9 +82,11 @@ fn falls_through(body: &[Lowered]) -> bool {
 
 /// Whether a never-reassigned local or helper parameter holding `literal` is replaced by it at
 /// every read instead of being bound.
-// ponytail: literals that push 4 or more bytes stay bound, as repeating them costs more than
-// reading one copy, so they never fold further; substitute them too once wide literals are
-// hoisted into shared bindings.
+// ponytail: a substituted literal that does not fold costs its full push at every read, so a
+// literal that pushes 3 bytes and is read six times grows the script; count reads before
+// substituting to avoid that. Literals that push 4 or more bytes stay bound for the same
+// reason and never fold further; substitute them too once wide literals are hoisted into
+// shared bindings.
 pub(super) fn propagates(literal: &str) -> bool {
     matches!(literal, "true" | "false") || !Op::Push(literal.to_string()).pushes_more_than(2)
 }
