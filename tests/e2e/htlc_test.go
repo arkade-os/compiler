@@ -6,9 +6,9 @@ import (
 	"testing"
 
 	"github.com/arkade-os/emulator/pkg/arkade"
+	"github.com/btcsuite/btcd/address/v2"
 	"github.com/btcsuite/btcd/btcec/v2"
-	"github.com/btcsuite/btcd/btcutil"
-	"github.com/btcsuite/btcd/wire"
+	"github.com/btcsuite/btcd/wire/v2"
 )
 
 func TestCompiledHTLC(t *testing.T) {
@@ -31,7 +31,7 @@ func TestCompiledHTLC(t *testing.T) {
 	values := map[string][]byte{
 		"CONTRACT:SingleSig(<receiver>)": receiverScript[2:],
 		"CONTRACT:SingleSig(<sender>)":   senderScript[2:],
-		"preimageHash":                   btcutil.Hash160(preimage),
+		"preimageHash":                   address.Hash160(preimage),
 		"refundTime":                     refundTimeBytes,
 		"sender":                         fixedPublicKey(4).SerializeCompressed(),
 		"receiver":                       fixedPublicKey(5).SerializeCompressed(),

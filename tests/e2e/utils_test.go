@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math/big"
 	"os"
@@ -21,9 +22,9 @@ import (
 	"github.com/arkade-os/emulator/pkg/arkade"
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcec/v2/schnorr"
-	"github.com/btcsuite/btcd/btcutil/psbt"
-	"github.com/btcsuite/btcd/txscript"
-	"github.com/btcsuite/btcd/wire"
+	"github.com/btcsuite/btcd/psbt/v2"
+	"github.com/btcsuite/btcd/txscript/v2"
+	"github.com/btcsuite/btcd/wire/v2"
 )
 
 type artifact struct {
@@ -531,9 +532,10 @@ func requireVMResult(
 	}
 	// Unoptimized Arkade Scripts verify with an unfused OP_VERIFY where the optimizer
 	// emits OP_EQUALVERIFY or leaves the result for the final stack check.
+	var execErr *arkade.ExecutionError
 	unfused := os.Getenv("ARKADEC_NO_OPTIMIZE") != "" &&
 		(strings.HasSuffix(wantErr, "VERIFY failed") || wantErr == "false stack entry") &&
-		strings.Contains(err.Error(), "failed to execute arkade script: OP_VERIFY failed")
+		errors.As(err, &execErr) && execErr.Opcode == "OP_VERIFY"
 	if !unfused {
 		t.Fatalf("VM error %q does not contain %q", err, wantErr)
 	}

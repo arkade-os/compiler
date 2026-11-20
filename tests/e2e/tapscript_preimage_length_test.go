@@ -7,10 +7,10 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/btcsuite/btcd/address/v2"
 	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcec/v2/schnorr"
-	"github.com/btcsuite/btcd/btcutil"
-	"github.com/btcsuite/btcd/wire"
+	"github.com/btcsuite/btcd/wire/v2"
 )
 
 func TestTapscriptHashlockPreimageLength(t *testing.T) {
@@ -32,7 +32,7 @@ func TestTapscriptHashlockPreimageLength(t *testing.T) {
 				serverKey, ownerKey := fixedPrivateKey(1), fixedPrivateKey(2)
 				group := instantiateLeaf(t, contract, "claim", map[string][]byte{
 					"owner":  schnorr.SerializePubKey(ownerKey.PubKey()),
-					"digest": btcutil.Hash160(preimage),
+					"digest": address.Hash160(preimage),
 				}, serverKey.PubKey())
 				wantError := ""
 				if declaredType == "bytes20" && length != 20 || declaredType == "bytes32" && length != 32 {
@@ -66,7 +66,7 @@ func TestArkadeScriptHashlockPreimageLength(t *testing.T) {
 			t.Run(fmt.Sprintf("%s/%d", declaredType, length), func(t *testing.T) {
 				preimage := bytes.Repeat([]byte{0x42}, length)
 				instance := instantiateGroup(t, contract, "claim", map[string][]byte{
-					"digest": btcutil.Hash160(preimage),
+					"digest": address.Hash160(preimage),
 				}, serverKey.PubKey(), emulatorKey.PubKey())
 				witness := arkadeScriptWitness(t, contract, group, map[string][]byte{"n": {1}, "preimage": preimage})
 				spend := spendingPSBTWithWitness(t, fundingTx(instance.pkScript, 10_000), instance, 10_000, instance.pkScript, witness)
