@@ -149,7 +149,7 @@ contract C() {
     private function sum(int[3] row) int { return row[0] + row[1] + row[2]; }
     private function grid(int v) int[2][3] { return [[v, v, v], [v, v, v]]; }
     function spend(int i, int j, int v, int[2][3] values, int[3] row) {
-        int[2][3] local = grid(v);
+        let local = grid(v);
         local[i] = row;
         local[i][j] = v;
         require(local[i] == values[1 - i]);
