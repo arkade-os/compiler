@@ -12,7 +12,7 @@ Arkade Language is a contract language for Bitcoin. You write a contract as a se
 
 The compiler, `arkadec`, turns a contract into a JSON artifact. Arkade libraries consume the artifact directly.
 
-The language covers signature and multisig checks, absolute and relative timelocks, transaction introspection, Arkade Assets and asset groups, byte-string parsing, fixed-size arrays, structs, and contract instantiation with `new` for recursive VTXOs.
+The language covers signature and multisig checks, absolute and relative timelocks, transaction introspection, Arkade Assets and asset groups, byte-string parsing, fixed-size arrays, structs, and instantiation of other contracts with `new`.
 
 ## Spending paths
 
