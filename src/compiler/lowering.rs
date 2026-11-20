@@ -131,7 +131,12 @@ pub(super) fn lower(
         if let Some(item) =
             lower_statement(statement, scope, structs, fold).map_err(|error| error.at(span))?
         {
+            let ends = !falls_through(std::slice::from_ref(&item));
             lowered.push(item);
+            // Emission stops at an item no path falls through, so the rest is dead.
+            if ends {
+                break;
+            }
         }
     }
     Ok(lowered)
@@ -144,12 +149,8 @@ fn lower_statement(
     fold: bool,
 ) -> Result<Option<Lowered>> {
     let span = statement.span;
-    let static_condition = |condition: &Expression| match &condition.kind {
-        ExprKind::Literal(value) if fold && matches!(value.as_str(), "true" | "false") => {
-            Some(value == "true")
-        }
-        _ => None,
-    };
+    let static_condition =
+        |condition: &Expression| fold.then(|| optimization::known_bool(condition)).flatten();
     Ok(Some(match statement.statement {
         Statement::Require(Expression {
             kind: ExprKind::Literal(value),
@@ -166,9 +167,20 @@ fn lower_statement(
                 } else {
                     else_body.unwrap_or_default()
                 };
+                let mut iteration = lower(&body, &mut scope.clone(), structs, fold)?;
+                // A condition with runtime operands still runs, for the failures they raise.
+                if !matches!(condition.kind, ExprKind::Literal(_)) {
+                    let evaluated = Lowered::If {
+                        span,
+                        condition,
+                        then_body: Vec::new(),
+                        else_body: None,
+                    };
+                    iteration.insert(0, evaluated);
+                }
                 Lowered::Unrolled {
                     span,
-                    iterations: vec![lower(&body, &mut scope.clone(), structs, fold)?],
+                    iterations: vec![iteration],
                     guarded: false,
                 }
             }

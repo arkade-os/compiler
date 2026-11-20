@@ -40,17 +40,45 @@ pub(super) fn fold_statement(statement: &mut Statement, scope: &Scope) -> Result
     Ok(())
 }
 
+/// The value a folded condition has whenever its evaluation completes, when no runtime operand
+/// decides it: a literal, or `&&` with a `false` side or `||` with a `true` one.
+pub(super) fn known_bool(condition: &Expression) -> Option<bool> {
+    match &condition.kind {
+        ExprKind::Literal(value) => match value.as_str() {
+            "true" => Some(true),
+            "false" => Some(false),
+            _ => None,
+        },
+        ExprKind::Unary {
+            op: UnaryOperator::Not,
+            value,
+        } => known_bool(value).map(|value| !value),
+        ExprKind::BinaryOp { left, op, right }
+            if matches!(op, BinaryOperator::And | BinaryOperator::Or) =>
+        {
+            let decisive = *op == BinaryOperator::Or;
+            [left, right]
+                .iter()
+                .any(|side| known_bool(side) == Some(decisive))
+                .then_some(decisive)
+        }
+        _ => None,
+    }
+}
+
 fn fold_expression(expression: &mut Expression, scope: &Scope) -> Result<(), String> {
     if let ExprKind::BinaryOp { left, op, right } = &mut expression.kind {
         if matches!(op, BinaryOperator::And | BinaryOperator::Or) {
             fold_expression(left, scope)?;
-            if let ExprKind::Literal(value) = &left.kind {
-                if (*op == BinaryOperator::And && value == "false")
-                    || (*op == BinaryOperator::Or && value == "true")
-                {
+            let decisive = *op == BinaryOperator::Or;
+            if known_bool(left) == Some(decisive) {
+                // The right operand never runs.
+                if matches!(left.kind, ExprKind::Literal(_)) {
                     expression.kind = left.kind.clone();
-                    return Ok(());
+                } else {
+                    right.kind = ExprKind::Literal(decisive.to_string());
                 }
+                return Ok(());
             }
             fold_expression(right, scope)?;
             if matches!(&left.kind, ExprKind::Literal(value) if value == "true" || value == "false")

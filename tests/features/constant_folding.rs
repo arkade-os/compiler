@@ -362,8 +362,13 @@ fn unrolled_index_validation_skips_dead_branches_and_returned_iterations_in_both
         "require(helper(values, input) == input);",
         "require(true || bad(values, input));",
         "require(guarded(values, 3) == input);",
+        "require(late(values, 3) == input);",
+        "require(total(values) == input);",
+        "for (i, unused) in values { let j = i + 1; if (input > 0 && j < 3) { require(values[j] == input); } } require(input > 0);",
+        "for (i, unused) in values { let j = i + 1; if (input > 0 && j < 3 && values[j] == input) { require(input > 1); } } require(input > 0);",
+        "for (i, unused) in values { let j = i + 1; if (input > 0 || j >= 3) { require(input > 0); } else { require(values[j] == input); } }",
     ] {
-        let source = format!("contract C() {{ private function guarded(int[3] values, int k) int {{ if (k < 3) {{ return values[k]; }} return 0; }} private function helper(int[3] values, int input) int {{ for (i, unused) in values {{ if (i == 0) {{ return input; }} require(values[i + 1] == input); }} return 0; }} private function bad(int[3] values, int input) bool {{ for (i, unused) in values {{ require(values[i + 1] == input); }} return true; }} function spend(int[3] values, int input) {{ {body} }} }}");
+        let source = format!("contract C() {{ private function guarded(int[3] values, int k) int {{ if (k < 3) {{ return values[k]; }} return 0; }} private function late(int[3] values, int k) int {{ if (k >= 3) {{ return 0; }} return values[k]; }} private function total(int[3] values) int {{ int t = 0; for (i, unused) in values {{ let j = i + 1; if (j == 3) {{ return t; }} t = t + values[j]; }} return t; }} private function helper(int[3] values, int input) int {{ for (i, unused) in values {{ if (i == 0) {{ return input; }} require(values[i + 1] == input); }} return 0; }} private function bad(int[3] values, int input) bool {{ for (i, unused) in values {{ require(values[i + 1] == input); }} return true; }} function spend(int[3] values, int input) {{ {body} }} }}");
         compile(&source).unwrap();
         compile_unoptimized(&source).unwrap();
     }
@@ -459,14 +464,20 @@ fn short_circuit_folding_preserves_executed_helpers() {
         ("false || verify(input)", true),
         ("verify(input) || true", true),
         ("verify(input) && false", true),
+        ("verify(input) && false && verify(input + 1)", true),
     ] {
-        let source = format!("contract C() {{ private function verify(int input) bool {{ require(input > 0); return true; }} function spend(int input) {{ require({condition}); }} }}");
-        let tokens = asm(&source);
-        assert_eq!(
-            tokens.iter().any(|token| token == "OP_GREATERTHAN"),
-            called,
-            "{condition}: {tokens:?}"
-        );
+        for statement in [
+            format!("require({condition});"),
+            format!("if ({condition}) {{ require(input != 0); }} else {{ require(input != 1); }}"),
+        ] {
+            let source = format!("contract C() {{ private function verify(int input) bool {{ require(input > 0); return true; }} function spend(int input) {{ {statement} }} }}");
+            let tokens = asm(&source);
+            assert_eq!(
+                tokens.iter().any(|token| token == "OP_GREATERTHAN"),
+                called,
+                "{statement}: {tokens:?}"
+            );
+        }
     }
     for source in [
         "contract C() { function spend() { if (true) { require(true); } else { require(missing == 0); } } }",
@@ -666,6 +677,7 @@ fn optimization_preserves_numeric_execution_across_scopes_and_returns() {
         "if (choose) { require(helper(input, choose) == input + 1); } else { require(helper(input, choose) == input + 2); }",
         "let k = 2; int n = input; if (choose) { n = n + k; } else { n = n + k * k; } require(n > input);",
         "require(helper(input, true) == input + 1); require(helper(input, false) == input + 2);",
+        "int[3] values = [7, 9, 11]; let n = input; for (i, v) in values { let j = i + 1; if (choose && j < 3 && values[j] > 8) { n = n + values[j]; } else { n = n + 1; } } require(n > input);",
     ].map(|body| (body, r#"
                 int[2] values = [7, 9];
                 for (i, v) in values { for (j, w) in values {
