@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to the Arkade Compiler are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html). `arkade-compiler`, `arkade-bindgen` and `@arkade-os/compiler` share one version.
+All notable changes to the Arkade Compiler are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html). `arkade-compiler` and `@arkade-os/compiler` share one version.
 
 ## [0.1.0] - Unreleased
 
@@ -10,8 +10,7 @@ The first stable release of Arkade Language and its toolchain.
 - **`arkadec`**, the CLI, writes a JSON artifact with both kinds of script. `--check` lists diagnostics, `--debug` writes Arkade Script source maps, `--report` shows script sizes, stack peaks and opcode counts, `--explain` documents lints and error codes, and `--builtins` prints the builtin docs. Each GitHub release attaches binaries for Linux, macOS and Windows.
 - **`arkade-compiler`**, the Rust crate: `compile`, `compile_file` and `compile_sources`, and `analyze` and `check` for editors and tools, with the typed AST, symbols and positioned diagnostics.
 - **`@arkade-os/compiler`**, the npm package: the compiler as WebAssembly for Node.js and browsers, with `compile`, `check`, `symbolAt`, `completionsAt`, `builtinDocs` and `version`.
-- **`arkade-bindgen`** generates typed TypeScript and Go bindings from artifacts.
-- **Playground** at [arkade-os.github.io/compiler](https://arkade-os.github.io/compiler) runs the compiler in the browser, with live diagnostics, hover, go to definition, completion, and assembly and bindings views.
+- **Playground** at [arkade-os.github.io/compiler](https://arkade-os.github.io/compiler) runs the compiler in the browser, with live diagnostics, hover, go to definition, completion, and artifact and assembly views.
 
 ### Changed since 0.1.0-rc.1
 
@@ -19,7 +18,7 @@ The first stable release of Arkade Language and its toolchain.
 
 - `server` is now `operator` and `serverExitDelay` is now `operatorExitDelay`. The placeholders `<SERVER_KEY>` and `<SERVER_EXIT_DELAY>` are now `<OPERATOR_KEY>` and `<OPERATOR_EXIT_DELAY>`, and the injected witness `serverSig` is now `operatorSig` (#283).
 - `emulator` is no longer a role and `<EMULATOR_KEY:f>` is no longer emitted. An Arkade Script function without a replacing leaf gets one default leaf, `<OPERATOR_KEY:f> OP_CHECKSIG`, and `tweak(operator, f)` pushes `<OPERATOR_KEY:f>`. A tapscript named after an Arkade Script function must tweak a key to that function and must have no CSV delay (#283).
-- `ArkadeCovenant` is now `ArkadeScript` in Rust and npm; only npm keeps `ArkadeCovenant` as a deprecated alias. In bindgen, `CovenantIR` is now `ArkadeScriptIR` and `GroupIR.covenant` is now `GroupIR.arkade`. The artifact JSON is unchanged (#282).
+- `ArkadeCovenant` is now `ArkadeScript` in Rust and npm; only npm keeps `ArkadeCovenant` as a deprecated alias. The artifact JSON is unchanged (#282).
 - `require` holds one boolean expression: the Rust `Requirement` enum is gone and `Statement::Require` holds an `Expression` (#272). `ArkType` gains `Void` (#276), and `ContractJson::format_version` is a required `u32` (#263).
 - `bin2num` and `num2bin` are now `bytes2int` and `int2bytes` (#252).
 - `sha256Initialize` and `sha256Update` return a `bytes` context instead of `bytes32`, so `bytes32 ctx = sha256Initialize(data);` no longer compiles (#215).
@@ -33,12 +32,13 @@ The first stable release of Arkade Language and its toolchain.
 
 **Stricter validation and API**
 
-- A tapscript input may be consumed only once per leaf.
-- Raw `older(n)` rejects bits that BIP68 ignores.
-- Keywords need a word boundary, so `functionspend` no longer parses.
-- Reserved names are rejected for every declaration.
-- Rust public enums and `CompileOptions` are `#[non_exhaustive]`, some internal modules are private, and the `compile*` functions return the newtype `arkade_compiler::Error`, which is `Send + Sync`.
-- The TypeScript `Diagnostic` declares `suggestions`, typed by a new `Suggestion` type.
+- A tapscript input may feed at most one hash preimage or signature in a leaf, since the witness carries each input once (#287).
+- A raw `older(n)` may set only the 16 value bits and the type flag that BIP68 reads, and the error points to `blocks(n)` and `seconds(n)` (#287).
+- Keywords end at a word boundary, so glued forms such as `functionspend(` no longer parse (#291).
+- Reserved keywords and type names are rejected for every declared name, and a function of any kind named after a builtin call is rejected (#291).
+- Most public Rust enums, `CompileOptions` and several AST and symbol structs are `#[non_exhaustive]`, so `CompileOptions` is built from `CompileOptions::default()`. The `operators` and `properties` modules are crate-private, and the `compile*` functions return `arkade_compiler::Error`, a `Send + Sync` newtype, instead of `Box<dyn Error>` (#288).
+- The TypeScript `Diagnostic` declares `suggestions: Suggestion[]`, with a new exported `Suggestion` type (#288).
+- A leaf's `witness` is documented as its inputs in declaration order, not the stack order; clients build the stack from the leaf script (#289).
 
 **Added**
 
@@ -49,6 +49,11 @@ The first stable release of Arkade Language and its toolchain.
 - Field and index access on computed results (`make().value`, `getArray()[i]`), `for ... in` over array expressions, and computed arrays in `ecPairing` (#239).
 - The verify builtins return `true`, so they work anywhere a `bool` does (#265).
 - `compile(input, { debug: false })` in npm skips the debug file (#231).
+- The README is split into focused pages under `docs/`: the tour, playground, CLI, API, artifact format, lints, development and the language reference (#284).
+
+**Removed**
+
+- `arkade-bindgen` and the playground Bindings tab; clients generate typed code from the artifact and its stack ABI in `docs/artifact.md` (#285).
 
 **Fixed**
 
