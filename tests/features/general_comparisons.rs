@@ -51,7 +51,7 @@ fn composite_comparisons_are_boolean_expressions() {
             let output = arkade_compiler::compile_sources_with_options(
                 "main.ark",
                 &[("main.ark".into(), source.clone())].into(),
-                arkade_compiler::CompileOptions { optimize },
+                crate::common::options(optimize),
             )
             .unwrap_or_else(|error| panic!("{ty}, optimize={optimize}: {error}"));
             assert_eq!(output.functions.len(), 1);
@@ -372,7 +372,7 @@ contract Compare(pubkey owner, ScriptPubKey expectedScript, bytes32 expectedTxid
         ]
         .into_iter()
         .collect(),
-        arkade_compiler::CompileOptions { optimize: false },
+        crate::common::options(false),
     )
     .unwrap();
     let asm = crate::common::arkade_asm_tokens(&output, "compare");

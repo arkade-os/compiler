@@ -44,7 +44,7 @@ pub enum BinaryOperator {
 }
 
 impl BinaryOperator {
-    pub const ALL: [Self; 18] = [
+    pub(crate) const ALL: [Self; 18] = [
         Self::Mul,
         Self::Div,
         Self::Rem,
@@ -96,17 +96,17 @@ impl BinaryOperator {
         self.describe().0
     }
 
-    pub fn class(self) -> OperatorClass {
+    pub(crate) fn class(self) -> OperatorClass {
         self.describe().1
     }
 
-    pub fn opcodes(self) -> &'static [Opcode] {
+    pub(crate) fn opcodes(self) -> &'static [Opcode] {
         self.describe().2
     }
 
     /// The opcodes applying the operator; `numeric` operands are compared as numbers, since
     /// `OP_EQUAL` compares bytes and so accepts a non-minimal encoding of an equal number.
-    pub fn opcodes_for(self, numeric: bool) -> &'static [Opcode] {
+    pub(crate) fn opcodes_for(self, numeric: bool) -> &'static [Opcode] {
         match self {
             Self::Eq if numeric => &[NumEqual],
             Self::Ne if numeric => &[NumNotEqual],
@@ -115,14 +115,14 @@ impl BinaryOperator {
     }
 
     /// Whether the result is a `bool` comparing its operands.
-    pub fn compares(self) -> bool {
+    pub(crate) fn compares(self) -> bool {
         matches!(
             self.class(),
             OperatorClass::Ordering | OperatorClass::Equality
         )
     }
 
-    pub fn from_symbol(symbol: &str) -> Option<Self> {
+    pub(crate) fn from_symbol(symbol: &str) -> Option<Self> {
         Self::ALL.into_iter().find(|op| op.symbol() == symbol)
     }
 }
@@ -154,11 +154,11 @@ impl UnaryOperator {
         self.describe().0
     }
 
-    pub fn operand_type(self) -> &'static str {
+    pub(crate) fn operand_type(self) -> &'static str {
         self.describe().1
     }
 
-    pub fn opcode(self) -> Opcode {
+    pub(crate) fn opcode(self) -> Opcode {
         self.describe().2
     }
 }

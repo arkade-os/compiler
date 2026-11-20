@@ -275,14 +275,7 @@ impl Generator {
             self.push_integer_temporary(threshold);
         } else {
             self.emit_expression(threshold.expect("runtime threshold"))?;
-            self.apply(Dup, 1, 2)?;
-            self.push_integer_temporary(1);
-            self.apply(GreaterThanOrEqual, 2, 1)?;
-            self.apply(Verify, 1, 0)?;
-            self.apply(Dup, 1, 2)?;
-            self.push_integer_temporary(count);
-            self.apply(LessThanOrEqual, 2, 1)?;
-            self.apply(Verify, 1, 0)?;
+            self.check_within(1, count + 1)?;
         }
         // At least the threshold must sign; for N-of-N that is all, which NUMEQUAL checks and
         // a following VERIFY fuses with.

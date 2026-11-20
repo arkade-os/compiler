@@ -8,9 +8,9 @@ mod imports;
 pub mod lint;
 pub mod models;
 pub mod opcodes;
-pub mod operators;
+mod operators;
 mod parser;
-pub mod properties;
+mod properties;
 pub mod symbols;
 mod types;
 mod validator;
@@ -25,8 +25,12 @@ pub use models::{
 };
 pub use types::ArkType;
 
-/// Per-call compiler settings. Optimizations are enabled by default.
+/// Per-call compiler settings. Optimizations are enabled by default. Outside this crate, start
+/// from `CompileOptions::default()` and set the fields to change. A field missing from
+/// deserialized options takes its default.
 #[derive(Clone, Copy, Debug, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+#[non_exhaustive]
 pub struct CompileOptions {
     /// Fold constant expressions, remove static branches, and optimize Arkade assembly.
     pub optimize: bool,
@@ -37,6 +41,25 @@ impl Default for CompileOptions {
         Self { optimize: true }
     }
 }
+
+/// A failed `compile*` call, which displays the error located in its file.
+#[derive(Clone)]
+pub struct Error(String);
+
+/// The message's `Debug`, as a `main` returning `Box<dyn std::error::Error>` prints it.
+impl std::fmt::Debug for Error {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Debug::fmt(&self.0, f)
+    }
+}
+
+impl std::fmt::Display for Error {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for Error {}
 
 /// Compile Arkade Language source code to a JSON-serializable structure
 ///
@@ -80,14 +103,12 @@ impl Default for CompileOptions {
 /// let json = serde_json::to_string_pretty(&result.unwrap()).unwrap();
 /// println!("{}", json);
 /// ```
-pub fn compile(source_code: &str) -> Result<ContractJson, Box<dyn std::error::Error>> {
-    compiler::compile(source_code).map_err(Into::into)
+pub fn compile(source_code: &str) -> Result<ContractJson, Error> {
+    compiler::compile(source_code).map_err(Error)
 }
 
 /// Compile an entry file and its relative imports from the filesystem.
-pub fn compile_file(
-    path: impl AsRef<std::path::Path>,
-) -> Result<ContractJson, Box<dyn std::error::Error>> {
+pub fn compile_file(path: impl AsRef<std::path::Path>) -> Result<ContractJson, Error> {
     compile_file_with_options(path, CompileOptions::default())
 }
 
@@ -95,16 +116,16 @@ pub fn compile_file(
 pub fn compile_file_with_options(
     path: impl AsRef<std::path::Path>,
     options: CompileOptions,
-) -> Result<ContractJson, Box<dyn std::error::Error>> {
-    imports::compile_file(path.as_ref(), options).map_err(Into::into)
+) -> Result<ContractJson, Error> {
+    imports::compile_file(path.as_ref(), options).map_err(Error)
 }
 
 /// Compile an entry file from an in-memory map of relative paths to source text.
 pub fn compile_sources(
     entry: &str,
     files: &std::collections::BTreeMap<String, String>,
-) -> Result<ContractJson, Box<dyn std::error::Error>> {
-    imports::compile_sources(entry, files, CompileOptions::default()).map_err(Into::into)
+) -> Result<ContractJson, Error> {
+    imports::compile_sources(entry, files, CompileOptions::default()).map_err(Error)
 }
 
 /// Compile in-memory sources with per-call options.
@@ -112,8 +133,8 @@ pub fn compile_sources_with_options(
     entry: &str,
     files: &std::collections::BTreeMap<String, String>,
     options: CompileOptions,
-) -> Result<ContractJson, Box<dyn std::error::Error>> {
-    imports::compile_sources(entry, files, options).map_err(Into::into)
+) -> Result<ContractJson, Error> {
+    imports::compile_sources(entry, files, options).map_err(Error)
 }
 
 /// Parse, resolve imports, type and validate `entry` from an in-memory map of
