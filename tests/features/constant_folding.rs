@@ -185,6 +185,14 @@ fn repeated_wide_literals_are_pushed_once_when_optimizing() {
     // A binding that would take the stack past the VM limit is left out.
     let tokens = asm(&format!("contract C() {{ function spend(int[998] xs) {{ require(xs[0] == {Q}); require(xs[1] == {Q}); require(xs[2] == {Q}); }} }}"));
     assert_eq!(tokens.iter().filter(|token| *token == Q).count(), 3);
+    // A binding whose deeper reads cost more than it saves is left out: bound, this takes 55
+    // bytes instead of 52.
+    let tokens = asm("contract C() { function spend(int a, int b, int c) { require(a < b + 8388608); require(c - a != b); require(c > a - 8388608); require(c - a != b); if (c == a) { require(a != 8388608); } require(c > a - 8388608); } }");
+    assert_eq!(
+        tokens.iter().filter(|token| *token == "8388608").count(),
+        4,
+        "{tokens:?}"
+    );
 }
 
 #[test]
