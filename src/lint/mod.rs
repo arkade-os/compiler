@@ -111,6 +111,7 @@ fn timelock_units(contract: &Contract, findings: &mut Vec<Finding>) {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[non_exhaustive]
 pub enum Level {
     Allow,
     Warn,
@@ -118,6 +119,7 @@ pub enum Level {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum Category {
     Security,
     Correctness,
@@ -130,6 +132,7 @@ pub enum Category {
 macro_rules! lints {
     ($($variant:ident: $id:literal, $category:ident, $level:ident, $summary:literal;)*) => {
         #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+        #[non_exhaustive]
         pub enum Lint {
             $($variant),*
         }

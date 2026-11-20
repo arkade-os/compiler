@@ -9,6 +9,7 @@ use crate::models::{
 use crate::types::ArkType;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum SymbolKind {
     Contract,
     Library,
@@ -23,6 +24,7 @@ pub enum SymbolKind {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub struct Definition {
     pub name: String,
     pub kind: SymbolKind,
@@ -39,6 +41,7 @@ pub struct Definition {
 
 /// A use of a name, which `definition` indexes in [`Symbols::definitions`].
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub struct Reference {
     pub file: String,
     pub span: Span,

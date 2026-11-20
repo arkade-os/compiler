@@ -614,11 +614,11 @@ fn an_allowed_unused_local_is_dropped_from_the_arkade_script_stack() {
 
 #[test]
 fn every_lint_is_documented_and_explained() {
-    let readme = include_str!("../../README.md");
+    let lints_doc = include_str!("../../docs/lints.md");
     for &lint in Lint::ALL {
         assert!(
-            readme.contains(&format!("| `{}` |", lint.id())),
-            "README's table of lints is missing {}",
+            lints_doc.contains(&format!("| `{}` |", lint.id())),
+            "docs/lints.md is missing {}",
             lint.id()
         );
         assert!(!lint.explanation().trim().is_empty(), "{}", lint.id());

@@ -154,7 +154,7 @@ fn fingerprint_identifies_artifact_content() {
     let unoptimized = arkade_compiler::compile_sources_with_options(
         "main.ark",
         &[("main.ark".to_string(), source.to_string())].into(),
-        arkade_compiler::CompileOptions { optimize: false },
+        crate::common::options(false),
     )
     .unwrap();
     assert_ne!(first.fingerprint, unoptimized.fingerprint);

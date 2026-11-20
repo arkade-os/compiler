@@ -139,9 +139,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    let options = CompileOptions {
-        optimize: !args.no_optimize,
-    };
+    let mut options = CompileOptions::default();
+    options.optimize = !args.no_optimize;
     if args.check {
         check(file_path, args.json, options, &levels)?;
         return Ok(());

@@ -115,6 +115,7 @@ fn locate(issues: &mut [ValidationIssue], span: crate::diagnostics::Span) {
 ///
 /// Checks performed:
 /// - Contract name is non-empty.
+/// - No declared name is a keyword or type name, and no function name a builtin call.
 /// - At least one Arkade Script or tapscript function is declared.
 /// - Function names are unique within the contract.
 /// - Tapscript names are unique within the contract.
@@ -145,6 +146,34 @@ pub(crate) fn validate_ast(contract: &Contract, require_entrypoint: bool) -> Vec
                 "contract must declare at least one Arkade Script or tapscript function",
             )
         });
+    }
+
+    // ── Reserved declaration names ─────────────────────────────────────────
+    // Structs, parameters, inputs and locals are checked where they are walked.
+    let kind = if contract.is_library {
+        "library"
+    } else {
+        "contract"
+    };
+    let constants = contract.constants.iter().filter(|c| !c.name.contains('.'));
+    let functions = contract.functions.iter().filter(|f| !f.is_imported());
+    let tapscripts = contract.tapscripts.iter();
+    let declarations = std::iter::once((kind, &contract.name, contract.span))
+        .chain(constants.map(|c| ("constant", &c.name, c.span)))
+        .chain(functions.map(|f| ("function", &f.name, f.span)))
+        .chain(tapscripts.map(|t| ("tapscript", &t.name, t.span)));
+    for (context, name, span) in declarations {
+        let first = issues.len();
+        validate_source_identifier(name, context, &mut issues);
+        // A builtin's name is reserved for its calls.
+        if matches!(context, "function" | "tapscript")
+            && crate::parser::reserved_function_signature(name).is_some()
+        {
+            issues.push(ValidationIssue::error(format!(
+                "function name '{name}' is reserved"
+            )));
+        }
+        locate(&mut issues[first..], span);
     }
 
     // ── Unique function names ──────────────────────────────────────────────
@@ -354,6 +383,10 @@ fn check_struct_definitions(contract: &Contract, issues: &mut Vec<ValidationIssu
                 ))
                 .at(definition.span),
             );
+        } else {
+            let first = issues.len();
+            validate_source_identifier(&definition.name, "struct", issues);
+            locate(&mut issues[first..], definition.span);
         }
         if !names.insert(definition.name.as_str()) {
             issues.push(ValidationIssue::error(format!(
@@ -363,6 +396,13 @@ fn check_struct_definitions(contract: &Contract, issues: &mut Vec<ValidationIssu
         }
         let mut fields = HashSet::new();
         for field in &definition.fields {
+            let first = issues.len();
+            validate_source_identifier(
+                &field.name,
+                &format!("struct '{}' field", definition.name),
+                issues,
+            );
+            locate(&mut issues[first..], field.span);
             if !fields.insert(field.name.as_str()) {
                 issues.push(
                     ValidationIssue::error(format!(
@@ -544,6 +584,7 @@ fn validate_source_identifier(name: &str, context: &str, issues: &mut Vec<Valida
         "tapscript",
         "private",
         "static",
+        "new",
         "tx",
         "this",
     ];

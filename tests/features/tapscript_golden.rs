@@ -150,7 +150,7 @@ fn sized_hashlock_preimages_emit_runtime_width_checks() {
                     let output = arkade_compiler::compile_sources_with_options(
                         "main.ark",
                         &std::collections::BTreeMap::from([("main.ark".into(), source.clone())]),
-                        arkade_compiler::CompileOptions { optimize },
+                        crate::common::options(optimize),
                     )
                     .unwrap();
                     let leaf = &crate::common::group(&output, "claim").leaves[0];
@@ -174,7 +174,7 @@ fn unsized_hashlock_preimage_preserves_existing_leaf() {
         let output = arkade_compiler::compile_sources_with_options(
             "main.ark",
             &std::collections::BTreeMap::from([("main.ark".into(), HTLC.into())]),
-            arkade_compiler::CompileOptions { optimize },
+            crate::common::options(optimize),
         )
         .unwrap();
         assert_eq!(

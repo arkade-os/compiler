@@ -222,6 +222,9 @@ pub(crate) fn emit_expression_asm(expr: &Expression, asm: &mut Vec<Op>) {
                     None => emit_expression_asm(arg, asm),
                 }
             }
+            if builtin.name == "bytes2uint" {
+                asm.push(Op::Push("0x00".into()));
+            }
             asm.extend(opcodes.iter().copied().map(Op::from));
             if matches!(builtin.lowering, Lowering::Check(_)) {
                 asm.push(Int1.into());
