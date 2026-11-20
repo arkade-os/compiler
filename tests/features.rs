@@ -32,6 +32,8 @@ mod group_properties;
 mod io_introspection;
 #[path = "features/multi_result.rs"]
 mod multi_result;
+#[path = "features/nested_arrays.rs"]
+mod nested_arrays;
 #[path = "features/new_opcodes.rs"]
 mod new_opcodes;
 #[path = "features/no_shadowing.rs"]

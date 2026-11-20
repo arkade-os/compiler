@@ -815,7 +815,10 @@ contract Loops() {
     for (iterable, expected) in [
         ("[v, true]", "element 1: expected 'int', got 'bool'"),
         ("[{ x: v }]", "cannot infer the element type"),
-        ("[[v, 1], [2, v]]", "array literal of arrays"),
+        (
+            "[[v, 1], [2]]",
+            "element 1: expected 2 array elements, got 1",
+        ),
         ("abs(v)", "loop iterable has type 'int', expected array"),
     ] {
         let error = compile(&format!(

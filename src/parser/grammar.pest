@@ -58,9 +58,10 @@ parameter = { data_type ~ identifier }
 
 // Supported data types - atomic rule to prevent partial matches
 // Note: longer types must come before shorter prefixes (bytes32/bytes20 before bytes)
-// Array types carry a positive literal or constant size (e.g., pubkey[3], int[Config.SIZE])
+// Array types carry a positive literal or constant size per level, outermost first
+// (e.g., pubkey[3], int[Config.SIZE], int[2][3])
 array_size = @{ !"0" ~ number_literal | qualified_name }
-data_type = { identifier ~ ("[" ~ array_size ~ "]")? }
+data_type = { identifier ~ ("[" ~ array_size ~ "]")* }
 
 // A function without a modifier is public. Tapscript declarations have no return type.
 function = {

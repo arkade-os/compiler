@@ -34,7 +34,7 @@ Timelocks use `older(n)` and `after(n)`; see [Time](builtins.md#time).
 
 | Key | Pushes |
 |---|---|
-| A constructor `pubkey` parameter `k`, or a struct field or array element of one | `<k>`, `<k.field>` or `<k.0>` |
+| A constructor `pubkey` parameter `k`, or a struct field or array element of one | `<k>`, `<k.field>`, `<k.0>` or `<k.1.0>` |
 | A 32-byte `pubkey` constant | Its bytes |
 | `operator` | The untweaked `<OPERATOR_KEY>` |
 | `tweak(operator, fn)` | `<OPERATOR_KEY:fn>` |

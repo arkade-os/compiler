@@ -133,6 +133,7 @@ Warnings are not serialized into artifacts. They remain available on the Rust co
 `constructorInputs`, `arkade.inputs`, and `witness` describe the source ABI, not the physical stack. Clients expand composite entries into scalar leaves:
 
 - an array entry `oracles` of type `pubkey[3]` becomes `oracles.0`, `oracles.1`, `oracles.2`;
+- a nested array entry `grid` of type `int[2][3]`, two rows of three, becomes `grid.0.0`, `grid.0.1`, `grid.0.2`, `grid.1.0`, `grid.1.1`, `grid.1.2`;
 - a struct entry becomes its scalar leaves in field order, recursively, using dotted paths such as `policy.primary.key`.
 
 Clients expand every `arkade.inputs` entry to its scalar leaves in that order, then push the whole list in reverse, so the first scalar ends up on top of the stack.

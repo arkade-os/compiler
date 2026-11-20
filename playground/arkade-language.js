@@ -225,11 +225,12 @@ function arkadeComplete(before, table) {
     let type = '';
     let prefix = '';
     path.split('.').forEach((segment, index) => {
-        const name = segment.replace(/\[\]$/, '');
+        const name = segment.replace(/(\[\])+$/, '');
         prefix += (index ? '.' : '') + name;
         const entry = docs.members[prefix] ?? docs.members[documentedPath(prefix, visible)];
         type = entry?.type || (index === 0 ? visible.get(name)?.type : struct(type)?.fields.find(f => f.name === name)?.type) || '';
-        if (segment.endsWith('[]')) type = type.endsWith(']') ? type.replace(/\[[^\]]*\]$/, '') : '';
+        // Each index drops the outermost size: `int[2][3]` indexed once is `int[3]`.
+        for (let level = (segment.length - name.length) / 2; level > 0; level--) type = type.endsWith(']') ? type.replace(/\[[^\]]*\]/, '') : '';
         prefix += segment.slice(name.length);
     });
     if (type.endsWith(']')) return [prop('length', 'Array length')];

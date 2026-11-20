@@ -337,7 +337,7 @@ pub(crate) fn evaluate(
 }
 
 fn fold_type(declared_type: &mut TypeName, values: &HashMap<String, String>) -> Result<(), String> {
-    let TypeName::Array(_, size) = declared_type else {
+    let TypeName::Array(element, size) = declared_type else {
         return Ok(());
     };
     let length = match size {
@@ -353,7 +353,7 @@ fn fold_type(declared_type: &mut TypeName, values: &HashMap<String, String>) -> 
         };
         format!("array size '{written}' must be a positive integer literal or int constant")
     })?);
-    Ok(())
+    fold_type(element, values)
 }
 
 fn fold_statements(
