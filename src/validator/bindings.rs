@@ -445,9 +445,7 @@ fn validate_binding_statements(
                             ArkType::Array(element, _)
                                 if matches!(&iterable.kind, ExprKind::ArrayLiteral(_)) =>
                             {
-                                if matches!(*element, ArkType::Array(..)) {
-                                    issues.push(ValidationIssue::error("arrays contain scalars or structs, so a loop cannot iterate an array literal of arrays"));
-                                } else if *element != ArkType::Unknown {
+                                if crate::types::resolved(&element) {
                                     super::functions::validate_value(
                                         &TypeName::from(&iterable.ty),
                                         iterable,

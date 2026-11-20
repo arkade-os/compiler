@@ -1,0 +1,47 @@
+// Nested array coverage for the emulator VM: a nested constructor parameter in
+// Arkade Script and in an L1 leaf, a nested public input, literal and runtime
+// indexes on each dimension, element and row writes, whole-array and row
+// comparisons, `.length` at each level, a row passed to a helper, and nested loops.
+
+contract NestedArrays(
+  int[2][3] weights,
+  pubkey[2][2] keys
+) {
+  private function rowSum(int[3] cells) int {
+    return cells[0] + cells[1] + cells[2];
+  }
+
+  function spend(
+    int i,
+    int j,
+    int wi,
+    int wj,
+    int[2][3] grid,
+    int expected,
+    int[3] row,
+    signature ownerSig
+  ) {
+    require(grid != [[0, 0, 0], [0, 0, 0]], "empty grid");
+    require(grid.length + grid[1].length == 5, "declared sizes");
+    require(grid[i] == row, "row mismatch");
+
+    int[2][3] cells = [[1, 2, 3], [4, 5, 6]];
+    cells[wi][wj] = grid[i][j] * 10;
+    cells[i] = row;
+
+    int total = weights[i][j] + rowSum(grid[1 - i]) + cells[i].length;
+    for (r, line) in cells {
+      for (c, cell) in line {
+        total = total + cell * (r * 3 + c + 1);
+      }
+    }
+
+    require(total == expected, "unexpected total");
+    require(checkSig(ownerSig, keys[0][1]));
+  }
+
+  function exit(signature sig) tapscript {
+    require(older(blocks(144)));
+    require(checkSig(sig, keys[1][0]));
+  }
+}

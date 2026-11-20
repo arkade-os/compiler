@@ -35,12 +35,17 @@ impl ArraySize {
 }
 
 impl TypeName {
-    /// The type a declaration spells, such as `bytes32` or `Point[N]`.
+    /// The type a declaration spells, such as `bytes32` or `Point[N]`. `T[a][b]` holds `a`
+    /// elements of `T[b]`.
     pub fn parse(text: &str) -> Self {
-        let Some((element, size)) = text.strip_suffix(']').and_then(|ty| ty.split_once('[')) else {
+        let Some((base, sizes)) = text.strip_suffix(']').and_then(|ty| ty.split_once('[')) else {
             return TypeName::Named(text.to_string());
         };
-        TypeName::Array(Box::new(TypeName::parse(element)), ArraySize::parse(size))
+        sizes
+            .rsplit("][")
+            .fold(TypeName::Named(base.to_string()), |element, size| {
+                TypeName::Array(Box::new(element), ArraySize::parse(size))
+            })
     }
 
     pub fn array(element: TypeName, length: usize) -> Self {
@@ -92,11 +97,15 @@ impl TypeName {
 
 impl std::fmt::Display for TypeName {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            TypeName::Named(name) => f.write_str(name),
-            TypeName::Array(element, ArraySize::Fixed(length)) => write!(f, "{element}[{length}]"),
-            TypeName::Array(element, ArraySize::Const(name)) => write!(f, "{element}[{name}]"),
-        }
+        let (element, size) = match self {
+            TypeName::Named(name) => return f.write_str(name),
+            TypeName::Array(element, ArraySize::Fixed(length)) => (element, length.to_string()),
+            TypeName::Array(element, ArraySize::Const(name)) => (element, name.clone()),
+        };
+        // The outer size comes first, after the base name: `int[2][3]` holds two `int[3]`.
+        let element = element.to_string();
+        let (base, sizes) = element.split_at(element.find('[').unwrap_or(element.len()));
+        write!(f, "{base}[{size}]{sizes}")
     }
 }
 
@@ -295,7 +304,14 @@ mod tests {
 
     #[test]
     fn type_names_keep_their_spelling() {
-        for text in ["pubkey", "Point", "int[3]", "pubkey[C.N]"] {
+        for text in [
+            "pubkey",
+            "Point",
+            "int[3]",
+            "pubkey[C.N]",
+            "int[2][N]",
+            "Point[4][2][3]",
+        ] {
             assert_eq!(TypeName::parse(text).to_string(), text);
         }
         let pubkeys = TypeName::parse("pubkey[2]");
@@ -305,5 +321,10 @@ mod tests {
         );
         assert_eq!(pubkeys.ark_type().as_str(), "bytes[2]");
         assert_eq!(serde_json::to_string(&pubkeys).unwrap(), "\"pubkey[2]\"");
+        // The first size is the outermost: two rows of three.
+        let grid = TypeName::parse("int[2][3]");
+        assert_eq!(grid.array_parts(), Some((&TypeName::parse("int[3]"), 2)));
+        assert_eq!(grid.ark_type().as_str(), "int[2][3]");
+        assert_eq!(serde_json::to_string(&grid).unwrap(), "\"int[2][3]\"");
     }
 }

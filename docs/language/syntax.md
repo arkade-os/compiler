@@ -123,7 +123,7 @@ A constant is readable in:
 
 So a delay shared by an Arkade Script function and its L1 exit is written once.
 
-Array sizes accept positive integer literals or `int` constants, such as `pubkey[KEY_COUNT]` or `int[Config.SIZE]`, in constructor parameters, function parameters, struct fields, and local declarations.
+Array sizes accept positive integer literals or `int` constants, such as `pubkey[KEY_COUNT]`, `int[Config.SIZE]` or `int[ROWS][COLS]`, in constructor parameters, function parameters, struct fields, and local declarations.
 
 ```solidity
 contract Vault(pubkey owner) {

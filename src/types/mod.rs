@@ -105,7 +105,7 @@ impl ArkType {
             ArkType::Int => "int".to_string(),
             ArkType::Bool => "bool".to_string(),
             ArkType::AssetGroup => "AssetGroup".to_string(),
-            ArkType::Array(inner, length) => format!("{}[{length}]", inner.as_str()),
+            ArkType::Array(..) => TypeName::from(self).to_string(),
             ArkType::Struct(name) => name.clone(),
             ArkType::Void => "void".to_string(),
             ArkType::Unknown => "unknown".to_string(),

@@ -242,18 +242,20 @@ func arkadeScriptGroup(t *testing.T, contract artifact, name string) *functionGr
 	return nil
 }
 
-// arrayTypeParts splits an ABI array type ("int[5]") into its element type and
-// length; length 0 means the type is not an array.
+// arrayTypeParts splits an ABI array type into its element type and length: the
+// first size is the outermost, so "int[2][3]" is 2 elements of "int[3]". Length 0
+// means the type is not an array.
 func arrayTypeParts(typeStr string) (string, int) {
 	open := strings.IndexByte(typeStr, '[')
-	if open < 0 || !strings.HasSuffix(typeStr, "]") {
+	end := strings.IndexByte(typeStr, ']')
+	if open < 0 || end < open || !strings.HasSuffix(typeStr, "]") {
 		return typeStr, 0
 	}
-	length, err := strconv.Atoi(typeStr[open+1 : len(typeStr)-1])
+	length, err := strconv.Atoi(typeStr[open+1 : end])
 	if err != nil || length <= 0 {
 		return typeStr, 0
 	}
-	return typeStr[:open], length
+	return typeStr[:open] + typeStr[end+1:], length
 }
 
 func flattenInput(name, typeName string, structs []structDefinition) []string {

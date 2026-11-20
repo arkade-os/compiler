@@ -8,7 +8,7 @@
 | `int` | CScriptNum integer |
 | `bool` | Boolean; an Arkade Script function's witness must be empty (false) or `0x01` (true), and any other encoding fails the spend |
 | `AssetGroup` | An asset group of the transaction; a witness or constructor value is its packet position |
-| `T[n]` | Fixed-size array of a scalar or struct type, `n` a positive integer literal or `int` constant |
+| `T[n]` | Fixed-size array of a scalar, struct or array type, `n` a positive integer literal or `int` constant; `T[a][b]` is `a` arrays of `T[b]` |
 | `struct` | User-declared; nested structs and fixed-size arrays allowed |
 
 ## Keys and signatures
@@ -42,7 +42,8 @@ A `signature` is a 64-byte signature, or 65 bytes whose last byte is a non-zero 
 ## Structs and arrays
 
 - Arrays and structs can be constructor parameters, Arkade Script function parameters, or locals.
-- Arrays contain scalars or structs. Structs contain scalars, arrays, and nested structs, and need at least one field.
+- Arrays contain scalars, structs, or arrays. Structs contain scalars, arrays, and nested structs, and need at least one field.
+- Sizes read in index order: `int[2][3] m` has `m.length == 2`, each `m[i]` is an `int[3]`, `m[1][2]` is its last element, and `[[1, 2, 3], [4, 5, 6]]` is an `int[2][3]` literal.
 - Tapscript inputs are scalars.
 
 ### Struct literals

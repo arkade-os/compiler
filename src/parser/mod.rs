@@ -919,11 +919,11 @@ pub(crate) fn parse_data_type(type_pair: Pair<Rule>) -> TypeName {
     let Some(base) = inner.next() else {
         return TypeName::Named(text);
     };
-    let base = TypeName::Named(base.as_str().to_string());
-    match inner.next() {
-        Some(size) => TypeName::Array(Box::new(base), ArraySize::parse(size.as_str())),
-        None => base,
-    }
+    // `T[a][b]` holds `a` elements of `T[b]`, so the last size is the innermost.
+    inner.rfold(
+        TypeName::Named(base.as_str().to_string()),
+        |element, size| TypeName::Array(Box::new(element), ArraySize::parse(size.as_str())),
+    )
 }
 
 /// Parse parameter list from contracts or functions
@@ -1612,6 +1612,40 @@ contract C(pubkey k, int unused) {
             assert!(
                 parse(&format!("contract C(int[{size}] values) {{}}")).is_err(),
                 "{size}"
+            );
+        }
+    }
+
+    #[test]
+    fn nested_array_types_list_sizes_outermost_first() {
+        use crate::models::{ArraySize, TypeName};
+        let array =
+            |element, size: &str| TypeName::Array(Box::new(element), ArraySize::parse(size));
+        let int = || TypeName::Named("int".into());
+        let contract = parse(
+            "struct Grid { int[2][N] cells; } contract C(pubkey[4][2][3] keys) { function spend(int [N] [M] grid) { int[2][3] local = [[1, 2, 3], [4, 5, 6]]; require(true); } }",
+        )
+        .unwrap();
+        // `T[a][b]` is `a` elements of `T[b]`.
+        assert_eq!(
+            contract.structs[0].fields[0].param_type,
+            array(array(int(), "N"), "2")
+        );
+        let keys = &contract.parameters[0].param_type;
+        let pubkey = TypeName::Named("pubkey".into());
+        assert_eq!(*keys, array(array(array(pubkey, "3"), "2"), "4"));
+        assert_eq!(keys.to_string(), "pubkey[4][2][3]");
+        assert_eq!(
+            contract.functions[0].parameters[0].param_type,
+            array(array(int(), "M"), "N")
+        );
+        assert!(
+            matches!(&contract.functions[0].statements[0].statement, Statement::LetBinding { declared_type: Some(ty), .. } if *ty == array(array(int(), "3"), "2"))
+        );
+        for sizes in ["[2][]", "[][2]", "[2][0]", "[2]x[3]"] {
+            assert!(
+                parse(&format!("contract C(int{sizes} values) {{}}")).is_err(),
+                "{sizes}"
             );
         }
     }

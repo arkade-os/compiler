@@ -18,6 +18,7 @@ const table = {
         { name: 'owner', kind: 'parameter', type: 'pubkey' },
         { name: 'points', kind: 'parameter', type: 'Point[2]' },
         { name: 'amounts', kind: 'parameter', type: 'int[3]' },
+        { name: 'corners', kind: 'parameter', type: 'Point[2][3]' },
         { name: 'spend', kind: 'function' },
         { name: 'sig', kind: 'parameter', type: 'signature' },
         { name: 'group', kind: 'variable', type: 'AssetGroup' },
@@ -65,6 +66,8 @@ assert.deepEqual(labels('group[0].', table), []);
 assert.deepEqual(labels('points[1].', table), ['x', 'y']);
 assert.deepEqual(labels('point.', table), ['x', 'y']);
 assert.deepEqual(labels('amounts.', table), ['length']);
+assert.deepEqual(labels('corners[1].', table), ['length']);
+assert.deepEqual(labels('corners[1][2].', table), ['x', 'y']);
 assert.deepEqual(labels('segment.from.', table), ['x', 'y']);
 assert.deepEqual(labels('segment.ends.', table), ['length']);
 assert.deepEqual(labels('segment.ends[1].', table), ['x', 'y']);
