@@ -36,14 +36,13 @@ Each case is a subtest such as `TestDifferentialFuzz/seed7_case42`. Pass `-run '
 
 ## Releasing
 
-`arkade-compiler`, `arkade-bindgen` and the npm package `@arkade-os/compiler` share one version: `[workspace.package]` in the root `Cargo.toml` and `version` in `npm/package.json`.
+`arkade-compiler` and the npm package `@arkade-os/compiler` share one version: `[workspace.package]` in the root `Cargo.toml` and `version` in `npm/package.json`.
 
 To release:
 
 1. In a PR, bump both versions:
    - set `version` in `[workspace.package]` in the root `Cargo.toml`;
    - set `version` in `npm/package.json`, then run `npm install --package-lock-only` in `npm/` to update its lockfile;
-   - on a minor bump or a release candidate, also set `arkade-bindgen`'s `arkade-compiler` requirement to the new version, since a `0.1.0` requirement does not accept `0.1.0-rc.1`;
    - run `cargo check --workspace` and commit the updated `Cargo.lock`, since the release builds with `--locked`.
 2. Merge the PR.
 3. Push `v<version>` from the merge commit.
@@ -53,7 +52,7 @@ To release:
 - checks the tag against both versions;
 - builds binaries for five targets and the tested npm tarball;
 - creates a GitHub release with them and `SHA256SUMS`;
-- publishes both crates to crates.io and the package to npm through trusted publishing.
+- publishes the crate to crates.io and the package to npm through trusted publishing.
 
 ### Tags
 
@@ -71,11 +70,11 @@ Trusted publishing can only be configured on an existing crate or package, so th
 
 **crates.io.** From the commit to be tagged, a crate owner:
 
-1. runs `cargo publish --locked -p arkade-compiler && cargo publish --locked -p arkade-bindgen`;
-2. enables trusted publishing for both crates (repository `arkade-os/compiler`, workflow `release.yml`, environment `crates-io`);
+1. runs `cargo publish --locked -p arkade-compiler`;
+2. enables trusted publishing for the crate (repository `arkade-os/compiler`, workflow `release.yml`, environment `crates-io`);
 3. pushes the tag.
 
-The workflow skips crates whose version is already published.
+The workflow skips the crate when its version is already published.
 
 **npm.** After the tag's workflow attaches the tarball to the GitHub release, an `@arkade-os` npm owner:
 

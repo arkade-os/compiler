@@ -1,6 +1,6 @@
 # Artifact format
 
-`arkadec` writes one JSON artifact per contract. Arkade libraries consume it directly, and `arkade-bindgen` generates client code from it.
+`arkadec` writes one JSON artifact per contract. Arkade libraries consume it directly. Typed client code follows the [Arkade Script stack ABI](#arkade-script-stack-abi).
 
 This artifact is `examples/htlc` compiled, with `"..."` marking omitted values:
 

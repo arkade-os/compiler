@@ -1,7 +1,6 @@
 // Arkade Playground - Main Application
 import { builtinDocs as compilerBuiltinDocs, compile, check, symbolAt as compilerSymbolAt, completionsAt, version } from './pkg/browser/index.js';
 import * as contracts from './contracts.js';
-import { generateBindings, AVAILABLE_TARGETS } from './codegen.js';
 
 // Projects: collections of related contracts
 const projects = {
@@ -1552,7 +1551,6 @@ async function doCompile() {
         lastCompiledSource = source;
         displayJson(artifact);
         displayAsm(artifact, debug);
-        displayBindings(artifact);
         showSuccess(artifact, diagnostics.filter(d => d.severity === 'warning').length);
         renderDiagnostics(diagnostics, entry);
         markCompiled();
@@ -1610,51 +1608,6 @@ function displayAsm(artifact, debug) {
         }
     }
     container.innerHTML = html || '<span class="comment">No functions compiled</span>';
-}
-
-// Display generated SDK bindings
-function displayBindings(artifact) {
-    const container = document.getElementById('bindings-output');
-
-    // Build target selector + content area if first time
-    if (!container.querySelector('.bindings-toolbar')) {
-        const toolbar = document.createElement('div');
-        toolbar.className = 'bindings-toolbar';
-        toolbar.innerHTML = AVAILABLE_TARGETS.map(t =>
-            `<button class="bindings-lang-btn${t.value === 'typescript' ? ' active' : ''}" data-lang="${t.value}">${t.label}</button>`
-        ).join('');
-        container.appendChild(toolbar);
-
-        const content = document.createElement('div');
-        content.className = 'bindings-code';
-        container.appendChild(content);
-
-        toolbar.addEventListener('click', (e) => {
-            const btn = e.target.closest('.bindings-lang-btn');
-            if (!btn) return;
-            toolbar.querySelectorAll('.bindings-lang-btn').forEach(b => b.classList.remove('active'));
-            btn.classList.add('active');
-            renderBindings(container.querySelector('.bindings-code'), btn.dataset.lang);
-        });
-    }
-
-    container.artifact = artifact;
-
-    const activeLang = container.querySelector('.bindings-lang-btn.active')?.dataset.lang || 'typescript';
-    renderBindings(container.querySelector('.bindings-code'), activeLang);
-}
-
-function renderBindings(contentEl, target) {
-    const container = document.getElementById('bindings-output');
-    const artifact = container.artifact;
-    if (!artifact) { contentEl.textContent = 'Compile a contract first'; return; }
-
-    try {
-        const code = generateBindings(artifact, target);
-        contentEl.innerHTML = escapeHtml(code);
-    } catch (err) {
-        contentEl.textContent = 'Codegen error: ' + err.message;
-    }
 }
 
 function escapeHtml(text) {

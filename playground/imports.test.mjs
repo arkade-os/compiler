@@ -5,7 +5,6 @@ import vm from 'node:vm';
 import { deflateRawSync } from 'node:zlib';
 import * as contracts from './contracts.js';
 import { builtinDocs, compile, check, completionsAt, symbolAt, version } from '../npm/dist/node/index.js';
-import { generateBindings } from './codegen.js';
 
 const storage = new Map();
 const context = vm.createContext({
@@ -39,11 +38,6 @@ assert(!Object.hasOwn(warningArtifact, 'warnings'));
 assert.equal(warningArtifact.compiler.options.optimize, false);
 assert.equal(warningArtifact.formatVersion, 1);
 assert.match(warningArtifact.fingerprint, /^sha256:[0-9a-f]{64}$/);
-for (const target of ['typescript', 'go']) {
-    const bindings = generateBindings(warningArtifact, target);
-    assert.match(bindings, /HasWarnings/);
-    assert.match(bindings, /spend|Spend/);
-}
 
 const selections = vm.runInContext(`[
     ...Object.entries(projects).flatMap(([id, project]) => Object.keys(project.files).map(file => [id, file])),
@@ -226,7 +220,6 @@ await vm.runInContext(`
     compilationSources = () => ({ entry: 'main.ark', files: { 'main.ark': warningSource } });
     displayJson = artifact => { renderedArtifact = artifact; };
     displayAsm = () => {};
-    displayBindings = () => {};
     markCompiled = () => {};
     doCompile();
 `, context);

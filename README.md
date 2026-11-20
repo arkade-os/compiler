@@ -10,7 +10,7 @@
 
 Arkade Language is a contract language for Bitcoin. You write a contract as a set of spend functions over constructor state.
 
-The compiler, `arkadec`, turns a contract into a JSON artifact. Arkade libraries consume the artifact directly, and `arkade-bindgen` turns it into typed TypeScript or Go stubs.
+The compiler, `arkadec`, turns a contract into a JSON artifact. Arkade libraries consume the artifact directly.
 
 The language covers signature and multisig checks, absolute and relative timelocks, transaction introspection, Arkade Assets and asset groups, byte-string parsing, fixed-size arrays, structs, and contract instantiation with `new` for recursive VTXOs.
 
@@ -64,7 +64,7 @@ arkadec contract.ark                     # writes contract.json
 |---|---|
 | [Tour by example](docs/tour.md) | Short contracts for each feature, and the `examples/` directory |
 | [Playground](docs/playground.md) | The browser editor, its output tabs, and running it locally |
-| [Command line](docs/cli.md) | Installing, `arkadec` options, the script report, and `arkade-bindgen` |
+| [Command line](docs/cli.md) | Installing, `arkadec` options, and the script report |
 | [APIs](docs/api.md) | The npm package, the Rust API, and the WASM bindings |
 | [Artifact format](docs/artifact.md) | Artifact fields, `codeHash`, the debug file, and the Arkade Script stack ABI |
 | [Lints](docs/lints.md) | Every lint, lint attributes, and CLI levels |

@@ -2,13 +2,12 @@
 
 ## Install
 
-Prebuilt `arkadec` and `arkade-bindgen` binaries for Linux, macOS, and Windows are attached to each [GitHub release](https://github.com/arkade-os/compiler/releases) with a `SHA256SUMS` file.
+Prebuilt `arkadec` binaries for Linux, macOS, and Windows are attached to each [GitHub release](https://github.com/arkade-os/compiler/releases) with a `SHA256SUMS` file.
 
 With a Rust toolchain ([rustup.rs](https://rustup.rs/)), install from crates.io or a checkout instead:
 
 ```bash
 cargo install arkade-compiler --locked   # installs arkadec
-cargo install arkade-bindgen --locked
 cargo install --path . --locked          # installs arkadec from a checkout
 ```
 
@@ -55,26 +54,3 @@ How the counts are computed:
 - The report excludes data pushes without named opcodes.
 
 Opcode counts are informational: a row does not imply that the opcode has a configured budget. Compute budgets are operator-configurable and are not enforced by the compiler. Compare the counts against the target deployment's per-input limits, and check its request-wide budget for the complete transaction.
-
-## Generate client bindings
-
-`arkade-bindgen` generates client bindings from one artifact or a directory of them:
-
-```bash
-arkade-bindgen contract.json --lang typescript,go -o ./generated/
-arkade-bindgen --list-targets
-```
-
-| Option | Effect |
-|---|---|
-| `--lang <targets>` | Comma-separated targets: `typescript` (or `ts`) and `go` |
-| `-o`, `--output <dir>` | Output directory, `./generated/` by default; with several targets, each writes into `<dir>/<target>/` |
-| `--embed` | Inlines the artifact JSON into the generated file |
-| `--package <name>` | Go package name, `contracts` by default |
-| `--list-targets` | Lists the available targets |
-
-- A directory input reads the `.json` files directly inside it, not in subdirectories.
-- Without `--embed`, the generated code loads `<snake_name>.json` from its own directory, so place the artifact there.
-- Generated TypeScript depends on `@arkade-os/contract-sdk`, and generated Go on `github.com/arkade-os/contract-sdk-go/ark`.
-
-The TypeScript SDK reads the artifact directly with `programFromArtifact`, so generating bindings is optional.
