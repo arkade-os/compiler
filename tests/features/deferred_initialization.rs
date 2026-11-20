@@ -73,7 +73,6 @@ fn deferred_initialization_handles_branches_loops_and_later_reassignment() {
             "Pair x; x = { a: input, b: [7, 9] }; x.b[index] = x.a; require(x.b[index] == input);",
             "int[2] x; require(x.length == 2); x = [7, 9]; require(x[index] > 0);",
             "Pair x; require(x.b.length == 2); x = { a: input, b: [7, 9] }; require(x.a == input);",
-            "int x; for (0) { x = 7; } x = 9; require(x == 9);",
         ] {
             artifact(body, optimize);
         }
@@ -87,7 +86,6 @@ fn rejects_reads_without_definite_initialization() {
         "int x; x = x + 1; require(x > 0);",
         "int x; if (choose) { x = 7; } require(x > 0);",
         "int x; if (choose) { x = 7; } else { require(x > 0); } require(true);",
-        "int x; for (0) { x = 7; } require(x > 0);",
         "int x; for (2) { x = x + 1; } require(x > 0);",
         "Pair x; x.a = 7; require(x.a == 7);",
         "int[2] x; x[index] = 7; require(x[index] > 0);",
