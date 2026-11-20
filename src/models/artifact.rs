@@ -90,10 +90,11 @@ pub struct AbiLeaf {
     /// Leaf name (source tapscript name, or the Arkade Script function's name for a synthesized
     /// default).
     pub name: String,
-    /// The inputs supplied at spend time, in the tapscript function's declaration order, with
-    /// `injected` on the operator's signatures. Not the stack order: the leaf script consumes
-    /// the preimage, if any, then a signature per key in the order the keys are written, so a
-    /// client builds the stack from the closure, signatures by key with the preimage on top.
+    /// The inputs supplied at spend time, in the source tapscript's declaration order, or the
+    /// single `operatorSig` for a synthesized default, with `injected` on the operator's
+    /// signatures. Not the stack order: the leaf script consumes the preimage, if any, then a
+    /// signature per key in the order the keys are written, so a client builds the stack from
+    /// the closure, signatures by key with the preimage on top.
     pub witness: Vec<WitnessElement>,
     /// Tapleaf assembly (pubkeys + ops; signatures live in `witness`).
     pub asm: Vec<String>,
