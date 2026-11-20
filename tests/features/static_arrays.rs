@@ -116,53 +116,101 @@ contract Counted(pubkey owner) {
 }
 
 #[test]
-fn zero_counted_loop_emits_no_body() {
-    let counted = compile(
-        r#"
-contract Counted(pubkey owner) {
-    function spend(signature sig) {
-        for (0) {
-            require(false);
-        }
-        require(checkSig(sig, owner));
+fn loops_that_run_zero_times_do_not_compile() {
+    let zero = "loop runs zero times, so its body never executes";
+    // The body's signature check would vanish from the spend path.
+    for header in ["for (0)", "for (N)", "for (i) in 2..2", "for (i) in N..N"] {
+        let error = compile(&format!(
+            "contract C(pubkey owner) {{
+                const int N = 0;
+                function spend(signature sig, int a) {{
+                    require(a > 0);
+                    {header} {{ require(checkSig(sig, owner)); }}
+                }}
+            }}"
+        ))
+        .expect_err(header)
+        .to_string();
+        assert!(error.contains(zero), "{header}: {error}");
     }
-}
-"#,
-    )
-    .expect("zero-count loop must compile");
-    let direct = compile(
-        r#"
-contract Counted(pubkey owner) {
-    function spend(signature sig) {
-        require(checkSig(sig, owner));
-    }
-}
-"#,
-    )
-    .expect("direct body must compile");
-
-    assert_eq!(
-        crate::common::arkade_asm_tokens(&counted, "spend"),
-        crate::common::arkade_asm_tokens(&direct, "spend")
-    );
-
+    let helper = |range: &str| {
+        format!(
+            "contract C() {{
+                static function f(int a) int {{ for (i) in {range} {{ return a + i; }} }}
+                function spend(int a) {{ require(f(a) == a); }}
+            }}"
+        )
+    };
+    compile(&helper("0..1")).expect("a non-empty range returns on every path");
+    let error = compile(&helper("1..1")).expect_err("1..1").to_string();
+    assert!(error.contains(zero), "{error}");
+    // An array type is never empty, so neither is a loop over one.
     let error = compile(
-        r#"
-contract Counted() {
-    function spend() {
-        for (0) {
-            require(true);
-        }
-    }
-}
-"#,
+        "contract C() { const int Z = 0; function spend(int[Z] xs) { for (i, x) in xs { require(x > i); } } }",
     )
-    .expect_err("a zero-count loop cannot enforce a spend condition")
+    .expect_err("int[Z]")
     .to_string();
     assert!(
-        error.contains("spend path with no require"),
-        "unexpected error: {error}"
+        error.contains("array size 'Z' must be a positive"),
+        "{error}"
     );
+}
+
+#[test]
+fn loops_unrolling_above_ten_thousand_iterations_do_not_compile() {
+    let source = |body: &str| {
+        format!(
+            "contract C() {{
+                static function f() {{ for (5001) {{}} }}
+                function spend(int a, int[2] xs) {{ require(a > xs[0]); {body} }}
+            }}"
+        )
+    };
+    for body in [
+        "for (10000) {}",
+        "for (100) { for (i) in 0..100 {} }",
+        "for (i, x) in xs { for (5000) {} }",
+        "f();",
+    ] {
+        compile(&source(body)).expect(body);
+    }
+    for (body, total) in [
+        ("for (10001) {}", 10001),
+        ("for (i) in 0..10001 {}", 10001),
+        ("for (101) { for (i) in 0..100 {} }", 10100),
+        ("for (2) { if (a > 1) { for (5001) {} } }", 10002),
+        ("for (i, x) in xs { f(); }", 10002),
+        // Rejected before unrolling, which would not finish.
+        ("for (1000000000) { for (1000000000) {} }", 1000000000),
+    ] {
+        let error = compile(&source(body)).expect_err(body).to_string();
+        let expected = format!("loop unrolls {total} iterations");
+        assert!(
+            error.contains(&expected) && error.contains("above the limit of 10000"),
+            "{body}: {error}"
+        );
+    }
+    // The body writes what the iterable reads, so each use of `b` reads it again and runs `g`.
+    let reread = |length: usize, body: &str| {
+        format!(
+            "struct P {{ int a; int[{length}] b; }}
+            contract C() {{
+                static function g(int a) int {{ for (5001) {{}} return a - a; }}
+                function spend(P[2] ps, int a) {{
+                    P[2] qs = ps;
+                    for (j, b) in qs[g(a)].b {{ qs[0].a = a; {body} }}
+                }}
+            }}"
+        )
+    };
+    compile(&reread(1, "require(b > a);")).expect("one use of b");
+    for (length, body) in [(2, "require(b > a);"), (1, "for (2) { require(b > a); }")] {
+        let error = compile(&reread(length, body)).expect_err(body).to_string();
+        assert!(
+            error.contains("loop unrolls 10002 iterations"),
+            "{body}: {error}"
+        );
+    }
 }
 
 #[test]
@@ -242,9 +290,6 @@ contract Ranges(pubkey owner) {
                 require(xs[j - i] != j);
             }
         }
-        for (i) in N..N {
-            require(false);
-        }
         require(checkSig(sig, owner));
     }
 }
@@ -304,7 +349,7 @@ fn range_loops_reject_invalid_bounds_and_index_misuse() {
         ),
         (
             "int x; for (i) in 0..0 { x = 1; } require(x == 1);",
-            "binding 'x' may be uninitialized",
+            "loop runs zero times",
         ),
     ] {
         let error = compile(&format!(
@@ -317,28 +362,6 @@ fn range_loops_reject_invalid_bounds_and_index_misuse() {
         .to_string();
         assert!(error.contains(expected), "{body}: {error}");
     }
-}
-
-#[test]
-fn only_a_non_empty_range_returns_or_enforces_a_condition() {
-    let helper = |range: &str| {
-        format!(
-            "contract C() {{
-                static function f(int a) int {{ for (i) in {range} {{ return a + i; }} }}
-                function spend(int a) {{ require(f(a) == a); }}
-            }}"
-        )
-    };
-    compile(&helper("0..1")).expect("a non-empty range returns on every path");
-    let error = compile(&helper("1..1")).expect_err("1..1").to_string();
-    assert!(
-        error.contains("must return a value on every path"),
-        "{error}"
-    );
-    let error = compile("contract C() { function spend() { for (i) in 2..2 { require(true); } } }")
-        .expect_err("2..2")
-        .to_string();
-    assert!(error.contains("spend path with no require"), "{error}");
 }
 
 #[test]

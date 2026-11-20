@@ -86,7 +86,7 @@ scale[x + 1] = 10;                 // runtime index with bounds checking
 p.primary.weight = 5;
 if (<expr>) { ... } else if (<expr>) { ... } else { ... }
 for (i, item) in arr { ... }       // unrolled at compile time
-for (COUNT) { ... }                // COUNT is a non-negative compile-time int expression
+for (COUNT) { ... }                // COUNT is a positive compile-time int expression
 for (i) in START..END { ... }      // i is START, START + 1, ..., END - 1
 check(amount);                     // void helper call
 Fees.check(amount);                // void library function call
@@ -97,7 +97,9 @@ Fees.check(amount);                // void library function call
 - `if` conditions must be `bool`.
 - A `require` message emits nothing into the script; it appears only in the [debug file](../artifact.md#debug-file). Tapscript functions drop it.
 - `for (i, item) in arr` evaluates a helper result or literal `arr` once, and checks a runtime index when the loop starts. Each use of `item` reads `arr[i]` as it currently is, so writes to `arr` in the body are seen.
-- `for (i) in START..END` binds only the read-only `int` index, a literal in each unrolled copy. `START` and `END` are non-negative compile-time int expressions, like `COUNT`, with `START <= END`; `END` is exclusive. A range is valid only there, and `for (i) in arr` or `for (i, item) in START..END` is an error.
+- `for (i) in START..END` binds only the read-only `int` index, a literal in each unrolled copy. `START` and `END` are non-negative compile-time int expressions with `START < END`; `END` is exclusive. A range is valid only there, and `for (i) in arr` or `for (i, item) in START..END` is an error.
+- A loop that runs zero times, such as `for (0)` or `for (i) in N..N`, is a compile error, because its body and every check in it would be silently dropped.
+- A loop may unroll at most 10,000 iterations, counting the loops nested in it and in the helpers it calls, so `for (101) { for (100) { ... } }` is a compile error.
 
 ### Declaring without a value
 
@@ -105,6 +107,6 @@ Typed locals may omit the initializer: `int result;`, `Policy policy;`, or `int[
 
 - A declaration emits no assembly. The first assignment binds the computed value directly, without zero filling or replacing a placeholder.
 - Every read must follow initialization on all paths that reach it.
-- Both continuing branches of an `if` must initialize the binding. A loop with zero iterations does not initialize it.
+- Both continuing branches of an `if` must initialize the binding.
 - Separate conditions are checked independently, even if their predicates match.
 - Arrays and structs must first receive a whole value before their fields or elements can be read or reassigned. Their static `.length` is available before initialization.

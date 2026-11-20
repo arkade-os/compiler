@@ -40,6 +40,10 @@ pub(super) fn validate_functions(contract: &Contract, issues: &mut Vec<Validatio
             return;
         }
     }
+    let mut unrolled = HashMap::new();
+    for function in contract.functions.iter().filter(|f| !f.is_imported()) {
+        unrolled_function(function, contract, &mut unrolled, issues);
+    }
     for function in contract.functions.iter().filter(|f| !f.is_imported()) {
         let flow = flow_block(&function.statements, 1, &guarantees);
         if function.is_private && function.return_type.is_some() && flow.fallthrough != 0 {
@@ -434,6 +438,132 @@ fn analyze_expression(
     Ok(())
 }
 
+/// The iterations `function` unrolls along its deepest nest of loops, counting the loops of the
+/// helpers it inlines. Recursion is rejected first, so the walk ends.
+fn unrolled_function(
+    function: &Function,
+    contract: &Contract,
+    unrolled: &mut HashMap<String, usize>,
+    issues: &mut Vec<ValidationIssue>,
+) -> usize {
+    if let Some(&iterations) = unrolled.get(&function.name) {
+        return iterations;
+    }
+    let iterations = unrolled_body(
+        &function.statements,
+        contract,
+        &HashMap::new(),
+        unrolled,
+        issues,
+    );
+    unrolled.insert(function.name.clone(), iterations);
+    iterations
+}
+
+/// The iterations `statements` unroll along their deepest nest of loops, after reporting each
+/// loop that runs zero times or unrolls above the limit. Both are checked before unrolling.
+/// `rereads` holds the iterations each use of a loop item unrolls when its iterable is read again
+/// at every use.
+fn unrolled_body(
+    statements: &[LocatedStatement],
+    contract: &Contract,
+    rereads: &HashMap<String, usize>,
+    unrolled: &mut HashMap<String, usize>,
+    issues: &mut Vec<ValidationIssue>,
+) -> usize {
+    let limit = crate::compiler::MAX_LOOP_ITERATIONS;
+    let mut most = 1;
+    for located in statements {
+        let statement = &located.statement;
+        for expression in statement.expressions() {
+            most = most.max(unrolled_calls(
+                expression, contract, rereads, unrolled, issues,
+            ));
+        }
+        most = most.max(match statement {
+            Statement::IfElse {
+                then_body,
+                else_body,
+                ..
+            } => {
+                let then = unrolled_body(then_body, contract, rereads, unrolled, issues);
+                let other = else_body.as_deref().unwrap_or_default();
+                then.max(unrolled_body(other, contract, rereads, unrolled, issues))
+            }
+            Statement::ForIn { body, .. }
+            | Statement::ForCount { body, .. }
+            | Statement::ForRange { body, .. } => {
+                let mut rereads = rereads.clone();
+                // Lowering may read a path iterable, calls in its indexes included, at each use of
+                // the item instead of binding it once.
+                // ponytail: counted also where lowering binds it, because the body writes nothing
+                // the iterable reads; share lowering's choice if that rejects a real contract.
+                if let Statement::ForIn {
+                    value_var,
+                    iterable,
+                    ..
+                } = statement
+                {
+                    if iterable.binding_path().is_some() {
+                        let calls = unrolled_calls(iterable, contract, &rereads, unrolled, issues);
+                        rereads.insert(value_var.clone(), calls);
+                    }
+                }
+                let body = unrolled_body(body, contract, &rereads, unrolled, issues);
+                // An invalid count or range is reported with the loop's bindings.
+                let count = crate::models::loop_indexes(statement).map_or(1, |range| range.len());
+                let total = count.saturating_mul(body);
+                if count == 0 {
+                    issues.push(
+                        ValidationIssue::error(
+                            "loop runs zero times, so its body never executes; remove the loop \
+                             or make it run at least once",
+                        )
+                        .at(located.span),
+                    );
+                } else if total > limit && body <= limit {
+                    // A nest already above the limit is reported at its own loop.
+                    issues.push(
+                        ValidationIssue::error(format!(
+                            "loop unrolls {total} iterations, nested loops and called helpers \
+                             included, above the limit of {limit}"
+                        ))
+                        .at(located.span),
+                    );
+                }
+                total
+            }
+            _ => 1,
+        });
+    }
+    most
+}
+
+fn unrolled_calls(
+    expression: &Expression,
+    contract: &Contract,
+    rereads: &HashMap<String, usize>,
+    unrolled: &mut HashMap<String, usize>,
+    issues: &mut Vec<ValidationIssue>,
+) -> usize {
+    let mut most = 1;
+    match &expression.kind {
+        ExprKind::Call { name, .. } => {
+            if let Some(function) = contract.functions.iter().find(|f| f.name == *name) {
+                most = unrolled_function(function, contract, unrolled, issues);
+            }
+        }
+        ExprKind::Name(path) | ExprKind::ArrayIndex { array: path, .. } => {
+            most = rereads.get(&path.root).copied().unwrap_or(1);
+        }
+        _ => {}
+    }
+    for child in child_exprs(expression) {
+        most = most.max(unrolled_calls(child, contract, rereads, unrolled, issues));
+    }
+    most
+}
+
 // Each mask records paths without (1) and with (2) an enforced requirement.
 #[derive(Default)]
 struct Flow {
@@ -495,32 +625,14 @@ fn flow_block(
                 flow.fallthrough = left.fallthrough | right.fallthrough;
                 flow.returned |= left.returned | right.returned;
             }
-            Statement::ForIn { body, .. } => {
-                // Source arrays have a positive static length, so every loop executes at least once.
+            Statement::ForIn { body, .. }
+            | Statement::ForCount { body, .. }
+            | Statement::ForRange { body, .. } => {
+                // A loop that runs zero times is an error, so every loop executes at least once.
                 let body = flow_block(body, flow.fallthrough, guarantees);
                 flow.fallthrough = body.fallthrough;
                 flow.returned |= body.returned;
             }
-            Statement::ForCount {
-                count:
-                    Expression {
-                        kind: ExprKind::Literal(count),
-                        ..
-                    },
-                body,
-            } if count.parse::<usize>().is_ok_and(|count| count > 0) => {
-                let body = flow_block(body, flow.fallthrough, guarantees);
-                flow.fallthrough = body.fallthrough;
-                flow.returned |= body.returned;
-            }
-            Statement::ForRange {
-                start, end, body, ..
-            } if crate::models::loop_range(start, end).is_ok_and(|range| !range.is_empty()) => {
-                let body = flow_block(body, flow.fallthrough, guarantees);
-                flow.fallthrough = body.fallthrough;
-                flow.returned |= body.returned;
-            }
-            Statement::ForCount { .. } | Statement::ForRange { .. } => {}
             Statement::Declaration { .. }
             | Statement::Call(_)
             | Statement::LetBinding { .. }
