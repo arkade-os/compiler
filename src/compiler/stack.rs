@@ -131,14 +131,15 @@ impl Generator {
     }
 
     pub(super) fn check_array_index(&mut self, length: usize) -> Result<()> {
-        self.apply(Dup, 1, 2)?;
-        self.push_integer_temporary(0);
-        self.apply(GreaterThanOrEqual, 2, 1)?;
-        self.apply(Verify, 1, 0)?;
+        self.check_within(0, length)
+    }
 
+    /// Fails the spend unless the top value is in `min..max`, leaving it in place.
+    pub(super) fn check_within(&mut self, min: usize, max: usize) -> Result<()> {
         self.apply(Dup, 1, 2)?;
-        self.push_integer_temporary(length);
-        self.apply(LessThan, 2, 1)?;
+        self.push_integer_temporary(min);
+        self.push_integer_temporary(max);
+        self.apply(Within, 3, 1)?;
         self.apply(Verify, 1, 0)
     }
 
@@ -552,11 +553,8 @@ mod symbolic_stack_tests {
                 "OP_PICK",
                 "OP_DUP",
                 "OP_0",
-                "OP_GREATERTHANOREQUAL",
-                "OP_VERIFY",
-                "OP_DUP",
                 "OP_3",
-                "OP_LESSTHAN",
+                "OP_WITHIN",
                 "OP_VERIFY",
                 "OP_PUT",
             ]
@@ -611,11 +609,8 @@ mod symbolic_stack_tests {
                 "OP_ADD",
                 "OP_DUP",
                 "OP_0",
-                "OP_GREATERTHANOREQUAL",
-                "OP_VERIFY",
-                "OP_DUP",
                 "OP_3",
-                "OP_LESSTHAN",
+                "OP_WITHIN",
                 "OP_VERIFY",
                 "OP_1",
                 "OP_ADD",

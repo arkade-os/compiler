@@ -1,8 +1,8 @@
 use crate::common::{compile_unoptimized as compile, opcode_count_in_arkade};
 use arkade_compiler::opcodes::{
-    OP_ADD, OP_BOOLAND, OP_CHECKSIG, OP_CHECKSIGFROMSTACK, OP_DUP, OP_ENDIF, OP_GREATERTHANOREQUAL,
-    OP_INSPECTASSETGROUPASSETID, OP_INSPECTINPUTOUTPOINT, OP_LESSTHAN, OP_MOD, OP_NOT, OP_NUMEQUAL,
-    OP_NUMEQUALVERIFY, OP_PICK, OP_PUT, OP_ROLL, OP_SHA256, OP_SWAP, OP_VERIFY,
+    OP_ADD, OP_BOOLAND, OP_CHECKSIG, OP_CHECKSIGFROMSTACK, OP_DUP, OP_ENDIF,
+    OP_INSPECTASSETGROUPASSETID, OP_INSPECTINPUTOUTPOINT, OP_MOD, OP_NOT, OP_NUMEQUAL,
+    OP_NUMEQUALVERIFY, OP_PICK, OP_PUT, OP_ROLL, OP_SHA256, OP_SWAP, OP_VERIFY, OP_WITHIN,
 };
 
 #[test]
@@ -472,7 +472,7 @@ contract C(Values values) {
         .as_ref()
         .expect("Arkade Script")
         .asm;
-    assert!(asm.windows(2).any(|tokens| tokens == ["OP_3", OP_LESSTHAN]));
+    assert!(asm.windows(2).any(|tokens| tokens == ["OP_3", OP_WITHIN]));
     assert!(asm.iter().filter(|token| token.as_str() == OP_ADD).count() >= 4);
 }
 
@@ -516,14 +516,9 @@ contract C() {
     let asm = &script.asm;
     assert!(asm.iter().any(|token| token == OP_PUT), "{asm:?}");
     assert!(
-        asm.windows(4)
-            .any(|tokens| { tokens == [OP_DUP, "OP_0", OP_GREATERTHANOREQUAL, OP_VERIFY] }),
-        "missing lower-bound check: {asm:?}"
-    );
-    assert!(
-        asm.windows(4)
-            .any(|tokens| { tokens == [OP_DUP, "OP_3", OP_LESSTHAN, OP_VERIFY] }),
-        "missing upper-bound check: {asm:?}"
+        asm.windows(5)
+            .any(|tokens| { tokens == [OP_DUP, "OP_0", "OP_3", OP_WITHIN, OP_VERIFY] }),
+        "missing bounds check: {asm:?}"
     );
 }
 
