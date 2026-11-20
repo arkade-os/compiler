@@ -14,11 +14,12 @@ func TestScriptSizeLimitMatchesTheVM(t *testing.T) {
 	if os.Getenv("ARKADEC_NO_OPTIMIZE") != "" {
 		t.Skip("the byte counts below are for the optimized Arkade Script")
 	}
-	// `require(x != n)` assembles to 6 bytes for a two-byte n and 7 for a three-byte one,
-	// less the last requirement's DUP and VERIFY.
+	// `require(x != n)` assembles to 6 bytes for a two-byte n, 7 for a three-byte one and 36
+	// for 2^253, less the last requirement's DUP and VERIFY.
 	write := func(wide int) string {
 		var requires strings.Builder
-		for i := 0; i < 1667; i++ {
+		requires.WriteString("require(x != 14474011154664524427946373126085988481658748083205070504932198000989141204992);")
+		for i := 0; i < 1661; i++ {
 			n := 1000 + i
 			if i < wide {
 				n = 100000 + i
