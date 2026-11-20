@@ -33,7 +33,7 @@ fn loop_indexes_encoding_requirements_and_branches_match_static_code() {
     );
     let raw = compile_unoptimized(&looped).unwrap();
     let optimized = arkade_asm_tokens(&output, "spend");
-    for opcode in ["OP_NUM2BIN", "OP_IF", "OP_MUL", "OP_WITHIN"] {
+    for opcode in ["OP_NUM2BIN", "OP_IF", "OP_MUL", "OP_LESSTHAN", "OP_WITHIN"] {
         assert!(
             !optimized.iter().any(|token| token == opcode),
             "{opcode}: {optimized:?}"
