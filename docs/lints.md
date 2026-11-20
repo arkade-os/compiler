@@ -6,7 +6,7 @@ Lints report code that compiles but is likely unsafe or wrong. Each lint has:
 - a category: `security`, `correctness`, `performance` or `style`;
 - a default level: `allow` (not reported), `warn`, or `deny` (an error).
 
-`arkadec --explain <lint>` prints what a lint reports, why it matters and how to fix it.
+`arkadec --explain <lint>` prints what a lint reports, why it matters and how to fix it. `arkadec --explain` with no id lists every lint and error code.
 
 ## Lint list
 

@@ -53,9 +53,9 @@ fn deferred_declarations_allocate_on_assignment_and_reduce_assembly() {
             assert_eq!(crate::common::witness_names(&output, "spend", "spend"), ["operatorSig"]);
             assert_eq!(crate::common::group(&output, "spend").leaves.len(), 1);
         }
-        let output = artifact("int x; x = 7; require(x == 7);", optimize);
+        let output = artifact("int x; x = input; require(x == input);", optimize);
         let asm = crate::common::arkade_asm_tokens(&output, "spend");
-        let initialized = artifact("int x = 7; require(x == 7);", optimize);
+        let initialized = artifact("int x = input; require(x == input);", optimize);
         assert_eq!(asm, crate::common::arkade_asm_tokens(&initialized, "spend"));
     }
 }

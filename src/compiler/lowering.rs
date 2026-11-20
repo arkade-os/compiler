@@ -80,7 +80,20 @@ fn falls_through(body: &[Lowered]) -> bool {
     })
 }
 
-/// Lower `statements` in `scope`, which gains their bindings as they are declared.
+/// Whether a never-reassigned local or helper parameter holding `literal` is replaced by it at
+/// every read instead of being bound.
+// ponytail: a substituted literal that does not fold costs its full push at every read, so a
+// literal that pushes 3 bytes and is read six times grows the script; count reads before
+// substituting to avoid that. Literals that push 4 or more bytes stay bound for the same
+// reason and never fold further; substitute them too once wide literals are hoisted into
+// shared bindings.
+pub(super) fn propagates(literal: &str) -> bool {
+    matches!(literal, "true" | "false") || !Op::Push(literal.to_string()).pushes_more_than(2)
+}
+
+/// Lower `statements` in `scope`, which gains their bindings as they are declared. When
+/// folding, a never-reassigned local folded to a literal that `propagates` is substituted into
+/// the statements after it, its whole scope, instead of being bound.
 pub(super) fn lower(
     statements: &[LocatedStatement],
     scope: &mut types::Scope,
@@ -88,17 +101,44 @@ pub(super) fn lower(
     fold: bool,
 ) -> Result<Vec<Lowered>> {
     let mut lowered = Vec::with_capacity(statements.len());
-    for statement in statements {
+    let mut literals: Vec<(String, String)> = Vec::new();
+    for (index, statement) in statements.iter().enumerate() {
         let span = statement.span;
         let mut statement = statement.clone();
+        // ponytail: each substitution rebuilds the statement; substitute all names in one pass
+        // if bodies with many propagated locals compile slowly.
+        for (name, literal) in &literals {
+            statement.statement = substitute_statement(&statement.statement, name, literal, None);
+        }
         if fold {
             optimization::fold_statement(&mut statement.statement, scope)
                 .map_err(|error| CompileError::from(error).at(span))?;
+            if let Statement::LetBinding {
+                name,
+                value:
+                    Expression {
+                        kind: ExprKind::Literal(literal),
+                        ..
+                    },
+                ..
+            } = &statement.statement
+            {
+                if propagates(literal) && !super::functions::assigns(&statements[index + 1..], name)
+                {
+                    literals.push((name.clone(), literal.clone()));
+                    continue;
+                }
+            }
         }
         if let Some(item) =
             lower_statement(statement, scope, structs, fold).map_err(|error| error.at(span))?
         {
+            let ends = !falls_through(std::slice::from_ref(&item));
             lowered.push(item);
+            // Emission stops at an item no path falls through, so the rest is dead.
+            if ends {
+                break;
+            }
         }
     }
     Ok(lowered)
@@ -111,12 +151,8 @@ fn lower_statement(
     fold: bool,
 ) -> Result<Option<Lowered>> {
     let span = statement.span;
-    let static_condition = |condition: &Expression| match &condition.kind {
-        ExprKind::Literal(value) if fold && matches!(value.as_str(), "true" | "false") => {
-            Some(value == "true")
-        }
-        _ => None,
-    };
+    let static_condition =
+        |condition: &Expression| fold.then(|| optimization::known_bool(condition)).flatten();
     Ok(Some(match statement.statement {
         Statement::Require(Expression {
             kind: ExprKind::Literal(value),
@@ -133,9 +169,20 @@ fn lower_statement(
                 } else {
                     else_body.unwrap_or_default()
                 };
+                let mut iteration = lower(&body, &mut scope.clone(), structs, fold)?;
+                // A condition with runtime operands still runs, for the failures they raise.
+                if !matches!(condition.kind, ExprKind::Literal(_)) {
+                    let evaluated = Lowered::If {
+                        span,
+                        condition,
+                        then_body: Vec::new(),
+                        else_body: None,
+                    };
+                    iteration.insert(0, evaluated);
+                }
                 Lowered::Unrolled {
                     span,
-                    iterations: vec![lower(&body, &mut scope.clone(), structs, fold)?],
+                    iterations: vec![iteration],
                     guarded: false,
                 }
             }
@@ -195,8 +242,8 @@ fn lower_statement(
                 }));
             }
             let iterations = (0..length).map(|k| {
-                let mut substituted =
-                    substitute_loop_body(&body, &index_var, &value_var, k, &iterable);
+                let element = Some((value_var.as_str(), &iterable));
+                let mut substituted = substitute_body(&body, &index_var, &k.to_string(), element);
                 // Substitution builds untyped nodes; return types and group members
                 // were resolved on the original body and survive the copy.
                 types::annotate_statements(&mut substituted, &mut scope.clone(), structs);
@@ -242,8 +289,7 @@ fn lower_statement(
             body,
         } => {
             let iterations = crate::models::loop_range(&start, &end)?.map(|k| {
-                // The index becomes the literal `k`; with no value variable, `items` is never read.
-                let mut substituted = substitute_loop_body(&body, &index_var, "", k, &start);
+                let mut substituted = substitute_body(&body, &index_var, &k.to_string(), None);
                 types::annotate_statements(&mut substituted, &mut scope.clone(), structs);
                 substituted
             });
@@ -327,11 +373,11 @@ fn unroll(
     })
 }
 
-/// The helpers `body` calls, each with the span of the statement that calls it.
-fn calls(body: &[Lowered], found: &mut Vec<(String, Span)>) {
-    fn walk(expression: &Expression, span: Span, found: &mut Vec<(String, Span)>) {
-        if let ExprKind::Call { name, .. } = &expression.kind {
-            found.push((name.clone(), span));
+/// The helper calls in `body`, each with the span of the statement that makes it.
+fn calls<'a>(body: &'a [Lowered], found: &mut Vec<(&'a Expression, Span)>) {
+    fn walk<'a>(expression: &'a Expression, span: Span, found: &mut Vec<(&'a Expression, Span)>) {
+        if let ExprKind::Call { .. } = &expression.kind {
+            found.push((expression, span));
         }
         for child in crate::models::child_exprs(expression) {
             walk(child, span, found);
@@ -375,16 +421,27 @@ pub(super) fn check_folded(
     constructor_scope: &types::Scope,
     structs: &[crate::models::StructDefinition],
     functions: &[Function],
-    checked: &mut std::collections::HashSet<String>,
+    checked: &mut std::collections::HashSet<(String, Vec<Option<String>>)>,
 ) -> Result<()> {
     let body = lower(statements, &mut scope.clone(), structs, true)?;
     let mut found = Vec::new();
     calls(&body, &mut found);
-    for (name, span) in found {
-        let Some(helper) = functions.iter().find(|f| f.name == name) else {
+    for (call, span) in found {
+        let ExprKind::Call { name, args, .. } = &call.kind else {
             continue;
         };
-        if !checked.insert(name) {
+        let Some(helper) = functions.iter().find(|f| f.name == *name) else {
+            continue;
+        };
+        // As at a call, literal arguments fold into the body, so each set of them is checked.
+        let literals = args
+            .iter()
+            .zip(&helper.parameters)
+            .map(|(argument, parameter)| {
+                super::functions::literal_argument(helper, parameter, argument).map(str::to_string)
+            })
+            .collect();
+        if !checked.insert((name.clone(), literals)) {
             continue;
         }
         // As at a call: the constructor's bindings, or none for a static helper, and the parameters.
@@ -404,7 +461,7 @@ pub(super) fn check_folded(
             );
         }
         check_folded(
-            &helper.statements,
+            &super::functions::substitute_arguments(helper, args),
             &scope,
             constructor_scope,
             structs,
