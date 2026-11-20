@@ -95,6 +95,10 @@ try {
     assert.deepEqual(diagnostics, JSON.parse(wasm.check_sources(invalidSource.entry, JSON.stringify(invalidSource.files))));
     // Each diagnostic has exactly the fields `Diagnostic` declares.
     assert.deepEqual(Object.keys(diagnostics[0]).sort(), ['code', 'end', 'file', 'message', 'severity', 'start', 'suggestions']);
+    const misspelled = await esm.check({ entry: 'main.ark', files: { 'main.ark': 'contract C(pubkey owner) { function spend(signature s) { require(checkSig(s, ownr)); } }' } });
+    const [suggestion] = misspelled.find(d => d.code === 'unknown-name').suggestions;
+    assert.deepEqual(Object.keys(suggestion).sort(), ['end', 'message', 'replacement', 'start']);
+    assert.equal(suggestion.replacement, 'owner');
     // Source errors are diagnostics with a null artifact, not rejections.
     const parseFailure = await esm.compile(invalidSource);
     assert.equal(parseFailure.artifact, null);

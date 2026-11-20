@@ -26,8 +26,10 @@ pub use models::{
 pub use types::ArkType;
 
 /// Per-call compiler settings. Optimizations are enabled by default. Outside this crate, start
-/// from `CompileOptions::default()` and set the fields to change.
+/// from `CompileOptions::default()` and set the fields to change. A field missing from
+/// deserialized options takes its default.
 #[derive(Clone, Copy, Debug, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
 #[non_exhaustive]
 pub struct CompileOptions {
     /// Fold constant expressions, remove static branches, and optimize Arkade assembly.
@@ -41,8 +43,15 @@ impl Default for CompileOptions {
 }
 
 /// A failed `compile*` call, which displays the error located in its file.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct Error(String);
+
+/// The message's `Debug`, as a `main` returning `Box<dyn std::error::Error>` prints it.
+impl std::fmt::Debug for Error {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Debug::fmt(&self.0, f)
+    }
+}
 
 impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

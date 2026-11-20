@@ -120,4 +120,15 @@ fn a_compile_error_crosses_threads_and_converts_with_question_mark() {
         .unwrap_err()
         .into();
     assert_eq!(local.to_string(), error.to_string());
+    assert_eq!(format!("{local:?}"), format!("{:?}", local.to_string()));
+}
+
+#[test]
+fn options_missing_a_field_take_its_default() {
+    let options: CompileOptions = serde_json::from_str("{}").unwrap();
+    assert!(options.optimize);
+    assert_eq!(
+        serde_json::to_string(&CompileOptions::default()).unwrap(),
+        r#"{"optimize":true}"#
+    );
 }

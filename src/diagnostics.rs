@@ -100,8 +100,8 @@ pub struct Diagnostic {
     pub severity: Severity,
     /// A lint's id, an error code's id such as `"unknown-name"` (see [`crate::errors::ErrorCode`]),
     /// or else the pass that raised this: `"validation"` (semantic checks), `"type"` (type
-    /// checker), `"emission"` (code generation) or `"internal"` (a compiler bug). `None` for parse,
-    /// import and file errors.
+    /// checker), `"emission"` (code generation) or `"internal"` (a compiler bug). `None` for file,
+    /// pragma, parse and import errors, and for a library compiled as the entry.
     pub code: Option<String>,
     pub message: String,
     pub file: String,
