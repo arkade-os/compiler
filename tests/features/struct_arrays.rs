@@ -193,7 +193,7 @@ contract C() {
     )
     .unwrap();
     let asm = arkade_asm_tokens(&output, "spend");
-    assert!(asm.iter().any(|op| op == "OP_LESSTHAN"));
+    assert!(asm.iter().any(|op| op == "OP_WITHIN"));
 
     compile(
         r#"

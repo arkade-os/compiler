@@ -5,12 +5,14 @@ use super::*;
 /// A binding and the struct fields and constant array elements read through it,
 /// as in `s.inner.x` or `ps[0].x`.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub struct Path {
     pub root: String,
     pub segments: Vec<Segment>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum Segment {
     Field(String),
     Index(usize),
@@ -96,6 +98,7 @@ impl PartialEq<str> for Path {
 
 /// Contract AST
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct Contract {
     /// Contract or library name; empty for a source file containing only structs.
     pub name: String,
@@ -161,6 +164,7 @@ impl Contract {
 
 /// An outer attribute, `@name(arg, ...)`, of the contract, function or statement it precedes.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct Attribute {
     pub name: String,
     pub name_span: crate::diagnostics::Span,
@@ -169,6 +173,7 @@ pub struct Attribute {
 }
 
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum AttributeArg {
     /// A name, such as a lint id: `outputs-shared-across-inputs`.
     Name(String, crate::diagnostics::Span),
@@ -178,6 +183,7 @@ pub enum AttributeArg {
 
 /// A compile-time constant, folded into every use site before validation.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct Constant {
     pub name: String,
     pub const_type: TypeName,
@@ -187,6 +193,7 @@ pub struct Constant {
 
 /// Function AST
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct Function {
     /// Function name
     pub name: String,
@@ -218,6 +225,7 @@ impl Function {
 
 /// A statement with the byte range of its source text.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct LocatedStatement {
     pub span: crate::diagnostics::Span,
     /// Byte ranges of the names the statement binds, in binding order.
@@ -232,6 +240,7 @@ pub struct LocatedStatement {
 
 /// Statement AST - represents any executable statement in a function body
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum Statement {
     /// A void private function call.
     Call(Expression),
@@ -277,6 +286,7 @@ pub enum Statement {
 
 /// A binding or array element on the left-hand side of an assignment.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum AssignmentTarget {
     Access(Box<Expression>),
     Binding(Path),
@@ -307,6 +317,7 @@ impl Statement {
 
 /// Hash function used in a tapscript condition prefix (`hashFn(x) == h`).
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub enum HashFn {
     Sha256,
     Hash160,
@@ -358,6 +369,7 @@ impl HashFn {
 
 /// A key operand in a tapscript `checkSig`/`checkMultisig`.
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub enum KeyExpr {
     /// A pubkey binding: the reserved `operator` role or any pubkey in scope
     /// (constructor pubkey, struct field, array element, etc.).
@@ -390,6 +402,7 @@ impl KeyExpr {
 /// One ordered component of a tapscript leaf body. Source order must follow the
 /// closure template: condition? · timelock? · multisig (validated in Context::Tapscript).
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum TapItem {
     /// `hashFn(preimage) == hash` → condition prefix.
     Hash {
@@ -417,6 +430,7 @@ pub enum TapItem {
 /// A hash value or timelock operand: a literal, with constants already folded in, or the
 /// binding it reads.
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub enum TapOperand {
     Literal(String),
     Name(Path),
@@ -442,6 +456,7 @@ impl std::fmt::Display for TapOperand {
 
 /// The unit of a `blocks(n)` or `seconds(n)` timelock operand.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum TimeUnit {
     Blocks,
     Seconds,
@@ -449,6 +464,7 @@ pub enum TimeUnit {
 
 /// A `tapscript`-modified function declaration: an L1 tapleaf source member.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct NamedTapscript {
     /// Declared name (decides function-binding by exact match).
     pub name: String,
@@ -464,6 +480,7 @@ pub struct NamedTapscript {
 
 /// Source of an asset lookup (input or output)
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub enum AssetLookupSource {
     /// tx.inputs[i]
     Input,
@@ -473,6 +490,7 @@ pub enum AssetLookupSource {
 
 /// Source for per-group input/output access
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub enum GroupIOSource {
     /// inputs (source=0)
     Inputs,
@@ -529,6 +547,7 @@ impl From<ExprKind> for Expression {
 
 /// Expression AST
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum ExprKind {
     /// A private function call; the declared result type is resolved before validation.
     Call {

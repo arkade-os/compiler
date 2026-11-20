@@ -1,7 +1,6 @@
 use crate::common::compile_unoptimized as compile;
 use arkade_compiler::opcodes::{
-    OP_ADD, OP_CAT, OP_CHECKSIGFROMSTACK, OP_DUP, OP_GREATERTHANOREQUAL, OP_LESSTHAN,
-    OP_NUMNOTEQUAL, OP_PUT, OP_VERIFY,
+    OP_ADD, OP_CAT, OP_CHECKSIGFROMSTACK, OP_DUP, OP_NUMNOTEQUAL, OP_PUT, OP_VERIFY, OP_WITHIN,
 };
 
 fn contains_tokens(asm: &[String], expected: &[&str]) -> bool {
@@ -206,7 +205,7 @@ contract Bounds() {
 
     let asm = crate::common::arkade_asm_tokens(&output, "spend");
     assert!(
-        contains_tokens(&asm, &["OP_7", OP_LESSTHAN]),
+        contains_tokens(&asm, &["OP_0", "OP_7", OP_WITHIN]),
         "bound check must compare against the declared size: {asm:?}"
     );
 }
@@ -362,7 +361,7 @@ contract Local(int limit) {
         "elements are pushed deepest-last so element 0 sits closest to the top: {asm:?}"
     );
     assert!(
-        contains_tokens(&asm, &["OP_3", OP_LESSTHAN]),
+        contains_tokens(&asm, &["OP_0", "OP_3", OP_WITHIN]),
         "runtime index into a local array is bounded by its declared size: {asm:?}"
     );
 }
@@ -408,12 +407,8 @@ contract Local() {
     assert!(
         contains_tokens(
             &asm,
-            &[OP_ADD, OP_DUP, "OP_0", OP_GREATERTHANOREQUAL, OP_VERIFY]
+            &[OP_ADD, OP_DUP, "OP_0", "OP_2", OP_WITHIN, OP_VERIFY, OP_PUT]
         ),
-        "assignment must check the computed index's lower bound: {asm:?}"
-    );
-    assert!(
-        contains_tokens(&asm, &[OP_DUP, "OP_2", OP_LESSTHAN, OP_VERIFY, OP_PUT]),
         "assignment must check the computed index against the array size: {asm:?}"
     );
     assert!(
