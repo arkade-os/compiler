@@ -2,20 +2,18 @@ use crate::models::*;
 
 // ─── Loop Unrolling ─────────────────────────────────────────────────────────────
 
-/// Substitute loop variables in the body for a specific iteration index k.
+/// Substitute `literal` for the scalar binding `name` in `body`. For a loop iteration,
+/// `element` names its value variable and the iterated items, and that variable and paths
+/// rooted at it become accesses on element `literal` of the items.
 ///
-/// Transforms:
-/// - `index_var` → `Literal(k)`
-/// - `value_var` and paths rooted at it → accesses on element `k` of `items`
-///
-/// Copies keep only the span and statement; names, branches and messages are read from the
-/// parsed body.
-pub(crate) fn substitute_loop_body(
+/// The literal keeps the substituted name's type, and a rebuilt array read keeps its own;
+/// element accesses are untyped. Copies keep only the span and statement; names, branches and
+/// messages are read from the parsed body.
+pub(crate) fn substitute_body(
     body: &[LocatedStatement],
-    index_var: &str,
-    value_var: &str,
-    k: usize,
-    items: &Expression,
+    name: &str,
+    literal: &str,
+    element: Option<(&str, &Expression)>,
 ) -> Vec<LocatedStatement> {
     body.iter()
         .map(|stmt| LocatedStatement {
@@ -23,7 +21,7 @@ pub(crate) fn substitute_loop_body(
             branches: Vec::new(),
             message: None,
             span: stmt.span,
-            statement: substitute_statement(&stmt.statement, index_var, value_var, k, items),
+            statement: substitute_statement(&stmt.statement, name, literal, element),
             attributes: stmt.attributes.clone(),
         })
         .collect()
@@ -31,40 +29,39 @@ pub(crate) fn substitute_loop_body(
 
 pub(crate) fn substitute_statement(
     stmt: &Statement,
-    index_var: &str,
-    value_var: &str,
-    k: usize,
-    items: &Expression,
+    name: &str,
+    literal: &str,
+    element: Option<(&str, &Expression)>,
 ) -> Statement {
     match stmt {
-        Statement::Call(expression) => Statement::Call(substitute_expression(
-            expression, index_var, value_var, k, items,
-        )),
-        Statement::Return(value) => {
-            Statement::Return(value.as_ref().map(|expression| {
-                substitute_expression(expression, index_var, value_var, k, items)
-            }))
+        Statement::Call(expression) => {
+            Statement::Call(substitute_expression(expression, name, literal, element))
         }
-        Statement::Require(condition) => Statement::Require(substitute_expression(
-            condition, index_var, value_var, k, items,
-        )),
+        Statement::Return(value) => Statement::Return(
+            value
+                .as_ref()
+                .map(|expression| substitute_expression(expression, name, literal, element)),
+        ),
+        Statement::Require(condition) => {
+            Statement::Require(substitute_expression(condition, name, literal, element))
+        }
         Statement::Declaration { .. } => stmt.clone(),
         Statement::LetBinding {
-            name,
+            name: binding,
             declared_type,
             value,
         } => Statement::LetBinding {
-            name: name.clone(),
+            name: binding.clone(),
             declared_type: declared_type.clone(),
-            value: substitute_expression(value, index_var, value_var, k, items),
+            value: substitute_expression(value, name, literal, element),
         },
         Statement::VarAssign { target, value } => Statement::VarAssign {
             // A bare binding has no span of its own; the assigned value's stands in.
             target: match substitute_expression(
                 &match target {
                     AssignmentTarget::Access(value) => (**value).clone(),
-                    AssignmentTarget::Binding(name) => {
-                        value.with_kind(ExprKind::Name(name.clone()))
+                    AssignmentTarget::Binding(path) => {
+                        value.with_kind(ExprKind::Name(path.clone()))
                     }
                     AssignmentTarget::ArrayIndex { array, index } => {
                         index.with_kind(ExprKind::ArrayIndex {
@@ -73,10 +70,9 @@ pub(crate) fn substitute_statement(
                         })
                     }
                 },
-                index_var,
-                value_var,
-                k,
-                items,
+                name,
+                literal,
+                element,
             ) {
                 Expression {
                     kind: ExprKind::Name(path),
@@ -88,18 +84,18 @@ pub(crate) fn substitute_statement(
                 } => AssignmentTarget::ArrayIndex { array, index },
                 value => AssignmentTarget::Access(Box::new(value)),
             },
-            value: substitute_expression(value, index_var, value_var, k, items),
+            value: substitute_expression(value, name, literal, element),
         },
         Statement::IfElse {
             condition,
             then_body,
             else_body,
         } => Statement::IfElse {
-            condition: substitute_expression(condition, index_var, value_var, k, items),
-            then_body: substitute_loop_body(then_body, index_var, value_var, k, items),
+            condition: substitute_expression(condition, name, literal, element),
+            then_body: substitute_body(then_body, name, literal, element),
             else_body: else_body
                 .as_ref()
-                .map(|b| substitute_loop_body(b, index_var, value_var, k, items)),
+                .map(|b| substitute_body(b, name, literal, element)),
         },
         Statement::ForIn {
             index_var: inner_idx,
@@ -109,32 +105,32 @@ pub(crate) fn substitute_statement(
         } => Statement::ForIn {
             index_var: inner_idx.clone(),
             value_var: inner_val.clone(),
-            iterable: substitute_expression(iterable, index_var, value_var, k, items),
-            body: substitute_loop_body(body, index_var, value_var, k, items),
+            iterable: substitute_expression(iterable, name, literal, element),
+            body: substitute_body(body, name, literal, element),
         },
         Statement::ForCount { count, body } => Statement::ForCount {
-            count: substitute_expression(count, index_var, value_var, k, items),
-            body: substitute_loop_body(body, index_var, value_var, k, items),
+            count: substitute_expression(count, name, literal, element),
+            body: substitute_body(body, name, literal, element),
         },
     }
 }
 
-/// Resolve a dotted binding path, rooting `value_var` paths at element `k` of `items`.
+/// Resolve a dotted binding path: `name` to `literal`, and `element`'s value variable paths to
+/// accesses on element `literal` of its items.
 fn substitute_path(
     path: &Path,
     at: &Expression,
-    index_var: &str,
-    value_var: &str,
-    k: usize,
-    items: &Expression,
+    name: &str,
+    literal: &str,
+    element: Option<(&str, &Expression)>,
 ) -> Option<Expression> {
-    if path.root == index_var && path.segments.is_empty() {
-        return Some(at.with_kind(ExprKind::Literal(k.to_string())));
+    if path.root == name && path.segments.is_empty() {
+        let mut value = at.clone();
+        value.kind = ExprKind::Literal(literal.to_string());
+        return Some(value);
     }
-    if path.root != value_var {
-        return None;
-    }
-    let index = Box::new(at.with_kind(ExprKind::Literal(k.to_string())));
+    let (_, items) = element.filter(|(value_var, _)| path.root == *value_var)?;
+    let index = Box::new(at.with_kind(ExprKind::Literal(literal.to_string())));
     let element = at.with_kind(match &items.kind {
         ExprKind::Name(path) => ExprKind::ArrayIndex {
             array: path.clone(),
@@ -162,33 +158,33 @@ fn substitute_path(
 
 pub(crate) fn substitute_expression(
     expr: &Expression,
-    index_var: &str,
-    value_var: &str,
-    k: usize,
-    items: &Expression,
+    name: &str,
+    literal: &str,
+    element: Option<(&str, &Expression)>,
 ) -> Expression {
     match &expr.kind {
-        ExprKind::Name(path) => substitute_path(path, expr, index_var, value_var, k, items)
-            .unwrap_or_else(|| expr.clone()),
+        ExprKind::Name(path) => {
+            substitute_path(path, expr, name, literal, element).unwrap_or_else(|| expr.clone())
+        }
         ExprKind::ArrayIndex { array, index } => {
-            let index = Box::new(substitute_expression(index, index_var, value_var, k, items));
-            expr.with_kind(
-                match substitute_path(array, expr, index_var, value_var, k, items) {
-                    Some(value) => ExprKind::IndexAccess {
-                        value: Box::new(value),
-                        index,
-                    },
-                    None => ExprKind::ArrayIndex {
-                        array: array.clone(),
-                        index,
-                    },
+            let index = Box::new(substitute_expression(index, name, literal, element));
+            let mut access = expr.clone();
+            access.kind = match substitute_path(array, expr, name, literal, element) {
+                Some(value) => ExprKind::IndexAccess {
+                    value: Box::new(value),
+                    index,
                 },
-            )
+                None => ExprKind::ArrayIndex {
+                    array: array.clone(),
+                    index,
+                },
+            };
+            access
         }
         _ => {
             let mut expression = expr.clone();
             for child in crate::models::child_exprs_mut(&mut expression) {
-                *child = substitute_expression(child, index_var, value_var, k, items);
+                *child = substitute_expression(child, name, literal, element);
             }
             expression
         }
@@ -231,7 +227,8 @@ mod tests {
         ] {
             let expression = Expression::new(kind, span);
             for (k, expected) in expected.iter().enumerate() {
-                let replaced = substitute_expression(&expression, "i", "x", k, &items);
+                let replaced =
+                    substitute_expression(&expression, "i", &k.to_string(), Some(("x", &items)));
                 assert_eq!(replaced.span, span);
                 assert_eq!(replaced.source_text(), *expected);
                 if let ExprKind::IndexAccess {

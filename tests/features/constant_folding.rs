@@ -64,7 +64,7 @@ fn loop_indexes_encoding_requirements_and_branches_match_static_code() {
 }
 
 #[test]
-fn literal_arithmetic_and_comparisons_fold_without_propagating_locals() {
+fn literal_arithmetic_and_comparisons_fold() {
     for (expression, literal) in [
         ("(2 + 3) * 4 - 1", "19"),
         ("-7 / 2", "-3"),
@@ -94,8 +94,80 @@ fn literal_arithmetic_and_comparisons_fold_without_propagating_locals() {
         let source = format!("contract C() {{ function spend() {{ require({condition}); }} }}");
         assert_eq!(asm(&source), ["OP_1"], "{condition}");
     }
-    let source = "contract C() { function spend(int[3] values, int input) { let k = 1 + 1; require(values[k] == input); } }";
-    assert!(asm(source).iter().any(|token| token == "OP_LESSTHAN"));
+}
+
+#[test]
+fn literal_locals_and_helper_arguments_fold_like_inline_code() {
+    let source = |body: &str| {
+        format!("contract C() {{ private function cell(bytes b, int r, int c) bytes {{ return substr(b, r * 9 + c, 1); }} function spend(bytes b, int[3] rows, bytes expected) {{ for (r, unused) in rows {{ {body} }} }} }}")
+    };
+    let expected = [
+        "OP_DUP",
+        "11",
+        "1",
+        "OP_SUBSTR",
+        "OP_5",
+        "OP_PICK",
+        "OP_EQUALVERIFY",
+        "OP_DUP",
+        "20",
+        "1",
+        "OP_SUBSTR",
+        "OP_5",
+        "OP_PICK",
+        "OP_EQUALVERIFY",
+        "OP_DUP",
+        "29",
+        "1",
+        "OP_SUBSTR",
+        "OP_5",
+        "OP_PICK",
+        "OP_EQUALVERIFY",
+        "OP_2DROP",
+        "OP_2DROP",
+        "OP_DROP",
+        "OP_1",
+    ];
+    for body in [
+        "require(substr(b, (r + 1) * 9 + 2, 1) == expected);",
+        "int row = r + 1; require(substr(b, row * 9 + 2, 1) == expected);",
+        "require(cell(b, r + 1, 2) == expected);",
+        "int row = r + 1; bool wide = row > 9; if (wide) { require(false); } require(cell(b, row, 2) == expected);",
+    ] {
+        assert_eq!(asm(&source(body)), expected, "{body}");
+    }
+    // A wide literal is pushed once and read from its binding.
+    let tokens = asm("contract C() { function spend(int input) { let q = 2147483648; require(input * q > q); } }");
+    assert_eq!(
+        tokens.iter().filter(|token| *token == "2147483648").count(),
+        1,
+        "{tokens:?}"
+    );
+    // A literal index opens only the element it names, without a runtime bounds check.
+    let tokens = asm("contract C() { private function at(int[3] xs, int k) int { return xs[k]; } function spend(int[3] rows, int input) { let k = 1 + 1; require(at(rows, k) == input); } }");
+    assert!(
+        !tokens.iter().any(|token| token == "OP_LESSTHAN"),
+        "{tokens:?}"
+    );
+}
+
+#[test]
+fn reassigned_locals_and_parameters_stay_bound() {
+    for (body, helper) in [
+        ("int row = r + 1; row = row + input; require(substr(b, row * 9 + 2, 1) == expected);", "return r + n;"),
+        ("int row = r + 1; if (input > 0) { row = input; } require(substr(b, row * 9 + 2, 1) == expected);", "return r + n;"),
+        ("int row = r + 1; for (2) { if (input > 0) { row = row + 1; } } require(substr(b, row * 9 + 2, 1) == expected);", "return r + n;"),
+        ("require(substr(b, shift(r + 1, input) * 9 + 2, 1) == expected);", "if (n > 0) { r = r + n; } return r;"),
+    ] {
+        let source = format!("contract C() {{ private function shift(int r, int n) int {{ {helper} }} function spend(bytes b, int[3] rows, int input, bytes expected) {{ for (r, unused) in rows {{ {body} }} }} }}");
+        let tokens = asm(&source);
+        assert_eq!(
+            tokens.iter().filter(|token| *token == "OP_MUL").count(),
+            3,
+            "{body}: {tokens:?}"
+        );
+        compile_unoptimized(&source).unwrap();
+    }
 }
 
 #[test]
@@ -248,8 +320,12 @@ fn computed_out_of_range_indexes_fail_for_reads_and_writes() {
         "value.points[1 - 2].y = input; require(true);",
         "for (i, x) in values { require(values[i + 1] == input); }",
         "require(identity(values[1 + 2]) == input);",
+        "let k = 1 + 2; require(values[k] == input);",
+        "for (i, x) in values { let k = i + 1; if (x > input) { require(values[k] == input); } }",
+        "require(at(values, 3) == input);",
+        "let k = 0 - 1; require(at(values, k) == input);",
     ] {
-        let source = format!("struct Data {{ ECPoint[3] points; }} contract C() {{ private function identity(int n) int {{ return n; }} function spend(int[3] values, Data value, int input) {{ require(values[0] == input); require(value.points[0].x == input); {body} }} }}");
+        let source = format!("struct Data {{ ECPoint[3] points; }} contract C() {{ private function identity(int n) int {{ return n; }} private function at(int[3] xs, int k) int {{ return xs[k]; }} function spend(int[3] values, Data value, int input) {{ require(values[0] == input); require(value.points[0].x == input); {body} }} }}");
         let error = compile(&source).unwrap_err().to_string();
         assert!(error.contains("out of range"), "{body}: {error}");
         let raw_error = compile_unoptimized(&source).unwrap_err().to_string();
@@ -292,8 +368,9 @@ fn unrolled_index_validation_skips_dead_branches_and_returned_iterations_in_both
         "for (i, unused) in values { if (i >= 3) { require(values[i + 1] == input); } else { require(true); } }",
         "require(helper(values, input) == input);",
         "require(true || bad(values, input));",
+        "require(guarded(values, 3) == input);",
     ] {
-        let source = format!("contract C() {{ private function helper(int[3] values, int input) int {{ for (i, unused) in values {{ if (i == 0) {{ return input; }} require(values[i + 1] == input); }} return 0; }} private function bad(int[3] values, int input) bool {{ for (i, unused) in values {{ require(values[i + 1] == input); }} return true; }} function spend(int[3] values, int input) {{ {body} }} }}");
+        let source = format!("contract C() {{ private function guarded(int[3] values, int k) int {{ if (k < 3) {{ return values[k]; }} return 0; }} private function helper(int[3] values, int input) int {{ for (i, unused) in values {{ if (i == 0) {{ return input; }} require(values[i + 1] == input); }} return 0; }} private function bad(int[3] values, int input) bool {{ for (i, unused) in values {{ require(values[i + 1] == input); }} return true; }} function spend(int[3] values, int input) {{ {body} }} }}");
         compile(&source).unwrap();
         compile_unoptimized(&source).unwrap();
     }
@@ -597,6 +674,8 @@ fn optimization_preserves_numeric_execution_across_scopes_and_returns() {
         "int[3] values = [7, 9, 11]; require(values[input % 3] > 0);",
         "int total = 0; int[3] values = [1, 2, 3]; for (i, v) in values { for (j, unused) in values { if (i == 0) { total = total + input; } else { total = total + v; } require(j + 1 < 4); } } require(total == 3 * input + 15);",
         "if (choose) { require(helper(input, choose) == input + 1); } else { require(helper(input, choose) == input + 2); }",
+        "let k = 2; int n = input; if (choose) { n = n + k; } else { n = n + k * k; } require(n > input);",
+        "require(helper(input, true) == input + 1); require(helper(input, false) == input + 2);",
     ].map(|body| (body, r#"
                 int[2] values = [7, 9];
                 for (i, v) in values { for (j, w) in values {

@@ -80,7 +80,18 @@ fn falls_through(body: &[Lowered]) -> bool {
     })
 }
 
-/// Lower `statements` in `scope`, which gains their bindings as they are declared.
+/// Whether a never-reassigned local or helper parameter holding `literal` is replaced by it at
+/// every read instead of being bound.
+// ponytail: literals that push 4 or more bytes stay bound, as repeating them costs more than
+// reading one copy, so they never fold further; substitute them too once wide literals are
+// hoisted into shared bindings.
+pub(super) fn propagates(literal: &str) -> bool {
+    matches!(literal, "true" | "false") || !Op::Push(literal.to_string()).pushes_more_than(2)
+}
+
+/// Lower `statements` in `scope`, which gains their bindings as they are declared. When
+/// folding, a never-reassigned local folded to a literal that `propagates` is substituted into
+/// the statements after it, its whole scope, instead of being bound.
 pub(super) fn lower(
     statements: &[LocatedStatement],
     scope: &mut types::Scope,
@@ -88,12 +99,34 @@ pub(super) fn lower(
     fold: bool,
 ) -> Result<Vec<Lowered>> {
     let mut lowered = Vec::with_capacity(statements.len());
-    for statement in statements {
+    let mut literals: Vec<(String, String)> = Vec::new();
+    for (index, statement) in statements.iter().enumerate() {
         let span = statement.span;
         let mut statement = statement.clone();
+        // ponytail: each substitution rebuilds the statement; substitute all names in one pass
+        // if bodies with many propagated locals compile slowly.
+        for (name, literal) in &literals {
+            statement.statement = substitute_statement(&statement.statement, name, literal, None);
+        }
         if fold {
             optimization::fold_statement(&mut statement.statement, scope)
                 .map_err(|error| CompileError::from(error).at(span))?;
+            if let Statement::LetBinding {
+                name,
+                value:
+                    Expression {
+                        kind: ExprKind::Literal(literal),
+                        ..
+                    },
+                ..
+            } = &statement.statement
+            {
+                if propagates(literal) && !super::functions::assigns(&statements[index + 1..], name)
+                {
+                    literals.push((name.clone(), literal.clone()));
+                    continue;
+                }
+            }
         }
         if let Some(item) =
             lower_statement(statement, scope, structs, fold).map_err(|error| error.at(span))?
@@ -195,8 +228,8 @@ fn lower_statement(
                 }));
             }
             let iterations = (0..length).map(|k| {
-                let mut substituted =
-                    substitute_loop_body(&body, &index_var, &value_var, k, &iterable);
+                let element = Some((value_var.as_str(), &iterable));
+                let mut substituted = substitute_body(&body, &index_var, &k.to_string(), element);
                 // Substitution builds untyped nodes; return types and group members
                 // were resolved on the original body and survive the copy.
                 types::annotate_statements(&mut substituted, &mut scope.clone(), structs);
@@ -313,11 +346,11 @@ fn unroll(
     })
 }
 
-/// The helpers `body` calls, each with the span of the statement that calls it.
-fn calls(body: &[Lowered], found: &mut Vec<(String, Span)>) {
-    fn walk(expression: &Expression, span: Span, found: &mut Vec<(String, Span)>) {
-        if let ExprKind::Call { name, .. } = &expression.kind {
-            found.push((name.clone(), span));
+/// The helper calls in `body`, each with the span of the statement that makes it.
+fn calls<'a>(body: &'a [Lowered], found: &mut Vec<(&'a Expression, Span)>) {
+    fn walk<'a>(expression: &'a Expression, span: Span, found: &mut Vec<(&'a Expression, Span)>) {
+        if let ExprKind::Call { .. } = &expression.kind {
+            found.push((expression, span));
         }
         for child in crate::models::child_exprs(expression) {
             walk(child, span, found);
@@ -361,16 +394,27 @@ pub(super) fn check_folded(
     constructor_scope: &types::Scope,
     structs: &[crate::models::StructDefinition],
     functions: &[Function],
-    checked: &mut std::collections::HashSet<String>,
+    checked: &mut std::collections::HashSet<(String, Vec<Option<String>>)>,
 ) -> Result<()> {
     let body = lower(statements, &mut scope.clone(), structs, true)?;
     let mut found = Vec::new();
     calls(&body, &mut found);
-    for (name, span) in found {
-        let Some(helper) = functions.iter().find(|f| f.name == name) else {
+    for (call, span) in found {
+        let ExprKind::Call { name, args, .. } = &call.kind else {
             continue;
         };
-        if !checked.insert(name) {
+        let Some(helper) = functions.iter().find(|f| f.name == *name) else {
+            continue;
+        };
+        // As at a call, literal arguments fold into the body, so each set of them is checked.
+        let literals = args
+            .iter()
+            .zip(&helper.parameters)
+            .map(|(argument, parameter)| {
+                super::functions::literal_argument(helper, parameter, argument).map(str::to_string)
+            })
+            .collect();
+        if !checked.insert((name.clone(), literals)) {
             continue;
         }
         // As at a call: the constructor's bindings, or none for a static helper, and the parameters.
@@ -390,7 +434,7 @@ pub(super) fn check_folded(
             );
         }
         check_folded(
-            &helper.statements,
+            &super::functions::substitute_arguments(helper, args),
             &scope,
             constructor_scope,
             structs,

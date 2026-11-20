@@ -79,6 +79,38 @@ pub(super) fn assigns(statements: &[LocatedStatement], name: &str) -> bool {
         })
 }
 
+/// The literal `argument` passes for `parameter` when a folding call substitutes it into a copy
+/// of `function`'s body instead of binding it: one that `lowering::propagates`, for a parameter
+/// the body never reassigns.
+pub(super) fn literal_argument<'a>(
+    function: &Function,
+    parameter: &Parameter,
+    argument: &'a Expression,
+) -> Option<&'a str> {
+    match &argument.kind {
+        ExprKind::Literal(literal)
+            if lowering::propagates(literal) && !assigns(&function.statements, &parameter.name) =>
+        {
+            Some(literal)
+        }
+        _ => None,
+    }
+}
+
+/// `function`'s body with each `literal_argument` of `args` substituted for its parameter.
+pub(super) fn substitute_arguments(
+    function: &Function,
+    args: &[Expression],
+) -> Vec<LocatedStatement> {
+    let mut body = function.statements.clone();
+    for (argument, parameter) in args.iter().zip(&function.parameters) {
+        if let Some(literal) = literal_argument(function, parameter, argument) {
+            body = substitute_body(&body, &parameter.name, literal, None);
+        }
+    }
+    body
+}
+
 impl Generator {
     pub(super) fn value_leaves(&self, path: &Path, ty: &TypeName) -> Result<Vec<TypeLeaf>> {
         Ok(crate::models::flatten_value(path, ty, &self.structs)?)
@@ -193,7 +225,7 @@ impl Generator {
         let ExprKind::Call { name, args, .. } = &expression.kind else {
             return Err("expected private function call".into());
         };
-        let function = self
+        let mut function = self
             .functions
             .iter()
             .find(|f| f.name == *name && f.is_private)
@@ -212,6 +244,10 @@ impl Generator {
         let mut arguments = Vec::new();
         let mut aliases = std::collections::HashMap::new();
         for (index, (argument, parameter)) in args.iter().zip(&function.parameters).enumerate() {
+            // The body is lowered with the literal in place of the parameter.
+            if self.optimize && literal_argument(&function, parameter, argument).is_some() {
+                continue;
+            }
             if !matches!(parameter.param_type, TypeName::Array(..))
                 && !assigns(&function.statements, &parameter.name)
             {
@@ -329,6 +365,9 @@ impl Generator {
                 self.push_temporary(Int0);
                 self.bind_local(leaf.access.clone())?;
             }
+        }
+        if self.optimize {
+            function.statements = substitute_arguments(&function, args);
         }
         if function.is_imported() {
             self.asm.pin();
