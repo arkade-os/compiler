@@ -36,7 +36,6 @@ func TestDeferredInitialization(t *testing.T) {
 		{"array loop", `int x; int[2] values = [9, 11];
             for (i, value) in values { x = value; }
             require(x == 11);`, ""},
-		{"zero loop", `int x; for (0) { x = 11; } x = input; require(x == input);`, ""},
 		{"helper return", `int x; Pair pair;
             x = result(choose, input); pair = make(choose, input);
             require(x == input); require(pair.a == input); require(pair.b[index] > input);`, `

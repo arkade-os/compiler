@@ -342,6 +342,23 @@ pub(crate) fn loop_range(
     Ok(start..end)
 }
 
+/// The indexes loop `statement` visits, if its count and range bounds are non-negative integer
+/// literals and its iterable is an array.
+pub(crate) fn loop_indexes(statement: &Statement) -> Option<std::ops::Range<usize>> {
+    match statement {
+        Statement::ForIn { iterable, .. } => match iterable.ty {
+            crate::types::ArkType::Array(_, length) => Some(0..length),
+            _ => None,
+        },
+        Statement::ForCount { count, .. } => match &count.kind {
+            ExprKind::Literal(count) => count.parse().ok().map(|count| 0..count),
+            _ => None,
+        },
+        Statement::ForRange { start, end, .. } => loop_range(start, end).ok(),
+        _ => None,
+    }
+}
+
 /// Hash function used in a tapscript condition prefix (`hashFn(x) == h`).
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]

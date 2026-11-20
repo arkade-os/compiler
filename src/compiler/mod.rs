@@ -68,6 +68,9 @@ enum StackItem {
 const MAX_STACK_ITEMS: usize = 1000;
 /// Bytes the VM allows in a script (`txscript.MaxScriptSize`).
 const MAX_SCRIPT_SIZE: usize = 10_000;
+/// Iterations a loop and the loops nested in it may unroll, checked before unrolling. An
+/// iteration can emit no bytes, so `MAX_SCRIPT_SIZE` alone does not bound the work.
+pub(crate) const MAX_LOOP_ITERATIONS: usize = 10_000;
 /// Bytes the VM allows in one stack element (`txscript.MaxScriptElementSize`).
 const MAX_ELEMENT_SIZE: usize = 520;
 

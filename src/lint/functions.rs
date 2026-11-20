@@ -49,8 +49,8 @@ struct OutputChecks {
 
 /// What holds on every path through the statements walked so far.
 ///
-/// ponytail: a `for` body counts as run, which a zero-count `for` is not, and a helper body
-/// as run to its end, which an early `return` cuts short. Track both if a lint needs them.
+/// ponytail: a helper body counts as run to its end, which an early `return` cuts short. Track
+/// returns if a lint needs them.
 #[derive(Default, Clone, Copy)]
 struct Path {
     /// A transaction signature: `checkSig` or `checkMultisig`.

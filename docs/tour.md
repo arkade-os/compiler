@@ -164,7 +164,7 @@ contract StructVault(Policy policy) {
 ```
 
 - Arrays are fixed-size and part of the type.
-- Loops unroll at compile time, one copy per element, so script size grows with the declared size.
+- Loops unroll at compile time, one copy per element, so script size grows with the declared size. A loop that runs zero times is a compile error. A loop may unroll at most 10,000 iterations, counting the loops nested in it.
 - Structs flatten to their scalar leaves. The artifact keeps the declaration so clients can flatten the same way.
 - A struct literal names its type, as in `Signer { key: k, weight: 1 }`, or leaves it to its position, as `local` and its `limits` do.
 

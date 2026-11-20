@@ -496,21 +496,15 @@ fn validate_binding_statements(
                 validate_binding_statements(body, function_name, scopes, structs, issues);
                 scopes.pop();
             }
-            Statement::ForCount { count, body } => {
-                if !matches!(&count.kind, ExprKind::Literal(value) if value.parse::<usize>().is_ok())
-                {
+            Statement::ForCount { body, .. } => {
+                if crate::models::loop_indexes(&statement.statement).is_none() {
                     issues.push(ValidationIssue::error(
                         "loop count must be a non-negative integer compile-time constant",
                     ));
                 }
-                let incoming = scopes.clone();
                 scopes.push(HashMap::new());
                 validate_binding_statements(body, function_name, scopes, structs, issues);
                 scopes.pop();
-                if !matches!(&count.kind, ExprKind::Literal(count) if count.parse::<usize>().is_ok_and(|count| count > 0))
-                {
-                    *scopes = incoming;
-                }
             }
             Statement::ForRange {
                 index_var,
@@ -518,11 +512,9 @@ fn validate_binding_statements(
                 end,
                 body,
             } => {
-                let range = crate::models::loop_range(start, end);
-                if let Err(message) = &range {
-                    issues.push(ValidationIssue::error(message.clone()));
+                if let Err(message) = crate::models::loop_range(start, end) {
+                    issues.push(ValidationIssue::error(message));
                 }
-                let incoming = scopes.clone();
                 let index = BindingInfo {
                     binding_type: ArkType::Int,
                     source: BindingSource::Loop,
@@ -531,9 +523,6 @@ fn validate_binding_statements(
                 scopes.push(HashMap::from([(index_var.clone(), index)]));
                 validate_binding_statements(body, function_name, scopes, structs, issues);
                 scopes.pop();
-                if !range.is_ok_and(|range| !range.is_empty()) {
-                    *scopes = incoming;
-                }
             }
         }
         locate(&mut issues[first..], statement.span);
