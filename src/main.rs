@@ -88,33 +88,35 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let matches = Args::command().get_matches();
     let args = Args::from_arg_matches(&matches)?;
     if let Some(explain) = &args.explain {
-        let lints = Lint::ALL.iter().map(|&lint| {
-            let level = format!("{:?}", lint.level()).to_lowercase();
-            let category = format!("{:?}", lint.category()).to_lowercase();
-            let kind = format!("{category}, {level} by default");
-            (lint.id(), kind, lint.summary(), lint.explanation())
-        });
-        let codes = arkade_compiler::errors::ErrorCode::ALL.iter().map(|&code| {
-            let kind = "error".to_string();
-            (code.id(), kind, code.summary(), code.explanation())
-        });
-        let entries: Vec<_> = lints.chain(codes).collect();
-        match explain {
-            Some(id) => {
-                let (_, kind, _, explanation) = entries
-                    .iter()
-                    .find(|entry| entry.0 == id)
-                    .ok_or_else(|| format!("unknown lint or error code '{id}'"))?;
-                println!("{id}: {kind}\n\n{explanation}");
+        let kind = |lint: Lint| {
+            format!("{:?}, {:?} by default", lint.category(), lint.level()).to_lowercase()
+        };
+        let Some(id) = explain else {
+            let codes = arkade_compiler::errors::ErrorCode::ALL
+                .iter()
+                .map(|code| (code.id(), "error".to_string(), code.summary()));
+            let rows: Vec<_> = Lint::ALL
+                .iter()
+                .map(|&lint| (lint.id(), kind(lint), lint.summary()))
+                .chain(codes)
+                .collect();
+            let id_width = rows.iter().map(|(id, ..)| id.len()).max().unwrap_or(0);
+            let kind_width = rows
+                .iter()
+                .map(|(_, kind, _)| kind.len())
+                .max()
+                .unwrap_or(0);
+            for (id, kind, summary) in rows {
+                println!("{id:id_width$}  {kind:kind_width$}  {summary}");
             }
-            None => {
-                let id_width = entries.iter().map(|entry| entry.0.len()).max().unwrap_or(0);
-                let kind_width = entries.iter().map(|entry| entry.1.len()).max().unwrap_or(0);
-                for (id, kind, summary, _) in &entries {
-                    println!("{id:id_width$}  {kind:kind_width$}  {summary}");
-                }
-            }
+            return Ok(());
+        };
+        if let Ok(code) = id.parse::<arkade_compiler::errors::ErrorCode>() {
+            println!("{id}: error\n\n{}", code.explanation());
+            return Ok(());
         }
+        let lint: Lint = id.parse()?;
+        println!("{id}: {}\n\n{}", kind(lint), lint.explanation());
         return Ok(());
     }
 

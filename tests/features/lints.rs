@@ -642,20 +642,26 @@ fn every_lint_is_documented_and_explained() {
     assert!(output.status.success());
     let codes = arkade_compiler::errors::ErrorCode::ALL
         .iter()
-        .map(|code| code.id());
-    let ids: Vec<_> = Lint::ALL
+        .map(|code| (code.id(), code.summary()));
+    let rows: Vec<_> = Lint::ALL
         .iter()
-        .map(|lint| lint.id())
+        .map(|lint| (lint.id(), lint.summary()))
         .chain(codes)
         .collect();
-    assert_eq!(listed.lines().count(), ids.len(), "{listed}");
-    for id in ids {
-        let row = format!("{id} ");
+    assert_eq!(listed.lines().count(), rows.len(), "{listed}");
+    for (line, (id, summary)) in listed.lines().zip(rows) {
         assert!(
-            listed.lines().any(|line| line.starts_with(&row)),
-            "{listed}"
+            line.starts_with(&format!("{id} ")) && line.ends_with(summary),
+            "{line}"
         );
     }
+    assert!(
+        listed
+            .lines()
+            .any(|line| line.starts_with("offchain-locktime ")
+                && line.contains("  correctness, deny by default  ")),
+        "{listed}"
+    );
 }
 
 #[test]

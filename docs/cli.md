@@ -28,7 +28,7 @@ arkadec contract.ark --check             # diagnostics only, no artifact
 | `--debug` | Also writes `<name>.debug.json` with Arkade Script source maps; see [Debug file](artifact.md#debug-file) |
 | `--report` | Prints each Arkade Script's bytes, stack peak and opcode execution counts; see [Script report](#script-report) |
 | `--allow`, `--warn`, `--deny <lint>` | Set lint levels; see [Lints](lints.md#from-the-command-line) |
-| `--explain <id>` | Prints what a lint or an error code (`unknown-name`, `unknown-function`) reports, why it matters and how to fix it; with no id, lists every lint, with its category and default level, and every error code |
+| `--explain [<id>]` | Prints what a lint or an error code (`unknown-name`, `unknown-function`) reports, why it matters and how to fix it; with no id, lists every lint, with its category and default level, and every error code |
 | `--builtins` | Prints every builtin and `tx`/`this` member, with its signature and docs, as JSON |
 
 The source file must have the `.ark` extension.
