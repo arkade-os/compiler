@@ -95,7 +95,7 @@ Fees.check(amount);                // void library function call
 - Constructor parameters are immutable.
 - `if` conditions must be `bool`.
 - A `require` message emits nothing into the script; it appears only in the [debug file](../artifact.md#debug-file). Tapscript functions drop it.
-- `for (i, item) in arr` evaluates a helper result or literal `arr` once, and checks a runtime index when the loop starts.
+- `for (i, item) in arr` evaluates a helper result or literal `arr` once, and checks a runtime index when the loop starts. Each use of `item` reads `arr[i]` as it currently is, so writes to `arr` in the body are seen.
 
 ### Declaring without a value
 
