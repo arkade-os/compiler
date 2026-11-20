@@ -27,6 +27,7 @@ pub(crate) fn parse_named_tapscript(
     let inputs = parse_parameters(params)?;
     let block = inner.next().ok_or("Missing tapscript body")?;
     let mut items = Vec::new();
+    let mut consumed = std::collections::HashSet::new();
     for stmt in block.into_inner() {
         if stmt.as_rule() == Rule::tap_require_stmt {
             let mut inner = stmt.into_inner();
@@ -86,7 +87,24 @@ pub(crate) fn parse_named_tapscript(
                 return Err(CompileError::from(message).at(part.as_span().into()));
             }
             let at = expr.as_span().into();
-            items.push(parse_tap_item(expr, constants).map_err(|e| CompileError::from(e).at(at))?);
+            let item = parse_tap_item(expr.clone(), constants)
+                .map_err(|e| CompileError::from(e).at(at))?;
+            let operands = match &item {
+                crate::models::TapItem::Hash { preimage, .. } => std::slice::from_ref(preimage),
+                crate::models::TapItem::Sig { sigs, .. } => sigs.as_slice(),
+                _ => &[],
+            };
+            for (path, operand) in operands.iter().zip(witness_operands(&expr)) {
+                let input = path.key();
+                if inputs.iter().any(|p| p.name == input) && !consumed.insert(input.clone()) {
+                    let message = format!(
+                        "tapscript `{name}`: input `{input}` is used more than once, but the \
+                         witness carries each input once; declare a separate input for each use"
+                    );
+                    return Err(CompileError::from(message).at(operand.as_span().into()));
+                }
+            }
+            items.push(item);
             if let Some(message) = inner.next() {
                 parse_string_literal(message.as_str())?;
             }
@@ -100,6 +118,26 @@ pub(crate) fn parse_named_tapscript(
         inputs,
         items,
     })
+}
+
+/// The operands a tapscript require consumes from the witness, in source order: a hash's
+/// preimage or a signature check's signatures.
+fn witness_operands<'a>(expr: &Pair<'a, Rule>) -> Vec<Pair<'a, Rule>> {
+    let mut inner = expr.clone().into_inner();
+    match expr.as_rule() {
+        Rule::hash_comparison => inner
+            .next()
+            .and_then(|f| f.into_inner().nth(1))
+            .into_iter()
+            .collect(),
+        Rule::check_sig => inner.take(1).collect(),
+        Rule::check_multisig => inner
+            .nth(1)
+            .into_iter()
+            .flat_map(|sigs| sigs.into_inner())
+            .collect(),
+        _ => Vec::new(),
+    }
 }
 
 /// The Arkade-Script-only member a `primary_expr` starts with: `this.expiry`, `this.tunnel(...)`,

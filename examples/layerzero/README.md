@@ -83,13 +83,13 @@ expressed in Arkade:
 | Marker output pinning | `tx.outputs[1].script == new ReceiveMarker(…)` | `OP_INSPECTOUTPUTSCRIPTPUBKEY` + VTXO placeholder |
 | Marker mint (1 unit) | `tx.outputs[i].assets.lookup(marker) == 1` + `group.sumOutputs == 1` | `OP_INSPECTOUTASSETLOOKUP`, `OP_INSPECTASSETGROUPSUM` |
 | Marker burn | `group.sumOutputs == 0` | same |
-| USDT0 delta == credited amount | `usdt0Group.delta == bytes2uint(reverseBytes(substr(packet, off, 8)))` | `OP_INSPECTASSETGROUPSUM`, `OP_SUBSTR`, `OP_REVERSEBYTES`, `OP_NUM2BIN`, `OP_CAT`, `OP_BIN2NUM` |
+| USDT0 delta == credited amount | `usdt0Group.delta == bytes2uint(reverseBytes(substr(packet, off, 8)))` | `OP_INSPECTASSETGROUPSUM`, `OP_SUBSTR`, `OP_REVERSEBYTES`, `OP_CAT`, `OP_BIN2NUM` |
 | Marker pinned to consumer | `tx.inputs[i].arkadeScriptHash == expectedHash` | `OP_INSPECTINPUTARKADESCRIPTHASH` |
 | Marker at expected input position | `this.activeInputIndex == k` | `OP_PUSHCURRENTINPUTINDEX` |
 | Packet version | `substr(tx.packet(t), 0, 1) == 1` | `OP_INSPECTPACKET`, `OP_SUBSTR` |
 | Packet size | `size(tx.packet(t)) == N` | `OP_INSPECTPACKET`, `OP_SIZE`, `OP_NIP` |
 | Route preservation | `substr(tx.packet(t), off, len) == endpointID` | `OP_INSPECTPACKET`, `OP_SUBSTR`, `OP_EQUAL` |
-| Big-endian numeric packet fields | `bytes2uint(reverseBytes(substr(packet, off, 4)))` | `OP_REVERSEBYTES`, `OP_NUM2BIN`, `OP_CAT`, `OP_BIN2NUM` |
+| Big-endian numeric packet fields | `bytes2uint(reverseBytes(substr(packet, off, 4)))` | `OP_REVERSEBYTES`, `OP_CAT`, `OP_BIN2NUM` |
 | DVN attested-hash binding | `sha256(substr(recv, 1, 140)) == attestedHash` | `OP_INSPECTPACKET`, `OP_SUBSTR`, `OP_SHA256` |
 | LzSend GUID = sha256(invocation) | `sha256(substr(tx.inputs[1].packet(20), 0, 175)) == substr(tx.packet(19), 77, 32)` | `OP_INSPECTINPUTPACKET`, `OP_SHA256`, `OP_INSPECTPACKET`, `OP_SUBSTR` |
 

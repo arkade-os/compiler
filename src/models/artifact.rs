@@ -19,11 +19,7 @@ pub struct FunctionInput {
     pub param_type: String,
 }
 
-/// A single element in a tapleaf's `witness` array.
-///
-/// Each leaf's `witness` lists every value the caller must supply at spend time,
-/// in source-declared order (constructor parameters, which are baked into the
-/// script, are excluded).
+/// A single element in a tapleaf's [`AbiLeaf::witness`] array.
 ///
 /// The `encoding` field is a stable identifier that code generators
 /// (TypeScript, Go, …) can switch on to pick the correct serializer:
@@ -37,7 +33,7 @@ pub struct FunctionInput {
 /// | `scriptnum`     | Bitcoin CScriptNum (variable-length LE)       |
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct WitnessElement {
-    /// Parameter name (matches an `<name>` placeholder in `asm`)
+    /// Input name
     pub name: String,
     /// Arkade Language type string (e.g., `"pubkey"`, `"signature"`, `"bytes32"`)
     #[serde(rename = "type")]
@@ -94,7 +90,11 @@ pub struct AbiLeaf {
     /// Leaf name (source tapscript name, or the Arkade Script function's name for a synthesized
     /// default).
     pub name: String,
-    /// Ordered witness stack the caller supplies at spend time.
+    /// The inputs supplied at spend time, in the source tapscript's declaration order, or the
+    /// single `operatorSig` for a synthesized default, with `injected` on the operator's
+    /// signatures. Not the stack order: the leaf script consumes the preimage, if any, then a
+    /// signature per key in the order the keys are written, so a client builds the stack from
+    /// the closure, signatures by key with the preimage on top.
     pub witness: Vec<WitnessElement>,
     /// Tapleaf assembly (pubkeys + ops; signatures live in `witness`).
     pub asm: Vec<String>,

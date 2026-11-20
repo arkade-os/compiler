@@ -33,13 +33,7 @@ fn loop_indexes_encoding_requirements_and_branches_match_static_code() {
     );
     let raw = compile_unoptimized(&looped).unwrap();
     let optimized = arkade_asm_tokens(&output, "spend");
-    for opcode in [
-        "OP_NUM2BIN",
-        "OP_IF",
-        "OP_MUL",
-        "OP_LESSTHAN",
-        "OP_GREATERTHANOREQUAL",
-    ] {
+    for opcode in ["OP_NUM2BIN", "OP_IF", "OP_MUL", "OP_LESSTHAN", "OP_WITHIN"] {
         assert!(
             !optimized.iter().any(|token| token == opcode),
             "{opcode}: {optimized:?}"
@@ -95,7 +89,7 @@ fn literal_arithmetic_and_comparisons_fold_without_propagating_locals() {
         assert_eq!(asm(&source), ["OP_1"], "{condition}");
     }
     let source = "contract C() { function spend(int[3] values, int input) { let k = 1 + 1; require(values[k] == input); } }";
-    assert!(asm(source).iter().any(|token| token == "OP_LESSTHAN"));
+    assert!(asm(source).iter().any(|token| token == "OP_WITHIN"));
 }
 
 #[test]
@@ -215,8 +209,7 @@ fn static_indexes_cover_reads_writes_nested_arrays_and_helper_arguments() {
         assert_eq!(asm(&source(body)), asm(&source(expected)), "{body}");
     }
     let runtime = asm("contract C() { function spend(int[3] values, int index, int input) { require(values[index + 1] == input); } }");
-    assert!(runtime.iter().any(|token| token == "OP_LESSTHAN"));
-    assert!(runtime.iter().any(|token| token == "OP_GREATERTHANOREQUAL"));
+    assert!(runtime.iter().any(|token| token == "OP_WITHIN"));
 }
 
 #[test]
@@ -282,7 +275,7 @@ fn constant_index_diagnostics_are_independent_of_optimization() {
     let source = "contract C() { function spend(int[3] values, int input) { require(values[1 + 1] == input); } }";
     let raw = arkade_asm_tokens(&compile_unoptimized(source).unwrap(), "spend");
     assert!(raw.iter().any(|token| token == "OP_ADD"));
-    assert!(raw.iter().any(|token| token == "OP_LESSTHAN"));
+    assert!(raw.iter().any(|token| token == "OP_WITHIN"));
 }
 
 #[test]
@@ -303,16 +296,7 @@ fn unrolled_index_validation_skips_dead_branches_and_returned_iterations_in_both
 fn unoptimized_builds_check_unrolled_indexes_past_the_end_of_removed_code_at_runtime() {
     // Index 3 is past the end of each array only in code folding removes: a branch whose
     // condition becomes false, and the iterations after an unconditional return.
-    let check = [
-        "OP_DUP",
-        "OP_0",
-        "OP_GREATERTHANOREQUAL",
-        "OP_VERIFY",
-        "OP_DUP",
-        "OP_3",
-        "OP_LESSTHAN",
-        "OP_VERIFY",
-    ];
+    let check = ["OP_DUP", "OP_0", "OP_3", "OP_WITHIN", "OP_VERIFY"];
     for access in [
         "t = t + xs[i];",
         "t = t + ps[i].b;",
@@ -544,6 +528,12 @@ fn optimization_preserves_numeric_execution_across_scopes_and_returns() {
                         "OP_NEGATE" => -value,
                         _ => value + 1,
                     });
+                }
+                "OP_WITHIN" => {
+                    let max = stack.pop().unwrap();
+                    let min = stack.pop().unwrap();
+                    let value = stack.pop().unwrap();
+                    stack.push(i128::from(min <= value && value < max));
                 }
                 "OP_ADD"
                 | "OP_SUB"

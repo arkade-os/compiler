@@ -40,8 +40,9 @@ pub fn offset(source: &str, line: usize, column: usize) -> Option<usize> {
     (units >= column).then_some(start + text.len())
 }
 
-/// `diagnostic` as JSON for tools: `severity`, `code`, `message`, `file`, and, when it is
-/// located and `source` is its file's text, `start` and `end` as `{ line, column }`.
+/// `diagnostic` as JSON for tools: `severity`, `code`, `message`, `file`, `start` and `end` as
+/// `{ line, column }` when it is located and `source` is its file's text, and `suggestions`, each
+/// with `message`, `start`, `end` and `replacement`.
 pub fn to_json(diagnostic: &Diagnostic, source: Option<&str>) -> serde_json::Value {
     let [start, end] = range_json(source, diagnostic.span);
     serde_json::json!({
@@ -97,9 +98,10 @@ pub enum Severity {
 #[non_exhaustive]
 pub struct Diagnostic {
     pub severity: Severity,
-    /// Which pass raised this: `"validation"` (semantic checks), `"type"` (type checker),
-    /// `"emission"` (code generation), `"internal"` (a compiler bug) or a lint's id. `None` for
-    /// parse, import and file errors.
+    /// A lint's id, an error code's id such as `"unknown-name"` (see [`crate::errors::ErrorCode`]),
+    /// or else the pass that raised this: `"validation"` (semantic checks), `"type"` (type
+    /// checker), `"emission"` (code generation) or `"internal"` (a compiler bug). `None` for file,
+    /// pragma, parse and import errors, and for a library compiled as the entry.
     pub code: Option<String>,
     pub message: String,
     pub file: String,
@@ -112,6 +114,7 @@ pub struct Diagnostic {
 
 /// Replacing `span` with `replacement`, described by `message`.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct Suggestion {
     pub message: String,
     pub span: Span,

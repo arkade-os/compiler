@@ -21,6 +21,7 @@ use crate::properties::{GroupIoProperty, GroupProperty};
 /// Internal types are produced by introspection expressions; they never appear
 /// in user-written type annotations.
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub enum ArkType {
     // ── Declared types (match grammar data_type rule) ──────────────────────
     /// 64-byte Schnorr signature

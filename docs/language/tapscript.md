@@ -24,7 +24,7 @@ The leaf script is fixed when the address is made, and the witness is supplied w
 | Timelock | A number, a scalar constructor parameter, or `operatorExitDelay` in `older(...)` without a unit |
 | Key | One of the [keys](#keys) below |
 
-A tapscript input used as a key, hash value or timelock is an error. The hash preimage and the signatures are tapscript inputs, which the leaf consumes from the witness. Use each signature input once.
+A tapscript input used as a key, hash value or timelock is an error. The hash preimage and the signatures are tapscript inputs, which the leaf consumes from the witness, so a leaf may use each tapscript input only once.
 
 Tapscript hashlocks use `require(hashFn(preimage) == hash)` with `sha256`, `hash256`, `hash160`, or `ripemd160`. A `bytes32` or `bytes20` preimage input makes the leaf check its length with `OP_SIZE <n> OP_EQUALVERIFY`; a `bytes` preimage may have any length.
 

@@ -12,11 +12,18 @@
 
 use arkade_compiler::models::{AbiFunctionGroup, AbiLeaf, ContractJson};
 
-pub fn compile_unoptimized(source: &str) -> Result<ContractJson, Box<dyn std::error::Error>> {
+/// Settings with `optimize` set, built as a crate outside the compiler must build them.
+pub fn options(optimize: bool) -> arkade_compiler::CompileOptions {
+    let mut options = arkade_compiler::CompileOptions::default();
+    options.optimize = optimize;
+    options
+}
+
+pub fn compile_unoptimized(source: &str) -> Result<ContractJson, arkade_compiler::Error> {
     arkade_compiler::compile_sources_with_options(
         "main.ark",
         &[("main.ark".to_string(), source.to_string())].into(),
-        arkade_compiler::CompileOptions { optimize: false },
+        options(false),
     )
 }
 
@@ -24,7 +31,7 @@ pub fn compile_unoptimized(source: &str) -> Result<ContractJson, Box<dyn std::er
 pub fn project(
     entry: &str,
     sources: &[(&str, &str)],
-) -> Result<ContractJson, Box<dyn std::error::Error>> {
+) -> Result<ContractJson, arkade_compiler::Error> {
     arkade_compiler::compile_sources(
         entry,
         &sources
@@ -97,7 +104,7 @@ pub fn leaf_asm_tokens(out: &ContractJson, group_name: &str, leaf_name: &str) ->
     leaf(out, group_name, leaf_name).asm.clone()
 }
 
-/// Witness element names of a leaf (the on-chain witness stack items).
+/// Names of a leaf's declared witness inputs.
 pub fn witness_names(out: &ContractJson, group_name: &str, leaf_name: &str) -> Vec<String> {
     leaf(out, group_name, leaf_name)
         .witness
