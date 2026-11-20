@@ -111,9 +111,8 @@ packet-derived value before it is used:
   the contract-baked DVN pubkeys (which are themselves pinned against the
   in-packet DVN pubkey slots in the Endpoint state).
 
-This is the same pattern the existing examples use for hash preimages
-(see `htlc.ark`'s `claim(preimage)` and `fuji_safe.ark`'s
-`liquidate(currentPrice)`). The witness supplies an unverified value;
+This is the same pattern `htlc.ark`'s `claim(preimage)` uses for hash
+preimages. The witness supplies an unverified value;
 the contract body proves it equals the canonical on-chain value before
 relying on it.
 

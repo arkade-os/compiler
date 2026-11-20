@@ -4,14 +4,6 @@ import * as contracts from './contracts.js';
 
 // Projects: collections of related contracts
 const projects = {
-    stability: {
-        name: 'Stability',
-        description: 'USD-denominated BTC positions with oracle-signed price witness',
-        files: {
-            'stability_vault.ark': contracts.stability_vault,
-            'stability_offer.ark': contracts.stability_offer,
-        }
-    },
     layerzero: {
         name: 'LayerZero / USDT0',
         description: 'LayerZero pathway Endpoint + USDT0 OApp with receive/send invocation markers',
@@ -32,9 +24,8 @@ const projects = {
     },
     bonds: {
         name: 'Bonds',
-        description: "Fixed-maturity bond market with a phased lifecycle: borrowers self-issue 1:1 credit + debit tokens against collateral and sell credit on the order book for USDT (no interest rate); permissionless oracle-priced margin call (pre-maturity, fires when collateralValue < liqThresholdBps × mintedAmount / 10000) keeps every vault thresholded healthy so credit tokens are genuinely fungible; post-maturity auction window settles defaulted collateral; credit holders redeem pro-rata into single-sig wallets",
+        description: 'Per-issuance collateral vault for a fixed-maturity bond, with repay, liquidate, auction, and roll paths',
         files: {
-            'repayment_pool.ark': contracts.repayment_pool,
             'bond_mint.ark': contracts.bond_mint,
         }
     },
@@ -56,8 +47,6 @@ const examples = {
     single_sig: { name: 'SingleSig', code: contracts.single_sig },
     htlc: { name: 'HTLC', code: contracts.htlc },
     escrow: { name: 'Escrow', code: contracts.escrow },
-    fuji_safe: { name: 'FujiSafe', code: contracts.fuji_safe },
-    struct_vault: { name: 'StructVault', code: contracts.struct_vault },
     swap: { name: 'NonInteractiveSwap', code: contracts.non_interactive_swap },
 };
 
@@ -65,8 +54,6 @@ const examplePaths = {
     single_sig: 'single_sig/single_sig.ark',
     htlc: 'htlc/htlc.ark',
     escrow: 'escrow/escrow.ark',
-    fuji_safe: 'fuji_safe/fuji_safe.ark',
-    struct_vault: 'struct_vault/struct_vault.ark',
     swap: 'non_interactive_swap/non_interactive_swap.ark',
 };
 

@@ -242,11 +242,8 @@ fn all_examples_have_well_formed_placeholders() {
 }
 
 /// Verify placeholder resolution for simple contracts that have no let-binding
-/// placeholders or compound expression placeholders.  Complex contracts like
-/// arkade_kitties use `let sireGroup = tx.assetGroups.lookup(...)` which emits
-/// `<sireGroup>` — an unresolved local-variable placeholder (a known current
-/// compiler limitation tracked by the variable-binding TODO).  Those are
-/// correctly surfaced as warnings by `local_check_placeholder_consistency` and
+/// placeholders or compound expression placeholders.  Let-bound asset groups,
+/// as in controlled_mint's `let tokenGroup = tx.assetGroups.lookup(...)`, are
 /// tested separately below.
 #[test]
 fn simple_contracts_have_fully_resolvable_placeholders() {
@@ -303,16 +300,16 @@ fn simple_contracts_have_fully_resolvable_placeholders() {
 
 #[test]
 fn local_variable_placeholders_are_resolved() {
-    let path = examples_dir().join("arkade_kitties/arkade_kitties.ark");
+    let path = examples_dir().join("controlled_mint/controlled_mint.ark");
     if !path.exists() {
         return;
     }
-    let output = compile_file(&path).expect("arkade_kitties.ark must compile");
+    let output = compile_file(&path).expect("controlled_mint.ark must compile");
 
-    // Find the breed function group
-    let breed_group = output.functions.iter().find(|g| g.name == "breed");
+    // Find the mint function group
+    let mint_group = output.functions.iter().find(|g| g.name == "mint");
 
-    if let Some(group) = breed_group {
+    if let Some(group) = mint_group {
         if let Some(arkade) = &group.arkade {
             let ctor_names: Vec<&str> = output.parameters.iter().map(|p| p.name.as_str()).collect();
             let input_names: Vec<&str> = arkade.inputs.iter().map(|i| i.name.as_str()).collect();
@@ -324,7 +321,7 @@ fn local_variable_placeholders_are_resolved() {
                 .collect();
             assert!(
                 unresolved.is_empty(),
-                "arkade_kitties breed has unresolved local placeholders: {unresolved:?}"
+                "controlled_mint mint has unresolved local placeholders: {unresolved:?}"
             );
         }
     }
