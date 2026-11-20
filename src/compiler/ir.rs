@@ -138,23 +138,7 @@ impl Op {
         if let Ok(number) = value.parse::<i64>() {
             return scriptnum_len(number) > limit;
         }
-        let mut bytes = vec![0u8];
-        for digit in value.trim_start_matches('-').bytes() {
-            let mut carry = u16::from(digit - b'0');
-            for byte in &mut bytes {
-                carry += u16::from(*byte) * 10;
-                *byte = carry as u8;
-                carry >>= 8;
-            }
-            if carry != 0 {
-                bytes.push(carry as u8);
-            }
-            // Stop once the magnitude alone exceeds the limit, bounding conversion memory.
-            if bytes.len() > limit {
-                return true;
-            }
-        }
-        bytes.len() + usize::from(bytes.last().unwrap() & 0x80 != 0) > limit
+        decimal_len(value, limit) > limit
     }
 
     /// The fewest bytes this takes once assembled with canonical pushes;
@@ -163,12 +147,17 @@ impl Op {
         match self {
             Op::Opcode(_) => 1,
             Op::Push(value) => match value.strip_prefix("0x") {
+                // Of one-byte values, only 0x01…0x10 and 0x81 push as a single opcode.
+                Some(hex) if hex.len() == 2 => match u8::from_str_radix(hex, 16) {
+                    Ok(0x01..=0x10 | 0x81) => 1,
+                    _ => 2,
+                },
                 Some(hex) => push_size(hex.len() / 2),
                 None => match value.parse::<i64>() {
                     Ok(-1..=16) => 1,
                     Ok(number) => 1 + scriptnum_len(number),
-                    // Beyond i64 the magnitude alone takes eight bytes.
-                    Err(_) => 1 + 8,
+                    // The element limit rejects a longer push, so counting stops just past it.
+                    Err(_) => push_size(decimal_len(value, super::MAX_ELEMENT_SIZE)),
                 },
             },
             Op::Param(name) => push_size(param_width(name)),
@@ -188,6 +177,28 @@ fn push_size(len: usize) -> usize {
         256..=65535 => 3 + len,
         _ => 5 + len,
     }
+}
+
+/// A decimal literal's Script-number length, or `limit + 1` once it exceeds `limit`.
+fn decimal_len(value: &str, limit: usize) -> usize {
+    let mut bytes = vec![0u8];
+    for digit in value.trim_start_matches('-').bytes() {
+        let mut carry = u16::from(digit - b'0');
+        for byte in &mut bytes {
+            carry += u16::from(*byte) * 10;
+            *byte = carry as u8;
+            carry >>= 8;
+        }
+        if carry != 0 {
+            bytes.push(carry as u8);
+        }
+        // Stop once the magnitude alone exceeds the limit, bounding conversion memory.
+        if bytes.len() > limit {
+            return limit + 1;
+        }
+    }
+    // A set top bit needs an extra byte for the sign.
+    bytes.len() + usize::from(bytes.last().unwrap() & 0x80 != 0)
 }
 
 fn scriptnum_len(number: i64) -> usize {
@@ -215,7 +226,17 @@ mod tests {
         assert_eq!(size("127"), 2);
         assert_eq!(size("128"), 3);
         assert_eq!(size("-255"), 3);
+        // 2^63 needs a sign byte after its eight magnitude bytes.
+        assert_eq!(size("9223372036854775808"), 10);
+        assert_eq!(size("-9223372036854775809"), 10);
+        assert_eq!(
+            size("14474011154664524427946373126085988481658748083205070504932198000989141204997"),
+            33
+        );
         assert_eq!(size("0x"), 1);
+        assert_eq!(size("0x10"), 1);
+        assert_eq!(size("0x81"), 1);
+        assert_eq!(size("0x00"), 2);
         assert_eq!(size(&format!("0x{}", "ab".repeat(76))), 78);
         assert_eq!(Op::Param("key".into()).min_size(&|_| 32), 33);
         assert_eq!(Op::Opcode(Opcode::Equal).min_size(&none), 1);

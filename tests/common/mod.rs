@@ -104,7 +104,7 @@ pub fn leaf_asm_tokens(out: &ContractJson, group_name: &str, leaf_name: &str) ->
     leaf(out, group_name, leaf_name).asm.clone()
 }
 
-/// Witness element names of a leaf (the on-chain witness stack items).
+/// Names of a leaf's declared witness inputs.
 pub fn witness_names(out: &ContractJson, group_name: &str, leaf_name: &str) -> Vec<String> {
     leaf(out, group_name, leaf_name)
         .witness
