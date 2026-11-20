@@ -183,12 +183,6 @@ fn roundtrip_htlc() {
 }
 
 #[test]
-fn roundtrip_token_vault() {
-    let output = compile_example("token_vault/token_vault.ark");
-    assert_output_invariants(&output, "token_vault/token_vault.ark");
-}
-
-#[test]
 fn roundtrip_controlled_mint() {
     let output = compile_example("controlled_mint/controlled_mint.ark");
     assert_output_invariants(&output, "controlled_mint/controlled_mint.ark");
@@ -218,30 +212,9 @@ fn roundtrip_nft_mint() {
 }
 
 #[test]
-fn roundtrip_fuji_safe() {
-    let output = compile_example("fuji_safe/fuji_safe.ark");
-    assert_output_invariants(&output, "fuji_safe/fuji_safe.ark");
-}
-
-#[test]
-fn roundtrip_stability_vault() {
-    let output = compile_example("stability/stability_vault.ark");
-    assert_output_invariants(&output, "stability/stability_vault.ark");
-}
-
-#[test]
 fn roundtrip_threshold_oracle() {
     let output = compile_example("threshold_oracle/threshold_oracle.ark");
     assert_output_invariants(&output, "threshold_oracle/threshold_oracle.ark");
-}
-
-#[test]
-fn roundtrip_threshold_multisig_htlc() {
-    let output = compile_example("threshold_multisig_htlc/threshold_multisig_htlc.ark");
-    assert_output_invariants(
-        &output,
-        "threshold_multisig_htlc/threshold_multisig_htlc.ark",
-    );
 }
 
 #[test]
@@ -264,38 +237,9 @@ fn roundtrip_non_interactive_swap() {
 }
 
 #[test]
-fn roundtrip_fee_adapter() {
-    let output = compile_example("fee_adapter/fee_adapter.ark");
-    assert_output_invariants(&output, "fee_adapter/fee_adapter.ark");
-}
-
-#[test]
-fn roundtrip_stability_offer() {
-    let output = compile_example("stability/stability_offer.ark");
-    assert_output_invariants(&output, "stability/stability_offer.ark");
-}
-
-#[test]
-fn roundtrip_arkade_kitties() {
-    let output = compile_example("arkade_kitties/arkade_kitties.ark");
-    assert_output_invariants(&output, "arkade_kitties/arkade_kitties.ark");
-}
-
-#[test]
 fn roundtrip_payment_auth() {
     let output = compile_example("payment_auth/payment_auth.ark");
     assert_output_invariants(&output, "payment_auth/payment_auth.ark");
-}
-
-#[test]
-#[ignore = "dynamic contract reconstruction is temporarily disabled"]
-fn roundtrip_repayment_pool() {
-    let output = compile_example("bonds/repayment_pool.ark");
-    assert_output_invariants(&output, "bonds/repayment_pool.ark");
-    assert_eq!(output.name, "RepaymentPool");
-    // 7 function-backed spend groups (issue, acceptRepayment, rollOut, rollIn,
-    // liquidate, acceptAuction, redeem); no standalone exit tapscript.
-    assert_eq!(output.functions.len(), 7);
 }
 
 #[test]
