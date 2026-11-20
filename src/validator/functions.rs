@@ -449,16 +449,25 @@ fn unrolled_function(
     if let Some(&iterations) = unrolled.get(&function.name) {
         return iterations;
     }
-    let iterations = unrolled_body(&function.statements, contract, unrolled, issues);
+    let iterations = unrolled_body(
+        &function.statements,
+        contract,
+        &HashMap::new(),
+        unrolled,
+        issues,
+    );
     unrolled.insert(function.name.clone(), iterations);
     iterations
 }
 
 /// The iterations `statements` unroll along their deepest nest of loops, after reporting each
 /// loop that runs zero times or unrolls above the limit. Both are checked before unrolling.
+/// `rereads` holds the iterations each use of a loop item unrolls when its iterable is read again
+/// at every use.
 fn unrolled_body(
     statements: &[LocatedStatement],
     contract: &Contract,
+    rereads: &HashMap<String, usize>,
     unrolled: &mut HashMap<String, usize>,
     issues: &mut Vec<ValidationIssue>,
 ) -> usize {
@@ -467,7 +476,9 @@ fn unrolled_body(
     for located in statements {
         let statement = &located.statement;
         for expression in statement.expressions() {
-            most = most.max(unrolled_calls(expression, contract, unrolled, issues));
+            most = most.max(unrolled_calls(
+                expression, contract, rereads, unrolled, issues,
+            ));
         }
         most = most.max(match statement {
             Statement::IfElse {
@@ -475,14 +486,30 @@ fn unrolled_body(
                 else_body,
                 ..
             } => {
-                let then = unrolled_body(then_body, contract, unrolled, issues);
+                let then = unrolled_body(then_body, contract, rereads, unrolled, issues);
                 let other = else_body.as_deref().unwrap_or_default();
-                then.max(unrolled_body(other, contract, unrolled, issues))
+                then.max(unrolled_body(other, contract, rereads, unrolled, issues))
             }
             Statement::ForIn { body, .. }
             | Statement::ForCount { body, .. }
             | Statement::ForRange { body, .. } => {
-                let body = unrolled_body(body, contract, unrolled, issues);
+                let mut rereads = rereads.clone();
+                // Lowering may read a path iterable, calls in its indexes included, at each use of
+                // the item instead of binding it once.
+                // ponytail: counted also where lowering binds it, because the body writes nothing
+                // the iterable reads; share lowering's choice if that rejects a real contract.
+                if let Statement::ForIn {
+                    value_var,
+                    iterable,
+                    ..
+                } = statement
+                {
+                    if iterable.binding_path().is_some() {
+                        let calls = unrolled_calls(iterable, contract, &rereads, unrolled, issues);
+                        rereads.insert(value_var.clone(), calls);
+                    }
+                }
+                let body = unrolled_body(body, contract, &rereads, unrolled, issues);
                 // An invalid count or range is reported with the loop's bindings.
                 let count = crate::models::loop_indexes(statement).map_or(1, |range| range.len());
                 let total = count.saturating_mul(body);
@@ -515,17 +542,24 @@ fn unrolled_body(
 fn unrolled_calls(
     expression: &Expression,
     contract: &Contract,
+    rereads: &HashMap<String, usize>,
     unrolled: &mut HashMap<String, usize>,
     issues: &mut Vec<ValidationIssue>,
 ) -> usize {
     let mut most = 1;
-    if let ExprKind::Call { name, .. } = &expression.kind {
-        if let Some(function) = contract.functions.iter().find(|f| f.name == *name) {
-            most = unrolled_function(function, contract, unrolled, issues);
+    match &expression.kind {
+        ExprKind::Call { name, .. } => {
+            if let Some(function) = contract.functions.iter().find(|f| f.name == *name) {
+                most = unrolled_function(function, contract, unrolled, issues);
+            }
         }
+        ExprKind::Name(path) | ExprKind::ArrayIndex { array: path, .. } => {
+            most = rereads.get(&path.root).copied().unwrap_or(1);
+        }
+        _ => {}
     }
     for child in child_exprs(expression) {
-        most = most.max(unrolled_calls(child, contract, unrolled, issues));
+        most = most.max(unrolled_calls(child, contract, rereads, unrolled, issues));
     }
     most
 }

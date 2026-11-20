@@ -190,6 +190,27 @@ fn loops_unrolling_above_ten_thousand_iterations_do_not_compile() {
             "{body}: {error}"
         );
     }
+    // The body writes what the iterable reads, so each use of `b` reads it again and runs `g`.
+    let reread = |length: usize, body: &str| {
+        format!(
+            "struct P {{ int a; int[{length}] b; }}
+            contract C() {{
+                static function g(int a) int {{ for (5001) {{}} return a - a; }}
+                function spend(P[2] ps, int a) {{
+                    P[2] qs = ps;
+                    for (j, b) in qs[g(a)].b {{ qs[0].a = a; {body} }}
+                }}
+            }}"
+        )
+    };
+    compile(&reread(1, "require(b > a);")).expect("one use of b");
+    for (length, body) in [(2, "require(b > a);"), (1, "for (2) { require(b > a); }")] {
+        let error = compile(&reread(length, body)).expect_err(body).to_string();
+        assert!(
+            error.contains("loop unrolls 10002 iterations"),
+            "{body}: {error}"
+        );
+    }
 }
 
 #[test]
