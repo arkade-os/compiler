@@ -10,9 +10,10 @@ cargo fmt --check
 node playground/imports.test.mjs                         # after the playground build
 node playground/completions.test.mjs
 ./scripts/e2e.sh -v                                      # builds arkadec, runs artifacts through the Arkade VM and btcd (Go)
-cp ./scripts/pre-commit "$(git rev-parse --git-path hooks)"   # fmt + test before every commit
+git config core.hooksPath scripts                       # fmt + test before every commit; runs the checked-out script, so re-run it if you installed by copying
 ```
 
+- `core.hooksPath` replaces `.git/hooks`, so other hooks kept there stop running. To keep them, link the hook instead: `ln -sf ../../scripts/pre-commit "$(git rev-parse --git-path hooks)/pre-commit"`.
 - [Build the playground](playground.md#run-it-locally) before the playground tests.
 - `BLESS=1 cargo test --test diagnostics` rewrites the expected diagnostics in `tests/diagnostics/`.
 - CI also checks every example with `arkadec --check --json --deny security`, so a security lint finding in `examples/` fails the build.
