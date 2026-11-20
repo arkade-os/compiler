@@ -113,7 +113,9 @@ fn check_ctor_assignment(
                     check_ctor_assignment(eb, fname, ctor_names, const_names, issues);
                 }
             }
-            Statement::ForIn { body, .. } | Statement::ForCount { body, .. } => {
+            Statement::ForIn { body, .. }
+            | Statement::ForCount { body, .. }
+            | Statement::ForRange { body, .. } => {
                 check_ctor_assignment(body, fname, ctor_names, const_names, issues);
             }
             Statement::Declaration { .. }
@@ -187,6 +189,23 @@ fn walk_scope(
                 frame.insert(index_var.clone());
                 frame.insert(value_var.clone());
                 stack.push(frame);
+                walk_scope(body, fname, stack, issues);
+                stack.pop();
+            }
+            Statement::ForRange {
+                index_var, body, ..
+            } => {
+                validate_source_identifier(
+                    index_var,
+                    &format!("loop variable in function '{fname}'"),
+                    issues,
+                );
+                if in_scope(stack, index_var) {
+                    issues.push(ValidationIssue::error(format!(
+                        "loop variable '{index_var}' in function '{fname}' shadows an in-scope binding"
+                    )));
+                }
+                stack.push(HashSet::from([index_var.clone()]));
                 walk_scope(body, fname, stack, issues);
                 stack.pop();
             }

@@ -142,9 +142,9 @@ impl Contract {
                         walk(then_body, out);
                         walk(else_body.as_deref().unwrap_or_default(), out);
                     }
-                    Statement::ForIn { body, .. } | Statement::ForCount { body, .. } => {
-                        walk(body, out)
-                    }
+                    Statement::ForIn { body, .. }
+                    | Statement::ForCount { body, .. }
+                    | Statement::ForRange { body, .. } => walk(body, out),
                     _ => {}
                 }
             }
@@ -282,6 +282,13 @@ pub enum Statement {
         count: Expression,
         body: Vec<LocatedStatement>,
     },
+    /// for (index_var) in start..end { body }; `end` is exclusive.
+    ForRange {
+        index_var: String,
+        start: Box<Expression>,
+        end: Box<Expression>,
+        body: Vec<LocatedStatement>,
+    },
 }
 
 /// A binding or array element on the left-hand side of an assignment.
@@ -310,9 +317,29 @@ impl Statement {
             Statement::IfElse { condition, .. } => vec![condition],
             Statement::ForIn { iterable, .. } => vec![iterable],
             Statement::ForCount { count, .. } => vec![count],
+            Statement::ForRange { start, end, .. } => vec![&**start, &**end],
             Statement::Return(None) | Statement::Declaration { .. } => vec![],
         }
     }
+}
+
+/// The indexes `for (i) in start..end` visits, or why its bounds are invalid: each must be a
+/// non-negative integer literal, and `start` must not exceed `end`.
+pub(crate) fn loop_range(
+    start: &Expression,
+    end: &Expression,
+) -> Result<std::ops::Range<usize>, String> {
+    let bound = |bound: &Expression| match &bound.kind {
+        ExprKind::Literal(value) => value.parse::<usize>().ok(),
+        _ => None,
+    };
+    let (Some(start), Some(end)) = (bound(start), bound(end)) else {
+        return Err("loop range bounds must be non-negative integer compile-time constants".into());
+    };
+    if start > end {
+        return Err(format!("loop range start {start} exceeds its end {end}"));
+    }
+    Ok(start..end)
 }
 
 /// Hash function used in a tapscript condition prefix (`hashFn(x) == h`).

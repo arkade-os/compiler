@@ -434,6 +434,21 @@ impl Collector<'_> {
                     self.expression(count);
                     self.block(body, located.span.end);
                 }
+                Statement::ForRange {
+                    index_var,
+                    start,
+                    end,
+                    body,
+                } => {
+                    self.expression(start);
+                    self.expression(end);
+                    self.scopes.push(HashMap::new());
+                    let index_type = Some(TypeName::Named("int".to_string()));
+                    let (start, end) = (end.span.end, located.span.end);
+                    self.local(index_var, index_type, located.names[0], start, end);
+                    self.statements(body, located.span.end);
+                    self.scopes.pop();
+                }
                 Statement::Call(_) | Statement::Return(_) | Statement::Require(_) => {
                     for expression in located.statement.expressions() {
                         self.expression(expression);

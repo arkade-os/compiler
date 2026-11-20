@@ -362,9 +362,9 @@ fn check_typed(statements: &[LocatedStatement], issues: &mut Vec<ValidationIssue
                 check_typed(then_body, issues);
                 check_typed(else_body.as_deref().unwrap_or_default(), issues);
             }
-            Statement::ForIn { body, .. } | Statement::ForCount { body, .. } => {
-                check_typed(body, issues)
-            }
+            Statement::ForIn { body, .. }
+            | Statement::ForCount { body, .. }
+            | Statement::ForRange { body, .. } => check_typed(body, issues),
             _ => {}
         }
     }
@@ -484,7 +484,9 @@ fn validate_local_types(
                     validate_local_types(else_body, function_name, definitions, issues);
                 }
             }
-            Statement::ForIn { body, .. } | Statement::ForCount { body, .. } => {
+            Statement::ForIn { body, .. }
+            | Statement::ForCount { body, .. }
+            | Statement::ForRange { body, .. } => {
                 validate_local_types(body, function_name, definitions, issues);
             }
             _ => {}

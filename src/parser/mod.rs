@@ -797,6 +797,28 @@ fn parse_statement(
                     )?;
                     Statement::ForCount { count, body }
                 }
+                Rule::for_range_stmt => {
+                    let [index_var, range, body] = <[_; 3]>::try_from(inner.collect::<Vec<_>>())
+                        .map_err(|_| "a range binds one loop variable, as in `for (i) in 0..N`")?;
+                    if range.as_rule() != Rule::loop_range {
+                        return Err(
+                            "one loop variable iterates a range, as in `for (i) in 0..N`; \
+                             an array takes two, as in `for (i, x) in items`"
+                                .into(),
+                        );
+                    }
+                    names.push(index_var.as_span().into());
+                    let mut bounds = range.into_inner();
+                    let (Some(start), Some(end)) = (bounds.next(), bounds.next()) else {
+                        return Err("Parse error: Invalid loop range".into());
+                    };
+                    Statement::ForRange {
+                        index_var: index_var.as_str().to_string(),
+                        start: Box::new(parse_general_expression(start)?),
+                        end: Box::new(parse_general_expression(end)?),
+                        body: parse_block(function_name, body, constants)?,
+                    }
+                }
                 _ => return Err("Parse error: Invalid for loop".into()),
             }
         }
@@ -1297,6 +1319,57 @@ mod tests {
             &source[span.start..span.end],
             "if (n > 0) { require(n > 1); }"
         );
+    }
+
+    #[test]
+    fn ranges_parse_only_as_the_iterable_of_a_single_variable_loop() {
+        let source = "contract C() { function spend(int a) {
+            for (i) in 0..N { require(a > i); }
+            for (i) in a.b..c.d(e) {}
+            for (i) in 0 .. Lib.N - 1 {}
+            for (i, x) in items {}
+            for (N) {}
+        } }";
+        let statements = &parse(source).unwrap().functions[0].statements;
+        let text = |expression: &Expression| &source[expression.span.start..expression.span.end];
+        for (statement, expected) in
+            statements
+                .iter()
+                .zip([("0", "N", 1), ("a.b", "c.d(e)", 0), ("0", "Lib.N - 1", 0)])
+        {
+            let Statement::ForRange {
+                index_var,
+                start,
+                end,
+                body,
+            } = &statement.statement
+            else {
+                panic!("{statement:?}");
+            };
+            assert_eq!(index_var, "i");
+            assert_eq!((text(start), text(end), body.len()), expected);
+        }
+        assert!(matches!(statements[3].statement, Statement::ForIn { .. }));
+        assert!(matches!(
+            statements[4].statement,
+            Statement::ForCount { .. }
+        ));
+        for (statement, expected) in [
+            ("for (i) in items {}", "one loop variable iterates a range"),
+            ("for (i, x) in 0..N {}", "a range binds one loop variable"),
+            ("let r = 0..N;", "Parse error"),
+            ("require(f(0..N));", "Parse error"),
+            ("for (i) in (0..N) {}", "Parse error"),
+            ("for (i) in 0...N {}", "Parse error"),
+            ("for (i) in 0..N..M {}", "Parse error"),
+            ("for (i) in 0.. {}", "Parse error"),
+            ("for (i) in ..N {}", "Parse error"),
+            ("for (i) 0..N {}", "Parse error"),
+        ] {
+            let source = format!("contract C() {{ function spend() {{ {statement} }} }}");
+            let error = parse(&source).unwrap_err();
+            assert!(error.contains(expected), "{statement}: {error}");
+        }
     }
 
     #[test]

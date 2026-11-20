@@ -132,7 +132,9 @@ fn validate_body(
                     validate_body(body, function, contract, issues);
                 }
             }
-            Statement::ForIn { body, .. } | Statement::ForCount { body, .. } => {
+            Statement::ForIn { body, .. }
+            | Statement::ForCount { body, .. }
+            | Statement::ForRange { body, .. } => {
                 validate_body(body, function, contract, issues);
             }
             Statement::Declaration { .. }
@@ -404,7 +406,9 @@ fn analyze_calls(
                     analyze_calls(body, contract, visiting, guarantees)?;
                 }
             }
-            Statement::ForIn { body, .. } | Statement::ForCount { body, .. } => {
+            Statement::ForIn { body, .. }
+            | Statement::ForCount { body, .. }
+            | Statement::ForRange { body, .. } => {
                 analyze_calls(body, contract, visiting, guarantees)?
             }
             _ => {}
@@ -509,7 +513,14 @@ fn flow_block(
                 flow.fallthrough = body.fallthrough;
                 flow.returned |= body.returned;
             }
-            Statement::ForCount { .. } => {}
+            Statement::ForRange {
+                start, end, body, ..
+            } if crate::models::loop_range(start, end).is_ok_and(|range| !range.is_empty()) => {
+                let body = flow_block(body, flow.fallthrough, guarantees);
+                flow.fallthrough = body.fallthrough;
+                flow.returned |= body.returned;
+            }
+            Statement::ForCount { .. } | Statement::ForRange { .. } => {}
             Statement::Declaration { .. }
             | Statement::Call(_)
             | Statement::LetBinding { .. }

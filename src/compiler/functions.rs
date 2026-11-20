@@ -46,9 +46,9 @@ pub(super) fn contains_return(statements: &[LocatedStatement]) -> bool {
                 contains_return(then_body)
                     || else_body.as_ref().is_some_and(|body| contains_return(body))
             }
-            Statement::ForIn { body, .. } | Statement::ForCount { body, .. } => {
-                contains_return(body)
-            }
+            Statement::ForIn { body, .. }
+            | Statement::ForCount { body, .. }
+            | Statement::ForRange { body, .. } => contains_return(body),
             _ => false,
         })
 }
@@ -74,7 +74,9 @@ pub(super) fn assigns(statements: &[LocatedStatement], name: &str) -> bool {
                 assigns(then_body, name)
                     || else_body.as_ref().is_some_and(|body| assigns(body, name))
             }
-            Statement::ForIn { body, .. } | Statement::ForCount { body, .. } => assigns(body, name),
+            Statement::ForIn { body, .. }
+            | Statement::ForCount { body, .. }
+            | Statement::ForRange { body, .. } => assigns(body, name),
             _ => false,
         })
 }

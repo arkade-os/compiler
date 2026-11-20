@@ -191,6 +191,135 @@ contract Counted() {{
 }
 
 #[test]
+fn range_loops_fold_the_index_instead_of_materializing_an_iterable() {
+    let source = |header: &str| {
+        format!(
+            r#"
+contract Sum(pubkey owner) {{
+    function spend(signature sig, bytes data, int total) {{
+        require(checkSig(sig, owner));
+        int sum = 0;
+        {header} {{
+            sum = sum + bytes2uint(substr(data, i, 1));
+        }}
+        require(sum == total);
+    }}
+}}
+"#
+        )
+    };
+    let range = arkade_compiler::compile(&source("for (i) in 0..8")).unwrap();
+    let literal =
+        arkade_compiler::compile(&source("for (i, unused) in [0, 0, 0, 0, 0, 0, 0, 0]")).unwrap();
+
+    // The accumulator stays on top and each offset is a literal push.
+    let mut expected = vec!["<owner>", "OP_CHECKSIGVERIFY", "0"];
+    for offset in ["0", "1", "2", "3", "4", "5", "6", "7"] {
+        expected.extend(["OP_OVER", offset, "1", "OP_SUBSTR"]);
+        expected.extend(["0x00", "OP_CAT", "OP_BIN2NUM", "OP_ADD"]);
+    }
+    expected.extend(["OP_ROT", "OP_NUMEQUAL", "OP_NIP"]);
+    assert_eq!(crate::common::arkade_asm_tokens(&range, "spend"), expected);
+    let bytes = |output: &arkade_compiler::models::ContractJson| {
+        let script = output.functions[0].arkade.as_ref().unwrap();
+        script.costs[0].used
+    };
+    assert_eq!((bytes(&literal), bytes(&range)), (130, 78));
+}
+
+#[test]
+fn range_loops_emit_the_body_once_per_index_from_start_to_end() {
+    let looped = r#"
+contract Ranges(pubkey owner) {
+    const int N = 4;
+
+    function spend(signature sig, int[4] xs) {
+        for (i) in 1..N - 1 {
+            require(xs[i] > i);
+        }
+        for (i) in 0..2 {
+            for (j) in N - 2..N {
+                require(xs[j - i] != j);
+            }
+        }
+        for (i) in N..N {
+            require(false);
+        }
+        require(checkSig(sig, owner));
+    }
+}
+"#;
+    let unrolled = r#"
+contract Ranges(pubkey owner) {
+    function spend(signature sig, int[4] xs) {
+        require(xs[1] > 1);
+        require(xs[2] > 2);
+        require(xs[2 - 0] != 2);
+        require(xs[3 - 0] != 3);
+        require(xs[2 - 1] != 2);
+        require(xs[3 - 1] != 3);
+        require(checkSig(sig, owner));
+    }
+}
+"#;
+    for compile in [arkade_compiler::compile, compile] {
+        assert_eq!(
+            crate::common::arkade_asm_tokens(&compile(looped).unwrap(), "spend"),
+            crate::common::arkade_asm_tokens(&compile(unrolled).unwrap(), "spend")
+        );
+    }
+}
+
+#[test]
+fn range_loops_reject_invalid_bounds_and_index_misuse() {
+    let bounds = "loop range bounds must be non-negative integer compile-time constants";
+    for (body, expected) in [
+        ("for (i) in 0..rounds { require(true); }", bounds),
+        ("for (i) in 0..-1 { require(true); }", bounds),
+        ("for (i) in -1..2 { require(true); }", bounds),
+        (
+            "for (i) in 0..18446744073709551616 { require(true); }",
+            bounds,
+        ),
+        ("for (i) in 0..xs.length { require(true); }", bounds),
+        (
+            "for (i) in 3..2 { require(true); }",
+            "loop range start 3 exceeds its end 2",
+        ),
+        (
+            "for (i) in 0..2 { i = 1; }",
+            "cannot assign to compile-time loop variable 'i'",
+        ),
+        (
+            "for (i) in 0..2 { for (i) in 0..2 { require(true); } }",
+            "loop variable 'i' in function 'spend' shadows an in-scope binding",
+        ),
+        (
+            "for (rounds) in 0..2 { require(true); }",
+            "loop variable 'rounds' in function 'spend' shadows an in-scope binding",
+        ),
+        (
+            "for (i) in 0..2 { require(true); } require(i == 0);",
+            "binding 'i' is undefined",
+        ),
+        (
+            "int x; for (i) in 0..0 { x = 1; } require(x == 1);",
+            "binding 'x' may be uninitialized",
+        ),
+    ] {
+        let error = compile(&format!(
+            "contract C() {{ function spend(int rounds, int[2] xs) {{
+                require(rounds == xs[0]);
+                {body}
+            }} }}"
+        ))
+        .expect_err(body)
+        .to_string();
+        assert!(error.contains(expected), "{body}: {error}");
+    }
+}
+
+#[test]
 fn runtime_index_bound_check_uses_the_arrays_own_size() {
     let output = compile(
         r#"

@@ -512,6 +512,29 @@ fn validate_binding_statements(
                     *scopes = incoming;
                 }
             }
+            Statement::ForRange {
+                index_var,
+                start,
+                end,
+                body,
+            } => {
+                let range = crate::models::loop_range(start, end);
+                if let Err(message) = &range {
+                    issues.push(ValidationIssue::error(message.clone()));
+                }
+                let incoming = scopes.clone();
+                let index = BindingInfo {
+                    binding_type: ArkType::Int,
+                    source: BindingSource::Loop,
+                    initialized: true,
+                };
+                scopes.push(HashMap::from([(index_var.clone(), index)]));
+                validate_binding_statements(body, function_name, scopes, structs, issues);
+                scopes.pop();
+                if !range.is_ok_and(|range| !range.is_empty()) {
+                    *scopes = incoming;
+                }
+            }
         }
         locate(&mut issues[first..], statement.span);
     }

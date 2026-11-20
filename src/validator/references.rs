@@ -78,7 +78,9 @@ fn collect_live<'a>(
             // every name read after the body, tells which locals are dead.
             // ponytail: re-walks the body until no new name turns up, which multiplies with loop
             // nesting depth; summarize each body once if loops ever nest deeply.
-            Statement::ForIn { body, .. } | Statement::ForCount { body, .. } => {
+            Statement::ForIn { body, .. }
+            | Statement::ForCount { body, .. }
+            | Statement::ForRange { body, .. } => {
                 let acts = loop {
                     let (mut next, mut pass) = (live.clone(), Vec::new());
                     let acts = collect_live(body, &mut next, &mut pass);
@@ -88,14 +90,19 @@ fn collect_live<'a>(
                     }
                     live.extend(next);
                 };
-                if let Statement::ForIn {
-                    index_var,
-                    value_var,
-                    ..
-                } = &statement.statement
-                {
-                    live.remove(index_var.as_str());
-                    live.remove(value_var.as_str());
+                match &statement.statement {
+                    Statement::ForIn {
+                        index_var,
+                        value_var,
+                        ..
+                    } => {
+                        live.remove(index_var.as_str());
+                        live.remove(value_var.as_str());
+                    }
+                    Statement::ForRange { index_var, .. } => {
+                        live.remove(index_var.as_str());
+                    }
+                    _ => {}
                 }
                 if !acts && !calls {
                     continue;
@@ -184,6 +191,13 @@ fn collect_statements<'a>(
             }
             Statement::ForCount { count, body } => {
                 collect_expression(count, names, functions, visited);
+                collect_statements(body, names, functions, visited);
+            }
+            Statement::ForRange {
+                start, end, body, ..
+            } => {
+                collect_expression(start, names, functions, visited);
+                collect_expression(end, names, functions, visited);
                 collect_statements(body, names, functions, visited);
             }
         }

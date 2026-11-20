@@ -265,6 +265,25 @@ fn a_local_is_visible_to_the_end_of_its_branch() {
 }
 
 #[test]
+fn a_range_index_is_an_int_visible_in_its_loop_body() {
+    let source = "contract C() { function spend(int n) { for (i) in 0..2 { require(n > i); } require(n > 0); } }";
+    let files = BTreeMap::from([("main.ark".to_string(), source.to_string())]);
+    let analysis = analyze("main.ark", &files);
+    let definition = analysis
+        .symbols()
+        .definition_at("main.ark", source.find("i)").unwrap())
+        .unwrap();
+    assert_eq!(definition.ty.as_ref().unwrap().to_string(), "int");
+    let span = definition.visible.unwrap();
+    assert_eq!(&source[span.start..span.end], " { require(n > i); }");
+    let read = source.find("> i").unwrap() + 2;
+    assert_eq!(
+        analysis.symbols().definition_at("main.ark", read).unwrap(),
+        definition
+    );
+}
+
+#[test]
 fn visible_names_follow_blocks_and_include_imports() {
     let files = project(MAIN);
     let analysis = analyze("main.ark", &files);

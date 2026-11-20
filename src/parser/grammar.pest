@@ -102,12 +102,18 @@ if_stmt = {
 else_keyword = @{ "else" ~ !(ASCII_ALPHANUMERIC | "_") }
 
 // For loop statement (compile-time unrolled)
-for_stmt = { for_in_stmt | for_count_stmt }
+for_stmt = { for_in_stmt | for_range_stmt | for_count_stmt }
 for_keyword = @{ "for" ~ !(ASCII_ALPHANUMERIC | "_") }
 in_keyword = @{ "in" ~ !(ASCII_ALPHANUMERIC | "_") }
 for_in_stmt = {
     &for_keyword ~ "for" ~ "(" ~ identifier ~ "," ~ identifier ~ ")" ~ &in_keyword ~ "in" ~ general_expression ~ block
 }
+// `for (i) in 0..N`: a range is no expression and appears only here. The parser rejects a range
+// with two loop variables and an expression with one, which the grammar accepts to name them.
+for_range_stmt = {
+    &for_keyword ~ "for" ~ "(" ~ identifier ~ ("," ~ identifier)? ~ ")" ~ &in_keyword ~ "in" ~ (loop_range | general_expression) ~ block
+}
+loop_range = { general_expression ~ ".." ~ general_expression }
 for_count_stmt = {
     &for_keyword ~ "for" ~ "(" ~ general_expression ~ ")" ~ block
 }

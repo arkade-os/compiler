@@ -997,6 +997,12 @@ fn validate_local_types(
                 at(binding(value_var))?;
                 validate_local_types(body, check, binding)?;
             }
+            Statement::ForRange {
+                index_var, body, ..
+            } => {
+                at(binding(index_var))?;
+                validate_local_types(body, check, binding)?;
+            }
             Statement::ForCount { body, .. } => {
                 validate_local_types(body, check, binding)?;
             }
@@ -1041,6 +1047,13 @@ fn visit_statements(
             }
             Statement::ForCount { count, body } => {
                 visit_expression(count, visit)?;
+                visit_statements(body, visit)?;
+            }
+            Statement::ForRange {
+                start, end, body, ..
+            } => {
+                visit_expression(start, visit)?;
+                visit_expression(end, visit)?;
                 visit_statements(body, visit)?;
             }
             Statement::Return(None) | Statement::Declaration { .. } => {}
