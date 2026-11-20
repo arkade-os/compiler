@@ -95,3 +95,31 @@ fn report_prints_usage_without_limits() {
         ["OP_CHECKSIGVERIFY", "3"]
     );
 }
+
+#[test]
+fn report_aligns_counts_past_long_opcode_names() {
+    let dir = tempfile::tempdir().unwrap();
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_arkadec"))
+        .arg(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/examples/htlc/htlc.ark"
+        ))
+        .arg("-o")
+        .arg(dir.path().join("htlc.json"))
+        .arg("--report")
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(
+        stdout.contains("  OP_INSPECTOUTPUTSCRIPTPUBKEY "),
+        "{stdout}"
+    );
+    let rows: Vec<_> = stdout
+        .lines()
+        .filter(|line| line.starts_with("  "))
+        .collect();
+    assert!(
+        rows.iter().all(|row| row.len() == rows[0].len()),
+        "{stdout}"
+    );
+}

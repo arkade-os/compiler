@@ -221,13 +221,21 @@ fn check(
 
 /// One block per Arkade Script with its resource usage.
 fn print_report(output: &arkade_compiler::models::ContractJson) {
+    let width = output
+        .functions
+        .iter()
+        .filter_map(|group| group.arkade.as_ref())
+        .flat_map(|script| &script.costs)
+        .map(|cost| cost.name.len())
+        .max()
+        .unwrap_or(0);
     for group in &output.functions {
         let Some(script) = &group.arkade else {
             continue;
         };
         println!("{}", group.name);
         for cost in &script.costs {
-            println!("  {:<24} {:>6}", cost.name, cost.used);
+            println!("  {:<width$} {:>6}", cost.name, cost.used);
         }
     }
 }
