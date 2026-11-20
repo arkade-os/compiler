@@ -10,7 +10,7 @@ cargo fmt --check
 node playground/imports.test.mjs                         # after the playground build
 node playground/completions.test.mjs
 ./scripts/e2e.sh -v                                      # builds arkadec, runs artifacts through the Arkade VM and btcd (Go)
-cp ./scripts/pre-commit "$(git rev-parse --git-path hooks)"   # fmt + test before every commit
+git config core.hooksPath scripts                       # fmt + test before every commit; runs the checked-out script, so re-run it if you installed by copying
 ```
 
 - [Build the playground](playground.md#run-it-locally) before the playground tests.
