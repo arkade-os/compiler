@@ -404,16 +404,32 @@ fn fold_statements(
                 fold_statements(body, values, uses)?;
             }
             Statement::ForCount { count, body } => {
-                fold_expression(count, values, uses);
-                if let Ok(value) = evaluate(count, &mut |_| Err("runtime value".to_string())) {
-                    count.kind = ExprKind::Literal(value);
-                }
+                fold_count(count, values, uses);
+                fold_statements(body, values, uses)?;
+            }
+            Statement::ForRange {
+                start, end, body, ..
+            } => {
+                fold_count(start, values, uses);
+                fold_count(end, values, uses);
                 fold_statements(body, values, uses)?;
             }
             Statement::Return(None) => {}
         }
     }
     Ok(())
+}
+
+/// Fold a loop count or range bound to a literal when it is a constant expression.
+fn fold_count(
+    count: &mut Expression,
+    values: &HashMap<String, String>,
+    uses: &mut Vec<(Path, Span)>,
+) {
+    fold_expression(count, values, uses);
+    if let Ok(value) = evaluate(count, &mut |_| Err("runtime value".to_string())) {
+        count.kind = ExprKind::Literal(value);
+    }
 }
 
 fn fold_expression(

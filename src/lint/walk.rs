@@ -62,9 +62,9 @@ impl<'a> Walk<'a> {
                     self.statements(else_body, visitor);
                     visitor.exit_arm();
                 }
-                Statement::ForIn { body, .. } | Statement::ForCount { body, .. } => {
-                    self.statements(body, visitor)
-                }
+                Statement::ForIn { body, .. }
+                | Statement::ForCount { body, .. }
+                | Statement::ForRange { body, .. } => self.statements(body, visitor),
                 _ => {}
             }
         }

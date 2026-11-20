@@ -112,6 +112,17 @@ pub(crate) fn substitute_statement(
             count: substitute_expression(count, name, literal, element),
             body: substitute_body(body, name, literal, element),
         },
+        Statement::ForRange {
+            index_var: inner_idx,
+            start,
+            end,
+            body,
+        } => Statement::ForRange {
+            index_var: inner_idx.clone(),
+            start: Box::new(substitute_expression(start, name, literal, element)),
+            end: Box::new(substitute_expression(end, name, literal, element)),
+            body: substitute_body(body, name, literal, element),
+        },
     }
 }
 

@@ -52,6 +52,13 @@ fn walk_asset_id_stmts(
                 check_asset_id_expr(count, structs, issues);
                 walk_asset_id_stmts(body, structs, issues);
             }
+            Statement::ForRange {
+                start, end, body, ..
+            } => {
+                check_asset_id_expr(start, structs, issues);
+                check_asset_id_expr(end, structs, issues);
+                walk_asset_id_stmts(body, structs, issues);
+            }
         }
         locate(&mut issues[first..], stmt.span);
     }

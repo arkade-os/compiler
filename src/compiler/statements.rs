@@ -176,7 +176,10 @@ fn emit_statement(stmt: &LocatedStatement, generator: &mut Generator) -> Result<
             return Ok(false);
         }
         Statement::Require(condition) => generate_requirement_asm(condition, generator)?,
-        Statement::IfElse { .. } | Statement::ForIn { .. } | Statement::ForCount { .. } => {
+        Statement::IfElse { .. }
+        | Statement::ForIn { .. }
+        | Statement::ForCount { .. }
+        | Statement::ForRange { .. } => {
             return Err(CompileError::internal(
                 "control flow reached emission unlowered",
             ));
