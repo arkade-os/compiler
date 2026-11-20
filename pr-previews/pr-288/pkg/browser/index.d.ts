@@ -24,7 +24,8 @@ export interface Diagnostic {
     severity: "error" | "warning";
     /**
      * A lint's id, such as `"unused-variable"`, an error code's id, such as `"unknown-name"`, or else the pass that
-     * raised it: `"validation"`, `"type"`, `"emission"` or `"internal"`; `null` for parse, import and file errors.
+     * raised it: `"validation"`, `"type"`, `"emission"` or `"internal"`; `null` for file, pragma, parse and import errors,
+     * and for a library compiled as the entry.
      */
     code: string | null;
     message: string;
