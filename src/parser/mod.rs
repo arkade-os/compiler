@@ -311,7 +311,6 @@ fn rule_term(rule: &Rule) -> Option<String> {
         Rule::function_visibility | Rule::function => "a function",
         Rule::data_type => "a type",
         Rule::block => "a block",
-        Rule::if_stmt => "'if'",
         Rule::attribute => "an attribute",
         Rule::attribute_name => "a name",
         Rule::unary_expr
@@ -321,9 +320,15 @@ fn rule_term(rule: &Rule) -> Option<String> {
         | Rule::empty_list => "an expression",
         Rule::number_literal => "a number",
         Rule::string_literal => "a string",
-        // ponytail: unmapped rules fall back to their grammar name with spaces;
-        // map any that show up confusingly in real errors.
-        other => return Some(format!("{other:?}").replace('_', " ")),
+        // ponytail: unmapped rules fall back to their grammar name with spaces, and a keyword
+        // rule to its quoted keyword; map any that show up confusingly in real errors.
+        other => {
+            let name = format!("{other:?}");
+            return Some(match name.strip_suffix("_keyword") {
+                Some(keyword) => format!("'{keyword}'"),
+                None => name.replace('_', " "),
+            });
+        }
     };
     Some(term.to_string())
 }
@@ -597,13 +602,6 @@ fn parse_function(
         end: name.as_span().end(),
     };
     let name = name.as_str().to_string();
-    if is_private
-        && (expr::reserved_function_signature(&name).is_some()
-            || matches!(name.as_str(), "require" | "return")
-            || is_cast(&name))
-    {
-        return Err(CompileError::from(format!("function name '{name}' is reserved")).at(span));
-    }
     let parameters = parse_parameters(inner.next().ok_or("Missing parameter list")?)?;
     let return_type = if inner.peek().is_some_and(|p| p.as_rule() == Rule::data_type) {
         Some(parse_data_type(inner.next().expect("return type")))
@@ -1233,6 +1231,54 @@ mod tests {
             ));
             crate::compile(&source).unwrap();
         }
+    }
+
+    #[test]
+    fn keywords_end_at_a_word_boundary() {
+        for source in [
+            "structPoint { int x; } contractC(pubkey pk, Point p) { functionspend(signature s) { require(checkSig(s, pk)); require(p.x == 1); } }",
+            "libraryL { function f() int { return 1; } }",
+            "contract C() { private functionf() int { return 1; } function g() { require(true); } }",
+            "contract C(pubkey pk, int[2] xs) { function spend(signature s) { require(checkSig(s, pk)); for (i, v) inxs { require(v > 0); } } }",
+        ] {
+            assert!(parse(source).is_err(), "{source}");
+        }
+
+        let source = "struct structure { int index; int inputs; }
+            contract contractor(pubkey library_key, structure functional, int[2] inputs) {
+                function format(signature s, int newValue) {
+                    require(checkSig(s, library_key));
+                    int iffy = tapscriptX(newValue);
+                    iffy = iffy + functional.index;
+                    for (index, input) in inputs { require(input == iffy + index); }
+                    require(functional.inputs == tx.inputs.length);
+                }
+                private function tapscriptX(int index) int { return index; }
+            }";
+        let contract = parse(source).unwrap();
+        assert_eq!(contract.name, "contractor");
+        assert_eq!(contract.structs[0].name, "structure");
+        let names = |functions: &[crate::models::Function]| -> Vec<String> {
+            functions.iter().map(|f| f.name.clone()).collect()
+        };
+        assert_eq!(names(&contract.functions), ["format", "tapscriptX"]);
+        let statements = &contract.functions[0].statements;
+        assert!(matches!(
+            &statements[2].statement,
+            Statement::VarAssign { target: AssignmentTarget::Binding(target), .. } if target.key() == "iffy"
+        ));
+        assert!(matches!(
+            &statements[3].statement,
+            Statement::ForIn { index_var, iterable, .. }
+                if index_var == "index" && matches!(&iterable.kind, ExprKind::Name(path) if path.key() == "inputs")
+        ));
+        crate::compile(source).unwrap();
+
+        // A word that only starts with `tapscript` is a return type.
+        let contract = parse("contract C(pubkey o) { function f(signature s) tapscript{ require(checkSig(s, o)); } function g() tapscriptX { require(true); } }").unwrap();
+        assert_eq!(contract.tapscripts[0].name, "f");
+        let return_type = contract.functions[0].return_type.as_ref().unwrap();
+        assert_eq!(return_type.base_name(), "tapscriptX");
     }
 
     #[test]
