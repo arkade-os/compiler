@@ -320,6 +320,28 @@ fn range_loops_reject_invalid_bounds_and_index_misuse() {
 }
 
 #[test]
+fn only_a_non_empty_range_returns_or_enforces_a_condition() {
+    let helper = |range: &str| {
+        format!(
+            "contract C() {{
+                static function f(int a) int {{ for (i) in {range} {{ return a + i; }} }}
+                function spend(int a) {{ require(f(a) == a); }}
+            }}"
+        )
+    };
+    compile(&helper("0..1")).expect("a non-empty range returns on every path");
+    let error = compile(&helper("1..1")).expect_err("1..1").to_string();
+    assert!(
+        error.contains("must return a value on every path"),
+        "{error}"
+    );
+    let error = compile("contract C() { function spend() { for (i) in 2..2 { require(true); } } }")
+        .expect_err("2..2")
+        .to_string();
+    assert!(error.contains("spend path with no require"), "{error}");
+}
+
+#[test]
 fn runtime_index_bound_check_uses_the_arrays_own_size() {
     let output = compile(
         r#"
