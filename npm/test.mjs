@@ -93,6 +93,8 @@ try {
     assert.deepEqual(docs, JSON.parse(wasm.builtin_docs()));
     const diagnostics = await esm.check(invalidSource);
     assert.deepEqual(diagnostics, JSON.parse(wasm.check_sources(invalidSource.entry, JSON.stringify(invalidSource.files))));
+    // Each diagnostic has exactly the fields `Diagnostic` declares.
+    assert.deepEqual(Object.keys(diagnostics[0]).sort(), ['code', 'end', 'file', 'message', 'severity', 'start', 'suggestions']);
     // Source errors are diagnostics with a null artifact, not rejections.
     const parseFailure = await esm.compile(invalidSource);
     assert.equal(parseFailure.artifact, null);
@@ -106,7 +108,7 @@ try {
     await assert.rejects(esm.symbolAt(nested, { line: 1, column: 1 }), error => !(error instanceof TypeError));
     assert.deepEqual(await esm.symbolAt(input, position), symbol);
 
-    const typecheck = `import { compile, check, symbolAt, completionsAt, builtinDocs, version, type BuiltinDocs, type CompileInput, type CompileOptions, type CompileResult, type Completions, type DebugInfo, type Diagnostic, type Position, type SymbolInfo } from '@arkade-os/compiler';
+    const typecheck = `import { compile, check, symbolAt, completionsAt, builtinDocs, version, type BuiltinDocs, type CompileInput, type CompileOptions, type CompileResult, type Completions, type DebugInfo, type Diagnostic, type Position, type Suggestion, type SymbolInfo } from '@arkade-os/compiler';
 const input: CompileInput = { entry: 'main.ark', files: { 'main.ark': '' } };
 const options: CompileOptions = { optimize: false, debug: false };
 const result: Promise<CompileResult> = compile(input, options);
@@ -121,6 +123,9 @@ void result; void symbol; void table; void docs; void diagnostics; void compiler
 compile({ entry: 'main.ark', files: { 'main.ark': 42 } });
 // @ts-expect-error A failed compile has no artifact.
 void (await compile(input)).artifact.contractName;
+declare const diagnostic: Diagnostic;
+const fixes: Suggestion[] = diagnostic.suggestions;
+void fixes;
 declare const narrowed: CompileResult;
 if (narrowed.artifact !== null) {
     const map: DebugInfo | null = narrowed.debug;

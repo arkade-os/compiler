@@ -17,15 +17,29 @@ export interface Position {
     column: number;
 }
 
+/** An edit that may fix a diagnostic: `replacement` in place of the text from `start` to `end`. */
+export interface Suggestion {
+    message: string;
+    /** Set together with `end`, or both `null`. */
+    start: Position | null;
+    end: Position | null;
+    replacement: string;
+}
+
 export interface Diagnostic {
     severity: "error" | "warning";
-    /** The pass that raised it, such as `"validation"` or `"type"`; `null` for parse and import errors. */
+    /**
+     * A lint's id, such as `"unused-variable"`, an error code's id, such as `"unknown-name"`, or else the pass that
+     * raised it: `"validation"`, `"type"`, `"emission"` or `"internal"`; `null` for parse, import and file errors.
+     */
     code: string | null;
     message: string;
     file: string;
     /** Set together with `end`, or both `null`. */
     start: Position | null;
     end: Position | null;
+    /** Edits that may fix it, for editors to offer. */
+    suggestions: Suggestion[];
 }
 
 export interface Parameter {

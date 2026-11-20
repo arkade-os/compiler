@@ -9,6 +9,7 @@ pub use ast::*;
 /// A declared type as written: a builtin or struct name such as `pubkey`, or a
 /// fixed-size array of one such as `int[3]` or `int[N]`.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum TypeName {
     Named(String),
     Array(Box<TypeName>, ArraySize),
@@ -16,6 +17,7 @@ pub enum TypeName {
 
 /// An array length; constant folding resolves every `Const` to `Fixed`.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum ArraySize {
     Fixed(usize),
     Const(String),

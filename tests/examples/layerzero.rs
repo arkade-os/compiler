@@ -56,7 +56,7 @@ fn has_self_continuation(asm: &[String]) -> bool {
 //     control-asset singleton.
 // ---------------------------------------------------------------------------
 
-fn compile(source: &str) -> Result<arkade_compiler::ContractJson, Box<dyn std::error::Error>> {
+fn compile(source: &str) -> Result<arkade_compiler::ContractJson, arkade_compiler::Error> {
     let files = [
         ("main.ark".to_string(), source.to_string()),
         (
