@@ -25,7 +25,7 @@ Release tags publish it to npm, as [Releasing](development.md#releasing) describ
 | `compile_file(path)` | An entry file and its relative imports, loaded from disk |
 | `compile_sources(entry, &files)` | An in-memory project: a `BTreeMap<String, String>` mapping paths to source text |
 
-All return `Result<ContractJson, _>` and optimize. `compile_file_with_options(path, options)` and `compile_sources_with_options(entry, &files, options)` take a `CompileOptions { optimize }`, whose default enables optimization.
+All return `Result<ContractJson, Error>` and optimize. `Error` is `Send + Sync` and displays the error located in its file. `compile_file_with_options(path, options)` and `compile_sources_with_options(entry, &files, options)` take a `CompileOptions`. Outside the crate, start from `CompileOptions::default()`, which enables optimization, and set its `optimize` field.
 
 ### Analyze
 
@@ -68,7 +68,8 @@ The `wasm` feature exposes `compile`, `compile_sources`, `compile_sources_with_d
 
 `compile_sources_with_diagnostics` reports compilation errors as diagnostics with a `null` artifact, not a thrown error. Each diagnostic has:
 
-- `severity`, `code`, `message` and `file`;
+- `severity`, `message` and `file`;
+- `code`: a lint's id, an error code's id such as `unknown-name`, or else the pass that raised it (`validation`, `type`, `emission` or `internal`), and `null` for file, pragma, parse and import errors and for a library compiled as the entry;
 - 1-based `start` and `end` `{ line, column }` positions with UTF-16 columns, or `null` when the diagnostic has no location;
 - `suggestions`: fix-its, each `{ message, start, end, replacement }`.
 
