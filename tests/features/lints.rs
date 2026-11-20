@@ -623,18 +623,39 @@ fn every_lint_is_documented_and_explained() {
         );
         assert!(!lint.explanation().trim().is_empty(), "{}", lint.id());
     }
-    let explain = |id: &str| {
+    let explain = |args: &[&str]| {
         std::process::Command::new(env!("CARGO_BIN_EXE_arkadec"))
-            .args(["--explain", id])
+            .arg("--explain")
+            .args(args)
             .output()
             .unwrap()
     };
-    let output = explain("unsigned-spend-path");
+    let output = explain(&["unsigned-spend-path"]);
     let text = String::from_utf8(output.stdout).unwrap();
     assert!(output.status.success());
     assert!(text.starts_with("unsigned-spend-path: security, warn by default"));
     assert!(text.contains("checkSig"), "{text}");
-    assert!(!explain("no-such-lint").status.success());
+    assert!(!explain(&["no-such-lint"]).status.success());
+
+    let output = explain(&[]);
+    let listed = String::from_utf8(output.stdout).unwrap();
+    assert!(output.status.success());
+    let codes = arkade_compiler::errors::ErrorCode::ALL
+        .iter()
+        .map(|code| code.id());
+    let ids: Vec<_> = Lint::ALL
+        .iter()
+        .map(|lint| lint.id())
+        .chain(codes)
+        .collect();
+    assert_eq!(listed.lines().count(), ids.len(), "{listed}");
+    for id in ids {
+        let row = format!("{id} ");
+        assert!(
+            listed.lines().any(|line| line.starts_with(&row)),
+            "{listed}"
+        );
+    }
 }
 
 #[test]

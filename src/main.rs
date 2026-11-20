@@ -61,9 +61,10 @@ struct Args {
     #[arg(long, value_name = "LINT")]
     warn: Vec<String>,
 
-    /// Explain a lint: what it reports, why it matters and how to fix it
-    #[arg(long, value_name = "LINT", exclusive = true)]
-    explain: Option<String>,
+    /// Explain a lint or error code: what it reports, why it matters and how to fix it;
+    /// without an id, list every lint and error code
+    #[arg(long, value_name = "ID", exclusive = true)]
+    explain: Option<Option<String>>,
 
     /// Report a lint as an error (by id, category, `all`, or `warnings` for every warning-level lint)
     #[arg(long, value_name = "LINT")]
@@ -86,18 +87,34 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Parse CLI arguments
     let matches = Args::command().get_matches();
     let args = Args::from_arg_matches(&matches)?;
-    if let Some(id) = &args.explain {
-        if let Ok(code) = id.parse::<arkade_compiler::errors::ErrorCode>() {
-            println!("{id}: error\n\n{}", code.explanation());
-            return Ok(());
+    if let Some(explain) = &args.explain {
+        let lints = Lint::ALL.iter().map(|&lint| {
+            let level = format!("{:?}", lint.level()).to_lowercase();
+            let category = format!("{:?}", lint.category()).to_lowercase();
+            let kind = format!("{category}, {level} by default");
+            (lint.id(), kind, lint.summary(), lint.explanation())
+        });
+        let codes = arkade_compiler::errors::ErrorCode::ALL.iter().map(|&code| {
+            let kind = "error".to_string();
+            (code.id(), kind, code.summary(), code.explanation())
+        });
+        let entries: Vec<_> = lints.chain(codes).collect();
+        match explain {
+            Some(id) => {
+                let (_, kind, _, explanation) = entries
+                    .iter()
+                    .find(|entry| entry.0 == id)
+                    .ok_or_else(|| format!("unknown lint or error code '{id}'"))?;
+                println!("{id}: {kind}\n\n{explanation}");
+            }
+            None => {
+                let id_width = entries.iter().map(|entry| entry.0.len()).max().unwrap_or(0);
+                let kind_width = entries.iter().map(|entry| entry.1.len()).max().unwrap_or(0);
+                for (id, kind, summary, _) in &entries {
+                    println!("{id:id_width$}  {kind:kind_width$}  {summary}");
+                }
+            }
         }
-        let lint: Lint = id.parse()?;
-        let level = format!("{:?}", lint.level()).to_lowercase();
-        let category = format!("{:?}", lint.category()).to_lowercase();
-        println!(
-            "{id}: {category}, {level} by default\n\n{}",
-            lint.explanation()
-        );
         return Ok(());
     }
 
