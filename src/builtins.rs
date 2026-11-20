@@ -260,7 +260,7 @@ pub(crate) const BUILTINS: &[Builtin] = &[
             ("leaf", "bytes"),
         ],
         "bytes32",
-        &[MerkleBranchVerify],
+        &[MerkleBranchRoot],
         "Root of a BIP-341 tagged-hash Merkle proof. Siblings in proof are 32 bytes each and \
          combined in sorted order. An empty leafTag takes a 32-byte leaf as already hashed. Fails \
          the spend when proof is not a multiple of 32 bytes, branchTag is empty, or an already \

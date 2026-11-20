@@ -51,7 +51,7 @@ Tapscript hashlocks use `require(hashFn(preimage) == hash)` with `sha256`, `hash
 
 ## Merkle proofs
 
-`merkleRoot(leafTag, branchTag, proof, leaf)` returns the `bytes32` root that `OP_MERKLEBRANCHVERIFY` computes with BIP-341 tagged hashes:
+`merkleRoot(leafTag, branchTag, proof, leaf)` returns the `bytes32` root that `OP_MERKLEBRANCHROOT` computes with BIP-341 tagged hashes:
 
 - the leaf is `tagged_hash(leafTag, leaf)`;
 - each 32-byte sibling in `proof` is combined in sorted order as `tagged_hash(branchTag, min || max)`;

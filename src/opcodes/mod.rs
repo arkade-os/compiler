@@ -185,8 +185,8 @@ opcodes! {
     // Hashing (additional)
     Sha1 = OP_SHA1 => (1, 1),
 
-    // Merkle proof verification (introspector extension)
-    MerkleBranchVerify = OP_MERKLEBRANCHVERIFY => (4, 1),
+    // Merkle root (introspector extension)
+    MerkleBranchRoot = OP_MERKLEBRANCHROOT => (4, 1),
 
     // Introspection (transaction global)
     Txid = OP_TXID => (0, 1),
