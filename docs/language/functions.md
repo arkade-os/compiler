@@ -87,6 +87,7 @@ p.primary.weight = 5;
 if (<expr>) { ... } else if (<expr>) { ... } else { ... }
 for (i, item) in arr { ... }       // unrolled at compile time
 for (COUNT) { ... }                // COUNT is a non-negative compile-time int expression
+for (i) in START..END { ... }      // i is START, START + 1, ..., END - 1
 check(amount);                     // void helper call
 Fees.check(amount);                // void library function call
 ```
@@ -96,6 +97,7 @@ Fees.check(amount);                // void library function call
 - `if` conditions must be `bool`.
 - A `require` message emits nothing into the script; it appears only in the [debug file](../artifact.md#debug-file). Tapscript functions drop it.
 - `for (i, item) in arr` evaluates a helper result or literal `arr` once, and checks a runtime index when the loop starts. Each use of `item` reads `arr[i]` as it currently is, so writes to `arr` in the body are seen.
+- `for (i) in START..END` binds only the read-only `int` index, a literal in each unrolled copy. `START` and `END` are non-negative compile-time int expressions, like `COUNT`, with `START <= END`; `END` is exclusive. A range is valid only there, and `for (i) in arr` or `for (i, item) in START..END` is an error.
 
 ### Declaring without a value
 

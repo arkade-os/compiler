@@ -377,6 +377,18 @@ impl Typing<'_> {
                     self.expression(count, scope);
                     self.statements(body, &mut scope.clone());
                 }
+                Statement::ForRange {
+                    index_var,
+                    start,
+                    end,
+                    body,
+                } => {
+                    self.expression(start, scope);
+                    self.expression(end, scope);
+                    let mut body_scope = scope.clone();
+                    body_scope.insert(index_var.clone(), ArkType::Int);
+                    self.statements(body, &mut body_scope);
+                }
             }
         }
     }

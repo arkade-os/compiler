@@ -235,6 +235,20 @@ fn lower_statement(
             .ok_or("loop count must be a non-negative integer compile-time constant")?;
             unroll(span, std::iter::repeat_n(body, count), scope, structs, fold)?
         }
+        Statement::ForRange {
+            index_var,
+            start,
+            end,
+            body,
+        } => {
+            let iterations = crate::models::loop_range(&start, &end)?.map(|k| {
+                // The index becomes the literal `k`; with no value variable, `items` is never read.
+                let mut substituted = substitute_loop_body(&body, &index_var, "", k, &start);
+                types::annotate_statements(&mut substituted, &mut scope.clone(), structs);
+                substituted
+            });
+            unroll(span, iterations, scope, structs, fold)?
+        }
         Statement::Declaration {
             ref name,
             ref declared_type,

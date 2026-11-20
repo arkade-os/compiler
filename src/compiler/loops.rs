@@ -116,6 +116,17 @@ pub(crate) fn substitute_statement(
             count: substitute_expression(count, index_var, value_var, k, items),
             body: substitute_loop_body(body, index_var, value_var, k, items),
         },
+        Statement::ForRange {
+            index_var: inner_idx,
+            start,
+            end,
+            body,
+        } => Statement::ForRange {
+            index_var: inner_idx.clone(),
+            start: Box::new(substitute_expression(start, index_var, value_var, k, items)),
+            end: Box::new(substitute_expression(end, index_var, value_var, k, items)),
+            body: substitute_loop_body(body, index_var, value_var, k, items),
+        },
     }
 }
 

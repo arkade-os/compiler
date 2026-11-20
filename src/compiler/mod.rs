@@ -825,9 +825,9 @@ fn require_messages(
                 require_messages(then_body, messages);
                 require_messages(else_body.as_deref().unwrap_or_default(), messages);
             }
-            Statement::ForIn { body, .. } | Statement::ForCount { body, .. } => {
-                require_messages(body, messages)
-            }
+            Statement::ForIn { body, .. }
+            | Statement::ForCount { body, .. }
+            | Statement::ForRange { body, .. } => require_messages(body, messages),
             _ => {}
         }
     }

@@ -35,6 +35,10 @@ pub(super) fn fold_statement(statement: &mut Statement, scope: &Scope) -> Result
         Statement::IfElse { condition, .. } => fold_expression(condition, scope)?,
         Statement::ForIn { iterable, .. } => fold_expression(iterable, scope)?,
         Statement::ForCount { count, .. } => fold_expression(count, scope)?,
+        Statement::ForRange { start, end, .. } => {
+            fold_expression(start, scope)?;
+            fold_expression(end, scope)?;
+        }
         Statement::Return(None) | Statement::Declaration { .. } => {}
     }
     Ok(())
