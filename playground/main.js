@@ -1236,7 +1236,7 @@ function updateCurrentFileName(name) {
 function initMonaco() {
     require.config({
         paths: {
-            'vs': 'https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.45.0/min/vs'
+            'vs': 'https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.57.0/min/vs'
         }
     });
 

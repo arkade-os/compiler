@@ -67,7 +67,7 @@ The static playground imports the browser entrypoint of a locally packed package
 
 ## Development and packing
 
-Package development requires Rust with the `wasm32-unknown-unknown` target, wasm-pack 0.15.0, and Node.js 22.12 or newer:
+Package development requires Rust with the `wasm32-unknown-unknown` target, wasm-pack 0.15.1, and Node.js 22.12 or newer:
 
 ```sh
 rustup target add wasm32-unknown-unknown
