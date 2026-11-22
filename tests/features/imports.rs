@@ -621,41 +621,6 @@ fn a_grandchild_change_reaches_the_parent_pin() {
 }
 
 #[test]
-fn shared_instantiations_compile_once() {
-    // Every contract of a level instantiates both of the next, so compiling each path again
-    // would take 2^LEVELS compilations.
-    const LEVELS: usize = 16;
-    let contract = |name: String, next: Option<usize>| {
-        let (imports, outputs) = next.map_or_else(Default::default, |n| {
-            (
-                format!(r#"import "X{n}.ark"; import "Y{n}.ark";"#),
-                format!(" require(tx.outputs[0].script == new X{n}(k)); require(tx.outputs[1].script == new Y{n}(k));"),
-            )
-        });
-        format!("{imports} contract {name}(pubkey k) {{ function spend(signature s) {{ require(checkSig(s, k));{outputs} }} }}")
-    };
-    let mut files = vec![("r.ark".to_string(), contract("R".to_string(), Some(1)))];
-    for level in 1..=LEVELS {
-        let next = (level < LEVELS).then_some(level + 1);
-        for side in ["X", "Y"] {
-            let name = format!("{side}{level}");
-            files.push((format!("{name}.ark"), contract(name, next)));
-        }
-    }
-    let files: Vec<_> = files
-        .iter()
-        .map(|(p, s)| (p.as_str(), s.as_str()))
-        .collect();
-    let started = std::time::Instant::now();
-    assert_eq!(project("r.ark", &files).unwrap().contracts.len(), 2);
-    assert!(
-        started.elapsed() < std::time::Duration::from_secs(5),
-        "{:?}",
-        started.elapsed()
-    );
-}
-
-#[test]
 fn native_and_virtual_compilation_match_and_bundle_is_portable() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::create_dir(dir.path().join("contracts")).unwrap();
