@@ -35,7 +35,7 @@ Diagnostics are also underlined in the editor, and clicking one moves the cursor
 
 ## Explorer
 
-The Explorer ships the single-file examples (SingleSig, HTLC, Escrow, FujiSafe, StructVault, NonInteractiveSwap) and the multi-file projects (Stability, LayerZero / USDT0, Option, Bonds, Constant product).
+The Explorer ships the single-file examples (SingleSig, HTLC, Escrow, NonInteractiveSwap) and the projects (LayerZero / USDT0, Option, Bonds, Constant product).
 
 - You can add files and folders, rename, delete through the context menu, and drag between folders.
 - Everything persists in `localStorage`.

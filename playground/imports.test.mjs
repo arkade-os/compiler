@@ -433,14 +433,14 @@ function loadStored(saved) {
 
 const legacy = loadStored({
     projects: {
-        bonds: { name: 'Bonds', description: '', files: { 'bond_mint.ark': 'stale', 'mine.ark': 'own' } },
+        option: { name: 'Option', description: '', files: { 'option_vault.ark': 'stale', 'mine.ark': 'own' } },
         mine: { name: 'Mine', description: '', files: { 'a.ark': 'own' } },
     },
     examples: { htlc: { name: 'HTLC', code: 'stale' }, own: { name: 'Own', code: 'own' } },
 });
-assert.equal(legacy.read("projects.bonds.files['bond_mint.ark']"), contracts.bond_mint);
-assert.equal(legacy.read("projects.bonds.files['repayment_pool.ark']"), contracts.repayment_pool);
-assert.equal(legacy.read("projects.bonds.files['mine.ark']"), 'own');
+assert.equal(legacy.read("projects.option.files['option_vault.ark']"), contracts.option_vault);
+assert.equal(legacy.read("projects.option.files['option_intent.ark']"), contracts.option_intent);
+assert.equal(legacy.read("projects.option.files['mine.ark']"), 'own');
 assert.equal(legacy.read("projects.mine.files['a.ark']"), 'own');
 assert.equal(legacy.read('examples.htlc.code'), contracts.htlc);
 assert.equal(legacy.read('examples.own.code'), 'own');

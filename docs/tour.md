@@ -88,7 +88,7 @@ contract Splitter(pubkey alicePk, pubkey bobPk) {
 - Arguments are constructor parameters or literals, resolved when the contract is instantiated.
 - The artifact pins the build of each instantiated contract in its [`contracts`](artifact.md#fields) field.
 
-A contract cannot instantiate itself, directly or through other contracts, since its address would depend on itself. To keep funds in the same contract, compare against the input's own script with `tx.outputs[0].script == tx.input.current.script` (see [`examples/fuji_safe`](../examples/fuji_safe)).
+A contract cannot instantiate itself, directly or through other contracts, since its address would depend on itself. To keep funds in the same contract, compare against the input's own script with `tx.outputs[0].script == tx.input.current.script` (see [`examples/threshold_oracle`](../examples/threshold_oracle)).
 
 The check goes by name, so it also rejects a `static` helper in `B` that returns `new B(...)`, which forms no loop.
 
@@ -175,17 +175,14 @@ contract StructVault(Policy policy) {
 | Directory | Shows |
 |---|---|
 | [`single_sig`](../examples/single_sig), [`htlc`](../examples/htlc) | Minimum viable VTXO and hash/time locks |
-| [`threshold_multisig_htlc`](../examples/threshold_multisig_htlc) | HTLC with a 2-of-2 cooperative path, a `checkTime` refund and a preimage claim |
 | [`escrow`](../examples/escrow) | Oracle release to a committed script, timeout refund, joint CSV exit signed by both parties; `escrow.md` |
 | [`non_interactive_swap`](../examples/non_interactive_swap) | Atomic asset swap with `new SingleSig(...)` payout and locktime-gated cancel |
 | [`constant_product`](../examples/constant_product) | Shared constant-product pool: one standing swap, deposit, or exit per virtual transaction; `constant_product.md` |
 | [`payment_auth`](../examples/payment_auth) | Introspection-driven payout splits with `if`/`else` and `tx.input.current.value` |
-| [`fee_adapter`](../examples/fee_adapter) | Asset balance checks around a fee with a minimum, and a separate fee operator key |
-| [`token_vault`](../examples/token_vault), [`controlled_mint`](../examples/controlled_mint), [`nft_mint`](../examples/nft_mint) | Asset lookups, asset groups, control assets |
-| [`struct_vault`](../examples/struct_vault), [`threshold_oracle`](../examples/threshold_oracle) | Structs, arrays, loops, oracle quorum |
-| [`fuji_safe`](../examples/fuji_safe), [`stability`](../examples/stability), [`bonds`](../examples/bonds) | Stateful contracts |
+| [`controlled_mint`](../examples/controlled_mint), [`nft_mint`](../examples/nft_mint) | Asset lookups, asset groups, control assets |
+| [`threshold_oracle`](../examples/threshold_oracle) | Arrays, loops, oracle quorum |
+| [`bonds`](../examples/bonds) | Per-issuance collateral vault for a fixed-maturity bond, with repay, liquidate, auction and roll paths |
 | [`option`](../examples/option) | Cash-settled covered call and limited put with an on-stack oracle TWAP |
 | [`layerzero`](../examples/layerzero) | Packet introspection, `substr`/`cat`/`bytes2uint`, cross-input binding via `arkadeScriptHash` |
-| [`arkade_kitties`](../examples/arkade_kitties) | NFT breeding with asset-group introspection |
 
 The `.md` files next to those contracts explain the economics and transaction layouts.
