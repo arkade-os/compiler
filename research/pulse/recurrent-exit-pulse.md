@@ -5,7 +5,7 @@
 A protocol for giving open-membership pool contracts on Arkade a *standing* unilateral
 exit, enforced by recurrent state updates between the transacting parties. This document
 is a design specification: it defines the protocol lifecycle, the trust model, the
-attack analysis — thirty-one adversarial findings (A1–A31), detailed in §10 — that shaped
+attack analysis — thirty-two adversarial findings (A1–A32), detailed in §10 — that shaped
 it, and the compiler surface that would standardize it. It proposes no code changes; the
 compiler-facing sections are future work.
 
@@ -206,8 +206,8 @@ share:
     that member alone.
 
 **Revision 2.4** — the stale-state race, re-examined against what Bitcoin's timelock
-and miners actually enforce. Six findings (A26–A31). Everything here uses Bitcoin as it
-is today.
+and miners actually enforce. Seven findings (A26–A32). Everything here uses Bitcoin as
+it is today.
 
 24. **A26 — the stale-lattice race was not unconditional. This is the substantive
     fix in this revision.** The exit-leaf delay counts from the confirmation of the
@@ -265,15 +265,23 @@ is today.
 33. **An alternative is recorded and not adopted (§7.4a, §12.1 item 8):** a
     pre-signed kickoff transaction that would start the delay only when someone
     moves.
+34. **A32 — the seal does not say which kind of pulse it receipts (§7.4a duty 2,
+    §12.1 item 9).** `h_k` and the seal read the same for a pulse admitted in time
+    and for one proposed late as on-chain, so a client whose view of the chain is
+    behind can be shown a late pulse as final. This revision states the client-side
+    rule and where it stops. It records one alternative, binding the kind of pulse
+    into `h_k`, and does not decide it.
 
 Standing limits of this revision: that a holder acts in time and that miners include
 its transaction are assumed, never derived; the fee reserve behind that holder is
 unlocked money that no other party can audit; a signing enclave learns the chain tip
-from its host; the bribery bound is taken from the cited analysis and neither
-re-derived nor modeled here; the model checks safety only, so nothing is shown about
-a pool making progress under these rules; and of findings A27–A31 the model carries
-only A27's adversary and one witness for A31. Fees and bribery, the fee path,
-deposit inputs and their respend deadlines, and time-based delays have no formal
+from its host; a client that is behind on the chain without knowing it has no
+protection against a late pulse shown to it as final (A32); the bribery bound is
+taken from the cited analysis and neither re-derived nor modeled here; the model
+checks safety only, so nothing is shown about a pool making progress under these
+rules; and of findings A27–A32 the model carries only A27's adversary and one
+witness for A31. Fees and bribery, the fee path, deposit inputs and their respend
+deadlines, time-based delays and a view of the chain that is behind have no formal
 counterpart.
 
 ---
@@ -723,14 +731,16 @@ of the anchor beneath it. A conforming client therefore treats a sealed pulse as
 only while, in its own view of the chain, the anchor is before its deadline, the
 rollback exposure through that pulse is within `v_max`, no respend deadline in the
 pending chain has been reached, and every pending pulse beneath it is final (§7.4a).
-If the anchor has reached its deadline with the pulse's ancestors still unconfirmed,
-the client does two things: it performs the extension duty, and it treats the
-pending pulses as unsettled until `T_{a+1}` confirms. External settlement gates on
-the same pair — the seal *and* the anchor's age. The seal does not stand in for the
-second: a pulse sealed on an anchor at or past its deadline is an on-chain pulse,
-sealed and not final before a transition has confirmed (§7.4a, duty 2). Unlike a
-failure of checks 1–2, this is no reason to exit on `k−1`: the pulse is valid and
-only needs to reach the chain.
+That view has to be current. A client that cannot tell how far behind its tip is
+counts nothing new as final, and one that is behind without knowing it is not
+protected (A32). If the anchor has reached its deadline with the pulse's ancestors
+still unconfirmed, the client does two things: it performs the extension duty, and
+it treats the pending pulses as unsettled until `T_{a+1}` confirms. External
+settlement gates on the same pair — the seal *and* the anchor's age. The seal does
+not stand in for the second: a pulse sealed on an anchor at or past its deadline is
+an on-chain pulse, sealed and not final before a transition has confirmed (§7.4a,
+duty 2). Unlike a failure of checks 1–2, this is no reason to exit on `k−1`: the
+pulse is valid and only needs to reach the chain.
 
 ### 7.2 Heartbeat (D2) — there is no cheap operator-only re-anchor
 
@@ -911,9 +921,12 @@ make it hold when the Operator is late, dark, or not on the honest side.
    `h_k` and the seal read the same for both kinds. The check that cannot be skipped
    is therefore each client's own: it looks at the anchor's age itself, whatever the
    proposal said, in a view of the chain it knows to be current. A client that
-   cannot tell how far behind its tip is counts nothing new as final. The other two
-   do not see the chain equally well either: a signing enclave is told the chain tip
-   by its host, which can show it an old one, so its refusal is a second line (§9).
+   cannot tell how far behind its tip is counts nothing new as final. One that is
+   behind without knowing it has no protection in this revision; an alternative
+   that would let it lean on the seal set's view of the chain is recorded and not
+   decided (A32, §12.1 item 9). The other two do not see the chain equally well
+   either: a signing enclave is told the chain tip by its host, which can show it an
+   old one, so its refusal is a second line (§9).
 3. **Extension — every holder of the pending chain.** If the anchor reaches its
    deadline and `T_{a+1}` is still unconfirmed, every party that holds it broadcasts
    it with a fee-paying child on its anchor output and raises the fee until it
@@ -1805,13 +1818,13 @@ and threshold members rotate out without coverage ever dipping.
 
 ## 10. Attack analysis appendix
 
-Thirty-one adversarial findings shaped this spec — A1–A13 from the protocol
+Thirty-two adversarial findings shaped this spec — A1–A13 from the protocol
 red-team, A14–A15 from the recourse analysis (§8a), A16–A17 from the revision-2
 current-state exit analysis (§7.5), A18–A23 from the revision-2.1 red-team of the
 self-enforcing bond and federation-hardening layers (§9.2–§9.4), A24–A25 from the
-revision-2.2 formal-verification passes (§0), and A26–A31 from the revision-2.4
-review of the stale-state race against Bitcoin's timelock and mining rules (§7.4a,
-§8). Severity:
+revision-2.2 formal-verification passes (§0), and A26–A32 from the revision-2.4
+review of the stale-state race against Bitcoin's timelock and mining rules, and of
+the admission rule that answers it (§7.4a, §8). Severity:
 **CRITICAL** (breaks the safety claim), **HIGH** (loses funds or bricks exit under a
 realistic adversary), **MED** (griefing/liveness/cost).
 
@@ -1848,6 +1861,7 @@ realistic adversary), **MED** (griefing/liveness/cost).
 | A29 | **Respendable deposit inputs** — a pending transition that spends a deposit is void if the depositor spends that deposit elsewhere first, and so is every transition after it: a rollback with no lattice involved and no timelock to wait for | HIGH | A pending transition spends only inputs whose owner cannot respend alone, each with a respend height. The transition confirms below that height: its respend deadline falls `margin_a` before it, earlier again for each pending transition beneath, and the three duties serve it like the anchor deadline. Anything else is admitted only in an on-chain pulse; the enclave refuses to co-sign a conflicting spend (§7.4a, §9). The protection of such an input before confirmation is the Operator threshold, not consensus — stated as such |
 | A30 | **Time-denominated Δ** — a delay in 512-second units is measured on median-time-past, which miners producing six of eleven consecutive blocks can advance by about two hours, and it holds fewer blocks when blocks are slow | MED | Δ and `margin_a` are block counts; the validator rejects a time-based `exit` in a `pulse` leaf (§8, §11) |
 | A31 | **No eviction window on an aged anchor** — the §7.5 response to a broadcast root assumed the Operator can still spend the pool output first. A root can be broadcast only when it is already mature, so there is no such window: on an idle pool whose anchor is older than Δ, one fee-bumped root unwinds the pool. This is A17 again, by a path §7.5 did not close | MED | Stated in §7.5 and §8. Deployments choose: a keep-alive heartbeat inside every `Δ − margin_a` blocks keeps the window open at the cost of an on-chain pulse per interval, or the pool accepts that it can be unwound while idle (§7.4a). Balances are safe either way |
+| A32 | **A seal that does not say which kind of pulse it receipts** — `h_k` and the seal are the same for a pulse admitted in time and for one proposed late as on-chain. The kind is stated only in the proposal, which the Operator's host relays and which an outside settler never sees. A party whose view of the chain is behind — eclipsed, or taking its chain data from the Operator — sees the anchor as younger than it is and counts a late sealed pulse as final. If the anchor's lattice then confirms before the transition, the pulse is void and what that party released against it is lost | HIGH for a client whose view of the chain can be held back | **Not closed in this revision.** The rule is client-side: each client checks the anchor's age itself, on a view of the chain it knows to be current and does not take from the Operator, and counts nothing new as final when it cannot tell how far behind it is. Its own `v_max` check caps what it can lose (§7.1a, §7.4a duty 2). A client that is behind without knowing it is unprotected. Binding the kind of pulse into `h_k` would let that client rely on the seal set's view of the chain as well as its own; the alternative and its costs are recorded in §12.1 item 9 and not decided |
 
 ## 11. Compiler surface (future work — gated zones)
 
@@ -1978,6 +1992,24 @@ with its compensating discipline:
    would give §7.5 a response window on every anchor (A31), at the cost of one more
    transaction off-chain and on-chain for every pool output it protects. Revision
    2.4 records that alternative and does not adopt it.
+9. **A client has to see the current chain.** Whether a sealed pulse is final
+   depends on the age of the anchor beneath it, and the seal does not say: `h_k` and
+   the seal read the same for a pulse admitted in time and for one proposed late as
+   on-chain (§7.4a duty 2). Each client reads the anchor's age from its own view of
+   the chain. A client whose view is held back can be shown a late pulse as final,
+   and loses up to `v_max` if the anchor's lattice then confirms first (A32).
+   Discipline: chain data from more than one source, none of them the Operator; a
+   check that the tip is recent; and nothing new counted as final while either is
+   in doubt. Binding the kind of pulse into `h_k` would add a second line. An
+   off-chain label under a seal would carry the seal set's word that the anchor was
+   before its deadline when it sealed, and a seal on an on-chain pulse could no
+   longer pass for finality. Three things count against it. It changes the
+   commitment format. A self-sealed deployment gains nothing: its sealer is the
+   Operator threshold, which sees the chain through the Operator's host. And a
+   pulse committed as off-chain that reaches the deadline unsealed could not be
+   relabelled, because commitments are signed under single-use nonces (§9.2); it
+   would be sealed only after its transition confirmed. Revision 2.4 records that
+   alternative and does not decide it.
 
 Worst-case for a passive member shorted by an actively-colluding Operator, recourse is
 the bond (compensation), not coin recovery (§8a) — the bond is therefore a *cap on
@@ -2051,7 +2083,9 @@ every anchor margin and be able to pay a fee, and enough hash power must stand
 outside any collusion to mine that transition within `margin_a` (§8). Nothing in it
 depends on observing a mempool. If it fails, a sealed pulse can be undone by anyone
 holding an older lattice, with the loss capped at `v_max`. Payment channels make the
-same kind of assumption; earlier revisions of this document did not state it.
+same kind of assumption; earlier revisions of this document did not state it. One
+more condition falls on each client: it reads the anchor's age from its own view of
+the chain, and no seal corrects a view that is behind (A32).
 
 **Why the amount model is weaker than the systems PULSE resembles.** In a statechain or
 a coinpool, every signer is checking *their own* balance and updates are N-of-N, so any
@@ -2258,7 +2292,9 @@ lattice *cryptography*.)
 > beneath it confirms before the pool output it spends is Δ blocks old. The
 > Operator's heartbeat does that in the normal case and any one holder of the pending
 > chain otherwise, and it needs miners that include the transition within the margin
-> (§7.4a, §8). Either way the amount — and the payout leg of exit-or-payout — rests
+> (§7.4a, §8). Whether a sealed pulse was admitted in time is for each client to
+> judge on its own view of the chain, which has to be current; the seal does not say
+> (A32). Either way the amount — and the payout leg of exit-or-payout — rests
 > on enclave-threshold or committee trust, not cryptographic
 > self-custody — the **trilemma** (§13.2): with non-interactive passive members and no
 > covenant, amount-safety *must* be enforced by a trusted layer rather than by
