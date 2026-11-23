@@ -1,5 +1,4 @@
 // Arkade Playground - Main Application
-import { builtinDocs as compilerBuiltinDocs, compile, check, symbolAt as compilerSymbolAt, completionsAt, version } from './pkg/browser/index.js';
 import * as contracts from './contracts.js';
 
 // Projects: collections of related contracts
@@ -69,6 +68,9 @@ const bundledSnapshot = JSON.parse(JSON.stringify({ projects, examples }));
 
 // Global state
 let editor = null;
+// The compiler module, and `master` or the release version it was loaded as.
+let compiler = null;
+let compilerName = null;
 // Once set, compiler calls resolve before any edit can arrive, so their results are current.
 let wasmReady = false;
 let currentProject = null;
@@ -293,11 +295,11 @@ function openSharedBundle(bundle) {
 }
 
 async function shareContract() {
-    if (!editor) return;
+    if (!editor || (!wasmReady && !await initCompiler())) return;
     let encoded;
     try {
         const { entry, files } = compilationSources();
-        const { artifact, diagnostics } = await compile({ entry, files });
+        const { artifact, diagnostics } = await compiler.compile({ entry, files });
         if (artifact === null) {
             showErrors(diagnostics, entry);
             return;
@@ -795,16 +797,65 @@ function promptNewStandaloneFile() {
     if (name && name.trim()) createStandaloneFile(name.trim());
 }
 
-// Load the compiler and show its version; true once it is ready.
+const COMPILER_RELEASES = 'https://data.jsdelivr.com/v1/packages/npm/@arkade-os/compiler';
+
+// `master` or an exact version such as `0.1.0`, else null, so no other value reaches import().
+function compilerChoice(value) {
+    return value === 'master' || /^\d+\.\d+\.\d+(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$/.test(value) ? value : null;
+}
+
+// master is this site's build; a version is that npm release.
+function compilerUrl(choice) {
+    return choice === 'master'
+        ? './pkg/browser/index.js'
+        : `https://cdn.jsdelivr.net/npm/@arkade-os/compiler@${choice}/dist/browser/index.js`;
+}
+
+// The latest and the stable npm releases; none when jsDelivr does not answer.
+async function compilerReleases() {
+    try {
+        const response = await fetch(COMPILER_RELEASES, { signal: AbortSignal.timeout(10000) });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const { tags, versions } = await response.json();
+        const stable = versions.map(release => release.version).filter(version => /^\d+\.\d+\.\d+$/.test(version));
+        return { latest: tags.latest, stable };
+    } catch (err) {
+        console.warn('Failed to list compiler releases:', err);
+        return { latest: null, stable: [] };
+    }
+}
+
+// The compiler `?compiler=` names, else the latest release, else master when none is listed.
+// The picker offers master, the stable releases and the choice.
+async function loadCompiler() {
+    const releases = await compilerReleases();
+    const choice = compilerChoice(new URLSearchParams(location.search).get('compiler'))
+        ?? compilerChoice(releases.latest) ?? 'master';
+    const names = [...new Set(['master', ...releases.stable, choice])];
+    document.getElementById('compiler-select').replaceChildren(...names.map(name => new Option(name, name, false, name === choice)));
+    const module = await import(compilerUrl(choice));
+    // ponytail: only missing exports are detected; an export whose arguments or result changed
+    // fails or misrenders at its call. A minimum release per export would catch that once one changes.
+    const missing = ['compile', 'check', 'symbolAt', 'completionsAt', 'version'].filter(name => typeof module[name] !== 'function');
+    if (missing.length) throw new Error(`compiler ${choice} has no ${missing.join(', ')}`);
+    compilerName = choice;
+    return module;
+}
+
+// Load the compiler and show what loaded; true once it is ready.
 async function initCompiler() {
     try {
-        const ver = await version();
+        compiler ??= await loadCompiler();
+        const ver = await compiler.version();
         // The builtins come from the compiler, so the tokenizer is set again to highlight them.
-        window.arkadeUseDocs(await compilerBuiltinDocs());
+        // A release without builtinDocs leaves them undocumented.
+        if (compiler.builtinDocs) window.arkadeUseDocs(await compiler.builtinDocs());
         monaco.languages.setMonarchTokensProvider('arkade', window.arkadeMonarch);
         wasmReady = true;
-        document.getElementById('compiler-version').textContent = `v${ver}`;
-        document.getElementById('footer-version').textContent = `v${ver}`;
+        // master reports the last release's version, so it is named instead.
+        const label = compilerName === 'master' ? 'master' : `v${ver}`;
+        document.getElementById('compiler-version').textContent = label;
+        document.getElementById('footer-version').textContent = label;
         lint();
     } catch (err) {
         console.error('Failed to initialize compiler:', err);
@@ -1371,7 +1422,7 @@ function sourceFiles() {
 async function symbolAt(model, position) {
     if (!wasmReady || model !== editor?.getModel()) return null;
     try {
-        return await compilerSymbolAt(sourceFiles(), { line: position.lineNumber, column: position.column });
+        return await compiler.symbolAt(sourceFiles(), { line: position.lineNumber, column: position.column });
     } catch {
         return null;
     }
@@ -1509,7 +1560,7 @@ async function symbolTable(lineNumber) {
         const lines = files[entry].split('\n');
         lines[lineNumber - 1] = '';
         files[entry] = lines.join('\n');
-        const at = files => completionsAt({ entry, files }, { line: lineNumber, column: 1 });
+        const at = files => compiler.completionsAt({ entry, files }, { line: lineNumber, column: 1 });
         const table = await at(files);
         if (table.symbols.length) lastSources[entry] = files;
         else if (lastSources[entry]) return await at(lastSources[entry]);
@@ -1529,7 +1580,7 @@ async function doCompile() {
     try {
         const { entry, files } = compilationSources();
         const optimize = document.getElementById('optimize-toggle').checked;
-        const { artifact, debug, diagnostics } = await compile({ entry, files }, { optimize });
+        const { artifact, debug, diagnostics } = await compiler.compile({ entry, files }, { optimize });
         markDiagnostics(diagnostics, entry);
         if (artifact === null) {
             showErrors(diagnostics, entry);
@@ -1752,7 +1803,7 @@ function lint() {
         try {
             const { entry, files } = sourceFiles();
             const optimize = document.getElementById('optimize-toggle').checked;
-            const diagnostics = await check({ entry, files }, { optimize });
+            const diagnostics = await compiler.check({ entry, files }, { optimize });
             markDiagnostics(diagnostics, entry);
             renderDiagnostics(diagnostics, entry);
         } catch {}
@@ -1976,6 +2027,19 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Share button
     document.getElementById('share-btn').addEventListener('click', shareContract);
+
+    // Compiler picker: the page reloads with the chosen compiler, after saving the open file.
+    document.getElementById('compiler-select').addEventListener('change', event => {
+        try {
+            saveCurrentFile();
+        } catch (err) {
+            showError(err.message);
+            return;
+        }
+        const url = new URL(location.href);
+        url.searchParams.set('compiler', event.target.value);
+        location.assign(url);
+    });
 
     // Sidebar action buttons
     document.getElementById('new-file-btn').addEventListener('click', promptNewStandaloneFile);

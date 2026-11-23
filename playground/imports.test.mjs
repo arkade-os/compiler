@@ -8,7 +8,7 @@ import { builtinDocs, compile, check, completionsAt, symbolAt, version } from '.
 
 const storage = new Map();
 const context = vm.createContext({
-    contracts, compile, check, compilerBuiltinDocs: builtinDocs, completionsAt, compilerSymbolAt: symbolAt, version,
+    contracts,
     document: { addEventListener() {} },
     localStorage: { getItem: key => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value) },
     location: { hash: '' },
@@ -208,11 +208,19 @@ context.warningSource = warningSource;
 context.renderedArtifact = null;
 const originalCompilationSources = vm.runInContext('compilationSources', context);
 const displayAsm = vm.runInContext('displayAsm', context);
+// Only master and exact versions name a compiler, and a version stays in the package's path.
+for (const value of ['master', '0.1.0', '0.1.0-rc.1', '10.2.3-beta.1']) assert.equal(context.compilerChoice(value), value);
+for (const value of [null, '', 'latest', 'Master', '0.1', '0.1.0-', '0.1.0-a..b', '../../x', '0.1.0/../../x', '0.1.0@1.0.0', '0.1.0?x', '0.1.0#x', '0.1.0%2F..', '0.1.0\n']) {
+    assert.equal(context.compilerChoice(value), null);
+}
+assert.equal(context.compilerUrl('master'), './pkg/browser/index.js');
+assert.equal(context.compilerUrl('0.1.0-rc.1'), 'https://cdn.jsdelivr.net/npm/@arkade-os/compiler@0.1.0-rc.1/dist/browser/index.js');
 // A failed initialization is shown, and the next call retries it, builtin docs included.
-context.version = async () => { throw new Error('Transient WASM failure'); };
+const compilerModule = { builtinDocs, compile, check, completionsAt, symbolAt, version: async () => { throw new Error('Transient WASM failure'); } };
+context.loadCompiler = async () => compilerModule;
 await vm.runInContext('initCompiler()', context);
 assert.match(elements['errors-output'].textContent, /Transient WASM failure/);
-context.version = version;
+compilerModule.version = version;
 context.window = { arkadeUseDocs: docs => { context.usedDocs = docs; } };
 context.monaco = { languages: { setMonarchTokensProvider() {} } };
 await vm.runInContext(`

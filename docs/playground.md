@@ -2,7 +2,7 @@
 
 **[arkade-os.github.io/compiler](https://arkade-os.github.io/compiler)**
 
-The playground runs the real compiler as WebAssembly. Nothing is installed and nothing leaves your browser. The footer shows the compiler version.
+The playground runs the real compiler as WebAssembly. Nothing is installed and nothing leaves your browser. The picker in the header loads the latest compiler release by default, or `master` or another release, which a link can choose with `?compiler=master` or `?compiler=0.1.0`; the footer shows the compiler loaded. The editor and examples always come from `master`, so newer syntax may not compile with an older release.
 
 ## Editing
 
@@ -57,7 +57,7 @@ cargo install wasm-pack
 ```
 
 - Node.js 22.12 or newer is required, and `serve.sh` needs `python3`.
-- The build script installs locked npm development dependencies and packs `@arkade-os/compiler` locally. It needs no npm publishing credentials.
+- The build script installs locked npm development dependencies and packs `@arkade-os/compiler` locally. It needs no npm publishing credentials. The picker's `master` is this local build.
 - `playground/contracts.js` and `playground/pkg/` are generated and git-ignored.
 
 To add a contract to the playground, add a `.ark` file under `examples/` and register it in `playground/main.js`: a single-file example needs entries in both `examples` and `examplePaths`. `contracts.js` exports each file by its basename, so the basename must be unique and a valid JavaScript identifier.
