@@ -21,9 +21,10 @@ the deadline, and that miners include a broadcast transition within a bounded nu
 of blocks.
 
 Source: [`research/pulse/recurrent-exit-pulse.md`](../recurrent-exit-pulse.md),
-revision 2.4, commit `0804bd05c51573d6272d9371e18ab093f1b87c8f`, SHA-256
-`17847a3fc8d42bd4ea710e74fb25d2132b49cb15f766258137e333872ced3c62`. Section and
-finding numbers below refer to that revision.
+revision 2.4, SHA-256
+`f821a1a8162e18eb2bd4cc630fc8fb966d7b9e9bc25e804cc34be57d53c749ad` — the file as
+committed together with this version of the record. Section and finding numbers
+below refer to that revision.
 
 Tool identities, stated rather than assumed: `TLC2 Version 2026.11.19.180144 (rev:
 bc1b506)` from the v1.8.0 release asset, jar SHA-256
