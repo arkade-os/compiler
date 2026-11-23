@@ -58,6 +58,21 @@ fn hashprice_contract_interfaces() {
             );
         }
         if name == "HashPriceBeacon" {
+            assert_eq!(
+                contract
+                    .parameters
+                    .iter()
+                    .map(|p| (p.name.as_str(), p.param_type.to_string()))
+                    .collect::<Vec<_>>(),
+                [
+                    ("coinGidx", "int"),
+                    ("sourceGidx", "int"),
+                    ("blockCoinScript", "bytes32"),
+                    ("hashPriceCoinScript", "bytes32"),
+                    ("checkpointHeight", "int"),
+                ]
+                .map(|(name, kind)| (name, kind.to_string()))
+            );
             let mint = crate::common::group(&contract, "mint");
             let inputs = &mint.arkade.as_ref().unwrap().inputs;
             assert_eq!(
@@ -71,7 +86,9 @@ fn hashprice_contract_interfaces() {
                     ("reward", "int"),
                     ("merkleDepth", "int"),
                     ("siblings", "bytes32[20]"),
-                    ("proof", "Groth16Proof")
+                    ("proof", "Groth16Proof"),
+                    ("bucketCount", "int"),
+                    ("histogramSiblings", "HistogramSibling[20]"),
                 ]
             );
             let asm = crate::common::arkade_asm(&contract, "mint");
@@ -83,6 +100,7 @@ fn hashprice_contract_interfaces() {
             );
             assert!(asm.contains("OP_SHA256"));
             assert!(asm.contains("OP_HASH256"));
+            assert!(asm.contains("OP_RSHIFT"));
             for (opcode, count) in [("OP_ECMUL", 3), ("OP_ECADD", 3), ("OP_ECPAIRING", 1)] {
                 assert_eq!(
                     asm.split_whitespace().filter(|op| *op == opcode).count(),

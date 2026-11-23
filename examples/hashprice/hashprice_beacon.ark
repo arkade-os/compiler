@@ -1,29 +1,54 @@
 pragma arkade ^0.1.0;
 
-// State: height:8 || recoveryCount:8 || accumulatorNumerator:64.
-// HPC: height:8 || numerator:64 || accumulator:64 || blockHash:32 || mintedAt:8.
+// State: height:8 || recoveryCount:8 || accumulatorNumerator:64 || histogramRoot:32.
+// HPC: height:8 || numerator:64 || accumulator:64 || blockHash:32 || mintedAt:8 || rootBefore:32 || rootAfter:32.
 // Control and observation assets originate in the same initialization tx;
 // group indices select the series without embedding that txid in scripts.
-// Unused Merkle siblings are zero bytes32; the branch always proves index zero.
+// Unused coinbase Merkle siblings are zero bytes32; the branch always proves index zero.
+// Histogram leaves are 2^20 ordered 10 sat / (PH/s * day) buckets in [0, 10,485,750+].
 struct Groth16Proof { ECPoint a; G2Point b; ECPoint c; }
+struct HistogramSibling { int count; bytes32 hash; }
 
-contract HashPriceBeacon(int coinGidx, int sourceGidx, bytes32 blockCoinScript, bytes32 hashPriceCoinScript) {
+contract HashPriceBeacon(
+  int coinGidx,
+  int sourceGidx,
+  bytes32 blockCoinScript,
+  bytes32 hashPriceCoinScript,
+  int checkpointHeight
+) {
   const int BN254 = 2;
   // SDK 6.10.0 coinbase guest, 1 MiB cap; its reviewed ELF and key are pinned in README.
   const int PROGRAM_VKEY = 211360200981073404834715045665936083077048586645350687854143298402673083698;
   const int VK_ROOT = 83960146348496814183195590144795274058764451818716359375255161226434597714;
+  // Exact reduced factor for floor(q * 86400 * 10^15 / (10 * T1 * 2^32)):
+  //   86400 * 10^15 / (10 * 65535 * 2^240) = 274658203125 / (4369 * 2^219).
+  const int HISTOGRAM_MAX_BUCKET = 1048575;
+  const int HASHPRICE_PH_NUM = 274658203125;
+  const int HASHPRICE_PH_SHIFT = 219;
+  const int HASHPRICE_PH_DEN = 4369;
+  const int MAX_HISTOGRAM_COUNT = 9223372036854775807;
 
   @allow(unsigned-spend-path, "the authenticated next header and proven coinbase reward determine issuance through the preserved control singleton")
-  function mint(int mintedAt, bytes32 coinbaseTxid, int reward, int merkleDepth, bytes32[20] siblings, Groth16Proof proof) {
+  function mint(
+    int mintedAt,
+    bytes32 coinbaseTxid,
+    int reward,
+    int merkleDepth,
+    bytes32[20] siblings,
+    Groth16Proof proof,
+    int bucketCount,
+    HistogramSibling[20] histogramSiblings
+  ) {
     let control = controlIdentity();
     let group = tx.assetGroups.find(control.txid, coinGidx);
     require(group.sumInputs == 0 && group.sumOutputs == 1, "hashprice supply");
     let id = group.assetId;
-    bytes state = inputState(0, 80);
+    bytes state = inputState(0, 112);
     require(bin2num(substr(state, 8, 8)) == 0, "normal only");
     int height = bin2num(substr(state, 0, 8)) + 1;
     int accumulator = bin2num(substr(state, 16, 64));
     require(accumulator >= 0, "nonnegative accumulator");
+    bytes rootBefore = substr(state, 80, 32);
 
     require(mintedAt >= 0, "nonnegative minting time");
     if (mintedAt >= 3600) {
@@ -62,13 +87,44 @@ contract HashPriceBeacon(int coinGidx, int sourceGidx, bytes32 blockCoinScript, 
     int numerator = reward * target;
     int nextAccumulator = accumulator + numerator;
 
-    bytes next = num2bin(height, 8) + num2bin(0, 8) + num2bin(nextAccumulator, 64);
+    // Derive deterministic 10 sat / (PH/s * day) bucket and update persistent Merkle-sum histogram.
+    require(checkpointHeight >= 0 && height > checkpointHeight, "checkpoint height");
+    int bucket = min(((numerator * HASHPRICE_PH_NUM) >> HASHPRICE_PH_SHIFT) / HASHPRICE_PH_DEN, HISTOGRAM_MAX_BUCKET);
+    require(bucketCount >= 0 && bucketCount < MAX_HISTOGRAM_COUNT, "bucket count");
+    bytes32 curBefore = sha256(0x00 + num2bin(bucketCount, 8));
+    bytes32 curAfter = sha256(0x00 + num2bin(bucketCount + 1, 8));
+    int countBefore = bucketCount;
+    int countAfter = bucketCount + 1;
+    int path = bucket;
+    for (i, sib) in histogramSiblings {
+      require(sib.count >= 0, "histogram sibling count");
+      bytes sibEnc = num2bin(sib.count, 8) + sib.hash;
+      bytes beforeEnc = num2bin(countBefore, 8) + curBefore;
+      bytes afterEnc = num2bin(countAfter, 8) + curAfter;
+      int isRight = path % 2;
+      path = path >> 1;
+      if (isRight == 0) {
+        curBefore = sha256(0x01 + beforeEnc + sibEnc);
+        curAfter = sha256(0x01 + afterEnc + sibEnc);
+      } else {
+        curBefore = sha256(0x01 + sibEnc + beforeEnc);
+        curAfter = sha256(0x01 + sibEnc + afterEnc);
+      }
+      countBefore = countBefore + sib.count;
+      countAfter = countAfter + sib.count;
+    }
+    require(curBefore == rootBefore, "histogram rootBefore");
+    require(countBefore == height - 1 - checkpointHeight, "histogram total");
+    require(countAfter <= MAX_HISTOGRAM_COUNT, "histogram overflow");
+    bytes32 rootAfter = curAfter;
+
+    bytes next = num2bin(height, 8) + num2bin(0, 8) + num2bin(nextAccumulator, 64) + rootAfter;
     require(tx.packet(32) == next, "issuer state");
     preserveCoin(1, blockCoinScript, source, block);
     let sourceGroup = tx.assetGroups.find(source.txid, source.gidx);
     require(sourceGroup.sumInputs == 1 && sourceGroup.sumOutputs == 1, "source supply");
     bytes32 blockHash = sha256(sha256(substr(block, 8, 80)));
-    bytes observation = num2bin(height, 8) + num2bin(numerator, 64) + num2bin(nextAccumulator, 64) + blockHash + num2bin(mintedAt, 8);
+    bytes observation = num2bin(height, 8) + num2bin(numerator, 64) + num2bin(nextAccumulator, 64) + blockHash + num2bin(mintedAt, 8) + rootBefore + rootAfter;
     require(tx.outputs[2].script.program == hashPriceCoinScript, "observation script");
     require(tx.outputs[2].value >= 330, "observation value");
     require(tx.outputs[2].assets.length == 1 && tx.outputs[2].assets.lookup(id.txid, id.gidx) == 1, "output identity");
@@ -80,14 +136,14 @@ contract HashPriceBeacon(int coinGidx, int sourceGidx, bytes32 blockCoinScript, 
     let control = controlIdentity();
     let group = tx.assetGroups.find(control.txid, coinGidx);
     require(group.sumInputs == 1 && group.sumOutputs == 1, "hashprice supply");
-    bytes state = inputState(0, 80);
+    bytes state = inputState(0, 112);
     require(bin2num(substr(state, 8, 8)) == 0, "normal only");
     require(identity(1) == group.assetId, "hashprice identity");
     require(tx.inputs[1].script.program == hashPriceCoinScript, "hashprice script");
-    bytes disputed = inputState(1, 176);
+    bytes disputed = inputState(1, 240);
     int height = bin2num(substr(disputed, 0, 8));
     int count = bin2num(substr(state, 0, 8)) - height + 1;
-    require(height > 0 && count > 0, "issued height");
+    require(checkpointHeight >= 0 && height > checkpointHeight && count > 0, "issued height");
 
     let source = identity(2);
     require(source.txid == control.txid && source.gidx == sourceGidx, "source beacon");
@@ -102,7 +158,8 @@ contract HashPriceBeacon(int coinGidx, int sourceGidx, bytes32 blockCoinScript, 
     int numerator = bin2num(substr(disputed, 8, 64));
     int accumulator = bin2num(substr(disputed, 72, 64));
     require(numerator >= 0 && accumulator >= numerator, "rollback accumulator");
-    bytes next = num2bin(height - 1, 8) + num2bin(count, 8) + num2bin(accumulator - numerator, 64);
+    bytes rootBefore = substr(disputed, 176, 32);
+    bytes next = num2bin(height - 1, 8) + num2bin(count, 8) + num2bin(accumulator - numerator, 64) + rootBefore;
     require(tx.packet(32) == next, "recovery state");
     preserveCoin(1, hashPriceCoinScript, group.assetId, disputed);
     preserveCoin(2, blockCoinScript, source, block);
@@ -114,10 +171,10 @@ contract HashPriceBeacon(int coinGidx, int sourceGidx, bytes32 blockCoinScript, 
     let group = tx.assetGroups.find(control.txid, coinGidx);
     int burned = group.sumInputs;
     require(group.sumOutputs == 0, "hashprice coins burned");
-    bytes state = inputState(0, 80);
+    bytes state = inputState(0, 112);
     int count = bin2num(substr(state, 8, 8));
     require(count > 0 && burned > 0 && burned <= count, "recovery burn count");
-    bytes next = substr(state, 0, 8) + num2bin(count - burned, 8) + substr(state, 16, 64);
+    bytes next = substr(state, 0, 8) + num2bin(count - burned, 8) + substr(state, 16, 96);
     require(tx.packet(32) == next, "recovery progress");
   }
 

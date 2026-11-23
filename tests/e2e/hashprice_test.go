@@ -3,6 +3,7 @@ package e2e
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
@@ -282,14 +283,152 @@ func blockObservation(t *testing.T, height int64, header []byte, bits, epoch []b
 	return beaconState(t, height, header, bits, epoch, beaconNum(t, work, 33))
 }
 
-func hashPriceBeaconState(t *testing.T, height int64, accumulator *big.Int, count int64) []byte {
-	t.Helper()
-	return beaconState(t, height, beaconNum(t, big.NewInt(count), 8), beaconNum(t, accumulator, 64))
+const (
+	hashpriceHistogramDepth = 20
+	hashpriceMaxBucket      = (1 << hashpriceHistogramDepth) - 1
+)
+
+func hashpriceBucket(q *big.Int) uint32 {
+	scaled := new(big.Int).Mul(q, big.NewInt(274658203125))
+	scaled.Rsh(scaled, 219)
+	scaled.Quo(scaled, big.NewInt(4369))
+	if !scaled.IsUint64() || scaled.Uint64() >= hashpriceMaxBucket {
+		return hashpriceMaxBucket
+	}
+	return uint32(scaled.Uint64())
 }
 
-func hashPriceObservation(t *testing.T, height int64, numerator, accumulator *big.Int, hash []byte, mintedAt int64) []byte {
+type histogramNode struct {
+	count int64
+	hash  [32]byte
+}
+
+func histogramCountBytes(count int64) []byte {
+	b, err := arkade.BigNumFromInt64(count).FixedBytes(8)
+	if err != nil {
+		panic(err)
+	}
+	return b
+}
+
+func histogramLeafHash(count int64) [32]byte {
+	var pre [9]byte
+	pre[0] = 0x00
+	copy(pre[1:], histogramCountBytes(count))
+	return sha256.Sum256(pre[:])
+}
+
+func histogramBranchHash(left, right histogramNode) [32]byte {
+	var pre [81]byte
+	pre[0] = 0x01
+	copy(pre[1:9], histogramCountBytes(left.count))
+	copy(pre[9:41], left.hash[:])
+	copy(pre[41:49], histogramCountBytes(right.count))
+	copy(pre[49:81], right.hash[:])
+	return sha256.Sum256(pre[:])
+}
+
+var histogramZeroNodes = func() [hashpriceHistogramDepth + 1]histogramNode {
+	var zeros [hashpriceHistogramDepth + 1]histogramNode
+	zeros[0] = histogramNode{count: 0, hash: histogramLeafHash(0)}
+	for lvl := 1; lvl <= hashpriceHistogramDepth; lvl++ {
+		zeros[lvl] = histogramNode{
+			count: 0,
+			hash:  histogramBranchHash(zeros[lvl-1], zeros[lvl-1]),
+		}
+	}
+	return zeros
+}()
+
+type sparseHistogram struct {
+	levels [hashpriceHistogramDepth + 1]map[uint32]histogramNode
+}
+
+func newSparseHistogram() *sparseHistogram {
+	h := &sparseHistogram{}
+	for i := range h.levels {
+		h.levels[i] = make(map[uint32]histogramNode)
+	}
+	return h
+}
+
+func (h *sparseHistogram) clone() *sparseHistogram {
+	cp := newSparseHistogram()
+	for i := range h.levels {
+		for k, v := range h.levels[i] {
+			cp.levels[i][k] = v
+		}
+	}
+	return cp
+}
+
+func (h *sparseHistogram) node(level int, index uint32) histogramNode {
+	if n, ok := h.levels[level][index]; ok {
+		return n
+	}
+	return histogramZeroNodes[level]
+}
+
+func (h *sparseHistogram) add(bucket uint32, delta int64) {
+	leaf := h.node(0, bucket)
+	nextCount := leaf.count + delta
+	if nextCount == 0 {
+		delete(h.levels[0], bucket)
+	} else {
+		h.levels[0][bucket] = histogramNode{count: nextCount, hash: histogramLeafHash(nextCount)}
+	}
+	idx := bucket
+	for lvl := 0; lvl < hashpriceHistogramDepth; lvl++ {
+		parentIdx := idx >> 1
+		left := h.node(lvl, parentIdx<<1)
+		right := h.node(lvl, (parentIdx<<1)|1)
+		total := left.count + right.count
+		if total == 0 {
+			delete(h.levels[lvl+1], parentIdx)
+		} else {
+			h.levels[lvl+1][parentIdx] = histogramNode{
+				count: total,
+				hash:  histogramBranchHash(left, right),
+			}
+		}
+		idx = parentIdx
+	}
+}
+
+func (h *sparseHistogram) root() []byte {
+	root := h.node(hashpriceHistogramDepth, 0).hash
+	return bytes.Clone(root[:])
+}
+
+func (h *sparseHistogram) writeWitness(t *testing.T, values map[string][]byte, countKey, sibPrefix string, bucket uint32) {
 	t.Helper()
-	return beaconState(t, height, beaconNum(t, numerator, 64), beaconNum(t, accumulator, 64), hash, beaconNum(t, big.NewInt(mintedAt), 8))
+	values[countKey] = scriptInt(t, h.node(0, bucket).count)
+	idx := bucket
+	for lvl := 0; lvl < hashpriceHistogramDepth; lvl++ {
+		sib := h.node(lvl, idx^1)
+		values[fmt.Sprintf("%s.%d.count", sibPrefix, lvl)] = scriptInt(t, sib.count)
+		values[fmt.Sprintf("%s.%d.hash", sibPrefix, lvl)] = bytes.Clone(sib.hash[:])
+		idx >>= 1
+	}
+}
+
+func hashPriceBeaconState(t *testing.T, height int64, accumulator *big.Int, count int64, histRoot []byte) []byte {
+	t.Helper()
+	if histRoot == nil {
+		histRoot = histogramZeroNodes[hashpriceHistogramDepth].hash[:]
+	}
+	return beaconState(t, height, beaconNum(t, big.NewInt(count), 8), beaconNum(t, accumulator, 64), histRoot)
+}
+
+func hashPriceObservation(t *testing.T, height int64, numerator, accumulator *big.Int, hash []byte, mintedAt int64, rootBefore, rootAfter []byte) []byte {
+	t.Helper()
+	if rootBefore == nil {
+		rootBefore = histogramZeroNodes[hashpriceHistogramDepth].hash[:]
+	}
+	if rootAfter == nil {
+		rootAfter = histogramZeroNodes[hashpriceHistogramDepth].hash[:]
+	}
+	return beaconState(t, height, beaconNum(t, numerator, 64), beaconNum(t, accumulator, 64), hash, beaconNum(t, big.NewInt(mintedAt), 8), rootBefore, rootAfter)
 }
 
 func linkBeaconInput(t *testing.T, next *psbt.Packet, vin int, previous *psbt.Packet, vout uint32) {
@@ -364,7 +503,7 @@ func hashpriceSP1(t *testing.T) hashpriceSP1Fixture {
 	return fixture
 }
 
-func hashpriceMintValues(t *testing.T, f headerFixture, mintedAt int64) map[string][]byte {
+func hashpriceMintValues(t *testing.T, f headerFixture, mintedAt int64, hist *sparseHistogram, bucket uint32) map[string][]byte {
 	t.Helper()
 	fixture := hashpriceSP1(t)
 	proof, public := beaconHex(t, fixture.Proof), beaconHex(t, fixture.PublicValues)
@@ -383,6 +522,7 @@ func hashpriceMintValues(t *testing.T, f headerFixture, mintedAt int64) map[stri
 		}
 		values[fmt.Sprintf("siblings.%d", i)] = value
 	}
+	hist.writeWitness(t, values, "bucketCount", "histogramSiblings", bucket)
 	return values
 }
 
@@ -471,15 +611,34 @@ func TestHashpriceBeacon(t *testing.T) {
 	reward := fixtureReward(t, f)
 	source := beaconObservation(t, 2)
 	hpc := beaconObservation(t, 4)
+	checkpointHeight := int64(975744) // 484 * 2016: 544 prior observations before height 976289
 	contract := compileArtifact(t, "../../examples/hashprice/hashprice_beacon.ark")
-	issuer := beaconInstances(t, contract, map[string][]byte{"coinGidx": scriptInt(t, 3), "sourceGidx": scriptInt(t, 1), "blockCoinScript": source.pkScript[2:], "hashPriceCoinScript": hpc.pkScript[2:]})["mint"]
+	issuer := beaconInstances(t, contract, map[string][]byte{
+		"coinGidx":            scriptInt(t, 3),
+		"sourceGidx":          scriptInt(t, 1),
+		"blockCoinScript":     source.pkScript[2:],
+		"hashPriceCoinScript": hpc.pkScript[2:],
+		"checkpointHeight":    scriptInt(t, checkpointHeight),
+	})["mint"]
 	target := blockchain.CompactToBig(binary.LittleEndian.Uint32(header[72:76]))
 	q := new(big.Int).Mul(reward, target)
+	bucket := hashpriceBucket(q)
+	if bucket != 4665 {
+		t.Fatalf("mainnet block 976289 bucket = %d, want 4665 (46650..46659 sats/PH/s-day)", bucket)
+	}
+	histBefore := newSparseHistogram()
+	histBefore.add(100, 200)
+	histBefore.add(bucket, 12)
+	histBefore.add(9000, 332)
+	histAfter := histBefore.clone()
+	histAfter.add(bucket, 1)
+	rootBefore := histBefore.root()
+	rootAfter := histAfter.root()
 	previous := new(big.Int).Lsh(big.NewInt(1), 300)
 	next := new(big.Int).Add(previous, q)
-	before := hashPriceBeaconState(t, f.Height-1, previous, 0)
+	before := hashPriceBeaconState(t, f.Height-1, previous, 0, rootBefore)
 	block := blockObservation(t, f.Height, header, beaconHex(t, f.Headers[1])[72:76], beaconHex(t, f.EpochStartHeader)[68:72], fixtureWork(t, f))
-	after := hashPriceBeaconState(t, f.Height, next, 0)
+	after := hashPriceBeaconState(t, f.Height, next, 0, rootAfter)
 	// Produce the BHC through the real header beacon, then consume that exact
 	// output in the ordinary mint case. Mutations use isolated authenticated states.
 	headerContract := compileArtifact(t, "../../examples/hashprice/block_header_beacon.ark")
@@ -493,7 +652,7 @@ func TestHashpriceBeacon(t *testing.T) {
 		[]*wire.TxOut{beaconOut(headerIssuer), beaconOut(source)}, [][]byte{headerAfter, block},
 		asset.Packet{beaconGroup(blockControlID, []uint16{0}, []uint16{0}), beaconGroup(blockCoinID, nil, []uint16{1})})
 	beaconResult(t, headerMint, true)
-	for _, mutation := range []string{"valid", "past endpoint", "future endpoint", "single transaction", "max merkle depth", "too old", "too far ahead", "negative time", "skip", "accumulator", "numerator", "block hash", "minting time", "recovering", "output recovery", "source state", "source identity", "source script", "extra supply", "burn source", "forged reward", "negative reward", "excessive reward", "wrong txid", "header merkle root", "nonzero index", "zero proof", "generic guest proof", "sibling", "short sibling", "unused sibling", "short depth", "negative depth", "excessive depth"} {
+	for _, mutation := range []string{"valid", "past endpoint", "future endpoint", "single transaction", "max merkle depth", "overflow bucket", "too old", "too far ahead", "negative time", "skip", "accumulator", "numerator", "block hash", "minting time", "recovering", "output recovery", "source state", "source identity", "source script", "extra supply", "burn source", "forged reward", "negative reward", "excessive reward", "wrong txid", "header merkle root", "nonzero index", "zero proof", "generic guest proof", "sibling", "short sibling", "unused sibling", "short depth", "negative depth", "excessive depth", "wrong bucket count", "negative bucket count", "wrong histogram sibling hash", "wrong histogram sibling count", "negative histogram sibling count", "short histogram sibling", "wrong rootBefore", "wrong rootAfter", "wrong coin rootBefore", "wrong coin rootAfter", "wrong checkpoint total"} {
 		t.Run(mutation, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				mintedAt := time.Now().Unix()
@@ -507,13 +666,13 @@ func TestHashpriceBeacon(t *testing.T) {
 				case "too far ahead":
 					mintedAt += 3601
 				}
-				observation := hashPriceObservation(t, f.Height, q, next, chainhash.DoubleHashB(header), mintedAt)
+				observation := hashPriceObservation(t, f.Height, q, next, chainhash.DoubleHashB(header), mintedAt, rootBefore, rootAfter)
 				inputState := bytes.Clone(before)
 				sourceState := bytes.Clone(block)
 				states := [][]byte{bytes.Clone(after), bytes.Clone(sourceState), bytes.Clone(observation)}
 				outs := []*wire.TxOut{beaconOut(issuer), beaconOut(source), beaconOut(hpc)}
 				assets := asset.Packet{beaconGroup(hashPriceControlID, []uint16{0}, []uint16{0}), beaconGroup(blockCoinID, []uint16{1}, []uint16{1}), beaconGroup(hashPriceCoinID, nil, []uint16{2})}
-				values := hashpriceMintValues(t, f, mintedAt)
+				values := hashpriceMintValues(t, f, mintedAt, histBefore, bucket)
 				// Synthetic authenticated BHCs isolate each proof binding. Header
 				// issuance and PoW are tested separately against mined fixtures.
 				setRoot := func(root []byte) {
@@ -546,12 +705,29 @@ func TestHashpriceBeacon(t *testing.T) {
 						values[fmt.Sprintf("siblings.%d", i)] = chainhash.DoubleHashB([]byte{byte(i)})
 					}
 					setRoot(branch(20, false))
+				case "overflow bucket":
+					// Difficulty 1 (0x1d00ffff) with ~3.13 BTC reward far exceeds 10,485,750 sats/PH/s-day and clamps to max bucket.
+					binary.LittleEndian.PutUint32(sourceState[80:84], 0x1d00ffff)
+					copy(states[1][80:84], sourceState[80:84])
+					copy(states[2][136:168], chainhash.DoubleHashB(sourceState[8:88]))
+					maxTarget := blockchain.CompactToBig(0x1d00ffff)
+					maxQ := new(big.Int).Mul(reward, maxTarget)
+					maxAcc := new(big.Int).Add(previous, maxQ)
+					maxHistAfter := histBefore.clone()
+					maxHistAfter.add(hashpriceMaxBucket, 1)
+					maxRootAfter := maxHistAfter.root()
+					histBefore.writeWitness(t, values, "bucketCount", "histogramSiblings", hashpriceMaxBucket)
+					copy(states[0][16:80], beaconNum(t, maxAcc, 64))
+					copy(states[0][80:112], maxRootAfter)
+					copy(states[2][8:72], beaconNum(t, maxQ, 64))
+					copy(states[2][72:136], beaconNum(t, maxAcc, 64))
+					copy(states[2][208:240], maxRootAfter)
 				case "forged reward":
 					forged := new(big.Int).Add(reward, big.NewInt(1))
 					values["reward"] = scriptBigInt(t, forged)
 					numerator := new(big.Int).Mul(forged, target)
 					accumulator := new(big.Int).Add(previous, numerator)
-					copy(states[0][16:], beaconNum(t, accumulator, 64))
+					copy(states[0][16:80], beaconNum(t, accumulator, 64))
 					copy(states[2][8:72], beaconNum(t, numerator, 64))
 					copy(states[2][72:136], beaconNum(t, accumulator, 64))
 				case "negative reward":
@@ -589,6 +765,37 @@ func TestHashpriceBeacon(t *testing.T) {
 					values["merkleDepth"] = scriptInt(t, -1)
 				case "excessive depth":
 					values["merkleDepth"] = scriptInt(t, 21)
+				case "wrong bucket count":
+					values["bucketCount"] = scriptInt(t, 13)
+				case "negative bucket count":
+					values["bucketCount"] = scriptInt(t, -1)
+				case "wrong histogram sibling hash":
+					values["histogramSiblings.0.hash"][0] ^= 1
+				case "wrong histogram sibling count":
+					values["histogramSiblings.19.count"] = scriptInt(t, 999)
+				case "negative histogram sibling count":
+					values["histogramSiblings.0.count"] = scriptInt(t, -1)
+				case "short histogram sibling":
+					values["histogramSiblings.0.hash"] = values["histogramSiblings.0.hash"][:31]
+				case "wrong rootBefore":
+					inputState[80] ^= 1
+				case "wrong rootAfter":
+					states[0][80] ^= 1
+				case "wrong coin rootBefore":
+					states[2][176] ^= 1
+				case "wrong coin rootAfter":
+					states[2][208] ^= 1
+				case "wrong checkpoint total":
+					// Extra observation in prior histogram mismatches height - 1 - checkpointHeight.
+					badHist := histBefore.clone()
+					badHist.add(1, 1)
+					badAfter := badHist.clone()
+					badAfter.add(bucket, 1)
+					copy(inputState[80:112], badHist.root())
+					copy(states[0][80:112], badAfter.root())
+					copy(states[2][176:208], badHist.root())
+					copy(states[2][208:240], badAfter.root())
+					badHist.writeWitness(t, values, "bucketCount", "histogramSiblings", bucket)
 				case "skip":
 					states[0][0]++
 				case "accumulator":
@@ -618,11 +825,11 @@ func TestHashpriceBeacon(t *testing.T) {
 				}
 				values["mintedAt"] = scriptInt(t, mintedAt)
 				witness := covenantWitness(t, contract, covenantGroup(t, contract, "mint"), values)
-				if len(witness) != 32 {
-					t.Fatalf("mint witness has %d items, want 32", len(witness))
+				if len(witness) != 73 {
+					t.Fatalf("mint witness has %d items, want 73", len(witness))
 				}
-				if witness.SerializeSize() > 977 {
-					t.Fatalf("mint witness exceeds its 977-byte serialized bound")
+				if witness.SerializeSize() > 1826 {
+					t.Fatalf("mint witness exceeds its 1826-byte serialized bound: %d", witness.SerializeSize())
 				}
 				for _, item := range witness {
 					if len(item) > 32 {
@@ -636,7 +843,7 @@ func TestHashpriceBeacon(t *testing.T) {
 				if mutation == "valid" {
 					linkBeaconInput(t, ptx, 1, headerMint, 1)
 				}
-				valid := mutation == "valid" || mutation == "past endpoint" || mutation == "future endpoint" || mutation == "single transaction" || mutation == "max merkle depth"
+				valid := mutation == "valid" || mutation == "past endpoint" || mutation == "future endpoint" || mutation == "single transaction" || mutation == "max merkle depth" || mutation == "overflow bucket"
 				beaconResult(t, ptx, valid)
 				if mutation == "valid" || mutation == "max merkle depth" {
 					t.Logf("HashPriceBeacon mint: script=%d bytes, witness=%d bytes serialized / %d items, largest item=32 bytes", len(issuer.covenant), witness.SerializeSize(), len(witness))
@@ -650,15 +857,25 @@ func TestHashpriceAccumulatorChallenge(t *testing.T) {
 	f := hashpriceProofFixture(t)
 	header := beaconHex(t, f.Headers[0])
 	bhc, hpc := beaconObservation(t, 2), beaconObservation(t, 4)
+	checkpointHeight := int64(975744)
 	contract := compileArtifact(t, "../../examples/hashprice/hashprice_beacon.ark")
-	beacon := beaconInstances(t, contract, map[string][]byte{"coinGidx": scriptInt(t, 3), "sourceGidx": scriptInt(t, 1), "blockCoinScript": bhc.pkScript[2:], "hashPriceCoinScript": hpc.pkScript[2:]})["challenge"]
-	for _, mutation := range []string{"valid", "latest", "long suffix", "same hash", "source height", "unissued", "zero height", "recovering", "negative numerator", "negative rollback", "hpc identity", "bhc identity", "hpc script", "bhc script", "hpc state size", "bhc state size", "output height", "output accumulator", "output count", "output hash", "output timestamp", "source state", "hpc value", "bhc value", "burn disputed", "burn source", "clone"} {
+	beacon := beaconInstances(t, contract, map[string][]byte{
+		"coinGidx":            scriptInt(t, 3),
+		"sourceGidx":          scriptInt(t, 1),
+		"blockCoinScript":     bhc.pkScript[2:],
+		"hashPriceCoinScript": hpc.pkScript[2:],
+		"checkpointHeight":    scriptInt(t, checkpointHeight),
+	})["challenge"]
+	rootCurrent := bytes.Repeat([]byte{0x11}, 32)
+	rootBefore := bytes.Repeat([]byte{0x22}, 32)
+	rootAfter := bytes.Repeat([]byte{0x33}, 32)
+	for _, mutation := range []string{"valid", "latest", "long suffix", "same hash", "source height", "unissued", "zero height", "checkpoint height", "recovering", "negative numerator", "negative rollback", "hpc identity", "bhc identity", "hpc script", "bhc script", "hpc state size", "bhc state size", "output height", "output accumulator", "output count", "output root", "output hash", "output timestamp", "source state", "hpc value", "bhc value", "burn disputed", "burn source", "clone"} {
 		t.Run(mutation, func(t *testing.T) {
-			before := hashPriceBeaconState(t, f.Height+2, big.NewInt(999), 0)
-			disputed := hashPriceObservation(t, f.Height, big.NewInt(7), big.NewInt(107), chainhash.DoubleHashB(header), pastTimeout)
+			before := hashPriceBeaconState(t, f.Height+2, big.NewInt(999), 0, rootCurrent)
+			disputed := hashPriceObservation(t, f.Height, big.NewInt(7), big.NewInt(107), chainhash.DoubleHashB(header), pastTimeout, rootBefore, rootAfter)
 			disputed[136] ^= 1
 			block := blockObservation(t, f.Height, header, header[72:76], make([]byte, 4), fixtureWork(t, f))
-			reset := hashPriceBeaconState(t, f.Height-1, big.NewInt(100), 3)
+			reset := hashPriceBeaconState(t, f.Height-1, big.NewInt(100), 3, rootBefore)
 			inputs := []beaconCoin{{beacon, before, nil, hashPriceControlID}, {hpc, disputed, nil, hashPriceCoinID}, {bhc, block, nil, blockCoinID}}
 			outputs := []*wire.TxOut{beaconOut(beacon), beaconOut(hpc), beaconOut(bhc)}
 			assets := asset.Packet{beaconGroup(hashPriceControlID, []uint16{0}, []uint16{0}), beaconGroup(hashPriceCoinID, []uint16{1}, []uint16{1}), beaconGroup(blockCoinID, []uint16{2}, []uint16{2})}
@@ -678,6 +895,11 @@ func TestHashpriceAccumulatorChallenge(t *testing.T) {
 			case "zero height":
 				clear(disputed[0:8])
 				clear(block[0:8])
+			case "checkpoint height":
+				copy(disputed[0:8], beaconNum(t, big.NewInt(checkpointHeight), 8))
+				copy(block[0:8], beaconNum(t, big.NewInt(checkpointHeight), 8))
+				copy(reset[0:8], beaconNum(t, big.NewInt(checkpointHeight-1), 8))
+				copy(reset[8:16], beaconNum(t, big.NewInt(f.Height+2-checkpointHeight+1), 8))
 			case "recovering":
 				before[8] = 1
 			case "negative numerator":
@@ -698,7 +920,7 @@ func TestHashpriceAccumulatorChallenge(t *testing.T) {
 			case "bhc script":
 				inputs[2].instance, outputs[2] = hpc, beaconOut(hpc)
 			case "hpc state size":
-				disputed = disputed[:175]
+				disputed = disputed[:239]
 				inputs[1].state = disputed
 			case "bhc state size":
 				block = block[:128]
@@ -709,6 +931,8 @@ func TestHashpriceAccumulatorChallenge(t *testing.T) {
 				reset[16] ^= 1
 			case "output count":
 				reset[8]++
+			case "output root":
+				reset[80] ^= 1
 			case "hpc value":
 				outputs[1].Value--
 			case "bhc value":
@@ -738,13 +962,20 @@ func TestHashpriceAccumulatorChallenge(t *testing.T) {
 func TestHashpriceAccumulatorBurns(t *testing.T) {
 	coins, bhc := beaconObservations(t, 4), beaconObservation(t, 2)
 	contract := compileArtifact(t, "../../examples/hashprice/hashprice_beacon.ark")
-	beacon := beaconInstances(t, contract, map[string][]byte{"coinGidx": scriptInt(t, 3), "sourceGidx": scriptInt(t, 1), "blockCoinScript": bhc.pkScript[2:], "hashPriceCoinScript": coins["burn"].pkScript[2:]})["burn"]
-	for _, mutation := range []string{"valid", "complete", "normal", "too many", "zero burns", "retained height", "older", "control identity", "coin identity", "input amount", "duplicate allocation", "continued coin", "wrong decrement", "changed height", "changed accumulator", "negative controller height", "controller size"} {
+	beacon := beaconInstances(t, contract, map[string][]byte{
+		"coinGidx":            scriptInt(t, 3),
+		"sourceGidx":          scriptInt(t, 1),
+		"blockCoinScript":     bhc.pkScript[2:],
+		"hashPriceCoinScript": coins["burn"].pkScript[2:],
+		"checkpointHeight":    scriptInt(t, 2016),
+	})["burn"]
+	histRoot := bytes.Repeat([]byte{0x44}, 32)
+	for _, mutation := range []string{"valid", "complete", "normal", "too many", "zero burns", "retained height", "older", "control identity", "coin identity", "input amount", "duplicate allocation", "continued coin", "wrong decrement", "changed height", "changed accumulator", "changed root", "negative controller height", "controller size"} {
 		t.Run(mutation, func(t *testing.T) {
-			before := hashPriceBeaconState(t, 3000, big.NewInt(42), 3)
-			after := hashPriceBeaconState(t, 3000, big.NewInt(42), 1)
-			first := hashPriceObservation(t, 3003, big.NewInt(1), big.NewInt(45), make([]byte, 32), pastTimeout)
-			second := hashPriceObservation(t, 3001, big.NewInt(1), big.NewInt(43), make([]byte, 32), pastTimeout)
+			before := hashPriceBeaconState(t, 3000, big.NewInt(42), 3, histRoot)
+			after := hashPriceBeaconState(t, 3000, big.NewInt(42), 1, histRoot)
+			first := hashPriceObservation(t, 3003, big.NewInt(1), big.NewInt(45), make([]byte, 32), pastTimeout, nil, nil)
+			second := hashPriceObservation(t, 3001, big.NewInt(1), big.NewInt(43), make([]byte, 32), pastTimeout, nil, nil)
 			inputs := []beaconCoin{{beacon, before, nil, hashPriceControlID}, {coins["burn"], first, nil, hashPriceCoinID}, {coins["burn"], second, nil, hashPriceCoinID}}
 			assets := asset.Packet{beaconGroup(hashPriceControlID, []uint16{0}, []uint16{0}), beaconGroup(hashPriceCoinID, []uint16{1, 2}, nil)}
 			switch mutation {
@@ -780,10 +1011,12 @@ func TestHashpriceAccumulatorBurns(t *testing.T) {
 				after[0] ^= 1
 			case "changed accumulator":
 				after[16] ^= 1
+			case "changed root":
+				after[80] ^= 1
 			case "negative controller height":
 				before[7] = 0x80
 			case "controller size":
-				inputs[0].state = before[:79]
+				inputs[0].state = before[:111]
 			}
 			ptx := beaconSpend(t, inputs, []*wire.TxOut{beaconOut(beacon)}, [][]byte{after}, assets)
 			withExtraInput(t, ptx, fundingTx([]byte{txscript.OP_TRUE}, 10000))
@@ -795,8 +1028,15 @@ func TestHashpriceAccumulatorBurns(t *testing.T) {
 func TestHashpriceAccumulatorRecovery(t *testing.T) {
 	bhcs, hpcs := beaconObservations(t, 2), beaconObservations(t, 4)
 	contract := compileArtifact(t, "../../examples/hashprice/hashprice_beacon.ark")
-	beacon := beaconInstances(t, contract, map[string][]byte{"coinGidx": scriptInt(t, 3), "sourceGidx": scriptInt(t, 1), "blockCoinScript": bhcs["continue"].pkScript[2:], "hashPriceCoinScript": hpcs["continue"].pkScript[2:]})
 	f := hashpriceProofFixture(t)
+	checkpointHeight := f.Height - 1
+	beacon := beaconInstances(t, contract, map[string][]byte{
+		"coinGidx":            scriptInt(t, 3),
+		"sourceGidx":          scriptInt(t, 1),
+		"blockCoinScript":     bhcs["continue"].pkScript[2:],
+		"hashPriceCoinScript": hpcs["continue"].pkScript[2:],
+		"checkpointHeight":    scriptInt(t, checkpointHeight),
+	})
 	synctest.Test(t, func(t *testing.T) {
 		type liveCoin struct {
 			state []byte
@@ -804,7 +1044,8 @@ func TestHashpriceAccumulatorRecovery(t *testing.T) {
 			vout  uint32
 		}
 		var controller *psbt.Packet
-		height, count, accumulator := f.Height-1, int64(0), big.NewInt(50)
+		height, count, accumulator := checkpointHeight, int64(0), big.NewInt(50)
+		hist := newSparseHistogram()
 		link := func(ptx *psbt.Packet, vin int, coin *liveCoin) {
 			if coin.tx != nil {
 				linkBeaconInput(t, ptx, vin, coin.tx, coin.vout)
@@ -816,12 +1057,17 @@ func TestHashpriceAccumulatorRecovery(t *testing.T) {
 			}
 		}
 		mint := func(source *liveCoin, numerator *big.Int, valid bool) *liveCoin {
-			before := hashPriceBeaconState(t, height, accumulator, count)
+			bucket := hashpriceBucket(numerator)
+			rootBefore := hist.root()
+			nextHist := hist.clone()
+			nextHist.add(bucket, 1)
+			rootAfter := nextHist.root()
+			before := hashPriceBeaconState(t, height, accumulator, count, rootBefore)
 			next := new(big.Int).Add(accumulator, numerator)
-			after := hashPriceBeaconState(t, height+1, next, 0)
+			after := hashPriceBeaconState(t, height+1, next, 0, rootAfter)
 			mintedAt := time.Now().Unix()
-			observation := hashPriceObservation(t, height+1, numerator, next, chainhash.DoubleHashB(source.state[8:88]), mintedAt)
-			witness := covenantWitness(t, contract, covenantGroup(t, contract, "mint"), hashpriceMintValues(t, f, mintedAt))
+			observation := hashPriceObservation(t, height+1, numerator, next, chainhash.DoubleHashB(source.state[8:88]), mintedAt, rootBefore, rootAfter)
+			witness := covenantWitness(t, contract, covenantGroup(t, contract, "mint"), hashpriceMintValues(t, f, mintedAt, hist, bucket))
 			ptx := beaconSpend(t, []beaconCoin{{beacon["mint"], before, witness, hashPriceControlID}, {bhcs["continue"], source.state, nil, blockCoinID}},
 				[]*wire.TxOut{beaconOut(beacon["mint"]), beaconOut(bhcs["continue"]), beaconOut(hpcs["continue"])}, [][]byte{after, source.state, observation},
 				asset.Packet{beaconGroup(hashPriceControlID, []uint16{0}, []uint16{0}), beaconGroup(blockCoinID, []uint16{1}, []uint16{1}), beaconGroup(hashPriceCoinID, nil, []uint16{2})})
@@ -831,13 +1077,13 @@ func TestHashpriceAccumulatorRecovery(t *testing.T) {
 			if !valid {
 				return nil
 			}
-			controller, height, accumulator = ptx, height+1, next
+			controller, height, accumulator, hist = ptx, height+1, next, nextHist
 			source.tx, source.vout = ptx, 1
 			return &liveCoin{observation, ptx, 2}
 		}
-		challenge := func(disputed, source *liveCoin, retainedHeight int64, retainedAccumulator *big.Int) {
-			before := hashPriceBeaconState(t, height, accumulator, count)
-			after := hashPriceBeaconState(t, retainedHeight, retainedAccumulator, height-retainedHeight)
+		challenge := func(disputed, source *liveCoin, retainedHeight int64, retainedAccumulator *big.Int, retainedHist *sparseHistogram) {
+			before := hashPriceBeaconState(t, height, accumulator, count, hist.root())
+			after := hashPriceBeaconState(t, retainedHeight, retainedAccumulator, height-retainedHeight, retainedHist.root())
 			ptx := beaconSpend(t, []beaconCoin{{beacon["challenge"], before, nil, hashPriceControlID}, {hpcs["continue"], disputed.state, nil, hashPriceCoinID}, {bhcs["continue"], source.state, nil, blockCoinID}},
 				[]*wire.TxOut{beaconOut(beacon["challenge"]), beaconOut(hpcs["continue"]), beaconOut(bhcs["continue"])}, [][]byte{after, disputed.state, source.state},
 				asset.Packet{beaconGroup(hashPriceControlID, []uint16{0}, []uint16{0}), beaconGroup(hashPriceCoinID, []uint16{1}, []uint16{1}), beaconGroup(blockCoinID, []uint16{2}, []uint16{2})})
@@ -845,13 +1091,13 @@ func TestHashpriceAccumulatorRecovery(t *testing.T) {
 			link(ptx, 1, disputed)
 			link(ptx, 2, source)
 			beaconResult(t, ptx, true)
-			controller, count, height, accumulator = ptx, height-retainedHeight, retainedHeight, retainedAccumulator
+			controller, count, height, accumulator, hist = ptx, height-retainedHeight, retainedHeight, retainedAccumulator, retainedHist.clone()
 			disputed.tx, disputed.vout = ptx, 1
 			source.tx, source.vout = ptx, 2
 		}
 		burn := func(discarded *liveCoin) {
-			before := hashPriceBeaconState(t, height, accumulator, count)
-			after := hashPriceBeaconState(t, height, accumulator, count-1)
+			before := hashPriceBeaconState(t, height, accumulator, count, hist.root())
+			after := hashPriceBeaconState(t, height, accumulator, count-1, hist.root())
 			ptx := beaconSpend(t, []beaconCoin{{beacon["burn"], before, nil, hashPriceControlID}, {hpcs["burn"], discarded.state, nil, hashPriceCoinID}},
 				[]*wire.TxOut{beaconOut(beacon["burn"])}, [][]byte{after},
 				asset.Packet{beaconGroup(hashPriceControlID, []uint16{0}, []uint16{0}), beaconGroup(hashPriceCoinID, []uint16{1}, nil)})
@@ -881,21 +1127,23 @@ func TestHashpriceAccumulatorRecovery(t *testing.T) {
 			oldQ[i].Mul(reward, blockchain.CompactToBig(oldBits))
 			oldSources[i] = &liveCoin{state: old}
 		}
+		histAtCheckpoint := hist.clone()
 		first := mint(oldSources[0], oldQ[0], true)
+		histAfterFirst := hist.clone()
 		second := mint(oldSources[1], oldQ[1], true)
 		time.Sleep(25 * time.Hour) // Virtual time: old HPCs have passed the consumer window.
 
 		// Rewind the later mismatch first, retaining the earlier wrong contribution.
-		challenge(second, replacements[1], f.Height, new(big.Int).Add(big.NewInt(50), oldQ[0]))
+		challenge(second, replacements[1], f.Height, new(big.Int).Add(big.NewInt(50), oldQ[0]), histAfterFirst)
 		mint(replacements[1], replacementQ[1], false)
 		burn(second)
 		mixed := mint(replacements[1], replacementQ[1], true)
-		if bytes.Equal(mixed.state[168:], second.state[168:]) {
+		if bytes.Equal(mixed.state[168:176], second.state[168:176]) {
 			t.Fatal("replacement inherited the old minting time")
 		}
 
 		// A successive rewind removes both the old contribution and its mixed descendant.
-		challenge(first, replacements[0], f.Height-1, big.NewInt(50))
+		challenge(first, replacements[0], f.Height-1, big.NewInt(50), histAtCheckpoint)
 		mint(replacements[0], replacementQ[0], false)
 		burn(mixed)
 		mint(replacements[0], replacementQ[0], false)
@@ -907,7 +1155,13 @@ func TestHashpriceAccumulatorRecovery(t *testing.T) {
 		if !bytes.Equal(last.state[72:136], beaconNum(t, want, 64)) {
 			t.Fatal("recovered accumulator includes discarded rewards")
 		}
-		if !bytes.Equal(last.state[168:], beaconNum(t, big.NewInt(time.Now().Unix()), 8)) {
+		wantHist := newSparseHistogram()
+		wantHist.add(hashpriceBucket(replacementQ[0]), 1)
+		wantHist.add(hashpriceBucket(replacementQ[1]), 1)
+		if !bytes.Equal(last.state[208:240], wantHist.root()) {
+			t.Fatal("recovered histogram includes discarded observations")
+		}
+		if !bytes.Equal(last.state[168:176], beaconNum(t, big.NewInt(time.Now().Unix()), 8)) {
 			t.Fatal("replacement timestamp is not fresh")
 		}
 	})
@@ -1100,7 +1354,7 @@ func TestHashpriceCoinPreservation(t *testing.T) {
 	for _, kind := range []byte{2, 4} {
 		t.Run(fmt.Sprint(kind), func(t *testing.T) {
 			id := hashPriceCoinID
-			state := hashPriceObservation(t, 2017, big.NewInt(1), big.NewInt(2), make([]byte, 32), pastTimeout)
+			state := hashPriceObservation(t, 2017, big.NewInt(1), big.NewInt(2), make([]byte, 32), pastTimeout, nil, nil)
 			if kind == 2 {
 				id = blockCoinID
 				state = beaconState(t, 2017, make([]byte, 121))
@@ -1133,8 +1387,8 @@ func TestHashpriceCoinPreservation(t *testing.T) {
 
 func TestHashpriceCoinContinuations(t *testing.T) {
 	coin := beaconObservation(t, 4)
-	first := hashPriceObservation(t, 2017, big.NewInt(1), big.NewInt(2), make([]byte, 32), pastTimeout)
-	second := hashPriceObservation(t, 2027, big.NewInt(3), big.NewInt(4), make([]byte, 32), pastTimeout+100)
+	first := hashPriceObservation(t, 2017, big.NewInt(1), big.NewInt(2), make([]byte, 32), pastTimeout, nil, nil)
+	second := hashPriceObservation(t, 2027, big.NewInt(3), big.NewInt(4), make([]byte, 32), pastTimeout+100, nil, nil)
 	for _, mutation := range []string{"valid", "swapped states", "merged outputs"} {
 		t.Run(mutation, func(t *testing.T) {
 			outs := []*wire.TxOut{beaconOut(coin), beaconOut(coin)}
@@ -1154,6 +1408,263 @@ func TestHashpriceCoinContinuations(t *testing.T) {
 			beaconResult(t, ptx, mutation == "valid")
 		})
 	}
+}
+
+func TestHashpriceMedianSettlement(t *testing.T) {
+	source := `pragma arkade ^0.1.0;
+
+struct HistogramSibling { int count; bytes32 hash; }
+
+contract HashPriceMedianSettlement(
+  bytes32 beaconTxid,
+  int hpcGidx,
+  bytes32 hpcScript,
+  int checkpointHeight,
+  int startHeight,
+  int endHeight,
+  int strikeBucket,
+  bytes32 longScript,
+  bytes32 shortScript
+) {
+  const int SETTLEMENT_DELAY = 86400;
+  const int BUCKETS = 1048576;
+
+  @allow(unsigned-spend-path, "anyone may settle using authenticated endpoint HPCs")
+  function settle(
+    int bucket,
+    int countL,
+    HistogramSibling[20] sibsL,
+    int countR,
+    HistogramSibling[20] sibsR
+  ) {
+    require(this.activeInputIndex == 0, "settlement input 0");
+    require(endHeight >= startHeight && startHeight > checkpointHeight, "valid interval");
+    require(bucket >= 0 && bucket < BUCKETS, "bucket range");
+
+    bytes stateL = readHpc(1, startHeight - 1);
+    bytes stateR = readHpc(2, endHeight);
+    int mintedAtR = bin2num(substr(stateR, 168, 8));
+    require(mintedAtR >= 0 && checkTime(mintedAtR + SETTLEMENT_DELAY), "settlement age");
+
+    bytes rootL = substr(stateL, 208, 32);
+    bytes rootR = substr(stateR, 208, 32);
+    require(countL >= 0 && countR >= 0, "leaf counts");
+    bytes32 hashL = sha256(0x00 + num2bin(countL, 8));
+    bytes32 hashR = sha256(0x00 + num2bin(countR, 8));
+    int totalL = countL;
+    int totalR = countR;
+    int belowL = 0;
+    int belowR = 0;
+    int path = bucket;
+    for (i, sibL) in sibsL {
+      let sibR = sibsR[i];
+      require(sibL.count >= 0 && sibR.count >= 0, "sibling counts");
+      bytes eL = num2bin(totalL, 8) + hashL;
+      bytes sL = num2bin(sibL.count, 8) + sibL.hash;
+      bytes eR = num2bin(totalR, 8) + hashR;
+      bytes sR = num2bin(sibR.count, 8) + sibR.hash;
+      int isRight = path % 2;
+      path = path >> 1;
+      if (isRight == 0) {
+        hashL = sha256(0x01 + eL + sL);
+        hashR = sha256(0x01 + eR + sR);
+      } else {
+        hashL = sha256(0x01 + sL + eL);
+        hashR = sha256(0x01 + sR + eR);
+        belowL = belowL + sibL.count;
+        belowR = belowR + sibR.count;
+      }
+      totalL = totalL + sibL.count;
+      totalR = totalR + sibR.count;
+    }
+    require(hashL == rootL && hashR == rootR, "histogram roots");
+    require(totalL == (startHeight - 1) - checkpointHeight, "totalL");
+    require(totalR == endHeight - checkpointHeight, "totalR");
+
+    int n = endHeight - startHeight + 1;
+    int k = (n + 1) / 2;
+    int below = belowR - belowL;
+    int inside = countR - countL;
+    require(below >= 0 && below < k && k <= below + inside && below + inside <= n, "median rank");
+
+    bytes32 winner = shortScript;
+    if (bucket >= strikeBucket) {
+      winner = longScript;
+    }
+    require(tx.outputs[0].script.program == winner, "winner script");
+    require(tx.outputs[0].value == tx.inputs[0].value, "payout value");
+  }
+
+  private function readHpc(int vin, int expectedHeight) bytes {
+    require(tx.inputs[vin].script.program == hpcScript, "hpc script");
+    require(tx.inputs[vin].assets.length == 1, "one hpc asset");
+    let alloc = tx.inputs[vin].assets[0];
+    require(alloc.amount == 1 && alloc.assetId.txid == beaconTxid && alloc.assetId.gidx == hpcGidx, "hpc identity");
+    let prev = tx.inputs[vin].outpoint;
+    require(prev.vout <= 223, "vout range");
+    bytes state = tx.inputs[vin].packet(32 + prev.vout);
+    require(size(state) == 240, "hpc size");
+    require(bin2num(substr(state, 0, 8)) == expectedHeight, "hpc height");
+    return state;
+  }
+}
+`
+	path := filepath.Join(t.TempDir(), "hashprice_median_settlement.ark")
+	if err := os.WriteFile(path, []byte(source), 0600); err != nil {
+		t.Fatal(err)
+	}
+	contract := compileArtifact(t, path)
+	hpc := beaconObservation(t, 4)
+	longScript := bytes.Repeat([]byte{0xbb}, 32)
+	shortScript := bytes.Repeat([]byte{0xcc}, 32)
+	longPk := append([]byte{txscript.OP_1, 32}, longScript...)
+	shortPk := append([]byte{txscript.OP_1, 32}, shortScript...)
+
+	const (
+		checkpointH = int64(96768)
+		startH      = int64(100000)
+		endH        = int64(110000) // N = 10,001 observations, median rank k = 5,001
+		strikeB     = uint32(4600)
+		medianB     = uint32(4665) // 46,650..46,659 sats / (PH/s * day)
+	)
+	histL := newSparseHistogram()
+	histL.add(4000, 1400)
+	histL.add(medianB, 25)
+	histL.add(5200, 1806) // totalL = 3,231 = 99,999 - 96,768
+
+	histR := histL.clone()
+	histR.add(4400, 4950)    // below = 4,950 (< 5,001)
+	histR.add(medianB, 105)  // inside = 105 (4,950 + 105 = 5,055 >= 5,001)
+	histR.add(5500, 4946)    // above = 4,946; totalR = 13,232 = 110,000 - 96,768
+
+	runSettle := func(name string, endHeight int64, strike uint32, payoutPk []byte, hL, hR *sparseHistogram, claimed int64, ageOffset int64, mutate func(map[string][]byte), wantValid bool) {
+		t.Run(name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				mintedAtR := time.Now().Unix() - ageOffset
+				sL := hashPriceObservation(t, startH-1, big.NewInt(1), big.NewInt(100), make([]byte, 32), mintedAtR-600000, nil, hL.root())
+				sR := hashPriceObservation(t, endHeight, big.NewInt(2), big.NewInt(500), make([]byte, 32), mintedAtR, nil, hR.root())
+
+				settlement := beaconInstances(t, contract, map[string][]byte{
+					"beaconTxid":       hashPriceCoinID.Txid[:],
+					"hpcGidx":          scriptInt(t, int64(hashPriceCoinID.Index)),
+					"hpcScript":        hpc.pkScript[2:],
+					"checkpointHeight": scriptInt(t, checkpointH),
+					"startHeight":      scriptInt(t, startH),
+					"endHeight":        scriptInt(t, endHeight),
+					"strikeBucket":     scriptInt(t, int64(strike)),
+					"longScript":       longScript,
+					"shortScript":      shortScript,
+				})["settle"]
+
+				openBucket := uint32(claimed & hashpriceMaxBucket)
+				values := map[string][]byte{"bucket": scriptInt(t, claimed)}
+				hL.writeWitness(t, values, "countL", "sibsL", openBucket)
+				hR.writeWitness(t, values, "countR", "sibsR", openBucket)
+				if mutate != nil {
+					mutate(values)
+				}
+				witness := covenantWitness(t, contract, covenantGroup(t, contract, "settle"), values)
+				if name == "valid 100k-110k" {
+					t.Logf("HashPriceMedianSettlement.settle (D=20): script=%d bytes, witness=%d bytes serialized / %d items", len(settlement.covenant), witness.SerializeSize(), len(witness))
+				}
+
+				prevEscrow := fundingTx(settlement.pkScript, 100000)
+				makePrevHPC := func(st []byte) *wire.MsgTx {
+					prev := fundingTx([]byte{txscript.OP_TRUE}, 10000)
+					prev.AddTxOut(&wire.TxOut{Value: 10000, PkScript: hpc.pkScript})
+					out, err := (extension.Extension{
+						asset.Packet{beaconGroup(hashPriceCoinID, nil, []uint16{1})},
+						extension.UnknownPacket{PacketType: 33, Data: st},
+					}).TxOut()
+					if err != nil {
+						t.Fatal(err)
+					}
+					prev.AddTxOut(out)
+					return prev
+				}
+				prevL := makePrevHPC(sL)
+				prevR := makePrevHPC(sR)
+
+				tx := wire.NewMsgTx(2)
+				tx.AddTxIn(&wire.TxIn{PreviousOutPoint: wire.OutPoint{Hash: prevEscrow.TxHash(), Index: 0}})
+				tx.AddTxIn(&wire.TxIn{PreviousOutPoint: wire.OutPoint{Hash: prevL.TxHash(), Index: 1}})
+				tx.AddTxIn(&wire.TxIn{PreviousOutPoint: wire.OutPoint{Hash: prevR.TxHash(), Index: 1}})
+				tx.AddTxOut(&wire.TxOut{Value: 100000, PkScript: bytes.Clone(payoutPk)})
+				tx.AddTxOut(beaconOut(hpc))
+				tx.AddTxOut(beaconOut(hpc))
+
+				em, err := arkade.NewPacket(
+					arkade.EmulatorEntry{Vin: 0, Script: settlement.covenant, Witness: witness},
+					arkade.EmulatorEntry{Vin: 1, Script: hpc.covenant},
+					arkade.EmulatorEntry{Vin: 2, Script: hpc.covenant},
+				)
+				if err != nil {
+					t.Fatal(err)
+				}
+				extOut, err := (extension.Extension{
+					asset.Packet{beaconGroup(hashPriceCoinID, []uint16{1, 2}, []uint16{1, 2})},
+					em,
+					extension.UnknownPacket{PacketType: 33, Data: sL},
+					extension.UnknownPacket{PacketType: 34, Data: sR},
+				}).TxOut()
+				if err != nil {
+					t.Fatal(err)
+				}
+				tx.AddTxOut(extOut)
+				tx.AddTxOut(txutils.AnchorOutput())
+
+				ptx, err := psbt.NewFromUnsignedTx(tx)
+				if err != nil {
+					t.Fatal(err)
+				}
+				ptx.Inputs[0].WitnessUtxo = prevEscrow.TxOut[0]
+				ptx.Inputs[0].TaprootLeafScript = []*psbt.TaprootTapLeafScript{settlement.tapLeafScript}
+				if err := txutils.SetArkPsbtField(ptx, 0, arkade.PrevArkTxField, *prevEscrow); err != nil {
+					t.Fatal(err)
+				}
+				for idx, prev := range []*wire.MsgTx{prevL, prevR} {
+					vin := idx + 1
+					ptx.Inputs[vin].WitnessUtxo = prev.TxOut[1]
+					ptx.Inputs[vin].TaprootLeafScript = []*psbt.TaprootTapLeafScript{hpc.tapLeafScript}
+					if err := txutils.SetArkPsbtField(ptx, vin, arkade.PrevArkTxField, *prev); err != nil {
+						t.Fatal(err)
+					}
+				}
+				beaconResult(t, ptx, wantValid)
+			})
+		})
+	}
+
+	// Odd N = 10,001 (100,000..110,000), median bucket 4665 >= strike 4600 => long wins.
+	runSettle("valid 100k-110k", endH, strikeB, longPk, histL, histR, int64(medianB), 90000, nil, true)
+	// Same interval with higher strike 4700 => short wins.
+	runSettle("valid short win", endH, 4700, shortPk, histL, histR, int64(medianB), 90000, nil, true)
+	// Even N = 10,000 (100,000..109,999), lower median rank k = 5,000 lands on bucket 4400 when 4400 holds 5,000 items.
+	histEvenR := histL.clone()
+	histEvenR.add(4400, 5000)
+	histEvenR.add(5500, 5000)
+	runSettle("valid even N lower median", endH-1, strikeB, shortPk, histL, histEvenR, 4400, 90000, nil, true)
+
+	// Negative cases.
+	runSettle("wrong lower bucket", endH, strikeB, longPk, histL, histR, 4400, 90000, nil, false)
+	runSettle("wrong higher bucket", endH, strikeB, longPk, histL, histR, 5500, 90000, nil, false)
+	runSettle("empty bucket", endH, strikeB, longPk, histL, histR, int64(medianB+1), 90000, nil, false)
+	runSettle("bucket wraparound", endH, strikeB, longPk, histL, histR, int64(medianB)+(1<<hashpriceHistogramDepth), 90000, nil, false)
+	runSettle("negative bucket", endH, strikeB, longPk, histL, histR, -1, 90000, nil, false)
+	runSettle("wrong winner", endH, strikeB, shortPk, histL, histR, int64(medianB), 90000, nil, false)
+	runSettle("tampered countR", endH, strikeB, longPk, histL, histR, int64(medianB), 90000, func(v map[string][]byte) {
+		v["countR"] = scriptInt(t, 131)
+	}, false)
+	runSettle("tampered sibling count", endH, strikeB, longPk, histL, histR, int64(medianB), 90000, func(v map[string][]byte) {
+		v["sibsR.10.count"] = scriptInt(t, 9999)
+	}, false)
+	runSettle("tampered sibling hash", endH, strikeB, longPk, histL, histR, int64(medianB), 90000, func(v map[string][]byte) {
+		v["sibsR.0.hash"][0] ^= 1
+	}, false)
+	runSettle("immature settlement age", endH, strikeB, longPk, histL, histR, int64(medianB), 86399, nil, false)
+	wrongTotalHistR := histR.clone()
+	wrongTotalHistR.add(5500, 1)
+	runSettle("wrong totalR", endH, strikeB, longPk, histL, wrongTotalHistR, int64(medianB), 90000, nil, false)
 }
 
 func TestHashpriceMath(t *testing.T) {

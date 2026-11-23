@@ -22,8 +22,8 @@ One transaction `T`; trusted epoch-start checkpoint `H > 388381`, `H % 2016 == 0
 vout  asset  contract           initial state / issuance authority
 0     T:0    BlockHeaderBeacon  H, checkpoint hash/nBits/time, count=0, work floor=0
 1     T:1    BeaconCoin (BHC)   H, header, nBits/time, work(H..H+5); control=T:0
-2     T:2    HashPriceBeacon    H, A=0, count=0
-3     T:3    BeaconCoin (HPC)   H, q=0, A=0, checkpoint hash, mintedAt; control=T:2
+2     T:2    HashPriceBeacon    H, A=0, count=0, histogramRoot=EMPTY_ROOT
+3     T:3    BeaconCoin (HPC)   H, q=0, A=0, checkpoint hash, mintedAt, EMPTY_ROOT, EMPTY_ROOT; control=T:2
 4     -      Extension         issuance and state packets
 ```
 
@@ -33,11 +33,11 @@ can reissue only while spending its control. The index starts at `H+1`.
 | Contract | Parameters |
 | --- | --- |
 | BlockHeaderBeacon | `coinGidx=1`, BHC script |
-| HashPriceBeacon | `coinGidx=3`, `sourceGidx=1`, BHC script, HPC script |
+| HashPriceBeacon | `coinGidx=3`, `sourceGidx=1`, BHC script, HPC script, `checkpointHeight=H` |
 | BeaconCoin (BHC) | `controlGidx=0` |
 | BeaconCoin (HPC) | `controlGidx=2` |
 
-Consumers audit the checkpoint, initial states, supplies, control
+Consumers audit the checkpoint, initial states (including `EMPTY_ROOT`), supplies, control
 relationships and complete script trees. Scripts are 32-byte Taproot programs;
 include every spend path and the collaborative leaves, with no covenant-bypassing
 exit or usable key path. Identities match both `T` and group index. Reissuance
@@ -47,17 +47,18 @@ packets omit `ControlAsset`; arkd validates the registered relationship.
 
 Fields are in byte order; widths and totals are bytes. `q` is the hashprice
 numerator, `A` its cumulative sum, `count` the recovery count, `floor` the minimum
-replacement proof work.
+replacement proof work, and `histRoot` / `rootBefore` / `rootAfter` the depth-20
+ordered Merkle-sum histogram roots.
 
 ```text
 BlockHeaderBeacon [89]
   height:8 | count:8 | lastHash:32 | nextNBits:4 | epochStart:4 | floor:33
 BHC [129]
   height:8 | header:80 | nextNBits:4 | epochStart:4 | proofWork:33
-HashPriceBeacon [80]
-  height:8 | count:8 | A:64
-HPC [176]
-  height:8 | q:64 | A:64 | blockHash:32 | mintedAt:8
+HashPriceBeacon [112]
+  height:8 | count:8 | A:64 | histRoot:32
+HPC [240]
+  height:8 | q:64 | A:64 | blockHash:32 | mintedAt:8 | rootBefore:32 | rootAfter:32
 
 output state = tx.packet(32 + vout)                  # vout: 0..223
 input state  = input.packet(32 + input.outpoint.vout)
@@ -149,26 +150,42 @@ replacement mint accepts any valid proof meeting the floor and clears it.
 
 BHCs supply authenticated headers and chain-recovery context. They contain no
 reward, transaction or Merkle-proof data and can be consumed by other applications.
-HashPriceBeacon authenticates the coinbase and its reward at minting.
+HashPriceBeacon authenticates the coinbase and its reward at minting, updating
+both the cumulative sum `A` and a persistent depth-20 ordered Merkle-sum histogram
+over 10 sat / (PH/s · day) buckets.
 
 ```text
+bucket(q)    = min(floor(q * 86400 * 10^15 / (10 * T1 * 2^32)), 2^20 - 1)
+             = min(floor(((q * 274658203125) >> 219) / 4369), 1048575)
+
+leafHash     = SHA256(0x00 || num2bin(count, 8))
+parentCount  = leftCount + rightCount
+parentHash   = SHA256(0x01 || num2bin(leftCount, 8) || leftHash ||
+                              num2bin(rightCount, 8) || rightHash)
+
 MINT       inputs [beacon[h], BHC[n]] --> outputs [beacon[n], same BHC[n], HPC[n]]
-  require n == h+1
+  require n == h+1 and n > checkpointHeight >= 0
   require mintedAt >= 0 and abs(mintedAt - emulator.now) <= 3600
   verify SP1 Groth16 proof of coinbaseTxid and rewardSats
   require coinbaseTxid at transaction index 0 in BHC[n].header.merkleRoot
   q = rewardSats * decodeTarget(BHC[n].header.nBits)
   A = beacon.A + q
-  HPC[n] = (n, q, A, SHA256d(BHC[n].header), mintedAt)
-  beacon = (n, A, count=0)
+  verify opening of bucket(q) against beacon.histRoot with totalBefore == h - checkpointHeight
+  increment bucket(q) leaf count by 1 and reconstruct rootAfter with the same siblings
+  HPC[n] = (n, q, A, SHA256d(BHC[n].header), mintedAt, beacon.histRoot, rootAfter)
+  beacon = (n, A, count=0, rootAfter)
 
 CHALLENGE  inputs [beacon[h], HPC[n], BHC[n]]
            --> outputs [beacon[n-1], same HPC[n], same BHC[n]]
-  require 0 < n <= h and HPC[n].blockHash != SHA256d(BHC[n].header)
+  require checkpointHeight < n <= h and HPC[n].blockHash != SHA256d(BHC[n].header)
   require HPC[n].A >= HPC[n].q >= 0
-  beacon = (n-1, HPC[n].A - HPC[n].q, count=h-n+1)
+  beacon = (n-1, HPC[n].A - HPC[n].q, count=h-n+1, HPC[n].rootBefore)
 ```
 
+Bucket `b` in `0..1,048,574` covers `[10*b, 10*b + 10)` sats / (PH/s · day), and
+bucket `1,048,575` is the overflow bucket `>= 10,485,750` sats / (PH/s · day).
+Counters use nonnegative 8-byte little-endian ScriptNum (`0..2^63-1`); empty
+subtrees share fixed zero-count hashes so off-chain storage is sparse (`O(blocks)`).
 Replacement HPCs receive fresh minting timestamps. Histories can remain stale or
 mixed until challenged and burned.
 
@@ -177,8 +194,10 @@ mixed until challenged and burned.
 `HashPriceBeacon.mint` takes:
 
 ```text
-mint(mintedAt, coinbaseTxid, reward, merkleDepth, bytes32[20] siblings, Groth16Proof proof)
-Groth16Proof = A:G1 (2 integers), B:G2 (4 integers), C:G1 (2 integers)
+mint(mintedAt, coinbaseTxid, reward, merkleDepth, bytes32[20] siblings,
+     Groth16Proof proof, int bucketCount, HistogramSibling[20] histogramSiblings)
+Groth16Proof     = A:G1 (2 integers), B:G2 (4 integers), C:G1 (2 integers)
+HistogramSibling = (count: int, hash: bytes32)
 ```
 
 The pinned SP1 guest is
@@ -210,22 +229,24 @@ result must equal the authenticated header's Merkle root (BHC offset 44).
 one-transaction blocks. Coinbase structure is checked independently by the guest as well as its
 leftmost position.
 
-The 20 siblings occupy 640 bytes **across 20 stack items**, rather than one
-oversized element. The mint witness has exactly 32 items: timestamp, txid,
-reward, depth, 20 siblings and eight proof coordinates. Its largest element is
-32 bytes. Its serialized upper bound is **977 bytes** (944 payload bytes plus
-33 count/length-prefix bytes), including maximum-width valid timestamp/reward
-numbers. No raw coinbase bytes enter the covenant witness. VM ceilings are 520
-bytes per element, 1,000 combined stack items, 128 KiB combined stack bytes and
-10,000 script bytes. The regression test exercises a full depth-20 branch with
-the actual Groth16 proof under the default VM compute limits.
+Both 20-level Merkle openings pass siblings across separate stack items rather than
+oversized elements. The mint witness has exactly 73 items: timestamp, txid, reward,
+depth, 20 coinbase siblings, eight proof coordinates, the target bucket's prior
+count, and 20 histogram `(count, hash)` pairs. Its largest element is 32 bytes.
+Its serialized upper bound is **1,826 bytes** (including maximum-width 8-byte
+counts and timestamp/reward numbers). No raw coinbase bytes enter the covenant
+witness. VM ceilings are 520 bytes per element, 1,000 combined stack items, 128 KiB
+combined stack bytes and 10,000 script bytes. The regression test exercises a full
+depth-20 coinbase branch and depth-20 histogram update with the actual Groth16 proof
+under the default VM compute limits.
 
 Measured with the checked-in deployment parameters: the optimized mint covenant
-is **2,879 bytes**, with compiler-reported peak stack **117 items**. Both the real
-13-level branch and a full 20-level branch serialize to **970 witness bytes**;
-unused siblings retain their 32-byte zero padding. The unoptimized covenant is
-2,495 bytes and passes the same VM cases. Even the conservative byte bound
-`117 * 520 = 60,840` remains below the 128 KiB combined-stack ceiling.
+is **5,197 bytes** (`challenge` 596 bytes, `burn` 176 bytes), with compiler-reported
+peak stack **160 items**. With the real block 976289 coinbase and a non-empty
+prior histogram, the mint witness serializes to **1,656 bytes** across 73 items.
+The unoptimized mint covenant is **4,944 bytes** and passes the same VM cases. Even
+the conservative byte bound `160 * 520 = 83,200` remains below the 128 KiB
+combined-stack ceiling.
 
 The self-contained fixture uses the real coinbase of mainnet block 976289,
 its 13-sibling index-zero branch and a real SP1 proof. Header PoW/recovery tests
@@ -240,29 +261,50 @@ checking the pinned program key and generating a Groth16 proof. The
 The [witness converter](../../benchmarks/sp1-sha256d/arkade/export_witness.py)
 converts the SDK envelope to named proof-coordinate inputs. For this contract,
 use its `outputSum` value as `reward`, its `expectedTxid` as `coinbaseTxid`, and
-add the timestamp, depth and 20 branch siblings. Always pin the program key of
-the reviewed guest build. The generic transaction benchmark guest has a different
-key and is deliberately rejected by HashPriceBeacon.
+add the timestamp, depth, 20 coinbase branch siblings and the depth-20 histogram
+opening. Always pin the program key of the reviewed guest build. The generic
+transaction benchmark guest has a different key and is deliberately rejected by
+HashPriceBeacon.
 
 ## Settlement
 
-Example consumer policy for inclusive interval `s..e`, `H < s <= e`, output scale `P`:
+Example consumer policy for inclusive interval `s..e`, `H < s <= e`, `N = e - s + 1`,
+output scale `P`:
 
 ```text
-authenticate identities, scripts and heights of HPC[s-1] and HPC[e]
-continue both coins in distinct input/output slots
+authenticate identities, scripts, sizes (240 B) and heights of HPC[s-1] and HPC[e]
+require settlement input 0 and continue both coins in distinct input/output slots
 require HPC[e].mintedAt + 24 hours < now
 
+# Mean (cumulative sum A):
 hashprice[n]   = q[n] / T1                          # satoshis / difficulty unit
-average        = (A[e] - A[s-1]) / ((e-s+1) * T1)
-average_scaled = floor(P * (A[e] - A[s-1]) / ((e-s+1) * T1))
+average        = (A[e] - A[s-1]) / (N * T1)
+average_scaled = floor(P * (A[e] - A[s-1]) / (N * T1))
 BTC_average    = average / 100000000
+
+# Median (depth-20 ordered Merkle-sum histogram, 10 sat / PH/s * day buckets):
+require 0 <= bucket < 2^20
+verify opening of bucket under HPC[s-1].rootAfter -> countL, belowL, totalL == (s - 1) - H
+verify opening of bucket under HPC[e].rootAfter   -> countR, belowR, totalR == e - H
+below  = belowR - belowL
+inside = countR - countL
+k      = floor((N + 1) / 2)                         # exact median for odd N; lower median for even N
+require 0 <= below < k <= below + inside <= N
+median_sats_per_PH_day in [10 * bucket, 10 * bucket + 10)
 ```
+
+In `TestHashpriceMedianSettlement` (blocks `100,000..110,000`, `N = 10,001`,
+`k = 5,001`), the depth-20 settlement covenant measures **3,561 bytes** optimized
+(**3,804 bytes** unoptimized) with a **1,379-byte** serialized witness across 83 items.
 
 The timestamp tolerance permits a minimum actual age just over 23 hours.
 Watchtowers must obtain replacement BHC evidence, challenge the HPC beacon and
 burn the affected endpoint before settlement. Recovery alone leaves it spendable;
 completed settlements are irreversible. Replacement issuance restarts its age.
+Because recovery forces every discarded suffix coin (`height > beacon.height`) to
+be burned before replacement minting can resume, any two simultaneously live HPCs
+share ancestry on one chain; the 24-hour settlement age protects against settling
+on an unburned stale suffix.
 
 ## Limits
 
@@ -271,10 +313,11 @@ completed settlements are irreversible. Replacement issuance restarts its age.
 | Chain evidence | Six-header work; equal-work challenges fail. Global greatest-work chain and full block validity are unproven. |
 | Consensus checks | Median-time-past, future-time bound, subsidy/fee ceiling and coinbase BIP34 height checks are omitted. SP1 enforces coinbase shape, scriptSig length and monetary ranges. |
 | Reward | Proven coinbase output sum; fees and the full block are not independently validated. |
-| Witness | Header mint: six separate 80-byte headers. Hashprice mint: 32 items, serialized ≤977 bytes, including SP1 proof coordinates and a depth 0–20 index-zero branch. |
-| Capacity | Private coinbase input ≤1 MiB. BHC state 129 bytes; HPC state 176 bytes. State packets fit 520 bytes; scripts must fit 10,000 bytes. |
+| Histogram | `2^20` ordered buckets of `10 sats / (PH/s * day)` (`0..10,485,750+`). Values above `10,485,750` clamp to the top bucket; off-chain indexers retain block bucket indices to reconstruct historical openings. |
+| Witness | Header mint: six separate 80-byte headers. Hashprice mint: 73 items, serialized ≤1,826 bytes (measured 1,656 B), including SP1 proof coordinates, a depth 0–20 coinbase branch and a depth-20 histogram opening. Median settlement: 83 items (measured 1,379 B). |
+| Capacity | Private coinbase input ≤1 MiB. BHC state 129 bytes; HashPriceBeacon state 112 bytes; HPC state 240 bytes. State packets fit 520 bytes; scripts must fit 10,000 bytes. |
 | Availability | Honest relaying, competing-work cost and timely watchtower burns are required assumptions; challenges have no expiry. |
-| Client work | Initialization, transaction building, settlement/payout contracts, BTC/USD pricing and per-hashrate-per-day conversion. |
+| Client work | Initialization, transaction building, off-chain histogram indexing, settlement/payout contracts and BTC/USD pricing. |
 
 ## Verification
 
