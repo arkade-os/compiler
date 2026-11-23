@@ -187,7 +187,7 @@ assert.equal(vaultAgain.project, 'shared');
 assert.equal(vaultAgain.file, 'vault/main.ark');
 assert.equal(sharedFolderCount(), foldersBefore + 1);
 
-const elements = Object.fromEntries(['errors-output', 'error-count', 'compile-status', 'compile-btn', 'compiler-version', 'footer-version'].map(id => {
+const elements = Object.fromEntries(['errors-output', 'error-count', 'compile-status', 'compile-btn', 'compiler-version', 'footer-version', 'compiler-select'].map(id => {
     const classes = new Set();
     return [id, {
         textContent: '',
@@ -215,9 +215,17 @@ for (const value of [null, '', 'latest', 'Master', '0.1', '0.1.0-', '0.1.0-a..b'
 }
 assert.equal(context.compilerUrl('master'), './pkg/browser/index.js');
 assert.equal(context.compilerUrl('0.1.0-rc.1'), 'https://cdn.jsdelivr.net/npm/@arkade-os/compiler@0.1.0-rc.1/dist/browser/index.js');
-// A failed initialization is shown, and the next call retries it, builtin docs included.
+// The bundled build is named for where the page is served; `master` marks production, whose default is the latest release.
+const bundledAt = (hostname, pathname) => context.bundledBuild({ hostname, pathname });
+assert.equal(bundledAt('arkade-os.github.io', '/compiler/'), 'master');
+assert.equal(bundledAt('arkade-os.github.io', '/compiler/pr-previews/pr-312/'), 'PR #312');
+assert.equal(bundledAt('arkade-os.github.io', '/compiler/pr-previews/pr-312/index.html'), 'PR #312');
+assert.equal(bundledAt('localhost', '/'), 'local');
+assert.equal(bundledAt('127.0.0.1', '/compiler/pr-previews/'), 'local');
+// A compiler that fails to start is shown, and the next call starts it again, builtin docs included.
 const compilerModule = { builtinDocs, compile, check, completionsAt, symbolAt, version: async () => { throw new Error('Transient WASM failure'); } };
-context.loadCompiler = async () => compilerModule;
+context.importCompiler = async () => compilerModule;
+context.loadCompiler = () => context.useCompiler('0.1.0');
 await vm.runInContext('initCompiler()', context);
 assert.match(elements['errors-output'].textContent, /Transient WASM failure/);
 compilerModule.version = version;
