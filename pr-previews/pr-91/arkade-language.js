@@ -3,7 +3,8 @@
 // Language configuration (for setLanguageConfiguration)
 const arkadeLanguageConfig = {
     comments: {
-        lineComment: '//'
+        lineComment: '//',
+        blockComment: ['/*', '*/']
     },
     brackets: [
         ['{', '}'],
@@ -72,7 +73,6 @@ const arkadeCompletions = [
     S('private', 'Keyword', 'private function ${1:name}(${2:params}) ${3:bool} {\n\treturn ${4:value};\n}'),
     S('static', 'Keyword', 'static function ${1:name}(${2:params}) ${3:int} {\n\treturn ${4:value};\n}'),
     S('const', 'Keyword', 'const ${1:int} ${2:NAME} = ${3:0};'),
-    S('public', 'Keyword', 'public'),
     S('return', 'Keyword', 'return ${1:value};'),
     S('new', 'Keyword', 'new ${1:Contract}(${2:args})'),
     S('import', 'Keyword', 'import "${1:./contract.ark}";', 'Import structs, a contract, or a library from a relative file'),
@@ -81,14 +81,13 @@ const arkadeCompletions = [
     S('false', 'Keyword', 'false'),
 
     // Types
-    ...['pubkey', 'signature', 'bytes', 'bytes20', 'bytes32', 'int', 'bool', 'asset', 'AssetGroup', 'ScriptPubKey'].map(t => S(t, 'TypeParameter', t)),
+    ...['pubkey', 'signature', 'bytes', 'bytes20', 'bytes32', 'int', 'bool', 'AssetGroup', 'ScriptPubKey'].map(t => S(t, 'TypeParameter', t)),
 
     // Implicit bindings
     S('tx', 'Variable', 'tx', 'Spending transaction'),
     S('this', 'Variable', 'this', 'Current contract'),
-    S('server', 'Variable', 'server', 'Arkade server key'),
-    S('emulator', 'Variable', 'emulator', 'Arkade emulator key'),
-    S('serverExitDelay', 'Variable', 'serverExitDelay', 'Arkade server unilateral exit delay'),
+    S('operator', 'Variable', 'operator', 'Arkade operator key'),
+    S('operatorExitDelay', 'Variable', 'operatorExitDelay', 'Arkade operator unilateral exit delay'),
 ];
 
 // Monarch tokenizer definition (for setMonarchTokensProvider); word lists come from the completions.
@@ -102,13 +101,12 @@ const arkadeMonarch = {
 
     tokenizer: {
         root: [
-            [/\/\/.*$/, 'comment'],
-            [/\s+/, 'white'],
+            { include: '@whitespace' },
             [/@(allow|warn|deny|expect)(?=\s*\()/, { token: 'annotation', next: '@lints' }],
             [/(pragma)(\s+)(arkade)\b/, ['keyword', 'white', 'keyword']],
             [/\d+\.\d+\.\d+/, 'number'],
             [/0x[0-9a-fA-F]*/, 'number.hex'],
-            [/\d+/, 'number'],
+            [/\d+(?:_\d+)*/, 'number'],
             [/"(?:[^"\\]|\\.)*"/, 'string'],
             [/[a-zA-Z]\w*/, {
                 cases: {
@@ -126,12 +124,23 @@ const arkadeMonarch = {
         // The parenthesized lint ids and reason of a lint attribute, ids spelled as grammar.pest's
         // `attribute_name`; anything else ends the attribute.
         lints: [
-            [/\s+/, 'white'],
+            { include: '@whitespace' },
             [/[a-zA-Z][\w-]*/, 'annotation.lint'],
             [/"(?:[^"\\]|\\.)*"/, 'string'],
             [/[(,]/, 'delimiter'],
             [/\)/, { token: 'delimiter', next: '@pop' }],
             [/./, { token: '@rematch', next: '@pop' }],
+        ],
+        whitespace: [
+            [/\s+/, 'white'],
+            [/\/\/.*$/, 'comment'],
+            [/\/\*/, 'comment', '@comment'],
+        ],
+        // Block comments do not nest.
+        comment: [
+            [/[^*]+/, 'comment'],
+            [/\*\//, 'comment', '@pop'],
+            [/\*/, 'comment'],
         ]
     }
 };
@@ -167,9 +176,9 @@ function arkadeUseDocs(json) {
         (arkadeMembers[key.slice(0, dot)] ??= []).push(docItem(entry.params ? 'Method' : 'Property', key.slice(dot + 1), entry));
     }
     for (const [alias, path, missing] of memberAliases) {
-        arkadeMembers[alias] = arkadeMembers[path].filter(item => !missing.includes(item.label));
+        arkadeMembers[alias] = (arkadeMembers[path] ?? []).filter(item => !missing.includes(item.label));
     }
-    for (const path of ['tx.inputs[].script', 'tx.input.current.script', 'tx.outputs[].script', 'this.activeBytecode']) {
+    for (const path of ['tx.inputs[].script', 'tx.input.current.script', 'tx.outputs[].script']) {
         arkadeMembers[path] = scriptFields.map(field => prop(field.name, field.type));
     }
 }
@@ -187,7 +196,7 @@ function memberPath(before) {
 
 // The documented path `path` stands for: an `AssetGroup` name stands for `tx.assetGroups[]`.
 function documentedPath(path, visible) {
-    const group = path.match(/^(\w+)(\.(?:inputs|outputs)\[\])?$/);
+    const group = path.match(/^(\w+)(\..*)?$/);
     if (visible.get(group?.[1])?.type === 'AssetGroup') return `tx.assetGroups[]${group[2] || ''}`;
     const alias = memberAliases.find(([from, , missing]) => (path === from || path.startsWith(from + '.') || path.startsWith(from + '['))
         && !missing.includes(path.slice(from.length + 1).split(/[.[]/)[0]));
@@ -210,15 +219,22 @@ function arkadeComplete(before, table) {
     if (Object.hasOwn(members, path) && ['library', 'contract'].includes(visible.get(path)?.kind)) return members[path].map(symbolItem);
     const documented = documentedPath(path, visible);
     if (Object.hasOwn(arkadeMembers, documented)) return arkadeMembers[documented];
-    // The type the path names, such as `Signer` for `next.primary`, through struct fields.
+    // The type the path names, such as `Signer` for `next.primary` or `bytes` for
+    // `tx.outputs[0].script.program`: each prefix's documented type, else its binding's or field's.
     const struct = type => type === 'ScriptPubKey' ? { fields: scriptFields } : structs.find(s => s.name === type);
     let type = '';
+    let prefix = '';
     path.split('.').forEach((segment, index) => {
-        const name = segment.replace(/\[\]$/, '');
-        type = index === 0 ? visible.get(name)?.type || '' : struct(type)?.fields.find(f => f.name === name)?.type || '';
-        if (segment.endsWith('[]')) type = type.endsWith(']') ? type.replace(/\[[^\]]*\]$/, '') : '';
+        const name = segment.replace(/(\[\])+$/, '');
+        prefix += (index ? '.' : '') + name;
+        const entry = docs.members[prefix] ?? docs.members[documentedPath(prefix, visible)];
+        type = entry?.type || (index === 0 ? visible.get(name)?.type : struct(type)?.fields.find(f => f.name === name)?.type) || '';
+        // Each index drops the outermost size: `int[2][3]` indexed once is `int[3]`.
+        for (let level = (segment.length - name.length) / 2; level > 0; level--) type = type.endsWith(']') ? type.replace(/\[[^\]]*\]/, '') : '';
+        prefix += segment.slice(name.length);
     });
     if (type.endsWith(']')) return [prop('length', 'Array length')];
+    if (/^(bytes(20|32)?|pubkey|signature)$/.test(type)) return [prop('length', 'Length in bytes')];
     return struct(type)?.fields.map(field => prop(field.name, field.type)) || [];
 }
 

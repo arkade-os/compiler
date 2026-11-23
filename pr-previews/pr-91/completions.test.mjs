@@ -18,6 +18,7 @@ const table = {
         { name: 'owner', kind: 'parameter', type: 'pubkey' },
         { name: 'points', kind: 'parameter', type: 'Point[2]' },
         { name: 'amounts', kind: 'parameter', type: 'int[3]' },
+        { name: 'corners', kind: 'parameter', type: 'Point[2][3]' },
         { name: 'spend', kind: 'function' },
         { name: 'sig', kind: 'parameter', type: 'signature' },
         { name: 'group', kind: 'variable', type: 'AssetGroup' },
@@ -53,6 +54,7 @@ assert.deepEqual(labels('tx.outputs[0].'), ['assets', 'script', 'value', 'witnes
 assert(labels('tx.inputs[this.activeInputIndex].').includes('arkadeScriptHash'));
 assert.deepEqual(labels('tx.outputs[idx[0]].'), ['assets', 'script', 'value', 'witnessVersion']);
 assert(labels('tx.inputs[i].assets.').includes('lookup'));
+assert(labels('tx.assetGroups.').includes('lookup') && !labels('tx.assetGroups.').includes('find'));
 assert.deepEqual(labels('tx.outputs[o].assets[0].'), ['amount', 'assetId']);
 assert(labels('tx.assetGroups[k].').includes('sumOutputs'));
 assert(labels('tx.input.current.').includes('value'));
@@ -64,6 +66,8 @@ assert.deepEqual(labels('group[0].', table), []);
 assert.deepEqual(labels('points[1].', table), ['x', 'y']);
 assert.deepEqual(labels('point.', table), ['x', 'y']);
 assert.deepEqual(labels('amounts.', table), ['length']);
+assert.deepEqual(labels('corners[1].', table), ['length']);
+assert.deepEqual(labels('corners[1][2].', table), ['x', 'y']);
 assert.deepEqual(labels('segment.from.', table), ['x', 'y']);
 assert.deepEqual(labels('segment.ends.', table), ['length']);
 assert.deepEqual(labels('segment.ends[1].', table), ['x', 'y']);
@@ -80,15 +84,22 @@ for (const prefix of ['tx.inputs[0].', 'tx.input.current.', 'tx.outputs[0].']) {
     assert(!labels(prefix).includes('scriptPubKey'));
 }
 assert(labels('').includes('ScriptPubKey'));
-for (const path of ['destination', 'destinations[0]', 'segment.script', 'tx.outputs[0].script', 'tx.inputs[0].script', 'tx.input.current.script', 'this.activeBytecode']) {
+for (const path of ['destination', 'destinations[0]', 'segment.script', 'tx.outputs[0].script', 'tx.inputs[0].script', 'tx.input.current.script']) {
     assert.deepEqual(labels(`${path}.`, table), ['program', 'version']);
 }
 assert.deepEqual(labels('destinations.', table), ['length']);
-assert.deepEqual(labels('destination.program.', table), []);
+assert.deepEqual(labels('destination.program.', table), ['length']);
+for (const path of [
+    'owner', 'sig', 'point.y', 'segment.script.program', 'tx.id', 'tx.input.current.arkadeScriptHash', 'tx.inputs', 'tx.outputs', 'group.inputs', 'tx.assetGroups[k].outputs',
+    'tx.outputs[0].script.program', 'tx.inputs[i].script.program', 'tx.input.current.script.program',
+    'tx.inputs[idx[0]].arkadeWitnessHash', 'tx.assetGroups[k].metadataHash', 'tx.assetGroups[k].inputs[j].txid', 'group.metadataHash', 'group.inputs[j].txid',
+]) {
+    assert.deepEqual(labels(`${path}.`, table), ['length']);
+}
 
 // A lint attribute's state opens only before `(`, and its ids take the grammar's characters.
 const { tokenizer } = context.window.arkadeMonarch;
-const opensLints = text => new RegExp(`^(?:${tokenizer.root.find(rule => rule[1].next === '@lints')[0].source})`).test(text);
+const opensLints = text => new RegExp(`^(?:${tokenizer.root.find(rule => rule[1]?.next === '@lints')[0].source})`).test(text);
 assert(opensLints('@allow (unused-variable)') && !opensLints('@allow let'));
 assert.equal('Unused_lint-2)'.match(tokenizer.lints[1][0])[0], 'Unused_lint-2');
 assert.equal(complete('', null).find(item => item.label === 'checkMultisig').insertText, 'checkMultisig([${1:pubkeys}], [${2:sigs}])');
@@ -97,12 +108,15 @@ assert.deepEqual(labels('tx.input.current.'), ['arkadeScriptHash', 'arkadeWitnes
 const describe = context.window.arkadeDescribe;
 assert.equal(describe('require(', 'sha256', null).declaration, 'function sha256(bytes data) bytes32');
 assert.equal(describe('tx.outputs[o].assets.', 'lookup', null).key, 'tx.inputs[].assets.lookup');
+assert.equal(describe('tx.assetGroups.', 'lookup', null).declaration, 'function tx.assetGroups.lookup(AssetId assetId) AssetGroup');
 assert.equal(describe('tx.input.current.', 'value', null).key, 'tx.inputs[].value');
 assert.equal(describe('tx.input.current.', 'assets', null), null);
 assert.equal(describe('tx.input.current.assets.', 'length', null), null);
 assert.deepEqual(labels('tx.input.current.assets.'), []);
 assert.equal(describe('(x).', 'size', null), null);
 assert.equal(describe('group.inputs[j].', 'txid', table).declaration, 'bytes32 tx.assetGroups[].inputs[].txid');
+assert.equal(describe('tx.inputs.', 'length', null).key, 'tx.inputs.length');
+assert.equal(describe('group.outputs.', 'length', table).key, 'tx.assetGroups[].outputs.length');
 assert.equal(describe('', 'constructor', null), null);
 assert.equal(describe('point.', 'x', table), null);
 

@@ -14,10 +14,10 @@ export function builtin_docs(): string;
 export function check_sources(entry: string, files: string, optimize?: boolean | null): string;
 
 /**
- * Compile Arkade Script source code to JSON
+ * Compile Arkade Language source code to JSON
  *
  * # Arguments
- * * `source` - The Arkade Script source code
+ * * `source` - The Arkade Language source code
  *
  * # Returns
  * A JSON string containing the compiled contract, or an error message
@@ -35,9 +35,9 @@ export function compile_sources(entry: string, files: string, optimize?: boolean
  * errors are diagnostics, not a thrown error: the result is
  * `{ artifact: string | null, debug: string | null, diagnostics: Diagnostic[] }`,
  * where `debug` is the debug file JSON (`ContractJson::debug_info`), built unless `debug` is
- * `false`, and each diagnostic has `severity`, `code`, `message`, `file` and, when located,
- * 1-based `start` and `end` `{ line, column }` with columns counted in UTF-16 units, as editors
- * count them.
+ * `false`, and each diagnostic has `severity`, `code`, `message`, `file`, `suggestions` and, when
+ * located, 1-based `start` and `end` `{ line, column }` with columns counted in UTF-16 units, as
+ * editors count them.
  */
 export function compile_sources_with_diagnostics(entry: string, files: string, optimize?: boolean | null, debug?: boolean | null): string;
 
@@ -62,10 +62,10 @@ export function init(): void;
 export function symbol_at(entry: string, files: string, line: number, column: number): string;
 
 /**
- * Validate Arkade Script source code without generating output
+ * Validate Arkade Language source code without generating output
  *
  * # Arguments
- * * `source` - The Arkade Script source code
+ * * `source` - The Arkade Language source code
  *
  * # Returns
  * `true` if the source is valid, otherwise returns an error message

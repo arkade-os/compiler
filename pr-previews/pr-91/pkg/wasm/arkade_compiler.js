@@ -57,10 +57,10 @@ export function check_sources(entry, files, optimize) {
 }
 
 /**
- * Compile Arkade Script source code to JSON
+ * Compile Arkade Language source code to JSON
  *
  * # Arguments
- * * `source` - The Arkade Script source code
+ * * `source` - The Arkade Language source code
  *
  * # Returns
  * A JSON string containing the compiled contract, or an error message
@@ -131,9 +131,9 @@ export function compile_sources(entry, files, optimize) {
  * errors are diagnostics, not a thrown error: the result is
  * `{ artifact: string | null, debug: string | null, diagnostics: Diagnostic[] }`,
  * where `debug` is the debug file JSON (`ContractJson::debug_info`), built unless `debug` is
- * `false`, and each diagnostic has `severity`, `code`, `message`, `file` and, when located,
- * 1-based `start` and `end` `{ line, column }` with columns counted in UTF-16 units, as editors
- * count them.
+ * `false`, and each diagnostic has `severity`, `code`, `message`, `file`, `suggestions` and, when
+ * located, 1-based `start` and `end` `{ line, column }` with columns counted in UTF-16 units, as
+ * editors count them.
  * @param {string} entry
  * @param {string} files
  * @param {boolean | null} [optimize]
@@ -263,10 +263,10 @@ export function symbol_at(entry, files, line, column) {
 }
 
 /**
- * Validate Arkade Script source code without generating output
+ * Validate Arkade Language source code without generating output
  *
  * # Arguments
- * * `source` - The Arkade Script source code
+ * * `source` - The Arkade Language source code
  *
  * # Returns
  * `true` if the source is valid, otherwise returns an error message

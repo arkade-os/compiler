@@ -5,11 +5,10 @@ import vm from 'node:vm';
 import { deflateRawSync } from 'node:zlib';
 import * as contracts from './contracts.js';
 import { builtinDocs, compile, check, completionsAt, symbolAt, version } from '../npm/dist/node/index.js';
-import { generateBindings } from './codegen.js';
 
 const storage = new Map();
 const context = vm.createContext({
-    contracts, compile, check, compilerBuiltinDocs: builtinDocs, completionsAt, compilerSymbolAt: symbolAt, version,
+    contracts,
     document: { addEventListener() {} },
     localStorage: { getItem: key => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value) },
     location: { hash: '' },
@@ -17,8 +16,21 @@ const context = vm.createContext({
     console: { warn() {}, error() {} },
 });
 const artifactOf = async input => (await compile(input)).artifact;
+// A library is a playground file, and check accepts it. It is not a compile entry.
+const artifactOrLibrary = async input => {
+    const compiled = await compile(input);
+    if (compiled.artifact !== null) return compiled.artifact;
+    assert.equal(compiled.diagnostics.length, 1);
+    assert.match(compiled.diagnostics[0].message, /not a library/);
+    assert.deepEqual(await check(input), []);
+    return null;
+};
 const source = fs.readFileSync(new URL('./main.js', import.meta.url), 'utf8');
 vm.runInContext(source.replace(/^import .*;$/gm, ''), context);
+
+// Keyed nodes with 50 or more inner lines fold; smaller ones, array items and the root stay open.
+context.text = JSON.stringify({ name: 'x', asm: Array(50).fill('OP_1'), small: Array(49).fill(1), items: [{ asm: Array(50).fill('OP_2') }] }, null, 2);
+assert.deepEqual([...vm.runInContext('largeNodes(text)', context)], [2, 107, 105]);
 
 const warningSource = 'contract HasWarnings(int value) { function spend() { require(true); } }';
 const detailed = await compile({ entry: 'main.ark', files: { 'main.ark': warningSource } }, { optimize: false });
@@ -30,11 +42,6 @@ assert(!Object.hasOwn(warningArtifact, 'warnings'));
 assert.equal(warningArtifact.compiler.options.optimize, false);
 assert.equal(warningArtifact.formatVersion, 1);
 assert.match(warningArtifact.fingerprint, /^sha256:[0-9a-f]{64}$/);
-for (const target of ['typescript', 'go']) {
-    const bindings = generateBindings(warningArtifact, target);
-    assert.match(bindings, /HasWarnings/);
-    assert.match(bindings, /spend|Spend/);
-}
 
 const selections = vm.runInContext(`[
     ...Object.entries(projects).flatMap(([id, project]) => Object.keys(project.files).map(file => [id, file])),
@@ -47,7 +54,8 @@ for (const [project, file] of selections) {
         editor = { getValue: () => currentProject ? projects[currentProject].files[currentFile] : examples[currentFile].code };
         compilationSources();
     `, context);
-    const output = await artifactOf(input);
+    const output = await artifactOrLibrary(input);
+    if (output === null) continue;
     const bundle = output.source;
     const rebuilt = await artifactOf(bundle);
     rebuilt.updatedAt = output.updatedAt;
@@ -62,7 +70,8 @@ for (const [project, file] of selections.filter(([, file]) => file !== 'single_s
         editor = { getValue: () => currentProject ? projects[currentProject].files[currentFile] : examples[currentFile].code };
         compilationSources();
     `, context);
-    assert.notEqual(await artifactOf(input), null);
+    const artifact = await artifactOrLibrary(input);
+    if (artifact !== null) assert.equal(typeof artifact.contractName, 'string');
 }
 
 context.bundle = {
@@ -182,7 +191,7 @@ assert.equal(vaultAgain.project, 'shared');
 assert.equal(vaultAgain.file, 'vault/main.ark');
 assert.equal(sharedFolderCount(), foldersBefore + 1);
 
-const elements = Object.fromEntries(['errors-output', 'error-count', 'compile-status', 'compile-btn', 'compiler-version', 'footer-version'].map(id => {
+const elements = Object.fromEntries(['errors-output', 'error-count', 'compile-status', 'compile-btn', 'compiler-version', 'footer-version', 'compiler-select'].map(id => {
     const classes = new Set();
     return [id, {
         textContent: '',
@@ -203,19 +212,80 @@ context.warningSource = warningSource;
 context.renderedArtifact = null;
 const originalCompilationSources = vm.runInContext('compilationSources', context);
 const displayAsm = vm.runInContext('displayAsm', context);
-// A failed initialization is shown, and the next call retries it, builtin docs included.
-context.version = async () => { throw new Error('Transient WASM failure'); };
-await vm.runInContext('initCompiler()', context);
-assert.match(elements['errors-output'].textContent, /Transient WASM failure/);
-context.version = version;
+// Only master and exact versions name a compiler, and a version stays in the package's path.
+for (const value of ['master', '0.1.0', '0.1.0-rc.1', '10.2.3-beta.1']) assert.equal(context.compilerChoice(value), value);
+for (const value of [null, '', 'latest', 'Master', '0.1', '0.1.0-', '0.1.0-a..b', '../../x', '0.1.0/../../x', '0.1.0@1.0.0', '0.1.0?x', '0.1.0#x', '0.1.0%2F..', '0.1.0\n']) {
+    assert.equal(context.compilerChoice(value), null);
+}
+assert.equal(context.compilerUrl('master'), './pkg/browser/index.js');
+assert.equal(context.compilerUrl('0.1.0-rc.1'), 'https://cdn.jsdelivr.net/npm/@arkade-os/compiler@0.1.0-rc.1/dist/browser/index.js');
+// The bundled build is named for where the page is served; `master` marks production, whose default is the latest release.
+const bundledAt = (hostname, pathname) => context.bundledBuild({ hostname, pathname });
+assert.equal(bundledAt('arkade-os.github.io', '/compiler/'), 'master');
+assert.equal(bundledAt('arkade-os.github.io', '/compiler/pr-previews/pr-312/'), 'PR #312');
+assert.equal(bundledAt('arkade-os.github.io', '/compiler/pr-previews/pr-312/index.html'), 'PR #312');
+assert.equal(bundledAt('localhost', '/'), 'local');
+assert.equal(bundledAt('127.0.0.1', '/compiler/pr-previews/'), 'local');
+context.URLSearchParams = URLSearchParams;
+context.Option = class { constructor(text, value) { Object.assign(this, { text, value }); } };
+elements['compiler-select'].replaceChildren = () => {};
 context.window = { arkadeUseDocs: docs => { context.usedDocs = docs; } };
 context.monaco = { languages: { setMonarchTokensProvider() {} } };
+context.lint = () => {};
+// Production starts the latest release, or the bundled build when it is unlisted or fails;
+// elsewhere the bundled build starts, and a requested compiler is never replaced. The bundled build
+// and the latest release then start in the background.
+const working = { builtinDocs, compile, check, completionsAt, symbolAt, version };
+const compilersStarted = [];
+const started = async (hostname, search, failing = []) => {
+    context.location = { hostname, pathname: '/compiler/', search, hash: '' };
+    compilersStarted.length = 0;
+    context.importCompiler = async choice => {
+        compilersStarted.push(choice);
+        if (failing.includes(choice)) throw new Error(`${choice} failed`);
+        return working;
+    };
+    vm.runInContext('compilerName = null', context);
+    await context.loadCompiler();
+    await new Promise(resolve => setImmediate(resolve));
+    return vm.runInContext('compilerName', context);
+};
+context.compilerReleases = async () => ({ latest: '0.1.0', stable: ['0.1.0'] });
+assert.equal(await started('arkade-os.github.io', ''), '0.1.0');
+assert.deepEqual(compilersStarted, ['0.1.0', 'master', '0.1.0']);
+assert.equal(await started('arkade-os.github.io', '', ['0.1.0']), 'master');
+assert.equal(await started('localhost', ''), 'master');
+assert.deepEqual(compilersStarted, ['master', 'master', '0.1.0']);
+assert.equal(await started('arkade-os.github.io', '?compiler=0.1.0-rc.1'), '0.1.0-rc.1');
+assert.deepEqual(compilersStarted, ['0.1.0-rc.1', 'master', '0.1.0']);
+await assert.rejects(started('arkade-os.github.io', '?compiler=9.9.9', ['9.9.9']), /9\.9\.9 failed/);
+context.compilerReleases = async () => ({ latest: null, stable: [] });
+assert.equal(await started('arkade-os.github.io', ''), 'master');
+// A later request stays active when an earlier one finishes after it.
+let finishSlow;
+context.importCompiler = async choice => {
+    if (choice === '0.1.0') await new Promise(resolve => { finishSlow = resolve; });
+    return working;
+};
+const slow = vm.runInContext("useCompiler('0.1.0', ++compilerRequest)", context);
+assert.equal(await vm.runInContext("useCompiler('master', ++compilerRequest)", context), true);
+finishSlow();
+assert.equal(await slow, false);
+assert.equal(vm.runInContext('compilerName', context), 'master');
+
+// A compiler that fails to start is shown, and the next call starts it again, builtin docs included.
+vm.runInContext('compiler = null; compilerName = null; wasmReady = false', context);
+context.location = { hostname: 'localhost', pathname: '/', search: '?compiler=0.1.0', hash: '' };
+const compilerModule = { builtinDocs, compile, check, completionsAt, symbolAt, version: async () => { throw new Error('Transient WASM failure'); } };
+context.importCompiler = async () => compilerModule;
+await vm.runInContext('initCompiler()', context);
+assert.match(elements['errors-output'].textContent, /Transient WASM failure/);
+compilerModule.version = version;
 await vm.runInContext(`
     editor = { getValue: () => warningSource };
     compilationSources = () => ({ entry: 'main.ark', files: { 'main.ark': warningSource } });
     displayJson = artifact => { renderedArtifact = artifact; };
     displayAsm = () => {};
-    displayBindings = () => {};
     markCompiled = () => {};
     doCompile();
 `, context);
@@ -268,15 +338,15 @@ assert.match(elements['errors-output'].innerHTML, /\(main\.ark:2:\d+\)/);
 const mapped = await compile({ entry: 'main.ark', files: {
     'main.ark': 'contract M(pubkey k) {\n  function f(signature s, int n) {\n    require(n > 0);\n    if (n > 1) {\n      require(checkSig(s, k));\n    }\n  }\n}',
 } });
-const covenant = mapped.artifact.functions[0].arkade;
-assert.equal(covenant.sourceMap, undefined);
+const script = mapped.artifact.functions[0].arkade;
+assert.equal(script.sourceMap, undefined);
 const sourceMap = mapped.debug.functions.f.sourceMap;
-context.covenant = covenant;
+context.script = script;
 context.sourceMap = sourceMap;
-const html = vm.runInContext('asmRuns = []; covenantListing(covenant.asm, sourceMap)', context);
+const html = vm.runInContext('asmRuns = []; arkadeScriptListing(script.asm, sourceMap)', context);
 assert.equal((html.match(/class="asm-line asm-run"/g) || []).length, sourceMap.length);
 assert.equal((html.match(/class="asm-line"/g) || []).length > 0, true);
-for (const token of covenant.asm) assert.ok(html.includes(token.replace(/</g, '&lt;').replace(/>/g, '&gt;')), token);
+for (const token of script.asm) assert.ok(html.includes(token.replace(/</g, '&lt;').replace(/>/g, '&gt;')), token);
 const runs = vm.runInContext('asmRuns', context);
 const innermost = line => [...vm.runInContext(`innermostRuns(asmRuns, ${line}, 9)`, context)].map(run => runs[run].start[0]);
 assert.deepEqual(innermost(3), [3]);
@@ -408,12 +478,12 @@ await vm.runInContext(`
 assert.equal(elements['errors-output'].textContent, 'Storage quota exceeded');
 context.localStorage.setItem = setItem;
 
-// Assembly rendering takes the artifact and debug file and keeps covenant and leaf sections.
+// Assembly rendering takes the artifact and debug file and keeps Arkade Script and leaf sections.
 elements['asm-output'] = { dataset: { linked: 'true' } };
 context.displayAsm = displayAsm;
 context.mappedResult = await compile({ entry: 'main.ark', files: { 'main.ark': warningSource } });
 vm.runInContext('displayAsm(mappedResult.artifact, mappedResult.debug)', context);
-assert.match(elements['asm-output'].innerHTML, /arkade covenant/);
+assert.match(elements['asm-output'].innerHTML, /arkade script/);
 assert.match(elements['asm-output'].innerHTML, /tapscript leaf/);
 
 function loadStored(saved) {
@@ -429,14 +499,14 @@ function loadStored(saved) {
 
 const legacy = loadStored({
     projects: {
-        bonds: { name: 'Bonds', description: '', files: { 'bond_mint.ark': 'stale', 'mine.ark': 'own' } },
+        option: { name: 'Option', description: '', files: { 'option_vault.ark': 'stale', 'mine.ark': 'own' } },
         mine: { name: 'Mine', description: '', files: { 'a.ark': 'own' } },
     },
     examples: { htlc: { name: 'HTLC', code: 'stale' }, own: { name: 'Own', code: 'own' } },
 });
-assert.equal(legacy.read("projects.bonds.files['bond_mint.ark']"), contracts.bond_mint);
-assert.equal(legacy.read("projects.bonds.files['repayment_pool.ark']"), contracts.repayment_pool);
-assert.equal(legacy.read("projects.bonds.files['mine.ark']"), 'own');
+assert.equal(legacy.read("projects.option.files['option_vault.ark']"), contracts.option_vault);
+assert.equal(legacy.read("projects.option.files['option_intent.ark']"), contracts.option_intent);
+assert.equal(legacy.read("projects.option.files['mine.ark']"), 'own');
 assert.equal(legacy.read("projects.mine.files['a.ark']"), 'own');
 assert.equal(legacy.read('examples.htlc.code'), contracts.htlc);
 assert.equal(legacy.read('examples.own.code'), 'own');
