@@ -1546,35 +1546,51 @@ async function doCompile() {
     }
 }
 
-// Display JSON output
+let jsonEditor;
+
+// The artifact in a read-only editor, with its large nodes folded.
 function displayJson(artifact) {
     const container = document.getElementById('json-output');
-    container.innerHTML = syntaxHighlightJson(artifact);
+    jsonEditor ??= monaco.editor.create(container, {
+        language: 'json',
+        theme: 'arkade-dark',
+        readOnly: true,
+        automaticLayout: true,
+        minimap: { enabled: false },
+        scrollBeyondLastLine: false,
+        fontSize: 13,
+        foldingStrategy: 'indentation',
+        showFoldingControls: 'always',
+        ariaLabel: 'Artifact JSON',
+    });
+    const text = JSON.stringify(artifact, null, 2);
+    // Folds land a few hundred milliseconds after the text, so the text stays transparent until then.
+    // Opacity rather than visibility keeps keyboard focus in the editor.
+    container.style.opacity = '0';
+    jsonEditor.setValue(text);
+    const model = jsonEditor.getModel();
+    const version = model.getVersionId();
+    const current = () => model.getVersionId() === version;
+    // unfoldAll resolves once the latest text's fold regions exist; a superseded call then folds nothing.
+    jsonEditor.getAction('editor.unfoldAll').run()
+        .then(() => current() && jsonEditor.getAction('editor.fold').run({ levels: 1, selectionLines: largeNodes(text) }))
+        .finally(() => { if (current()) container.style.opacity = ''; });
 }
 
-// Syntax highlight JSON
-function syntaxHighlightJson(artifact) {
-    return JSON.stringify(artifact, null, 2)
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/("(\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?)/g, match => {
-            let cls = 'json-number';
-            if (/^"/.test(match)) {
-                if (/:$/.test(match)) {
-                    cls = 'json-key';
-                    match = match.slice(0, -1); // Remove colon
-                    return `<span class="${cls}">${match}</span>:`;
-                } else {
-                    cls = 'json-string';
-                }
-            } else if (/true|false/.test(match)) {
-                cls = 'json-boolean';
-            } else if (/null/.test(match)) {
-                cls = 'json-null';
-            }
-            return `<span class="${cls}">${match}</span>`;
-        });
+// The 0-based first lines of keyed arrays and objects with 50 or more lines inside their brackets.
+// ponytail: reads JSON.stringify(_, null, 2)'s layout, where only a node's own brackets end a line;
+// walk the parsed value instead if the text ever comes from elsewhere.
+function largeNodes(text) {
+    const open = [], large = [];
+    text.split('\n').forEach((line, i) => {
+        if (/[[{]$/.test(line)) {
+            open.push(line.endsWith('": [') || line.endsWith('": {') ? i : -1);
+        } else if (/^\s*[\]}],?$/.test(line)) {
+            const start = open.pop();
+            if (start >= 0 && i - start > 50) large.push(start);
+        }
+    });
+    return large;
 }
 
 // Display Assembly output
@@ -1847,7 +1863,7 @@ async function copyOutput() {
     const activeTab = document.querySelector('.output-tab.active');
     if (!activeTab) return;
 
-    const text = activeTab.textContent;
+    const text = activeTab.id === 'json-output' ? jsonEditor?.getValue() ?? '' : activeTab.textContent;
     try {
         await navigator.clipboard.writeText(text);
         // Visual feedback
