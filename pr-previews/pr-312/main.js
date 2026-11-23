@@ -72,6 +72,8 @@ let editor = null;
 let compiler = null;
 let compilerName = null;
 let compilerLoading = null;
+// Counts requests for a compiler; only the latest one's compiler becomes active.
+let compilerRequest = 0;
 // Once set, compiler calls resolve before any edit can arrive, so their results are current.
 let wasmReady = false;
 let currentProject = null;
@@ -851,12 +853,14 @@ async function importCompiler(choice) {
     return module;
 }
 
-// Start the compiler `choice` names and make it the active one; a failure keeps the active one.
-async function useCompiler(choice) {
+// Start the compiler `choice` names and make it the active one while `request` is the latest
+// request; true once active. A failure keeps the active one.
+async function useCompiler(choice, request) {
     const module = await importCompiler(choice);
     const ver = await module.version();
     // A release without builtinDocs has no builtins to highlight or document.
     const docs = module.builtinDocs ? await module.builtinDocs() : { functions: {}, members: {} };
+    if (request !== compilerRequest) return false;
     compiler = module;
     compilerName = choice;
     wasmReady = true;
@@ -869,11 +873,13 @@ async function useCompiler(choice) {
     document.getElementById('footer-version').textContent = label;
     document.getElementById('compiler-select').value = choice;
     lint();
+    return true;
 }
 
 // Start the compiler `?compiler=` names, else the bundled build. In production the default is the
 // latest release instead, with the bundled build in its place when no release is listed or loads.
 async function loadCompiler() {
+    const request = ++compilerRequest;
     const requested = compilerChoice(new URLSearchParams(location.search).get('compiler'));
     const releases = compilerReleases();
     const latest = requested || bundledBuild(location) !== 'master' ? null : compilerChoice((await releases).latest);
@@ -881,11 +887,12 @@ async function loadCompiler() {
     listCompilers([], choice);
     releases.then(({ stable }) => listCompilers(stable, document.getElementById('compiler-select').value));
     try {
-        await useCompiler(choice);
+        await useCompiler(choice, request);
     } catch (err) {
+        if (request !== compilerRequest) return;
         if (!latest) throw err;
         console.warn(`Failed to load compiler ${latest}, so the bundled build is used:`, err);
-        await useCompiler('master');
+        await useCompiler('master', request);
     }
 }
 
@@ -2081,14 +2088,15 @@ document.addEventListener('DOMContentLoaded', () => {
     // Share button
     document.getElementById('share-btn').addEventListener('click', shareContract);
 
-    // Compiler picker: the chosen compiler replaces the active one once it starts, and compiles
-    // again when the output shows a result, so outputs compare across compilers.
+    // Compiler picker: the chosen compiler replaces the active one once it starts, unless another is
+    // chosen first, and the output then waits for a compile as after an edit.
     document.getElementById('compiler-select').addEventListener('change', async event => {
         const choice = event.target.value;
-        await compilerLoading?.catch(() => {});
+        const request = ++compilerRequest;
         try {
-            await useCompiler(choice);
+            if (!await useCompiler(choice, request)) return;
         } catch (err) {
+            if (request !== compilerRequest) return;
             if (compilerName) event.target.value = compilerName;
             console.error('Failed to switch compiler:', err);
             showError(`Failed to load compiler ${choice}: ${err.message}`);
@@ -2097,7 +2105,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const url = new URL(location.href);
         url.searchParams.set('compiler', choice);
         history.replaceState(null, '', url);
-        if (lastCompiledSource !== null) doCompile();
+        markDirty();
     });
 
     // Sidebar action buttons

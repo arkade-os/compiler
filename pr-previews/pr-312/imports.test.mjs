@@ -226,15 +226,53 @@ assert.equal(bundledAt('arkade-os.github.io', '/compiler/pr-previews/pr-312/'), 
 assert.equal(bundledAt('arkade-os.github.io', '/compiler/pr-previews/pr-312/index.html'), 'PR #312');
 assert.equal(bundledAt('localhost', '/'), 'local');
 assert.equal(bundledAt('127.0.0.1', '/compiler/pr-previews/'), 'local');
+context.URLSearchParams = URLSearchParams;
+context.Option = class { constructor(text, value) { Object.assign(this, { text, value }); } };
+elements['compiler-select'].replaceChildren = () => {};
+context.window = { arkadeUseDocs: docs => { context.usedDocs = docs; } };
+context.monaco = { languages: { setMonarchTokensProvider() {} } };
+context.lint = () => {};
+// Production starts the latest release, or the bundled build when it is unlisted or fails;
+// elsewhere the bundled build starts, and a requested compiler is never replaced.
+const working = { builtinDocs, compile, check, completionsAt, symbolAt, version };
+const started = async (hostname, search, failing = []) => {
+    context.location = { hostname, pathname: '/compiler/', search, hash: '' };
+    context.importCompiler = async choice => {
+        if (failing.includes(choice)) throw new Error(`${choice} failed`);
+        return working;
+    };
+    vm.runInContext('compilerName = null', context);
+    await context.loadCompiler();
+    return vm.runInContext('compilerName', context);
+};
+context.compilerReleases = async () => ({ latest: '0.1.0', stable: ['0.1.0'] });
+assert.equal(await started('arkade-os.github.io', ''), '0.1.0');
+assert.equal(await started('arkade-os.github.io', '', ['0.1.0']), 'master');
+assert.equal(await started('localhost', ''), 'master');
+assert.equal(await started('arkade-os.github.io', '?compiler=0.1.0-rc.1'), '0.1.0-rc.1');
+await assert.rejects(started('arkade-os.github.io', '?compiler=9.9.9', ['9.9.9']), /9\.9\.9 failed/);
+context.compilerReleases = async () => ({ latest: null, stable: [] });
+assert.equal(await started('arkade-os.github.io', ''), 'master');
+// A later request stays active when an earlier one finishes after it.
+let finishSlow;
+context.importCompiler = async choice => {
+    if (choice === '0.1.0') await new Promise(resolve => { finishSlow = resolve; });
+    return working;
+};
+const slow = vm.runInContext("useCompiler('0.1.0', ++compilerRequest)", context);
+assert.equal(await vm.runInContext("useCompiler('master', ++compilerRequest)", context), true);
+finishSlow();
+assert.equal(await slow, false);
+assert.equal(vm.runInContext('compilerName', context), 'master');
+
 // A compiler that fails to start is shown, and the next call starts it again, builtin docs included.
+vm.runInContext('compiler = null; compilerName = null; wasmReady = false', context);
+context.location = { hostname: 'localhost', pathname: '/', search: '?compiler=0.1.0', hash: '' };
 const compilerModule = { builtinDocs, compile, check, completionsAt, symbolAt, version: async () => { throw new Error('Transient WASM failure'); } };
 context.importCompiler = async () => compilerModule;
-context.loadCompiler = () => context.useCompiler('0.1.0');
 await vm.runInContext('initCompiler()', context);
 assert.match(elements['errors-output'].textContent, /Transient WASM failure/);
 compilerModule.version = version;
-context.window = { arkadeUseDocs: docs => { context.usedDocs = docs; } };
-context.monaco = { languages: { setMonarchTokensProvider() {} } };
 await vm.runInContext(`
     editor = { getValue: () => warningSource };
     compilationSources = () => ({ entry: 'main.ark', files: { 'main.ark': warningSource } });
