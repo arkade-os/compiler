@@ -23,7 +23,7 @@ blocks. Bitcoin enforces neither.
 
 Source: [`research/pulse/recurrent-exit-pulse.md`](../recurrent-exit-pulse.md),
 revision 2.4, SHA-256
-`e6b0043fbfd08fe240f2affa37a63b7b3034c82c25570d02f5c843a9419d74f7` — the file as
+`74f621826d88f28376d4ca46c96baee2824c20d52bc01cab5d45879e6e66843f` — the file as
 committed together with this version of the record. Section and finding numbers
 below refer to that revision.
 
@@ -39,13 +39,17 @@ The fifteen TLC configurations of the 2.2 record reproduce their distinct-state
 counts exactly on this build. Their files, the three older modules,
 `NonceSchedule.lean` and `Pulse.lean` are byte-identical to the hashes that record
 lists. `verify.py` is the one inherited file that changed: it gained the twelve
-`Anchor` cases.
+`Anchor` cases and a check of what the configurations declare (see "Reproduction").
 
 ## Revised after review
 
-This is the second version of this record. The first described a narrower
-`Anchor.tla` (SHA-256 `a2962a45c07f08741b25038215c373e133864fbb20654aa2475a1548657742d3`)
-with nine configurations. What changed:
+This is the third version of this record.
+
+### From the first version to the second
+
+The first version described a narrower `Anchor.tla` (SHA-256
+`a2962a45c07f08741b25038215c373e133864fbb20654aa2475a1548657742d3`) with nine
+configurations. What changed:
 
 - **The model is wider.** The first version let at most one signed pulse be
   non-final, let a block confirm at most one transition, and had the watcher act at
@@ -71,6 +75,33 @@ input puts a respend deadline on the pending chain (§7.4a), that nothing on-cha
 enforces the fee reserve (§7.4a, §9), and that the validator computes `margin_a`
 from its inputs (§11). Of these, the finality rule is the one `Finalize` models
 (decision 9). The others have no formal counterpart.
+
+### From the second version to the third
+
+No result changed. The model's actions and properties are the ones the second
+version describes, and every count in this record was reproduced after the changes
+below.
+
+- **The runner checks what a configuration declares.** TLC's success message does
+  not name the properties it checked. A copy of `Anchor.cfg` with `AnchorAge`
+  deleted would have printed `ok`, and the property ledger would have claimed a
+  result nobody had checked. `verify.py` now reads each configuration that is
+  expected to hold and fails if a property the records were written against is no
+  longer declared. It also fails if a negative or witness configuration of
+  `Anchor.tla` stops being `Anchor.cfg` with only its stated constants changed.
+  "Reproduction" says what this covers and what it leaves out.
+- **`Anchor.tla` gained two comments and nothing else.** One says why
+  `Margin < Delta` is assumed (decision 4). The other says what a block that
+  confirms several transitions leaves unspent (decision 3). The module's SHA-256 in
+  the second version was
+  `93f77290e49f90fafdc257acb8e87119eb36ec1d9f67ee1e4a08c939336c18a3`.
+- **The source names the case of a client that is behind on the chain as finding
+  A32.** A seal reads the same for a pulse admitted in time and for one proposed
+  late as on-chain, so a client whose view of the chain is behind can be shown a
+  late pulse as final. The source states the client-side rule, says where it stops,
+  and records one alternative, binding the kind of pulse into `h_k`, without
+  deciding it (§10, §12.1 item 9). Nothing in this bundle models a view of the
+  chain that is behind; "What is not formalized" says so.
 
 ## What this pass added
 
@@ -130,6 +161,8 @@ asserts that no block confirms more than one transition. All five fail.
 
 "Model-checked" means the exact finite abstraction and bounds below. It is not a
 proof for a larger Δ, more pulses, longer runs, or real Bitcoin executions.
+`verify.py` fails if `Anchor.cfg` or `AnchorWide.cfg` no longer declares one of the
+three properties in this table.
 
 | Property | Label and method | Source and assumptions |
 |---|---|---|
@@ -142,7 +175,7 @@ proof for a larger Δ, more pulses, longer runs, or real Bitcoin executions.
 - **Assumed — §6, BIP 68/112:** the root of `L_j` can be included in the block of height `anchorAt + Delta` and in no earlier block. Consensus enforces this on Bitcoin. Here it is the model's definition of maturity.
 - **Assumed — §7.4a duty 3, §8 conditions 1–3:** at least one party holds the pending transitions, looks at the chain at least once in every `Watch` blocks, and can pay to broadcast. Modeled as `ExtensionDuty`, through the guard `DutyDue`: while a final pulse is pending and its first transition is unbroadcast, the model produces no block beyond height `deadline + Watch − 1`. **Both positive results rest on this guard.** It does not describe Bitcoin, where blocks arrive whether or not anyone has acted. It asserts that a holder acts in time and derives nothing about it. Which party that is, how it got the data, and whether its fee wallet still holds the reserve of §7.4a are not modeled. Nothing on-chain enforces that reserve either.
 - **Assumed — §7.4a, §8 condition 4:** a broadcast transition that is still valid confirms within `Incl` blocks. Modeled as `BoundedInclusion`. This is an assumption about miners, not a Bitcoin guarantee. Miners with most of the hash power, or miners paid to wait, break it, and `AnchorCensored.cfg` shows what follows.
-- **Assumed — §7.4a duty 2, §9:** no pulse is treated as final on an anchor at or past its deadline. Modeled as `Admission`, one guard on `Finalize` that stands for the signing threshold, the seal set and every client. Everyone in the model sees the same chain, so an enclave shown an old tip by its host (§9), or a client whose view is behind, has no counterpart. The trust-layer caveats of the earlier records apply unchanged: nothing about TEE attestation, enclave code or committee honesty is derived.
+- **Assumed — §7.4a duty 2, §9:** no pulse is treated as final on an anchor at or past its deadline. Modeled as `Admission`, one guard on `Finalize` that stands for the signing threshold, the seal set and every client. Everyone in the model sees the same chain, so an enclave shown an old tip by its host (§9), or a client whose view is behind (A32), has no counterpart. The trust-layer caveats of the earlier records apply unchanged: nothing about TEE attestation, enclave code or committee honesty is derived.
 - **No longer assumed — §7.1 step 5:** that at most one pending transition confirms per block. The first version of the model held the adversary to that relay-policy limit. A block may now confirm any number of signed transitions (decision 3).
 - **Assumed:** signatures bind, a confirmed transaction is never reorganised out, and time is the block height.
 
@@ -231,8 +264,8 @@ bounds.
 
 1. **§6, §7.4a — the maturity height.** The source says a pool output that is "Δ blocks old" has a valid lattice. The model fixes the off-by-one from BIP 68: with the output confirmed in block `anchorAt`, the root can be included in block `anchorAt + Delta` and in none below (`RootValidNext`). Time-based delays are not modeled; revision 2.4 rejects them (A30).
 2. **§7.4a, §7.1 step 3 — one output chain, no reorgs.** One pool and one chain of pool outputs; the hot-band sub-pool of the two-tier sharding is not modeled. `U_0` is confirmed at height 0 before the model starts. A confirmed transition or root is never undone, so the reorg term of `margin_a` has no counterpart.
-3. **§7.1 step 5 — one transition per block binds the honest side only.** The source derives "about one per block" from relay policy, which does not bind a miner. `MineNext` therefore lets a block confirm the next `k` signed pending transitions for any `k ≥ 1`, whether or not they were broadcast. The honest side gets no such help: `BoundedInclusion` promises one transition, the first pending one, and only after its broadcast. Each confirmed output starts its own Δ at the block that confirmed it, so a burst leaves the last of them as a fresh anchor. The first version of this model held the adversary to one per block and recorded, unchecked, that this loses nothing. The wider step is now in the state space (`AnchorBurstReachable.cfg`), and the invariants hold with it at the stated bounds.
-4. **§7.4a — `margin_a` as `Margin`, `Watch` and `Incl`.** `Margin` stands for the whole of `margin_a`. Two of its components are constants of their own, because the result depends on them: `Watch`, the watch interval, and `Incl`, the non-inclusion allowance. Ancestry depth and the fee and reorg buffers have no counterpart (decisions 2 and 13). A holder that looks at the chain once in every `Watch` blocks takes its first look at or after the deadline at most `Watch − 1` blocks past it, and the model's chain does not grow beyond that height until a pending final transition is broadcast. `Watch = 1` is the source's always-on watchtower, which acts at the deadline height itself. A broadcast at height `b` can confirm in block `b + 1` at the earliest and is due by block `b + Incl`, and the root is valid from block `deadline + Margin`. The relation the model checks is therefore `Margin ≥ Watch + Incl`.
+3. **§7.1 step 5 — one transition per block binds the honest side only.** The source derives "about one per block" from relay policy, which does not bind a miner. `MineNext` therefore lets a block confirm the next `k` signed pending transitions for any `k ≥ 1`, whether or not they were broadcast. The honest side gets no such help: `BoundedInclusion` promises one transition, the first pending one, and only after its broadcast. Each confirmed output starts its own Δ at the block that confirmed it. In a burst the outputs before the last are spent in the block that creates them, so no lattice can ever spend them, and the last is left as a fresh anchor. The first version of this model held the adversary to one per block and recorded, unchecked, that this loses nothing. The wider step is now in the state space (`AnchorBurstReachable.cfg`), and the invariants hold with it at the stated bounds.
+4. **§7.4a — `margin_a` as `Margin`, `Watch` and `Incl`.** `Margin` stands for the whole of `margin_a`. Two of its components are constants of their own, because the result depends on them: `Watch`, the watch interval, and `Incl`, the non-inclusion allowance. Ancestry depth and the fee and reorg buffers have no counterpart (decisions 2 and 13). A holder that looks at the chain once in every `Watch` blocks takes its first look at or after the deadline at most `Watch − 1` blocks past it, and the model's chain does not grow beyond that height until a pending final transition is broadcast. `Watch = 1` is the source's always-on watchtower, which acts at the deadline height itself. A broadcast at height `b` can confirm in block `b + 1` at the earliest and is due by block `b + Incl`, and the root is valid from block `deadline + Margin`. The relation the model checks is therefore `Margin ≥ Watch + Incl`. The module also takes `Margin < Delta` as an `ASSUME`, and TLC refuses a configuration that breaks it. The reason is read off the definitions and is not machine-checked in general: with `Margin ≥ Delta` the deadline does not come after the anchor's own confirmation, `Finalize` is never enabled under `Admission`, and both invariants hold with nothing to check. A run by hand with that conjunct removed, the other constants of `Anchor.cfg`, and `Margin` = 5 and then 6 agrees at those values, **model-checked** in the sense of the hand runs above: `anchor = final` and `landed = 0` are invariant, so no pulse is final before a block confirms it (7,465 distinct states in each run).
 5. **§7.4a, §8 — `BoundedInclusion` in place of a probability.** The source's non-inclusion allowance is probabilistic (`q^n ≤ ε`). The model uses a deterministic bound: a broadcast transition that is still valid is in a block no later than `Incl` blocks after its broadcast, unless a conflicting spend confirms first. The exception matters. The block in which inclusion is due may hold a mature root instead, so the adversary keeps the transition out of `Incl − 1` blocks and still chooses the content of the next one. This is an environmental assumption of the same kind as the `Tick` deadline of `Exit.tla` (2.1 record, decision 7).
 6. **§8 — the adversary owns block contents; there is no mempool.** The model has no mempool, fee, relay rule or bribe. A mature root or a signed transition can enter a block without ever being broadcast, which is the point of A27. `Broadcast` exists for the honest side: it is the event `BoundedInclusion` counts from, and it is open to anyone at any time. Beyond this adversary, findings A27 and A28 are not formalized.
 7. **§7.4a duty 3 — the extension duty as a deadline that stops the chain.** `DutyDue` disables `Block` while a final pulse is pending, its first transition is not broadcast, and the tip is `Watch − 1` blocks past the deadline. A mandatory deadline is stronger than weak fairness, and it is not something Bitcoin provides: real blocks arrive whether or not a holder has acted. The guard asserts §8 conditions 1–3 — some holder exists, looks, and can pay — and proves nothing about them. Every positive result in this record is conditional on it, and `AnchorNoDuty.cfg` is what the same model does without it. No fairness is assumed of the Operator: its heartbeat is an early `Broadcast` and is never forced.
@@ -295,13 +328,24 @@ still checks under the pinned toolchain. It covers nothing that revision 2.4 add
 
 ## What is not formalized
 
-**Not proved or model-checked in this pass:** findings A27–A31, beyond the narrow
+**Not proved or model-checked in this pass:** findings A27–A32, beyond the narrow
 projections named above; miner incentives and bribery, including the bound the source
 cites from the MAD-HTLC analysis, which is taken from that paper and neither
 re-derived nor modeled; fees, TRUC, P2A, package relay and pinning; reorgs;
 time-based delays; the exposure cap `v_max`; a chain view that is stale or supplied
-by a host; the keep-alive heartbeat; the heartbeat parameter rule; disputes and
-notices; the two-tier hot band; and every liveness property.
+by a host (A32); the keep-alive heartbeat; the heartbeat parameter rule; disputes
+and notices; the two-tier hot band; and every liveness property.
+
+**A view of the chain that is behind (A32).** The model has one height, and
+`Admission` is evaluated against it. A client that takes an old tip for the current
+one, and so counts as final a pulse sealed past the deadline, has no counterpart.
+Neither has an enclave whose host shows it an old tip. `AnchorNoAdmission.cfg` is
+the nearest configuration: it shows what follows when the guard does not hold, and
+says nothing about how a party comes to believe it holds. The source's client-side
+rule for this case is prose only. So is the alternative the source records and does
+not decide, binding the kind of pulse into `h_k`. This bundle holds no evidence for
+or against that alternative, and `Anchor.tla` has no kinds of pulse to bind
+(decision 9).
 
 **Deposit inputs and respend deadlines (A29).** §7.4a puts a second deadline on the
 pending chain. A transition that spends a deposit has to confirm below that
@@ -345,6 +389,23 @@ checks each TLC configuration for its expected exit code and its **named** resul
 so a negative case that fails for a syntax or runtime error is rejected. It uses
 temporary state directories and leaves no trace files.
 
+The runner also reads the configurations, because TLC's success message does not
+name the properties it checked:
+
+- For each of the seven configurations that are expected to hold, it fails if a
+  property that configuration declared when its record was written is no longer
+  under `INVARIANTS` or `PROPERTIES`. For `Anchor.cfg` and `AnchorWide.cfg` these
+  are `TypeOK`, `AnchorAge` and `NoStaleWin`. A configuration may declare more. One
+  that is expected to hold and has no such list in the runner fails as well.
+- For the five negative configurations of `Anchor.tla`, it fails unless the
+  constants are those of `Anchor.cfg` with the one named constant changed. For the
+  five witnesses, it fails unless they are those of `Anchor.cfg` unchanged.
+
+It does not compare state counts, and it does not check the hashes listed below.
+The older negative configurations are not compared with their base configurations,
+and the bounds of `Anchor.cfg` and `AnchorWide.cfg` themselves are fixed only by
+those hashes.
+
 ## Artifact SHA-256
 
 New and changed files of this pass. Every other model, configuration and proof file
@@ -352,7 +413,7 @@ in this directory matches the hash given in the 2.2 record. The `verify.py` hash
 that record is the earlier version of the file.
 
 ```text
-93f77290e49f90fafdc257acb8e87119eb36ec1d9f67ee1e4a08c939336c18a3  Anchor.tla
+9cf76fb8896e9deb23964c1bb869076e5c7d4a96e0e9ce6db97831875ea83834  Anchor.tla
 4d1edc6949e9ccf78399422fb0a005fbcb79ee39e7d828d05b962cee642f7491  Anchor.cfg
 31d88ebb5bc7b37c812045d20c4dcafd3c56774321b89f1cfc1eff85ffbfea56  AnchorBurstReachable.cfg
 deb2549e34efe359a726ff1b8f7fdf7f43fd610ecb49ce7dc44e9870527c2b3f  AnchorCensored.cfg
@@ -365,5 +426,5 @@ e83af78aba9cd956d22cd2e7e50a7f07d2c33c2bd3c2ec268985eb03a8b8d70e  AnchorNoAdmiss
 4accd9043a58b04fa4ba2390b29ed1b49244f66c331deae1f95dc313655c7cf3  AnchorStackReachable.cfg
 377a7c341577cd8b225fb458facb5ea56a58cb274fb5cc95c93835e50c3c0912  AnchorThinMargin.cfg
 7a0e6adf2b515d0b2214fe45806938a390aa21a0626afb87aa1b164099dc7e16  AnchorWide.cfg
-3e7096aed8f409b3dd7793021f147e78ef2035a4e43e06e83e09ca6f5daa35ce  verify.py
+978e0f08fd3069e81c4cf02e85fe7da8e433976d047b0229bebb3fd2939e98ed  verify.py
 ```

@@ -13,9 +13,11 @@
 
 --mathlib is optional: without it the mathlib-dependent Pulse.lean is skipped and
 only the dependency-free NonceSchedule.lean is checked. Negative cases must fail
-for their NAMED property, never for a syntax or runtime error.
+for their NAMED property, never for a syntax or runtime error. Positive cases must
+still declare the properties their records were written against, and every Anchor
+negative case and witness must be Anchor.cfg with only its stated constants changed.
 """
-import argparse, subprocess, sys, tempfile
+import argparse, re, subprocess, sys, tempfile
 from pathlib import Path
 
 p = argparse.ArgumentParser()
@@ -63,11 +65,84 @@ CASES = {
     'AnchorBurstReachable':        (12, 'Invariant OneConfirmationPerBlock is violated.'),
 }
 
+# TLC's success message does not name what it checked, so a property deleted from a
+# .cfg would still print "ok". Each configuration that is expected to hold must
+# therefore still declare every property it declared when its record was written
+# (README.md, VERIFICATION-2.2.md, VERIFICATION-2.4.md). It may declare more.
+CHECKED = {
+    'Ceremony':           'TypeOK LatticeBeforeTransition AbandonProtected FinalitySound '
+                          'FallbackSelectsGood NoTheft StallDetected',
+    'CeremonyFaults':     'TypeOK LatticeBeforeTransition AbandonProtected FinalitySound '
+                          'FallbackSelectsGood StallDetected',
+    'Exit':               'TypeOK NoSweepUnderExit NoTheft ExitOrPayout',
+    'Nonce':              'TypeOK NoKeyLeak OneMessagePerNonce',
+    'ExitFiledNoticeFix': 'TypeOK NoTheft',
+    'Anchor':             'TypeOK AnchorAge NoStaleWin',
+    'AnchorWide':         'TypeOK AnchorAge NoStaleWin',
+}
+# VERIFICATION-2.4.md describes every Anchor configuration but AnchorWide as Anchor.cfg
+# with the constants below changed and no others. The witnesses change none: that is
+# what makes them witnesses for Anchor.cfg and not for some other set of bounds. The
+# older negative configurations are not pinned this way; their records describe them.
+ANCHOR_CHANGES = {
+    'AnchorNoDuty':                {'ExtensionDuty': 'FALSE'},
+    'AnchorNoAdmission':           {'Admission': 'FALSE'},
+    'AnchorCensored':              {'BoundedInclusion': 'FALSE'},
+    'AnchorThinMargin':            {'Margin': '2'},
+    'AnchorSlowWatch':             {'Watch': '2'},
+    'AnchorRootReachable':         {},
+    'AnchorNearMaturityReachable': {},
+    'AnchorLandingReachable':      {},
+    'AnchorStackReachable':        {},
+    'AnchorBurstReachable':        {},
+}
+CFG_KEYWORDS = dict.fromkeys(
+    ('SPECIFICATION INIT NEXT SYMMETRY VIEW ALIAS POSTCONDITION CHECK_DEADLOCK '
+     'CONSTRAINT CONSTRAINTS ACTION_CONSTRAINT ACTION_CONSTRAINTS').split())
+CFG_KEYWORDS.update(CONSTANT='constants', CONSTANTS='constants', INVARIANT='checked',
+                    INVARIANTS='checked', PROPERTY='checked', PROPERTIES='checked')
+
 def module_of(cfg):
     for m in ('Ceremony', 'Exit', 'Nonce', 'Anchor'):
         if cfg.startswith(m):
             return m
     raise SystemExit('no module for ' + cfg)
+
+def read_cfg(cfg):
+    """The constants and the checked properties a TLC .cfg declares, comments removed.
+
+    The constants are None unless CONSTANTS is a plain list of `Name = value`.
+    """
+    path = root / (cfg + '.cfg')
+    text = path.read_text(encoding='utf-8') if path.is_file() else ''
+    text = re.sub(r'\(\*.*?\*\)', ' ', text, flags=re.S)
+    text = re.sub(r'\\\*[^\n]*', ' ', text)
+    words, key = {'constants': [], 'checked': []}, None
+    for w in text.replace('=', ' = ').split():
+        if w in CFG_KEYWORDS:
+            key = CFG_KEYWORDS[w]
+        elif key:
+            words[key].append(w)
+    c = words['constants']
+    plain = len(c) % 3 == 0 and all(w == '=' for w in c[1::3])
+    return (dict(zip(c[0::3], c[2::3])) if plain else None), set(words['checked'])
+
+def drift(cfg):
+    """What a .cfg no longer says that the records rely on."""
+    notes = []
+    constants, checked = read_cfg(cfg)
+    if CASES[cfg][0] == 0 and cfg not in CHECKED:
+        notes.append('is expected to hold but CHECKED names no property for it')
+    missing = set(CHECKED.get(cfg, '').split()) - checked
+    if missing:
+        notes.append('no longer checks ' + ', '.join(sorted(missing)))
+    if cfg in ANCHOR_CHANGES:
+        changes, base = ANCHOR_CHANGES[cfg], read_cfg('Anchor')[0]
+        if base is None or constants != dict(base, **changes):
+            notes.append("its constants are not Anchor.cfg's with "
+                         + (', '.join('%s = %s' % c for c in sorted(changes.items()))
+                            or 'no change'))
+    return notes
 
 with tempfile.TemporaryDirectory(prefix='pulse-check-') as tmp:
     for cfg, (code, msg) in CASES.items():
@@ -77,10 +152,12 @@ with tempfile.TemporaryDirectory(prefix='pulse-check-') as tmp:
              '-config', str(root / (cfg + '.cfg')), str(root / (module_of(cfg) + '.tla'))],
             capture_output=True, text=True)
         out = r.stdout + r.stderr
-        good = r.returncode == code and msg in out
-        print(('  ok  ' if good else ' FAIL ') + cfg)
-        if not good:
-            fail.append(cfg + ' (rc=%s, wanted %s/%r)' % (r.returncode, code, msg))
+        notes = drift(cfg)
+        if r.returncode != code or msg not in out:
+            notes.insert(0, 'rc=%s, wanted %s/%r' % (r.returncode, code, msg))
+        print((' FAIL ' if notes else '  ok  ') + cfg)
+        if notes:
+            fail.append(cfg + ': ' + '; '.join(notes))
 
 r = subprocess.run([str(a.lean.resolve()), str(root / 'NonceSchedule.lean')],
                    capture_output=True, text=True)

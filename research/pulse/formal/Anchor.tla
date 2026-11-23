@@ -25,6 +25,10 @@
 EXTENDS Naturals
 CONSTANTS Delta, Margin, Watch, Incl, MaxPulse, Horizon,
           Admission, ExtensionDuty, BoundedInclusion
+(* Margin < Delta: with Margin >= Delta the deadline would not come after the
+   anchor's own confirmation. Under admission no pulse could then be final
+   before it confirmed, and AnchorAge and NoStaleWin would hold with nothing to
+   check. TLC refuses such a configuration rather than report that. *)
 ASSUME /\ Delta \in Nat /\ Margin \in Nat /\ Margin < Delta
        /\ Watch \in Nat /\ Watch >= 1 /\ Incl \in Nat /\ Incl >= 1
        /\ MaxPulse \in Nat /\ Horizon \in Nat
@@ -79,7 +83,10 @@ DutyDue == /\ ExtensionDuty /\ anchor < final /\ ~inPool
    within Incl blocks unless a conflicting spend confirms first. *)
 InclDue == BoundedInclusion /\ inPool /\ height + 1 >= poolSince + Incl
 (* The block confirms the next k pending transitions, for any k the adversary
-   likes, broadcast or not. One per block is relay policy (§7.1 step 5, §8). *)
+   likes, broadcast or not. One per block is relay policy (§7.1 step 5, §8).
+   The outputs U_(anchor+1) .. U_(anchor+k-1) are created and spent inside this
+   block and never stand unspent; U_(anchor+k) is the new anchor, and its Delta
+   counts from this block. *)
 MineNext == \E k \in 1..(signed - anchor) :
             /\ anchor' = anchor + k /\ anchorAt' = height + 1 /\ inPool' = FALSE
             /\ final' = IF final < anchor + k THEN anchor + k ELSE final
