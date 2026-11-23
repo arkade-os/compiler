@@ -8,6 +8,12 @@
 
 # Verification record — expansion pass, revision 2.2
 
+> **Extended by [`VERIFICATION-2.4.md`](VERIFICATION-2.4.md).** A later pass added the
+> `Anchor` module (finding A26, §7.4a of revision 2.4) with nine configurations, and
+> re-ran everything listed here with the same results. `verify.py` gained those
+> cases, so the `verify.py` hash at the end of this record is that of the earlier
+> file. Every other hash still matches.
+
 Extends the revision-2.1 record. Every result below was produced in this pass; the
 five configurations inherited from that record reproduce their published state
 counts exactly (1,124 / 1,632 / 176 / 349 / 246 / 303 / 3 / 99 / 176) on a
