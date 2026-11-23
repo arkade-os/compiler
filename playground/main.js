@@ -878,6 +878,7 @@ async function useCompiler(choice, request) {
 
 // Start the compiler `?compiler=` names, else the bundled build. In production the default is the
 // latest release instead, with the bundled build in its place when no release is listed or loads.
+// The bundled build and the latest release then start in the background, so picking either is instant.
 async function loadCompiler() {
     const request = ++compilerRequest;
     const requested = compilerChoice(new URLSearchParams(location.search).get('compiler'));
@@ -893,6 +894,12 @@ async function loadCompiler() {
         if (!latest) throw err;
         console.warn(`Failed to load compiler ${latest}, so the bundled build is used:`, err);
         await useCompiler('master', request);
+    } finally {
+        releases.then(({ latest: release }) => {
+            for (const name of ['master', compilerChoice(release)]) {
+                if (name) importCompiler(name).then(module => module.version()).catch(() => {});
+            }
+        });
     }
 }
 
