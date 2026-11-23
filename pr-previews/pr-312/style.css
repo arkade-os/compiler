@@ -566,8 +566,8 @@ main {
 }
 
 #json-output {
-    white-space: pre-wrap;
-    word-break: break-word;
+    padding: 0;
+    overflow: hidden;
 }
 
 #asm-output {
@@ -613,27 +613,6 @@ main {
 
 #errors-output.warning {
     color: var(--warning);
-}
-
-/* JSON Syntax Highlighting */
-.json-key {
-    color: #9cdcfe;
-}
-
-.json-string {
-    color: #ce9178;
-}
-
-.json-number {
-    color: #b5cea8;
-}
-
-.json-boolean {
-    color: #569cd6;
-}
-
-.json-null {
-    color: #569cd6;
 }
 
 /* ASM Syntax Highlighting */

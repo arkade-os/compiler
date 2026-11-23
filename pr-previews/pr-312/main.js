@@ -68,9 +68,10 @@ const bundledSnapshot = JSON.parse(JSON.stringify({ projects, examples }));
 
 // Global state
 let editor = null;
-// The compiler module, and `master` or the release version it was loaded as.
+// The active compiler module, `master` or the release version it was loaded as, and the first load.
 let compiler = null;
 let compilerName = null;
+let compilerLoading = null;
 // Once set, compiler calls resolve before any edit can arrive, so their results are current.
 let wasmReady = false;
 let currentProject = null;
@@ -296,7 +297,9 @@ function openSharedBundle(bundle) {
 
 async function shareContract() {
     if (!editor || (!wasmReady && !await initCompiler())) return;
-    let encoded;
+    // The link opens the contract under the compiler that compiles it here.
+    const url = new URL(location.href);
+    url.searchParams.set('compiler', compilerName);
     try {
         const { entry, files } = compilationSources();
         const { artifact, diagnostics } = await compiler.compile({ entry, files });
@@ -304,13 +307,12 @@ async function shareContract() {
             showErrors(diagnostics, entry);
             return;
         }
-        encoded = await compressCode(JSON.stringify(canonicalShareBundle(artifact.source)));
+        url.hash = `project=${await compressCode(JSON.stringify(canonicalShareBundle(artifact.source)))}`;
     } catch (error) {
         showError(error.message);
         return;
     }
-    const url = `${location.origin}${location.pathname}#project=${encoded}`;
-    await navigator.clipboard.writeText(url);
+    await navigator.clipboard.writeText(url.href);
     const btn = document.getElementById('share-btn');
     const orig = btn.innerHTML;
     btn.innerHTML = '<i class="fas fa-check"></i>';
@@ -797,24 +799,31 @@ function promptNewStandaloneFile() {
     if (name && name.trim()) createStandaloneFile(name.trim());
 }
 
-const COMPILER_RELEASES = 'https://data.jsdelivr.com/v1/packages/npm/@arkade-os/compiler';
-
 // `master` or an exact version such as `0.1.0`, else null, so no other value reaches import().
 function compilerChoice(value) {
     return value === 'master' || /^\d+\.\d+\.\d+(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$/.test(value) ? value : null;
 }
 
-// master is this site's build; a version is that npm release.
+// master is the build bundled with this page; a version is that npm release.
 function compilerUrl(choice) {
     return choice === 'master'
         ? './pkg/browser/index.js'
         : `https://cdn.jsdelivr.net/npm/@arkade-os/compiler@${choice}/dist/browser/index.js`;
 }
 
+// The bundled build's name where the page is served: `master` in production, the only place whose
+// default is the latest release, a pull request in its preview, which pr-preview.yml deploys
+// to pr-previews/pr-<n>/, and `local` anywhere else.
+function bundledBuild({ hostname, pathname }) {
+    const preview = pathname.match(/\/pr-previews\/pr-(\d+)\//);
+    if (preview) return `PR #${preview[1]}`;
+    return hostname === 'arkade-os.github.io' ? 'master' : 'local';
+}
+
 // The latest and the stable npm releases; none when jsDelivr does not answer.
 async function compilerReleases() {
     try {
-        const response = await fetch(COMPILER_RELEASES, { signal: AbortSignal.timeout(10000) });
+        const response = await fetch('https://data.jsdelivr.com/v1/packages/npm/@arkade-os/compiler', { signal: AbortSignal.timeout(10000) });
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const { tags, versions } = await response.json();
         const stable = versions.map(release => release.version).filter(version => /^\d+\.\d+\.\d+$/.test(version));
@@ -825,41 +834,69 @@ async function compilerReleases() {
     }
 }
 
-// The compiler `?compiler=` names, else the latest release, else master when none is listed.
-// The picker offers master, the stable releases and the choice.
-async function loadCompiler() {
-    const releases = await compilerReleases();
-    const choice = compilerChoice(new URLSearchParams(location.search).get('compiler'))
-        ?? compilerChoice(releases.latest) ?? 'master';
-    const names = [...new Set(['master', ...releases.stable, choice])];
-    document.getElementById('compiler-select').replaceChildren(...names.map(name => new Option(name, name, false, name === choice)));
+// List the bundled build, the `stable` releases, the active compiler and `selected`, which is selected.
+function listCompilers(stable, selected) {
+    const names = [...new Set(['master', ...stable, compilerName, selected].filter(Boolean))];
+    document.getElementById('compiler-select').replaceChildren(
+        ...names.map(name => new Option(name === 'master' ? bundledBuild(location) : name, name, false, name === selected)));
+}
+
+// The compiler module `choice` names; rejects when it lacks an export the page calls.
+async function importCompiler(choice) {
     const module = await import(compilerUrl(choice));
     // ponytail: only missing exports are detected; an export whose arguments or result changed
     // fails or misrenders at its call. A minimum release per export would catch that once one changes.
     const missing = ['compile', 'check', 'symbolAt', 'completionsAt', 'version'].filter(name => typeof module[name] !== 'function');
     if (missing.length) throw new Error(`compiler ${choice} has no ${missing.join(', ')}`);
-    compilerName = choice;
     return module;
 }
 
-// Load the compiler and show what loaded; true once it is ready.
+// Start the compiler `choice` names and make it the active one; a failure keeps the active one.
+async function useCompiler(choice) {
+    const module = await importCompiler(choice);
+    const ver = await module.version();
+    // A release without builtinDocs has no builtins to highlight or document.
+    const docs = module.builtinDocs ? await module.builtinDocs() : { functions: {}, members: {} };
+    compiler = module;
+    compilerName = choice;
+    wasmReady = true;
+    // The builtins come from the compiler, so the tokenizer is set again to highlight them.
+    window.arkadeUseDocs(docs);
+    monaco.languages.setMonarchTokensProvider('arkade', window.arkadeMonarch);
+    // The bundled build reports the last release's version, so it is named instead.
+    const label = choice === 'master' ? bundledBuild(location) : `v${ver}`;
+    document.getElementById('compiler-version').textContent = label;
+    document.getElementById('footer-version').textContent = label;
+    document.getElementById('compiler-select').value = choice;
+    lint();
+}
+
+// Start the compiler `?compiler=` names, else the bundled build. In production the default is the
+// latest release instead, with the bundled build in its place when no release is listed or loads.
+async function loadCompiler() {
+    const requested = compilerChoice(new URLSearchParams(location.search).get('compiler'));
+    const releases = compilerReleases();
+    const latest = requested || bundledBuild(location) !== 'master' ? null : compilerChoice((await releases).latest);
+    const choice = requested ?? latest ?? 'master';
+    listCompilers([], choice);
+    releases.then(({ stable }) => listCompilers(stable, document.getElementById('compiler-select').value));
+    try {
+        await useCompiler(choice);
+    } catch (err) {
+        if (!latest) throw err;
+        console.warn(`Failed to load compiler ${latest}, so the bundled build is used:`, err);
+        await useCompiler('master');
+    }
+}
+
+// Load the compiler once for every caller waiting on it; true once it is ready. The next call
+// after a failure loads again, though a browser keeps a failed import until the page reloads.
 async function initCompiler() {
     try {
-        compiler ??= await loadCompiler();
-        const ver = await compiler.version();
-        // The builtins come from the compiler, so the tokenizer is set again to highlight them.
-        // A release without builtinDocs leaves them undocumented.
-        if (compiler.builtinDocs) window.arkadeUseDocs(await compiler.builtinDocs());
-        monaco.languages.setMonarchTokensProvider('arkade', window.arkadeMonarch);
-        wasmReady = true;
-        // master reports the last release's version, so it is named instead.
-        const label = compilerName === 'master' ? 'master' : `v${ver}`;
-        document.getElementById('compiler-version').textContent = label;
-        document.getElementById('footer-version').textContent = label;
-        lint();
+        await (compilerLoading ??= loadCompiler().catch(err => { compilerLoading = null; throw err; }));
     } catch (err) {
         console.error('Failed to initialize compiler:', err);
-        showError(`Failed to load compiler: ${err.message}`);
+        showError(`Failed to load compiler: ${err.message}. Pick another compiler or reload the page.`);
     }
     return wasmReady;
 }
@@ -1597,35 +1634,51 @@ async function doCompile() {
     }
 }
 
-// Display JSON output
+let jsonEditor;
+
+// The artifact in a read-only editor, with its large nodes folded.
 function displayJson(artifact) {
     const container = document.getElementById('json-output');
-    container.innerHTML = syntaxHighlightJson(artifact);
+    jsonEditor ??= monaco.editor.create(container, {
+        language: 'json',
+        theme: 'arkade-dark',
+        readOnly: true,
+        automaticLayout: true,
+        minimap: { enabled: false },
+        scrollBeyondLastLine: false,
+        fontSize: 13,
+        foldingStrategy: 'indentation',
+        showFoldingControls: 'always',
+        ariaLabel: 'Artifact JSON',
+    });
+    const text = JSON.stringify(artifact, null, 2);
+    // Folds land a few hundred milliseconds after the text, so the text stays transparent until then.
+    // Opacity rather than visibility keeps keyboard focus in the editor.
+    container.style.opacity = '0';
+    jsonEditor.setValue(text);
+    const model = jsonEditor.getModel();
+    const version = model.getVersionId();
+    const current = () => model.getVersionId() === version;
+    // unfoldAll resolves once the latest text's fold regions exist; a superseded call then folds nothing.
+    jsonEditor.getAction('editor.unfoldAll').run()
+        .then(() => current() && jsonEditor.getAction('editor.fold').run({ levels: 1, selectionLines: largeNodes(text) }))
+        .finally(() => { if (current()) container.style.opacity = ''; });
 }
 
-// Syntax highlight JSON
-function syntaxHighlightJson(artifact) {
-    return JSON.stringify(artifact, null, 2)
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/("(\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?)/g, match => {
-            let cls = 'json-number';
-            if (/^"/.test(match)) {
-                if (/:$/.test(match)) {
-                    cls = 'json-key';
-                    match = match.slice(0, -1); // Remove colon
-                    return `<span class="${cls}">${match}</span>:`;
-                } else {
-                    cls = 'json-string';
-                }
-            } else if (/true|false/.test(match)) {
-                cls = 'json-boolean';
-            } else if (/null/.test(match)) {
-                cls = 'json-null';
-            }
-            return `<span class="${cls}">${match}</span>`;
-        });
+// The 0-based first lines of keyed arrays and objects with 50 or more lines inside their brackets.
+// ponytail: reads JSON.stringify(_, null, 2)'s layout, where only a node's own brackets end a line;
+// walk the parsed value instead if the text ever comes from elsewhere.
+function largeNodes(text) {
+    const open = [], large = [];
+    text.split('\n').forEach((line, i) => {
+        if (/[[{]$/.test(line)) {
+            open.push(line.endsWith('": [') || line.endsWith('": {') ? i : -1);
+        } else if (/^\s*[\]}],?$/.test(line)) {
+            const start = open.pop();
+            if (start >= 0 && i - start > 50) large.push(start);
+        }
+    });
+    return large;
 }
 
 // Display Assembly output
@@ -1898,7 +1951,7 @@ async function copyOutput() {
     const activeTab = document.querySelector('.output-tab.active');
     if (!activeTab) return;
 
-    const text = activeTab.textContent;
+    const text = activeTab.id === 'json-output' ? jsonEditor?.getValue() ?? '' : activeTab.textContent;
     try {
         await navigator.clipboard.writeText(text);
         // Visual feedback
@@ -2028,17 +2081,23 @@ document.addEventListener('DOMContentLoaded', () => {
     // Share button
     document.getElementById('share-btn').addEventListener('click', shareContract);
 
-    // Compiler picker: the page reloads with the chosen compiler, after saving the open file.
-    document.getElementById('compiler-select').addEventListener('change', event => {
+    // Compiler picker: the chosen compiler replaces the active one once it starts, and compiles
+    // again when the output shows a result, so outputs compare across compilers.
+    document.getElementById('compiler-select').addEventListener('change', async event => {
+        const choice = event.target.value;
+        await compilerLoading?.catch(() => {});
         try {
-            saveCurrentFile();
+            await useCompiler(choice);
         } catch (err) {
-            showError(err.message);
+            if (compilerName) event.target.value = compilerName;
+            console.error('Failed to switch compiler:', err);
+            showError(`Failed to load compiler ${choice}: ${err.message}`);
             return;
         }
         const url = new URL(location.href);
-        url.searchParams.set('compiler', event.target.value);
-        location.assign(url);
+        url.searchParams.set('compiler', choice);
+        history.replaceState(null, '', url);
+        if (lastCompiledSource !== null) doCompile();
     });
 
     // Sidebar action buttons
