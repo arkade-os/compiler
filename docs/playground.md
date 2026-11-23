@@ -2,7 +2,7 @@
 
 **[arkade-os.github.io/compiler](https://arkade-os.github.io/compiler)**
 
-The playground runs the real compiler as WebAssembly. Nothing is installed and nothing leaves your browser. The footer shows the compiler version.
+The playground runs the real compiler as WebAssembly. Nothing is installed and nothing leaves your browser. The picker in the header switches between the compiler built with the page and the npm releases, and a link can choose one with `?compiler=master` or `?compiler=0.1.0`. The site starts with the latest release, or its `master` build when no release loads, and the header and footer show the compiler loaded. The editor and examples come from the page's build, so newer syntax may not compile with an older release.
 
 ## Editing
 
@@ -43,9 +43,9 @@ The Explorer ships the single-file examples (SingleSig, HTLC, Escrow, NonInterac
 
 ## Sharing
 
-The link button compiles the selected contract and, when it compiles, copies a URL containing it and its dependencies. Shared bundles support up to 1 MiB of encoded URL content and 4 MiB of decompressed source data.
+The link button compiles the selected contract and, when it compiles, copies a URL containing it, its dependencies and the compiler that compiled it. Shared bundles support up to 1 MiB of encoded URL content and 4 MiB of decompressed source data.
 
-Every pull request to `master` from a branch of this repository gets its own build at `https://arkade-os.github.io/compiler/pr-previews/pr-<number>/`, posted as a comment on the PR.
+Every pull request to `master` from a branch of this repository gets its own build at `https://arkade-os.github.io/compiler/pr-previews/pr-<number>/`, posted as a comment on the PR. A preview starts with the pull request's compiler, labelled `PR #<number>`.
 
 ## Run it locally
 
@@ -57,7 +57,7 @@ cargo install wasm-pack
 ```
 
 - Node.js 22.12 or newer is required, and `serve.sh` needs `python3`.
-- The build script installs locked npm development dependencies and packs `@arkade-os/compiler` locally. It needs no npm publishing credentials.
+- The build script installs locked npm development dependencies and packs `@arkade-os/compiler` locally. It needs no npm publishing credentials. The playground starts with this local build, labelled `local`.
 - `playground/contracts.js` and `playground/pkg/` are generated and git-ignored.
 
 To add a contract to the playground, add a `.ark` file under `examples/` and register it in `playground/main.js`: a single-file example needs entries in both `examples` and `examplePaths`. `contracts.js` exports each file by its basename, so the basename must be unique and a valid JavaScript identifier.

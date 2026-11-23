@@ -63,7 +63,7 @@ Node.js 22.12 or newer is supported. The unbundled browser entrypoint is tested 
 
 Compilation currently runs synchronously inside WASM after initialization; the Promise API does not move compilation off the JavaScript thread. Applications needing background compilation can import this package in a worker. Other runtimes, including Expo, require separate verification.
 
-The static playground imports the browser entrypoint of a locally packed package. Its build script generates examples, builds and packs the compiler, and extracts `dist/browser/` and `dist/wasm/` into `playground/pkg/`. All compiler calls use the public package API; npm publication is not required to build or deploy it. The playground marks diagnostics at their positions, lints as you type with `check`, and drives hover, go to definition and completion with `symbolAt`, `completionsAt` and `builtinDocs`. Failed initialization can be retried by compiling again.
+The static playground bundles the browser entrypoint of a locally packed package: its build script generates examples, builds and packs the compiler, and extracts `dist/browser/` and `dist/wasm/` into `playground/pkg/`. It can also import a published release's browser entrypoint from jsDelivr, which is the default on arkade-os.github.io/compiler, with the bundled build as the fallback. All compiler calls use the public package API. The playground marks diagnostics at their positions, lints as you type with `check`, and drives hover, go to definition and completion with `symbolAt`, `completionsAt` and `builtinDocs`. Compiling again retries a failed WASM initialization; a module that fails to import needs another compiler or a page reload.
 
 ## Development and packing
 

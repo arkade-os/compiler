@@ -8,7 +8,7 @@ import { builtinDocs, compile, check, completionsAt, symbolAt, version } from '.
 
 const storage = new Map();
 const context = vm.createContext({
-    contracts, compile, check, compilerBuiltinDocs: builtinDocs, completionsAt, compilerSymbolAt: symbolAt, version,
+    contracts,
     document: { addEventListener() {} },
     localStorage: { getItem: key => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value) },
     location: { hash: '' },
@@ -191,7 +191,7 @@ assert.equal(vaultAgain.project, 'shared');
 assert.equal(vaultAgain.file, 'vault/main.ark');
 assert.equal(sharedFolderCount(), foldersBefore + 1);
 
-const elements = Object.fromEntries(['errors-output', 'error-count', 'compile-status', 'compile-btn', 'compiler-version', 'footer-version'].map(id => {
+const elements = Object.fromEntries(['errors-output', 'error-count', 'compile-status', 'compile-btn', 'compiler-version', 'footer-version', 'compiler-select'].map(id => {
     const classes = new Set();
     return [id, {
         textContent: '',
@@ -212,13 +212,75 @@ context.warningSource = warningSource;
 context.renderedArtifact = null;
 const originalCompilationSources = vm.runInContext('compilationSources', context);
 const displayAsm = vm.runInContext('displayAsm', context);
-// A failed initialization is shown, and the next call retries it, builtin docs included.
-context.version = async () => { throw new Error('Transient WASM failure'); };
-await vm.runInContext('initCompiler()', context);
-assert.match(elements['errors-output'].textContent, /Transient WASM failure/);
-context.version = version;
+// Only master and exact versions name a compiler, and a version stays in the package's path.
+for (const value of ['master', '0.1.0', '0.1.0-rc.1', '10.2.3-beta.1']) assert.equal(context.compilerChoice(value), value);
+for (const value of [null, '', 'latest', 'Master', '0.1', '0.1.0-', '0.1.0-a..b', '../../x', '0.1.0/../../x', '0.1.0@1.0.0', '0.1.0?x', '0.1.0#x', '0.1.0%2F..', '0.1.0\n']) {
+    assert.equal(context.compilerChoice(value), null);
+}
+assert.equal(context.compilerUrl('master'), './pkg/browser/index.js');
+assert.equal(context.compilerUrl('0.1.0-rc.1'), 'https://cdn.jsdelivr.net/npm/@arkade-os/compiler@0.1.0-rc.1/dist/browser/index.js');
+// The bundled build is named for where the page is served; `master` marks production, whose default is the latest release.
+const bundledAt = (hostname, pathname) => context.bundledBuild({ hostname, pathname });
+assert.equal(bundledAt('arkade-os.github.io', '/compiler/'), 'master');
+assert.equal(bundledAt('arkade-os.github.io', '/compiler/pr-previews/pr-312/'), 'PR #312');
+assert.equal(bundledAt('arkade-os.github.io', '/compiler/pr-previews/pr-312/index.html'), 'PR #312');
+assert.equal(bundledAt('localhost', '/'), 'local');
+assert.equal(bundledAt('127.0.0.1', '/compiler/pr-previews/'), 'local');
+context.URLSearchParams = URLSearchParams;
+context.Option = class { constructor(text, value) { Object.assign(this, { text, value }); } };
+elements['compiler-select'].replaceChildren = () => {};
 context.window = { arkadeUseDocs: docs => { context.usedDocs = docs; } };
 context.monaco = { languages: { setMonarchTokensProvider() {} } };
+context.lint = () => {};
+// Production starts the latest release, or the bundled build when it is unlisted or fails;
+// elsewhere the bundled build starts, and a requested compiler is never replaced. The bundled build
+// and the latest release then start in the background.
+const working = { builtinDocs, compile, check, completionsAt, symbolAt, version };
+const compilersStarted = [];
+const started = async (hostname, search, failing = []) => {
+    context.location = { hostname, pathname: '/compiler/', search, hash: '' };
+    compilersStarted.length = 0;
+    context.importCompiler = async choice => {
+        compilersStarted.push(choice);
+        if (failing.includes(choice)) throw new Error(`${choice} failed`);
+        return working;
+    };
+    vm.runInContext('compilerName = null', context);
+    await context.loadCompiler();
+    await new Promise(resolve => setImmediate(resolve));
+    return vm.runInContext('compilerName', context);
+};
+context.compilerReleases = async () => ({ latest: '0.1.0', stable: ['0.1.0'] });
+assert.equal(await started('arkade-os.github.io', ''), '0.1.0');
+assert.deepEqual(compilersStarted, ['0.1.0', 'master', '0.1.0']);
+assert.equal(await started('arkade-os.github.io', '', ['0.1.0']), 'master');
+assert.equal(await started('localhost', ''), 'master');
+assert.deepEqual(compilersStarted, ['master', 'master', '0.1.0']);
+assert.equal(await started('arkade-os.github.io', '?compiler=0.1.0-rc.1'), '0.1.0-rc.1');
+assert.deepEqual(compilersStarted, ['0.1.0-rc.1', 'master', '0.1.0']);
+await assert.rejects(started('arkade-os.github.io', '?compiler=9.9.9', ['9.9.9']), /9\.9\.9 failed/);
+context.compilerReleases = async () => ({ latest: null, stable: [] });
+assert.equal(await started('arkade-os.github.io', ''), 'master');
+// A later request stays active when an earlier one finishes after it.
+let finishSlow;
+context.importCompiler = async choice => {
+    if (choice === '0.1.0') await new Promise(resolve => { finishSlow = resolve; });
+    return working;
+};
+const slow = vm.runInContext("useCompiler('0.1.0', ++compilerRequest)", context);
+assert.equal(await vm.runInContext("useCompiler('master', ++compilerRequest)", context), true);
+finishSlow();
+assert.equal(await slow, false);
+assert.equal(vm.runInContext('compilerName', context), 'master');
+
+// A compiler that fails to start is shown, and the next call starts it again, builtin docs included.
+vm.runInContext('compiler = null; compilerName = null; wasmReady = false', context);
+context.location = { hostname: 'localhost', pathname: '/', search: '?compiler=0.1.0', hash: '' };
+const compilerModule = { builtinDocs, compile, check, completionsAt, symbolAt, version: async () => { throw new Error('Transient WASM failure'); } };
+context.importCompiler = async () => compilerModule;
+await vm.runInContext('initCompiler()', context);
+assert.match(elements['errors-output'].textContent, /Transient WASM failure/);
+compilerModule.version = version;
 await vm.runInContext(`
     editor = { getValue: () => warningSource };
     compilationSources = () => ({ entry: 'main.ark', files: { 'main.ark': warningSource } });

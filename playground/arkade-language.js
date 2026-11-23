@@ -176,7 +176,7 @@ function arkadeUseDocs(json) {
         (arkadeMembers[key.slice(0, dot)] ??= []).push(docItem(entry.params ? 'Method' : 'Property', key.slice(dot + 1), entry));
     }
     for (const [alias, path, missing] of memberAliases) {
-        arkadeMembers[alias] = arkadeMembers[path].filter(item => !missing.includes(item.label));
+        arkadeMembers[alias] = (arkadeMembers[path] ?? []).filter(item => !missing.includes(item.label));
     }
     for (const path of ['tx.inputs[].script', 'tx.input.current.script', 'tx.outputs[].script']) {
         arkadeMembers[path] = scriptFields.map(field => prop(field.name, field.type));
