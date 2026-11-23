@@ -253,21 +253,28 @@ is today.
 31. **§9.4 worked example made consistent.** It had a daily heartbeat and no value
     for Δ; it now carries Δ, `margin_a`, `v_max` and the fee reserve.
 32. **A new formal module, [`formal/Anchor.tla`](./formal/Anchor.tla).** It
-    model-checks the invariant of item 24 at two sets of small bounds. Four further
-    configurations each remove one defence, or thin the margin, and reproduce the
-    rollback; three more are reachability witnesses. Assumptions, bounds and results
-    are in [`formal/VERIFICATION-2.4.md`](./formal/VERIFICATION-2.4.md). That some
-    holder broadcasts by the deadline, and that miners include a broadcast transition
+    model-checks the invariant of item 24 at two sets of small bounds, against an
+    adversary that fills every block as it likes: a mature root, or any number of
+    signed transitions, broadcast or not. Five further configurations each remove
+    one defence, thin the margin or slow the watcher, and reproduce the rollback;
+    five more are reachability witnesses. Assumptions, bounds and results are in
+    [`formal/VERIFICATION-2.4.md`](./formal/VERIFICATION-2.4.md). That some holder
+    broadcasts by the deadline, and that miners include a broadcast transition
     within a bounded number of blocks, are assumptions of the model, not results.
+    Bitcoin enforces neither.
 33. **An alternative is recorded and not adopted (§7.4a, §12.1 item 8):** a
     pre-signed kickoff transaction that would start the delay only when someone
     moves.
 
 Standing limits of this revision: that a holder acts in time and that miners include
-its transaction are assumed, never derived; the bribery bound is taken from the cited
-analysis and neither re-derived nor modeled here; the model checks safety only, so
-nothing is shown about a pool making progress under these rules; and findings A27–A31
-have no formal counterpart.
+its transaction are assumed, never derived; the fee reserve behind that holder is
+unlocked money that no other party can audit; a signing enclave learns the chain tip
+from its host; the bribery bound is taken from the cited analysis and neither
+re-derived nor modeled here; the model checks safety only, so nothing is shown about
+a pool making progress under these rules; and of findings A27–A31 the model carries
+only A27's adversary and one witness for A31. Fees and bribery, the fee path,
+deposit inputs and their respend deadlines, and time-based delays have no formal
+counterpart.
 
 ---
 
