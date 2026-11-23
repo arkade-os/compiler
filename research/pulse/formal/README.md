@@ -18,8 +18,9 @@
 > **Extended by [`VERIFICATION-2.4.md`](VERIFICATION-2.4.md).** A later pass added the
 > `Anchor` module for finding A26 — the anchor-age invariant that revision 2.4 of the
 > source adds in §7.4a — and re-ran every TLC configuration listed here and in the
-> 2.2 record. No result below changed. `Exit.tla` has not been revised against the
-> corrected §7.5 of revision 2.4; the 2.4 record says what that leaves open.
+> 2.2 record, and `Pulse.lean` against the mathlib commit pinned below. No result
+> below changed. `Exit.tla` has not been revised against the corrected §7.5 of
+> revision 2.4; the 2.4 record says what that leaves open.
 
 Target: [`research/pulse/recurrent-exit-pulse.md`](https://github.com/arkade-os/compiler/blob/ab36e380e3cb7e9f47668a6451b2e30817c667da/research/pulse/recurrent-exit-pulse.md), commit `ab36e380e3cb7e9f47668a6451b2e30817c667da`, branch `claude/pulse-pr-review-qd8sj3`. The entire document, including §§0 and 13, was read. At retrieval on 2026-09-11 that branch still pointed to this commit. Source SHA-256: `3c5007e768e64e03aef6346e15f3d8786571228ec95ff5a7e5f63bd36cac856f`. The source is linked, not copied or modified here. These are research artifacts, with no compiler changes.
 

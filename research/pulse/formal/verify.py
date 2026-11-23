@@ -48,15 +48,19 @@ CASES = {
     # revision 2.4, the anchor-age invariant of §7.4a (A26). Positive, two sets of bounds:
     'Anchor':                (0,  OK),
     'AnchorWide':            (0,  OK),
-    # negative: each removes one defence, or thins the margin, and must lose NoStaleWin
+    # negative: each removes one defence, thins the margin or slows the watcher,
+    # and must lose NoStaleWin
     'AnchorNoDuty':          (12, 'Invariant NoStaleWin is violated.'),
     'AnchorNoAdmission':     (12, 'Invariant NoStaleWin is violated.'),
     'AnchorCensored':        (12, 'Invariant NoStaleWin is violated.'),
     'AnchorThinMargin':      (12, 'Invariant NoStaleWin is violated.'),
+    'AnchorSlowWatch':       (12, 'Invariant NoStaleWin is violated.'),
     # witnesses under the holding parameters, so NoStaleWin is not vacuous there
     'AnchorRootReachable':         (12, 'Invariant RootNeverConfirms is violated.'),
     'AnchorNearMaturityReachable': (12, 'Invariant PendingNeverNearMaturity is violated.'),
     'AnchorLandingReachable':      (12, 'Invariant OffChainNeverLands is violated.'),
+    'AnchorStackReachable':        (12, 'Invariant NoStackOnPendingFinal is violated.'),
+    'AnchorBurstReachable':        (12, 'Invariant OneConfirmationPerBlock is violated.'),
 }
 
 def module_of(cfg):
