@@ -1,43 +1,186 @@
 pragma arkade ^0.1.0;
-import "beacon_state.ark";
-import "bitcoin.ark";
 
-// State 0x0103 || lastMintedHeight:8 || accumulatorNumerator:64.
+// State: height:8 || recoveryCount:8 || accumulatorNumerator:64.
+// HPC: height:8 || numerator:64 || accumulator:64 || blockHash:32 || mintedAt:8.
 // Control and observation assets originate in the same initialization tx;
 // group indices select the series without embedding that txid in scripts.
+// Unused Merkle siblings are zero bytes32; the branch always proves index zero.
+struct Groth16Proof { ECPoint a; G2Point b; ECPoint c; }
+
 contract HashPriceBeacon(int coinGidx, int sourceGidx, bytes32 blockCoinScript, bytes32 hashPriceCoinScript) {
-  function mint() {
-    let id = BeaconState.issuer(coinGidx, 0, 1);
-    require(sourceGidx != id.gidx, "distinct series");
-    bytes state = BeaconState.input(0);
-    BeaconState.checkState(state, 0x0103, 74);
-    int height = bin2num(substr(state, 2, 8)) + 1;
-    int accumulator = bin2num(substr(state, 10, 64));
+  const int BN254 = 2;
+  // SDK 6.10.0 coinbase guest, 1 MiB cap; its reviewed ELF and key are pinned in README.
+  const int PROGRAM_VKEY = 211360200981073404834715045665936083077048586645350687854143298402673083698;
+  const int VK_ROOT = 83960146348496814183195590144795274058764451818716359375255161226434597714;
+
+  @allow(unsigned-spend-path, "the authenticated next header and proven coinbase reward determine issuance through the preserved control singleton")
+  function mint(int mintedAt, bytes32 coinbaseTxid, int reward, int merkleDepth, bytes32[20] siblings, Groth16Proof proof) {
+    let control = controlIdentity();
+    let group = tx.assetGroups.find(control.txid, coinGidx);
+    require(group.sumInputs == 0 && group.sumOutputs == 1, "hashprice supply");
+    let id = group.assetId;
+    bytes state = inputState(0, 80);
+    require(bin2num(substr(state, 8, 8)) == 0, "normal only");
+    int height = bin2num(substr(state, 0, 8)) + 1;
+    int accumulator = bin2num(substr(state, 16, 64));
     require(accumulator >= 0, "nonnegative accumulator");
 
-    let source = BeaconState.identity(1);
+    require(mintedAt >= 0, "nonnegative minting time");
+    if (mintedAt >= 3600) {
+      require(checkTime(mintedAt - 3600), "minting time too far ahead");
+    }
+    // CHECKTIME is inclusive; the extra second includes the past-hour endpoint.
+    require(!checkTime(mintedAt + 3601), "minting time too old");
+
+    let source = identity(1);
     require(source.txid == id.txid && source.gidx == sourceGidx, "source beacon");
-    require(tx.inputs[1].scriptPubKey == blockCoinScript, "source script");
-    bytes block = BeaconState.input(1);
-    BeaconState.checkState(block, 0x0102, 99);
-    require(bin2num(substr(block, 2, 8)) == height, "next height");
-    int reward = bin2num(substr(block, 90, 9));
-    require(reward >= 0, "nonnegative reward");
-    int target = Bitcoin.target(substr(block, 82, 4));
+    require(tx.inputs[1].script.program == blockCoinScript, "source script");
+    bytes block = inputState(1, 129);
+    require(bin2num(substr(block, 0, 8)) == height, "next height");
+    verifyCoinbase(coinbaseTxid, reward, proof);
+    require(merkleDepth >= 0 && merkleDepth <= 20, "merkle depth");
+    bytes32 merkle = coinbaseTxid;
+    for (i, sibling) in siblings {
+      if (i < merkleDepth) {
+        // The coinbase at index zero is the left child at every level.
+        merkle = hash256(merkle + sibling);
+      } else {
+        require(sibling == num2bin(0, 32), "unused sibling");
+      }
+    }
+    require(merkle == substr(block, 44, 32), "coinbase inclusion");
+    int coefficient = bin2num(substr(block, 80, 3) + 0x00);
+    int exponent = bin2num(substr(block, 83, 1) + 0x00);
+    require(coefficient > 0 && coefficient < 8388608 && exponent <= 34, "compact target");
+    int target = 0;
+    if (exponent <= 3) {
+      target = coefficient / bin2num(num2bin(0, 3 - exponent) + 0x0100);
+    } else {
+      target = coefficient * bin2num(num2bin(0, exponent - 3) + 0x0100);
+    }
+    require(target > 0 && target <= 26959535291011309493156476344723991336010898738574164086137773096960, "mainnet target");
     int numerator = reward * target;
     int nextAccumulator = accumulator + numerator;
 
-    bytes next = 0x0103 + num2bin(height, 8) + num2bin(nextAccumulator, 64);
-    require(BeaconState.output(0) == next, "issuer state");
-    BeaconState.outputCoin(1, blockCoinScript, source, block);
-    require(tx.outputs[1].value == tx.inputs[1].value, "source value");
+    bytes next = num2bin(height, 8) + num2bin(0, 8) + num2bin(nextAccumulator, 64);
+    require(tx.packet(32) == next, "issuer state");
+    preserveCoin(1, blockCoinScript, source, block);
     let sourceGroup = tx.assetGroups.find(source.txid, source.gidx);
     require(sourceGroup.sumInputs == 1 && sourceGroup.sumOutputs == 1, "source supply");
-    bytes observation = 0x0104 + num2bin(height, 8) + num2bin(numerator, 64) + num2bin(nextAccumulator, 64);
-    BeaconState.outputCoin(2, hashPriceCoinScript, id, observation);
+    bytes32 blockHash = sha256(sha256(substr(block, 8, 80)));
+    bytes observation = num2bin(height, 8) + num2bin(numerator, 64) + num2bin(nextAccumulator, 64) + blockHash + num2bin(mintedAt, 8);
+    require(tx.outputs[2].script.program == hashPriceCoinScript, "observation script");
+    require(tx.outputs[2].value >= 330, "observation value");
+    require(tx.outputs[2].assets.length == 1 && tx.outputs[2].assets.lookup(id.txid, id.gidx) == 1, "output identity");
+    require(tx.packet(34) == observation, "output state");
   }
 
-  function clone() {
-    BeaconState.clone(coinGidx, hashPriceCoinScript, 0x0104, 138, 0x0103, 74);
+  @allow(unsigned-spend-path, "an authenticated same-height block hash mismatch authorizes suffix recovery")
+  function challenge() {
+    let control = controlIdentity();
+    let group = tx.assetGroups.find(control.txid, coinGidx);
+    require(group.sumInputs == 1 && group.sumOutputs == 1, "hashprice supply");
+    bytes state = inputState(0, 80);
+    require(bin2num(substr(state, 8, 8)) == 0, "normal only");
+    require(identity(1) == group.assetId, "hashprice identity");
+    require(tx.inputs[1].script.program == hashPriceCoinScript, "hashprice script");
+    bytes disputed = inputState(1, 176);
+    int height = bin2num(substr(disputed, 0, 8));
+    int count = bin2num(substr(state, 0, 8)) - height + 1;
+    require(height > 0 && count > 0, "issued height");
+
+    let source = identity(2);
+    require(source.txid == control.txid && source.gidx == sourceGidx, "source beacon");
+    require(tx.inputs[2].script.program == blockCoinScript, "source script");
+    bytes block = inputState(2, 129);
+    require(bin2num(substr(block, 0, 8)) == height, "same height");
+    bytes32 blockHash = sha256(sha256(substr(block, 8, 80)));
+    require(substr(disputed, 136, 32) != blockHash, "different block");
+    let sourceGroup = tx.assetGroups.find(source.txid, source.gidx);
+    require(sourceGroup.sumInputs == 1 && sourceGroup.sumOutputs == 1, "source supply");
+
+    int numerator = bin2num(substr(disputed, 8, 64));
+    int accumulator = bin2num(substr(disputed, 72, 64));
+    require(numerator >= 0 && accumulator >= numerator, "rollback accumulator");
+    bytes next = num2bin(height - 1, 8) + num2bin(count, 8) + num2bin(accumulator - numerator, 64);
+    require(tx.packet(32) == next, "recovery state");
+    preserveCoin(1, hashPriceCoinScript, group.assetId, disputed);
+    preserveCoin(2, blockCoinScript, source, block);
+  }
+
+  @allow(unsigned-spend-path, "each coin validates its recovery eligibility and the beacon counts exactly the burned units")
+  function burn() {
+    let control = controlIdentity();
+    let group = tx.assetGroups.find(control.txid, coinGidx);
+    int burned = group.sumInputs;
+    require(group.sumOutputs == 0, "hashprice coins burned");
+    bytes state = inputState(0, 80);
+    int count = bin2num(substr(state, 8, 8));
+    require(count > 0 && burned > 0 && burned <= count, "recovery burn count");
+    bytes next = substr(state, 0, 8) + num2bin(count - burned, 8) + substr(state, 16, 64);
+    require(tx.packet(32) == next, "recovery progress");
+  }
+
+  // Published SP1 v6.1.0 Groth16 verification key (succinctlabs/sp1-contracts, MIT).
+  // Public bytes: internal-order coinbase txid || uint64 little-endian reward.
+  private function verifyCoinbase(bytes32 coinbaseTxid, int reward, Groth16Proof proof) {
+    require(reward >= 0 && reward <= 2100000000000000);
+    // Match SP1 hashPublicValues: SHA256, clear the high three bits,
+    // then convert big-endian digest bytes to an unsigned Script number.
+    bytes32 publicDigest = sha256(coinbaseTxid + num2bin(reward, 8));
+    int digest = bin2num(reverseBytes(publicDigest & 0x1fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff));
+
+    // Five Groth16 public scalars: [PROGRAM_VKEY, digest, 0, VK_ROOT, 0].
+    // Successful exit and the default nonce are fixed to zero here.
+    ECPoint linear = ecAdd(
+        {x: 20281192269339458123687070687118212311775320590888414619062163734024177320592, y: 4733327396113282720944079206751955104965328647794767422434462962576999295035},
+        ecMul({x: 6933777020392885277709527453058337947310422411038083362275568070104688005311, y: 981134475045095331624771061624185350383934842154508663637397442918499383708}, PROGRAM_VKEY, BN254), BN254);
+    linear = ecAdd(linear,
+        ecMul({x: 4994703368938944727583784298191985234033403433117347198670233075674015451426, y: 8251219283963080431419977720140972699009004688253176317231536639169726973868}, digest, BN254), BN254);
+    linear = ecAdd(linear,
+        ecMul({x: 10868099250506113890234768256645470833285719586092080686774540776807380789751, y: 481415511937576118656966359026147167555048629225366340770167496559184060449}, VK_ROOT, BN254), BN254);
+
+    ECPoint alpha = {x: 15279411540481963483749982645131486879260751823620651493692884460296130891713, y: 15872895802316430142046488442363778159164596024024981740547841316113839677454};
+    G2Point negativeDelta = {xC1: 8014260607368773541998918215611927658290278403999176336697043972644519659243, xC0: 10465707362494635227101096813108413078937487707553051407465224907243675430929, yC1: 16335894885742905444968709132584769120387318573561090701871591658625758958113, yC0: 19389283139277148919245778864125350153699493315071306268776225113374776030523};
+    G2Point negativeBeta = {xC1: 12771786691609444002416405093387705070206640282801320788762089789398249455552, xC0: 6145571844528009385227270901181311049451968424667282936975270874464890915386, yC1: 1735169520034591855846686229876971881413094324547255227368057137445726296809, yC0: 4488883874756188982949192438322346627006627895205628031405236004639323835517};
+    G2Point negativeGamma = {xC1: 11559732032986387107991004021392285783925812861821192530917403151452391805634, xC0: 10857046999023057135944570762232829481370756359578518086990519993285655852781, yC1: 17805874995975841540914202342111839520379459829704422454583296818431106115052, yC0: 13392588948715843804641432497768002650278120570034223513918757245338268106653};
+    // e(A,B) e(C,-delta) e(alpha,-beta) e(linear,-gamma) = 1.
+    require(ecPairing(
+        [proof.a, proof.c, alpha, linear],
+        [proof.b, negativeDelta, negativeBeta, negativeGamma], BN254));
+  }
+
+  private function inputState(int vin, int length) bytes {
+    let previous = tx.inputs[vin].outpoint;
+    require(previous.vout <= 223, "state output index");
+    int packetType = 32 + previous.vout;
+    bytes state = tx.inputs[vin].packet(packetType);
+    require(size(state) == length, "state size");
+    require(bin2num(substr(state, 0, 8)) >= 0, "state height");
+    return state;
+  }
+
+  private function preserveCoin(int vin, bytes32 program, AssetId id, bytes state) {
+    require(tx.outputs[vin].script.program == program, "observation script");
+    require(tx.outputs[vin].value == tx.inputs[vin].value, "observation value");
+    require(tx.outputs[vin].assets.length == 1 && tx.outputs[vin].assets.lookup(id.txid, id.gidx) == 1, "observation identity");
+    int packetType = 32 + vin;
+    require(tx.packet(packetType) == state, "observation state");
+  }
+
+  private function identity(int vin) AssetId {
+    require(tx.inputs[vin].assets.length == 1, "one identity asset");
+    let allocation = tx.inputs[vin].assets[0];
+    require(allocation.amount == 1, "one identity unit");
+    return allocation.assetId;
+  }
+
+  private function controlIdentity() AssetId {
+    require(this.activeInputIndex == 0, "issuer input 0");
+    let control = identity(0);
+    require(coinGidx >= 0 && coinGidx <= 65535 && coinGidx != control.gidx, "coin group");
+    require(sourceGidx >= 0 && sourceGidx <= 65535 && sourceGidx != coinGidx && sourceGidx != control.gidx, "source group");
+    require(this.tunnel(0), "issuer preserved");
+    return control;
   }
 }

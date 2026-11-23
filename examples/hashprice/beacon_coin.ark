@@ -1,15 +1,31 @@
 pragma arkade ^0.1.0;
-import "beacon_state.ark";
 
-// BlockHeaderCoin: (0x0102, 99); HashPriceCoin: (0x0104, 138).
-contract BeaconCoin(bytes stateTag, int stateLength) {
+// Both roles preserve observations and burn only through their own recovery beacon.
+contract BeaconCoin(int controlGidx) {
+  @allow(unsigned-spend-path, "anyone may read an observation while preserving it")
   function continue() {
     int vin = this.activeInputIndex;
-    require(tx.inputs[vin].assets.length == 1, "one identity asset");
-    require(tx.inputs[vin].assets[0].amount == 1, "one identity unit");
-    bytes state = BeaconState.input(vin);
-    BeaconState.checkState(state, stateTag, stateLength);
     require(this.tunnel(vin), "coin preserved");
-    require(BeaconState.output(vin) == state, "state preserved");
+    int inPacketType = tx.inputs[vin].outpoint.vout + 32;
+    bytes state = tx.inputs[vin].packet(inPacketType);
+    int outPacketType = vin + 32;
+    require(tx.packet(outPacketType) == state, "state preserved");
+  }
+
+  @allow(unsigned-spend-path, "the singleton beacon authorizes and counts each discarded observation during recovery")
+  function burn() {
+    int vin = this.activeInputIndex;
+    require(vin > 0, "beacon input 0");
+    let id = tx.inputs[vin].assets[0].assetId;
+    let control = tx.inputs[0].assets[0].assetId;
+    require(control.txid == id.txid && control.gidx == controlGidx, "beacon control");
+    int beaconPacketType = tx.inputs[0].outpoint.vout + 32;
+    bytes beaconState = tx.inputs[0].packet(beaconPacketType);
+    require(bin2num(substr(beaconState, 8, 8)) > 0, "recovery only");
+    int coinPacketType = tx.inputs[vin].outpoint.vout + 32;
+    bytes coinState = tx.inputs[vin].packet(coinPacketType);
+    require(bin2num(substr(coinState, 0, 8)) > bin2num(substr(beaconState, 0, 8)), "discarded height");
+    let group = tx.assetGroups.find(id.txid, id.gidx);
+    require(group.sumOutputs == 0, "coins burned");
   }
 }

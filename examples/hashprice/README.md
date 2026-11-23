@@ -1,224 +1,289 @@
-# Bitcoin header and hashprice beacon contracts
+# Bitcoin header and hashprice beacons
 
-First implementation of [SPEC.md](SPEC.md), for Bitcoin mainnet. The three
-contracts use unchanged scripts and mutable transaction state packets:
-
-| Contract | Constructor | Spend paths |
-| --- | --- | --- |
-| `BlockHeaderBeacon` | `coinGidx: int`, `blockCoinScript: bytes32` | `mint`, `clone` |
-| `HashPriceBeacon` | `coinGidx: int`, `sourceGidx: int`, `blockCoinScript: bytes32`, `hashPriceCoinScript: bytes32` | `mint`, `clone` |
-| `BeaconCoin` | `stateTag: bytes`, `stateLength: int` | `continue` |
-
-BlockHeaderCoin and HashPriceCoin are observation roles implemented by
-`BeaconCoin(0x0102, 99)` and `BeaconCoin(0x0104, 138)` respectively. Their
-constructor parameters fix the state schema; packet IDs come from output
-positions, not constructor parameters.
-
-The script arguments are 32-byte Taproot witness programs. Arkd enforces Taproot
-for these VTXOs; the contracts check the programs. Each issuer's Taproot tree
-must contain both spend leaves; observation trees contain only `continue`.
-The compiler supplies the normal collaborative server/emulator leaves; there is
-no additional owner key or unilateral exit. `beacon_state.ark` and `bitcoin.ark`
-are imported libraries.
-
-## Integer arithmetic
-
-The emulator's `int` operations promote to arbitrary-precision integers. No
-floating-point value or rounded difficulty is used. After validating the
-retarget and decoding the actual compact targets:
+Bitcoin mainnet BlockHeaderCoins (BHCs) and HashPriceCoins (HPCs), issued sequentially:
 
 ```text
-delta = max(newTarget - oldTarget, 0)
-C = 6 + (8 * delta + oldTarget - 1) / oldTarget
+6 headers --> BlockHeaderBeacon --> BHC (header + chain context)
+                                    |
+     SP1 coinbase sum + index-0 branch --> HashPriceBeacon --> HPC
+                                                                         |
+                                                   reward/difficulty + accumulator
 ```
 
-Division truncates. With positive targets this is exactly
-`max(6, ceil(8 * newTarget / oldTarget - 2))`: unchanged difficulty requires
-6 headers; a maximum fourfold target increase requires 30. Only an epoch-end
-mint uses the adaptive count; other heights require 6.
-
-Hashprice uses a shared, implicit denominator:
-
-```text
-T1 = 65535 * 256^26
-q[n] = rewardSats[n] * target[n]
-A[n] = A[n-1] + q[n]
-BTC hashprice[n] = q[n] / T1             # satoshis per difficulty unit
-period average = (A[end] - A[start-1]) / ((end-start+1) * T1)
-```
-
-Neither per-block hashprice nor the accumulator is rounded. Multiply the
-denominator by 100,000,000 to express the result in BTC rather than satoshis.
+[BlockHeaderBeacon](block_header_beacon.ark) and [HashPriceBeacon](hashprice_beacon.ark)
+provide `mint`, `challenge`, `burn`. BHCs and HPCs are separate instances of
+[BeaconCoin](beacon_coin.ark), with `continue` and `burn`.
 
 ## Initialization
 
-All four asset IDs originate in the **same transaction** `T`, with different
-asset group indices. Each control asset has a fixed supply of one and no
-`ControlAsset` of its own. Each observation asset starts with one unit and
-references its beacon's control asset:
-
-| Group | Asset ID | Purpose | Initial supply | ControlAsset |
-| --- | --- | --- | --- | --- |
-| 0 | `T:0` | BlockHeaderBeacon control | 1 | Absent (non-reissuable) |
-| 1 | `T:1` | BlockHeaderCoin series | 1 | Group 0 |
-| 2 | `T:2` | HashPriceBeacon control | 1 | Absent (non-reissuable) |
-| 3 | `T:3` | HashPriceCoin series | 1 | Group 2 |
-
-| Output | Contract | Identity | State |
-| --- | --- | --- | --- |
-| 0 | BlockHeaderBeacon | `T:0`, amount 1 | Trusted height `H`, its hash, its `nBits`, its timestamp |
-| 1 | BeaconCoin (BlockHeaderCoin) | `T:1`, amount 1 | `H`, trusted header, authenticated coinbase reward |
-| 2 | HashPriceBeacon | `T:2`, amount 1 | `H`, accumulator 0 |
-| 3 | BeaconCoin (HashPriceCoin) | `T:3`, amount 1 | `H`, numerator 0, accumulator 0 |
-| 4 | Extension | None | Asset issuance and state packets |
-
-Use `H >= 2016` and `H % 2016 == 0`. For this layout, BlockHeaderBeacon takes
-`coinGidx = 1`; HashPriceBeacon takes `coinGidx = 3` and `sourceGidx = 1`.
-Each beacon derives its observation ID as `(inputControlAsset.txid, coinGidx)`.
-HashPriceBeacon derives the BHC ID using `sourceGidx` and the same txid. This
-avoids embedding `T` into scripts that themselves determine `T`.
-
-Reissuance packets omit `ControlAsset`; arkd checks the immutable relationship
-from issuance and requires the controlling asset to be spent. Only the beacon
-holds that asset, forcing its mint or clone covenant to execute. BeaconCoin
-checks preservation and has no issuer or supply-increase check.
-
-Consumers must verify initialization: trusted checkpoint and reward, these
-scripts and their complete spend trees, initial state, the control relationships,
-exactly one unit of each control asset exclusively under its beacon, and one
-initial observation unit per series under its pinned BeaconCoin script.
-The contracts maintain this invariant; they cannot retroactively validate their
-deployment. Baseline HPC[H] has zero numerator and accumulator; observations
-start at `H+1`. Initialization and transaction-building tooling are not included.
-
-## State packets
-
-Reserve packet types **32 through 255** for this format. Output `vout` uses one
-packet of type `32 + vout`, limiting stateful outputs to indices 0 through 223.
-When spending, select the previous transaction's packet using the input's
-**prevout vout**, not its current vin. Do not combine this layout with another
-protocol using the same packet types.
-
-Every record starts with a one-byte version `01`, a one-byte kind, and an
-8-byte height. The sizes below include those fields:
-
-| Kind | Contract | Fields in serialization order | Bytes |
-| --- | --- | --- | --- |
-| `01` | BlockHeaderBeacon | `0101`, height:8, lastMintedHash:32, nextNBits:4, epochStartTimestamp:4 | 50 |
-| `02` | BlockHeaderCoin | `0102`, height:8, header:80, rewardSats:9 | 99 |
-| `03` | HashPriceBeacon | `0103`, height:8, accumulatorNumerator:64 | 74 |
-| `04` | HashPriceCoin | `0104`, height:8, hashpriceNumerator:64, accumulatorNumerator:64 | 138 |
-
-Heights, reward and numerators use positive fixed-width ScriptNum
-(`num2bin`): little-endian sign-magnitude, zero padded, with the sign bit clear.
-Heights are limited to `2^63-1`; reward sums to `2^64-1`. The 64-byte fields
-allow positive 511-bit values, more than the sum of height-many reward/target
-products under these bounds. Encoding fails rather than truncating.
-
-Headers retain Bitcoin's exact 80-byte serialization. `nextNBits` and timestamp
-are four raw little-endian unsigned bytes. Hashes are raw SHA256d digest bytes,
-the order used in serialized header links, **not** display-order hex. Each
-state record fits the emulator's 520-byte packet introspection limit.
-
-## Mint and continuation layouts
-
-`BlockHeaderBeacon.mint` spends the issuer at input 0 and recreates it at output 0,
-then creates BHC[n] at output 1. It takes no parent or window-start BHC input.
-Its witnesses, in source/ABI order, are:
-
-1. `headers: bytes[30]`: `n ... n+C-1`, each exactly 80 bytes, followed by empty
-   slots through index 29.
-2. `coinbase: bytes`: the complete **non-witness** transaction serialization.
-3. `merkleDepth: int`: 0 through 20.
-4. `siblings: bytes32[20]`: raw digest bytes, from leaf to root; unused slots
-   are exactly 32 zero bytes. Position zero is the left child at every level.
-
-The verifier checks the stored parent link and required difficulty, every
-header's PoW, applicable mainnet version rules, any crossed retarget, and the
-coinbase inclusion proof. Parsing authenticates the single coinbase input/null
-outpoint, sums all outputs, and requires the complete stripped serialization.
-The new verifier state stores the minted header's hash, the following header's
-`nBits`, and the epoch timestamp updated only when minting an epoch start.
-
-`HashPriceBeacon.mint` takes no witnesses. Spend issuer at input 0 and
-BHC[n] at input 1 through `continue`; recreate both at outputs 0 and 1 and
-create HPC[n] at output 2. It advances exactly one height and updates the
-accumulator from the authenticated reward and target. No preceding HPC input
-is needed. Each mint preserves one control unit and creates exactly one
-observation unit, with no input units of the minted series.
-
-Additional funding inputs may carry no involved control or observation assets.
-Mint transactions may have funding change outputs and include the required
-extension and anchor outputs. Issuers retain their exact BTC value. New
-observations require at least 330 sats and exactly one identity unit.
-
-`continue` takes no witnesses and maps **input index `i` to output index `i`**.
-It preserves the full script, BTC value, asset allocation and state. This
-injective mapping prevents two identical inputs from sharing one continuation
-output. Consumers must arrange their transaction accordingly. There is no burn
-path. Supply increases require the issuer at input 0, and that issuer's mint or
-clone checks constrain every newly issued unit. Arkd enforces issuance authority;
-BeaconCoin only checks its own continuation.
-
-## Cloning
-
-Both issuers expose `clone()` without witnesses:
+One transaction `T`; trusted epoch-start checkpoint `H > 388381`, `H % 2016 == 0`:
 
 ```text
-vin 0: issuer, clone                 -> vout 0: issuer unchanged
-vin 1: observation, continue         -> vout 1: observation unchanged
-optional funding inputs             -> vout 2 ... m+1: identical observations
-                                       vout m+2: extension, zero BTC/assets
-                                       vout m+3: arkd anchor
+vout  asset  contract           initial state / issuance authority
+0     T:0    BlockHeaderBeacon  H, checkpoint hash/nBits/time, count=0, work floor=0
+1     T:1    BeaconCoin (BHC)   H, header, nBits/time, work(H..H+5); control=T:0
+2     T:2    HashPriceBeacon    H, A=0, count=0
+3     T:3    BeaconCoin (HPC)   H, q=0, A=0, checkpoint hash, mintedAt; control=T:2
+4     -      Extension         issuance and state packets
 ```
 
-The first pass allows **1 through 8 additional clones**. All copies preserve
-state, script, BTC value and one identity unit. There is no change output on
-this path; callers must select funding accordingly. The issuer height and
-accumulator/header state do not change. The control asset has one input and one
-output unit; the observation asset has one input and `1 + m` output units.
+Exactly one initial unit of each asset; controls are non-reissuable. Each series
+can reissue only while spending its control. The index starts at `H+1`.
 
-## Capacity and verification
+| Contract | Parameters |
+| --- | --- |
+| BlockHeaderBeacon | `coinGidx=1`, BHC script |
+| HashPriceBeacon | `coinGidx=3`, `sourceGidx=1`, BHC script, HPC script |
+| BeaconCoin (BHC) | `controlGidx=0` |
+| BeaconCoin (HPC) | `controlGidx=2` |
 
-First-pass limits are 30 headers, a 4,096-byte stripped coinbase with at most
-16 outputs, 20 Merkle siblings, and 8 clones per transaction. Larger coinbases
-are rejected and stall the consecutive series until the design is extended;
-there is no skipped-block or substitute-reward behavior. These are prototype
-capacity limits, not Bitcoin consensus limits.
+Consumers audit the checkpoint, initial states, supplies, control
+relationships and complete script trees. Scripts are 32-byte Taproot programs;
+include every spend path and the collaborative leaves, with no covenant-bypassing
+exit or usable key path. Identities match both `T` and group index. Reissuance
+packets omit `ControlAsset`; arkd validates the registered relationship.
 
-The complete coinbase is supplied as one witness item and hashed directly.
-The tested emulator loads initial witnesses through `SetStack`, so the
-520-byte script-push/concatenation limit does not prohibit this. No operation
-concatenates the whole transaction. Expanding capacity or changing emulator
-versions requires rechecking stack, witness and script limits; streaming
-hashing alone does not establish support for arbitrary Bitcoin coinbases.
+## State
 
-The test suite compiles all three contracts, exercises the actual emulator
-and arkd asset validation, and includes public mainnet fixtures at heights
-2017, 4031, 689467, 689471 and
-689472. Each fixture records its Blockstream source URL. Tests cover ordinary
-issuance, lookahead across a boundary, a difficulty decrease requiring 10
-headers, the next epoch's first block, malformed witnesses and output state,
-big-integer retarget/confirmation arithmetic, accumulator transitions, cloning,
-continuation, non-burning, and rejection of issuance without the control asset.
-The arithmetic is independently compared against btcd's compact-target
-encoding. Both optimized and unoptimized contracts fit
-the 10,000-byte script limit.
+Fields are in byte order; widths and totals are bytes. `q` is the hashprice
+numerator, `A` its cumulative sum, `count` the recovery count, `floor` the minimum
+replacement proof work.
 
-Compile from the repository root:
+```text
+BlockHeaderBeacon [89]
+  height:8 | count:8 | lastHash:32 | nextNBits:4 | epochStart:4 | floor:33
+BHC [129]
+  height:8 | header:80 | nextNBits:4 | epochStart:4 | proofWork:33
+HashPriceBeacon [80]
+  height:8 | count:8 | A:64
+HPC [176]
+  height:8 | q:64 | A:64 | blockHash:32 | mintedAt:8
+
+output state = tx.packet(32 + vout)                  # vout: 0..223
+input state  = input.packet(32 + input.outpoint.vout)
+```
+
+All state packets start with height at offset 0 and have no tag prefix; the
+authenticated asset identity determines the layout. Both beacons have recovery
+count at offset 8.
+
+Reserve packet types 32–255. Integers use nonnegative, fixed-width little-endian
+ScriptNum; heights/counts/times fit 63 bits and numerators fit 511. The SP1 reward is an unsigned 64-bit value bounded by MAX_MONEY. Headers
+are raw; `nextNBits` and `epochStart` are raw unsigned little-endian bytes; hashes
+are raw SHA256d digests. `nextNBits` applies to `height+1`; `epochStart` is the
+start timestamp of the epoch containing `height`. `mintedAt` is Unix seconds.
+
+## Lifecycle
+
+```text
+Normal (count=0) -- mint(h+1) -------> Normal
+Normal          -- challenge(g) ----> Recovery (height=g, count=h-g)
+Recovery        -- burn(k<count) --> Recovery
+Recovery        -- burn(k=count) --> Normal
+
+BHC recovery --> replacement BHC --> HPC hash mismatch --> HPC recovery
+```
+
+Mint and challenge require Normal mode. Every beacon spend preserves its script,
+Bitcoin value and single control unit from input 0 to output 0. Observations must
+match their series identity, script and state schema; each carries one asset unit.
+Minting adds exactly one unit, with zero input units of the minted series.
+Transaction arrays below give input/output positions; evidence coins use `continue`.
+
+```text
+continue(coin at input i):
+  output[i] = same script, Bitcoin value, asset identity and complete state
+
+burn(beacon at input 0, suffix coins):
+  require matching control identity and count > 0
+  require each coin.height > beacon.height
+  k = series.sumInputs
+  require 0 < k <= count and series.sumOutputs == 0
+  beacon.count -= k                         # other fields unchanged
+```
+
+Burns may be batched in any order; funding inputs carry no series units. The entire
+suffix must be available and burned before minting resumes. Challenges preserve
+the evidence coins. Unburned coins remain readable during recovery, including
+stale BHCs used for HPC minting. Further rewinds can follow completed recovery.
+
+## BlockHeaderBeacon
+
+`verifyHeaders(context, headers)` checks exactly six linked 80-byte headers,
+starting from the context's hash and `nextNBits`, with signed 32-bit version >= 4
+(the checkpoint is after BIP65 activation):
+
+```text
+T1 = 65535 * 256^26                         # mainnet PoW limit
+require each header uses the expected nBits and 0 < decoded target <= T1
+require uintLE(SHA256d(header)) <= target
+at a subsequent epoch boundary inside the window:
+  elapsed = clamp(epochEnd.time - context.epochStart, 302400, 4838400)
+  nextNBits = compactEncode(min(floor(oldTarget * elapsed / 1209600), T1))
+  require headers from that boundary use nextNBits  # exact compact encoding
+return sum(floor(2^256 / (target + 1)))      # six headers' work
+
+MINT       inputs [beacon[h]] --> outputs [beacon[n], BHC[n]]
+  n = h + 1
+  W = verifyHeaders(beacon, headers[n..n+5])
+  require W >= beacon.floor
+  nextNBits = header[n+1].nBits
+  epochStart = header[n].time if n % 2016 == 0 else beacon.epochStart
+  BHC[n] = (n, header[n], nextNBits, epochStart, W)
+  beacon = (n, SHA256d(header[n]), nextNBits, epochStart, count=0, floor=0)
+
+CHALLENGE  inputs [beacon[h], BHC[g], BHC[g+1]]
+           --> outputs [beacon[g], same BHC[g], same BHC[g+1]]
+  require h > g and BHC[g+1].header links to BHC[g].header
+  W = verifyHeaders(BHC[g], replacementHeaders[g+1..g+6])
+  require replacement hash at g+1 != SHA256d(BHC[g+1].header)
+  require W > BHC[g+1].proofWork > 0
+  beacon = (g, SHA256d(BHC[g].header), BHC[g].nextNBits, BHC[g].epochStart,
+            count=h-g, floor=W)
+```
+
+Work is frozen at minting; the challenge compares six-header windows. The first
+replacement mint accepts any valid proof meeting the floor and clears it.
+
+## HashPriceBeacon
+
+BHCs supply authenticated headers and chain-recovery context. They contain no
+reward, transaction or Merkle-proof data and can be consumed by other applications.
+HashPriceBeacon authenticates the coinbase and its reward at minting.
+
+```text
+MINT       inputs [beacon[h], BHC[n]] --> outputs [beacon[n], same BHC[n], HPC[n]]
+  require n == h+1
+  require mintedAt >= 0 and abs(mintedAt - emulator.now) <= 3600
+  verify SP1 Groth16 proof of coinbaseTxid and rewardSats
+  require coinbaseTxid at transaction index 0 in BHC[n].header.merkleRoot
+  q = rewardSats * decodeTarget(BHC[n].header.nBits)
+  A = beacon.A + q
+  HPC[n] = (n, q, A, SHA256d(BHC[n].header), mintedAt)
+  beacon = (n, A, count=0)
+
+CHALLENGE  inputs [beacon[h], HPC[n], BHC[n]]
+           --> outputs [beacon[n-1], same HPC[n], same BHC[n]]
+  require 0 < n <= h and HPC[n].blockHash != SHA256d(BHC[n].header)
+  require HPC[n].A >= HPC[n].q >= 0
+  beacon = (n-1, HPC[n].A - HPC[n].q, count=h-n+1)
+```
+
+Replacement HPCs receive fresh minting timestamps. Histories can remain stale or
+mixed until challenged and burned.
+
+## Coinbase proof and witness
+
+`HashPriceBeacon.mint` takes:
+
+```text
+mint(mintedAt, coinbaseTxid, reward, merkleDepth, bytes32[20] siblings, Groth16Proof proof)
+Groth16Proof = A:G1 (2 integers), B:G2 (4 integers), C:G1 (2 integers)
+```
+
+The pinned SP1 guest is
+[`coinbase.rs`](sp1/program/src/bin/coinbase.rs), with
+SDK 6.10.0 and the published v6.1.0 Groth16 wrapper. It accepts at most 1,048,576
+wire bytes, validates canonical Bitcoin serialization, requires exactly one null
+prevout input and a 2–100 byte coinbase scriptSig, strips SegWit for SHA256d, and
+checks each output and their sum against `MAX_MONEY`. Its only public bytes are:
+
+```text
+coinbase txid in internal Bitcoin byte order[32] || reward uint64 little-endian[8]
+```
+
+The guest key is
+`0077a029932c562085f49d781fe0b39b5e6d98569cac99c5f5eb0031512dc532`.
+The approved ELF's SHA256 is
+`0627b6dad82b0ff690f398233e88578811b62bb6dd1b01f95dbf627b3a280db4`.
+The VM verifier fixes this program key, successful exit, the official recursion
+key root and default nonce zero. It uses the published Groth16 key: no new trusted
+setup or ceremony is needed for this guest or for different transaction lengths.
+It executes three BN254 scalar multiplications, three additions and one pairing
+product over four pairs. Proof coordinates use minimally encoded positive
+little-endian Script numbers; SDK proof words use 32-byte big-endian encoding.
+
+The Merkle branch starts at the proven txid. At every active level it computes
+`SHA256d(current || sibling)`, so the transaction is always at index zero. The
+result must equal the authenticated header's Merkle root (BHC offset 44).
+`merkleDepth` is 0–20; unused siblings must be zero bytes32. Depth zero covers
+one-transaction blocks. Coinbase structure is checked independently by the guest as well as its
+leftmost position.
+
+The 20 siblings occupy 640 bytes **across 20 stack items**, rather than one
+oversized element. The mint witness has exactly 32 items: timestamp, txid,
+reward, depth, 20 siblings and eight proof coordinates. Its largest element is
+32 bytes. Its serialized upper bound is **977 bytes** (944 payload bytes plus
+33 count/length-prefix bytes), including maximum-width valid timestamp/reward
+numbers. No raw coinbase bytes enter the covenant witness. VM ceilings are 520
+bytes per element, 1,000 combined stack items, 128 KiB combined stack bytes and
+10,000 script bytes. The regression test exercises a full depth-20 branch with
+the actual Groth16 proof under the default VM compute limits.
+
+Measured with the checked-in deployment parameters: the optimized mint covenant
+is **2,879 bytes**, with compiler-reported peak stack **117 items**. Both the real
+13-level branch and a full 20-level branch serialize to **970 witness bytes**;
+unused siblings retain their 32-byte zero padding. The unoptimized covenant is
+2,495 bytes and passes the same VM cases. Even the conservative byte bound
+`117 * 520 = 60,840` remains below the 128 KiB combined-stack ceiling.
+
+The self-contained fixture uses the real coinbase of mainnet block 976289,
+its 13-sibling index-zero branch and a real SP1 proof. Header PoW/recovery tests
+use real mined headers. Hashprice recovery tests also use synthetic authenticated
+BHCs to isolate rollback behavior while retaining the valid coinbase proof.
+
+The guest, transaction parser, CPU prover and pinned Cargo lockfiles live in
+[`sp1/`](sp1/README.md). Its README covers Nix tools, building the guest,
+checking the pinned program key and generating a Groth16 proof. The
+[benchmark runner](../../benchmarks/sp1-sha256d/run.py) uses that same workspace.
+
+The [witness converter](../../benchmarks/sp1-sha256d/arkade/export_witness.py)
+converts the SDK envelope to named proof-coordinate inputs. For this contract,
+use its `outputSum` value as `reward`, its `expectedTxid` as `coinbaseTxid`, and
+add the timestamp, depth and 20 branch siblings. Always pin the program key of
+the reviewed guest build. The generic transaction benchmark guest has a different
+key and is deliberately rejected by HashPriceBeacon.
+
+## Settlement
+
+Example consumer policy for inclusive interval `s..e`, `H < s <= e`, output scale `P`:
+
+```text
+authenticate identities, scripts and heights of HPC[s-1] and HPC[e]
+continue both coins in distinct input/output slots
+require HPC[e].mintedAt + 24 hours < now
+
+hashprice[n]   = q[n] / T1                          # satoshis / difficulty unit
+average        = (A[e] - A[s-1]) / ((e-s+1) * T1)
+average_scaled = floor(P * (A[e] - A[s-1]) / ((e-s+1) * T1))
+BTC_average    = average / 100000000
+```
+
+The timestamp tolerance permits a minimum actual age just over 23 hours.
+Watchtowers must obtain replacement BHC evidence, challenge the HPC beacon and
+burn the affected endpoint before settlement. Recovery alone leaves it spendable;
+completed settlements are irreversible. Replacement issuance restarts its age.
+
+## Limits
+
+| Area | Bound |
+| --- | --- |
+| Chain evidence | Six-header work; equal-work challenges fail. Global greatest-work chain and full block validity are unproven. |
+| Consensus checks | Median-time-past, future-time bound, subsidy/fee ceiling and coinbase BIP34 height checks are omitted. SP1 enforces coinbase shape, scriptSig length and monetary ranges. |
+| Reward | Proven coinbase output sum; fees and the full block are not independently validated. |
+| Witness | Header mint: six separate 80-byte headers. Hashprice mint: 32 items, serialized ≤977 bytes, including SP1 proof coordinates and a depth 0–20 index-zero branch. |
+| Capacity | Private coinbase input ≤1 MiB. BHC state 129 bytes; HPC state 176 bytes. State packets fit 520 bytes; scripts must fit 10,000 bytes. |
+| Availability | Honest relaying, competing-work cost and timely watchtower burns are required assumptions; challenges have no expiry. |
+| Client work | Initialization, transaction building, settlement/payout contracts, BTC/USD pricing and per-hashrate-per-day conversion. |
+
+## Verification
+
+[Contract interfaces](../../tests/examples/hashprice.rs) ·
+[Emulator and asset validation](../../tests/e2e/hashprice_test.go)
+
+From the repository root:
 
 ```sh
-cargo run -- examples/hashprice/block_header_beacon.ark -o /tmp/block-header-beacon.json
-cargo run -- examples/hashprice/hashprice_beacon.ark -o /tmp/hashprice-beacon.json
-cargo run -- examples/hashprice/beacon_coin.ark -o /tmp/beacon-coin.json
 cargo test --test examples hashprice
-./scripts/e2e.sh
+./scripts/e2e.sh -run TestHashprice -count=1
 ```
-
-The fixtures test covenant execution and arkd's asset accounting against a known
-initialization registry. Transaction funding and deployment authentication remain
-separate platform/client checks.
-The security model remains the spec's work-race assumption: no most-work fork
-selection, rollback, MTP history, future-time check, or full Bitcoin block
-validation is added. USD prices and consumer option contracts remain out of
-scope.

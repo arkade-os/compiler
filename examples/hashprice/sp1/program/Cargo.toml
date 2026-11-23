@@ -1,0 +1,14 @@
+[package]
+name = "sha256d-program"
+version = "0.1.0"
+edition = "2021"
+publish = false
+default-run = "sha256d-program"
+
+[workspace]
+
+[dependencies]
+bitcoin = { version = "=0.32.102", default-features = false, features = ["std"] }
+sp1-zkvm = "=6.10.0"
+sha2 = { git = "https://github.com/sp1-patches/RustCrypto-hashes", tag = "patch-sha2-0.10.9-sp1-6.10.0" }
+

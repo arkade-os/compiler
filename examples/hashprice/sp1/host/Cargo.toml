@@ -1,0 +1,15 @@
+[package]
+name = "sp1-sha256d-bench"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+anyhow = "1"
+bitcoin = { version = "=0.32.102", default-features = false, features = ["std"] }
+hex = "0.4"
+serde_json = "1"
+sha2 = "=0.10.9"
+sp1-sdk = { version = "=6.10.0", features = ["blocking", "native-gnark"] }
+tokio = { version = "1", features = ["rt-multi-thread"] }
+

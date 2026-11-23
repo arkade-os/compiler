@@ -1,0 +1,8 @@
+[workspace]
+members = ["host"]
+exclude = ["program"]
+resolver = "2"
+
+[profile.release]
+debug = 1
+

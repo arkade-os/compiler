@@ -1,88 +1,280 @@
 pragma arkade ^0.1.0;
-import "beacon_state.ark";
-import "bitcoin.ark";
 
-// State 0x0101 || height:8 || hash:32 || nextNBits:4 || epochStartTimestamp:4.
-// Unused header slots are empty; unused Merkle siblings are all-zero bytes32.
+// State: height:8 || recoveryCount:8 || hash:32 || nextNBits:4 ||
+// epochStartTimestamp:4 || minNextProofWork:33.
+// Checkpoint is after BIP65 (height 388381); earlier checkpoints need height-dependent version checks.
 contract BlockHeaderBeacon(int coinGidx, bytes32 blockCoinScript) {
-  function mint(bytes[30] headers, bytes coinbase, int merkleDepth, bytes32[20] siblings) {
-    let id = BeaconState.issuer(coinGidx, 0, 1);
-    bytes state = BeaconState.input(0);
-    BeaconState.checkState(state, 0x0101, 50);
-    int height = bin2num(substr(state, 2, 8)) + 1;
-    require(height > 2016, "checkpoint height");
-    bytes previousHash = substr(state, 10, 32);
-    bytes oldBits = substr(state, 42, 4);
-    int oldTarget = Bitcoin.target(oldBits);
-    int epochStart = Bitcoin.uint(substr(state, 46, 4));
-    int epochPosition = height - (height / 2016) * 2016;
-    int boundary = 2016 - epochPosition;
-    int count = 6;
-    bytes nextEpochBits = oldBits;
-    int nextEpochTarget = oldTarget;
+  const int POW_LIMIT = int(0x00000000ffff0000000000000000000000000000000000000000000000000000);
+  const int DIFFICULTY_EPOCH_BLOCKS = (14 * 24 * 60) / 10; // 14 days in blocks
+  const int TARGET_TIMESPAN_SECS = DIFFICULTY_EPOCH_BLOCKS * 10 * 60; // 14 days in seconds
+  const int MIN_TIMESPAN_SECS = TARGET_TIMESPAN_SECS / 4;
+  const int MAX_TIMESPAN_SECS = TARGET_TIMESPAN_SECS * 4;
 
-    // Retarget at most once per proof, outside the unrolled header checks.
+  @allow(unsigned-spend-path, "verified headers authorize issuance through the preserved control singleton")
+  function mint(bytes[6] headers) {
+    let control = controlIdentity();
+    let group = tx.assetGroups.find(control.txid, coinGidx);
+    let id = group.assetId;
+
+    require(group.sumInputs == 0 && group.sumOutputs == 1, "block supply");
+
+    bytes state = inputState(0, 89);
+    int height = bin2num(substr(state, 0, 8)) + 1;
+    int recoveryCount = bin2num(substr(state, 8, 8));
+    int floor = bin2num(substr(state, 56, 33));
+    bytes previousHash = substr(state, 16, 32);
+    bytes oldBits = substr(state, 48, 4);
+    int epochStart = uint(substr(state, 52, 4));
+    int oldTarget = decodeTarget(oldBits);
+    int oldWork = blockWork(oldTarget);
+    int nextWork = oldWork;
+    bytes nextBits = oldBits;
+    int nextTarget = oldTarget;
+
+    require(recoveryCount == 0, "must not be in recovery mode");
+
+    // Header index of the next difficulty adjustment.
+    int boundary = DIFFICULTY_EPOCH_BLOCKS - (height % DIFFICULTY_EPOCH_BLOCKS);
+
+    for (i, header) in headers {
+      require(size(header) == 80, "header size");
+    }
+
+    // calculate required next work when crossing a difficulty epoch
+    if (boundary < 6) {
+      int endIndex = boundary - 1;
+      bytes epochEnd = headers[endIndex];
+      bytes epochFirst = headers[boundary];
+
+      nextBits = substr(epochFirst, 72, 4);
+      nextTarget = decodeTarget(nextBits);
+      int elapsed = uint(substr(epochEnd, 68, 4)) - epochStart;
+      // clamp elapsed epoch timespan
+      elapsed = min(max(elapsed, MIN_TIMESPAN_SECS), MAX_TIMESPAN_SECS);
+      int rawTarget = min(oldTarget * elapsed / TARGET_TIMESPAN_SECS, POW_LIMIT);
+      // Verify that nextBits encodes rawTarget with Bitcoin's rounding rules.
+      int exponent = uint(substr(nextBits, 3, 1));
+      int coefficient = uint(substr(nextBits, 0, 3));
+      // A smaller coefficient could use a smaller exponent without setting its sign bit.
+      if (exponent > 1) {
+        require(coefficient >= (1 << 15), "compact normalization");
+      }
+
+      int roundingStep = 1;
+      if (exponent <= 3) {
+        // Small targets are exact; coefficient bytes discarded by division must be zero.
+        require(coefficient == nextTarget * power256(3 - exponent), "compact low bits");
+      } else {
+        // Increasing the coefficient by one increases the target by this amount.
+        roundingStep = power256(exponent - 3);
+      }
+      // Round down by less than one step: e.g. 0x12345678 becomes 0x12345600, losing 120 < 256.
+      require(
+        nextTarget <= rawTarget && rawTarget - nextTarget < roundingStep,
+        "retarget encoding"
+      );
+      nextWork = blockWork(nextTarget);
+    }
+
+    // validate header chain
+    int proofWork = 0;
+    for (i, header) in headers {
+      require(substr(header, 4, 32) == previousHash, "header link");
+      bytes bits = oldBits;
+      int target = oldTarget;
+      int work = oldWork;
+      if (i >= boundary) {
+        bits = nextBits;
+        target = nextTarget;
+        work = nextWork;
+      }
+      require(substr(header, 72, 4) == bits, "header difficulty");
+      bytes digest = hash256(header);
+      require(uint(digest) <= target, "proof of work");
+      int version = uint(substr(header, 0, 4));
+      require(version >= 4 && version < (1 << 31), "header version");
+      proofWork = proofWork + work;
+      previousHash = digest;
+    }
+    require(proofWork >= floor, "replacement work floor");
+
+    bytes first = headers[0];
+    bytes nextTimestamp = substr(state, 52, 4);
+    if (height - (height / 2016) * 2016 == 0) { nextTimestamp = substr(first, 68, 4); }
+    bytes nextState = num2bin(height, 8) + num2bin(0, 8) + hash256(first) + substr(headers[1], 72, 4) + nextTimestamp + num2bin(0, 33);
+    require(tx.packet(32) == nextState, "issuer state");
+    bytes observation = num2bin(height, 8) + first + substr(headers[1], 72, 4) + nextTimestamp + num2bin(proofWork, 33);
+    outputCoin(1, blockCoinScript, id, observation);
+  }
+
+  @expect(output-script-unchecked, "outputCoin checks both continuation scripts")
+  @allow(unsigned-spend-path, "a strictly stronger six-header proof starts recovery while preserving both observations")
+  function challenge(bytes[6] headers) {
+    let control = controlIdentity();
+    let group = tx.assetGroups.find(control.txid, coinGidx);
+    require(group.sumInputs == 2 && group.sumOutputs == 2, "block supply");
+    let id = group.assetId;
+    bytes state = inputState(0, 89);
+    require(bin2num(substr(state, 8, 8)) == 0, "normal only");
+    require(identity(1) == id && identity(2) == id, "block identities");
+    require(tx.inputs[1].script.program == blockCoinScript && tx.inputs[2].script.program == blockCoinScript, "block scripts");
+    bytes parent = inputState(1, 129);
+    bytes disputed = inputState(2, 129);
+    int height = bin2num(substr(parent, 0, 8));
+    int count = bin2num(substr(state, 0, 8)) - height;
+    require(count > 0, "issued successor");
+    require(bin2num(substr(disputed, 0, 8)) == height + 1, "successor height");
+    bytes parentHash = hash256(substr(parent, 8, 80));
+    require(substr(disputed, 12, 32) == parentHash, "successor link");
+    bytes first = headers[0];
+    require(hash256(first) != hash256(substr(disputed, 8, 80)), "different block");
+    int mintHeight = height + 1;
+    bytes previousHash = parentHash;
+    bytes oldBits = substr(parent, 88, 4);
+    int epochStart = uint(substr(parent, 92, 4));
+    require(mintHeight > 2016, "checkpoint height");
+    int oldTarget = decodeTarget(oldBits);
+    int oldWork = blockWork(oldTarget);
+    int nextWork = oldWork;
+    int boundary = 2016 - (mintHeight - (mintHeight / 2016) * 2016);
+    bytes nextBits = oldBits;
+    int nextTarget = oldTarget;
     if (boundary < 6) {
       int endIndex = boundary - 1;
       bytes epochEnd = headers[endIndex];
       bytes epochFirst = headers[boundary];
       require(size(epochEnd) == 80 && size(epochFirst) == 80, "boundary headers");
-      nextEpochBits = substr(epochFirst, 72, 4);
-      nextEpochTarget = Bitcoin.target(nextEpochBits);
-      Bitcoin.retarget(oldTarget, epochStart, Bitcoin.uint(substr(epochEnd, 68, 4)), nextEpochBits);
-      if (boundary == 1) {
-        count = Bitcoin.confirmations(oldTarget, nextEpochTarget);
+      nextBits = substr(epochFirst, 72, 4);
+      nextTarget = decodeTarget(nextBits);
+      int elapsed = uint(substr(epochEnd, 68, 4)) - epochStart;
+      if (elapsed < 302400) { elapsed = 302400; }
+      if (elapsed > 4838400) { elapsed = 4838400; }
+      int rawTarget = oldTarget * elapsed / 1209600;
+      if (rawTarget > POW_LIMIT) { rawTarget = POW_LIMIT; }
+      // Verify that nextBits encodes rawTarget with Bitcoin's rounding rules.
+      int exponent = uint(substr(nextBits, 3, 1));
+      int coefficient = uint(substr(nextBits, 0, 3));
+      // A smaller coefficient could use a smaller exponent without setting its sign bit.
+      if (exponent > 1) {
+        require(coefficient >= (1 << 15), "compact normalization");
       }
-    }
 
+      int roundingStep = 1;
+      if (exponent <= 3) {
+        // Small targets are exact; coefficient bytes discarded by division must be zero.
+        require(coefficient == nextTarget * power256(3 - exponent), "compact low bits");
+      } else {
+        // Increasing the coefficient by one increases the target by this amount.
+        roundingStep = power256(exponent - 3);
+      }
+      // Round down by less than one step: e.g. 0x12345678 becomes 0x12345600, losing 120 < 256.
+      require(
+        nextTarget <= rawTarget && rawTarget - nextTarget < roundingStep,
+        "retarget encoding"
+      );
+      nextWork = blockWork(nextTarget);
+    }
+    int proofWork = 0;
     for (i, header) in headers {
-      if (i < count) {
-        require(size(header) == 80, "header size");
-        require(substr(header, 4, 32) == previousHash, "header link");
-        bytes bits = oldBits;
-        int target = oldTarget;
-        if (i >= boundary) {
-          bits = nextEpochBits;
-          target = nextEpochTarget;
-        }
-        require(substr(header, 72, 4) == bits, "header difficulty");
-        bytes digest = Bitcoin.doubleSha(header);
-        require(Bitcoin.uint(digest) <= target, "proof of work");
-        int blockHeight = height + i;
-        int version = Bitcoin.uint(substr(header, 0, 4));
-        if (version >= 2147483648) { version = version - 4294967296; }
-        if (blockHeight >= 227931) { require(version >= 2, "BIP34 version"); }
-        if (blockHeight >= 363725) { require(version >= 3, "BIP66 version"); }
-        if (blockHeight >= 388381) { require(version >= 4, "BIP65 version"); }
-        previousHash = digest;
-      } else {
-        require(header == "", "unused header");
+      require(size(header) == 80, "header size");
+      require(substr(header, 4, 32) == previousHash, "header link");
+      bytes bits = oldBits;
+      int target = oldTarget;
+      int work = oldWork;
+      if (i >= boundary) {
+        bits = nextBits;
+        target = nextTarget;
+        work = nextWork;
       }
+      require(substr(header, 72, 4) == bits, "header difficulty");
+      bytes digest = hash256(header);
+      require(uint(digest) <= target, "proof of work");
+      int version = uint(substr(header, 0, 4));
+      require(version >= 4 && version < (1 << 31), "header version");
+      proofWork = proofWork + work;
+      previousHash = digest;
     }
-
-    int reward = Bitcoin.reward(coinbase);
-    bytes32 merkle = Bitcoin.doubleSha(coinbase);
-    require(merkleDepth >= 0 && merkleDepth <= 20, "merkle depth");
-    for (i, sibling) in siblings {
-      require(size(sibling) == 32, "sibling size");
-      if (i < merkleDepth) {
-        // Position zero is the left child at every level.
-        merkle = Bitcoin.doubleSha(merkle + sibling);
-      } else {
-        require(sibling == num2bin(0, 32), "unused sibling");
-      }
-    }
-    bytes first = headers[0];
-    require(merkle == substr(first, 36, 32), "coinbase inclusion");
-    bytes nextTimestamp = substr(state, 46, 4);
-    if (epochPosition == 0) { nextTimestamp = substr(first, 68, 4); }
-    bytes nextState = 0x0101 + num2bin(height, 8) + Bitcoin.doubleSha(first) + substr(headers[1], 72, 4) + nextTimestamp;
-    require(BeaconState.output(0) == nextState, "issuer state");
-    bytes observation = 0x0102 + num2bin(height, 8) + first + num2bin(reward, 9);
-    BeaconState.outputCoin(1, blockCoinScript, id, observation);
+    int disputedWork = bin2num(substr(disputed, 96, 33));
+    require(disputedWork > 0 && proofWork > disputedWork, "strictly greater work");
+    bytes next = num2bin(height, 8) + num2bin(count, 8) + parentHash + substr(parent, 88, 8) + num2bin(proofWork, 33);
+    require(tx.packet(32) == next, "recovery state");
+    outputCoin(1, blockCoinScript, id, parent);
+    outputCoin(2, blockCoinScript, id, disputed);
+    require(tx.outputs[1].value == tx.inputs[1].value && tx.outputs[2].value == tx.inputs[2].value, "block values preserved");
   }
 
-  function clone() {
-    BeaconState.clone(coinGidx, blockCoinScript, 0x0102, 99, 0x0101, 50);
+  @allow(unsigned-spend-path, "each spent block validates its recovery eligibility and the beacon counts exactly the burned units")
+  function burn() {
+    let control = controlIdentity();
+    let group = tx.assetGroups.find(control.txid, coinGidx);
+    int burned = group.sumInputs;
+    require(group.sumOutputs == 0, "block coins burned");
+    bytes state = inputState(0, 89);
+    int count = bin2num(substr(state, 8, 8));
+    require(count > 0 && burned > 0 && burned <= count, "recovery burn count");
+    bytes next = substr(state, 0, 8) + num2bin(count - burned, 8) + substr(state, 16, 73);
+    require(tx.packet(32) == next, "recovery progress");
   }
+
+  private function inputState(int vin, int length) bytes {
+    let previous = tx.inputs[vin].outpoint;
+    require(previous.vout <= 223, "state output index");
+    int packetType = 32 + previous.vout;
+    bytes state = tx.inputs[vin].packet(packetType);
+    require(size(state) == length, "state size");
+    require(bin2num(substr(state, 0, 8)) >= 0, "state height");
+    return state;
+  }
+
+  private function identity(int vin) AssetId {
+    require(tx.inputs[vin].assets.length == 1, "one identity asset");
+    let allocation = tx.inputs[vin].assets[0];
+    require(allocation.amount == 1, "one identity unit");
+    return allocation.assetId;
+  }
+
+  private function controlIdentity() AssetId {
+    require(this.activeInputIndex == 0, "issuer input 0");
+    let control = identity(0);
+    require(coinGidx >= 0 && coinGidx <= 65535 && coinGidx != control.gidx, "coin group");
+    require(this.tunnel(0), "issuer preserved");
+    return control;
+  }
+
+  private function outputCoin(int vout, bytes32 program, AssetId id, bytes state) {
+    require(tx.outputs[vout].script.program == program, "observation script");
+    require(tx.outputs[vout].value >= 330, "observation value");
+    require(tx.outputs[vout].assets.length == 1, "one output asset");
+    require(tx.outputs[vout].assets.lookup(id.txid, id.gidx) == 1, "output identity");
+    require(vout >= 0 && vout <= 223, "state output index");
+    int packetType = 32 + vout;
+    require(tx.packet(packetType) == state, "output state");
+  }
+
+  private function uint(bytes data) int {
+    return bin2num(data + 0x00);
+  }
+
+  private function power256(int exponent) int {
+    return 1 << (8 * exponent);
+  }
+
+  private function decodeTarget(bytes compact) int {
+    // bin2num is signed little-endian; append a zero sign byte to decode unsigned exponent byte
+    int exponent = uint(substr(compact, 3, 1));
+    int target = bin2num(substr(compact, 0, 3));
+    require(exponent <= 34, "target exponent");
+    if (exponent <= 3) {
+      target = target / power256(3 - exponent);
+    } else {
+      target = target * power256(exponent - 3);
+    }
+    require(target > 0 && target <= POW_LIMIT, "mainnet target");
+    return target;
+  }
+
+  private function blockWork(int target) int {
+    return power256(32) / (target + 1);
+  }
+
 }
