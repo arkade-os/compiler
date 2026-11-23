@@ -2104,7 +2104,9 @@ document.addEventListener('DOMContentLoaded', () => {
             if (!await useCompiler(choice, request)) return;
         } catch (err) {
             if (request !== compilerRequest) return;
+            // With no compiler active, the next compile starts the page's compiler again.
             if (compilerName) event.target.value = compilerName;
+            else compilerLoading = null;
             console.error('Failed to switch compiler:', err);
             showError(`Failed to load compiler ${choice}: ${err.message}`);
             return;
