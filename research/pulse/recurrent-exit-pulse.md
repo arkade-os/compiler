@@ -1,11 +1,11 @@
 # PULSE — Recurrent Unilateral Exit for Emulator-Enforced Pools
 
-**Pooled Unilateral-exit via Lattice State Epochs. Revision 2.2 (amended).**
+**Pooled Unilateral-exit via Lattice State Epochs. Revision 2.4.**
 
 A protocol for giving open-membership pool contracts on Arkade a *standing* unilateral
 exit, enforced by recurrent state updates between the transacting parties. This document
 is a design specification: it defines the protocol lifecycle, the trust model, the
-attack analysis — twenty-five adversarial findings (A1–A25), detailed in §10 — that shaped
+attack analysis — thirty-one adversarial findings (A1–A31), detailed in §10 — that shaped
 it, and the compiler surface that would standardize it. It proposes no code changes; the
 compiler-facing sections are future work.
 
@@ -31,9 +31,12 @@ covenants and today's exit asymmetry).
   - [7.2 Heartbeat (D2) — there is no cheap operator-only re-anchor](#72-heartbeat-d2--there-is-no-cheap-operator-only-re-anchor)
   - [7.3 Unilateral exit walk (D3)](#73-unilateral-exit-walk-d3)
   - [7.4 Expiry (D4) and the timelock ordering invariant](#74-expiry-d4-and-the-timelock-ordering-invariant)
+  - [7.4a Anchor age: the second ordering invariant](#74a-anchor-age-the-second-ordering-invariant)
   - [7.5 Exit notice and eviction-with-payout (D5)](#75-exit-notice-and-eviction-with-payout-d5)
   - [7.6 Own-balance enforcement without a signing share](#76-own-balance-enforcement-without-a-signing-share)
 - [8. Invalidation model](#8-invalidation-model)
+  - [What the stale-lattice race requires](#what-the-stale-lattice-race-requires)
+  - [Miners: consensus versus relay policy](#miners-consensus-versus-relay-policy)
 - [8a. Recourse: when the count doesn't check out](#8a-recourse-when-the-count-doesnt-check-out)
   - [Failure modes and where each lands](#failure-modes-and-where-each-lands)
   - [The recourse ladder (strongest → weakest)](#the-recourse-ladder-strongest--weakest)
@@ -202,6 +205,65 @@ share:
     a pool-wide DoS (§13.4). Missing the contest window accepts the new amount for
     that member alone.
 
+**Revision 2.4** — the stale-state race, re-examined against what Bitcoin's timelock
+and miners actually enforce. Six findings (A26–A31). Everything here uses Bitcoin as it
+is today.
+
+24. **A26 — the stale-lattice race was not unconditional. This is the substantive
+    fix in this revision.** The exit-leaf delay counts from the confirmation of the
+    pool output, not from an exit attempt. Once the last on-chain pool output is Δ
+    blocks old, its lattice is valid, and that lattice is stale as soon as one pulse
+    has followed. Earlier revisions said the honest side "structurally wins" this
+    race. It wins only if the next transition confirms first. New §7.4a states the
+    invariant — no pool output stays unspent for Δ blocks while a final pulse is
+    pending on it — and the three duties that keep it: a heartbeat cadence bounded by
+    `heartbeatInterval + margin_a ≤ Δ`, an admission rule (no off-chain pulse on an
+    anchor at or past its deadline), and an extension duty on every holder of the
+    pending transitions. This is a protocol change: Δ now also bounds how long
+    pulses may stay off-chain, and a deployment sized against an earlier revision
+    must choose Δ and its heartbeat interval together.
+25. **The watcher is named (§5, §7.3, §8, §13.1, §13.3).** Who must hold what, how
+    often they must look at the chain, and who pays the fee. Retention is extended to
+    the transitions since the last on-chain pool output. Every trigger is a fact
+    recorded in blocks; none depends on seeing a transaction in a mempool. §7.6 is
+    restated on the same basis: a member checks their slot before the transition
+    that changed it confirms, not "before Δ ends".
+26. **A28 — transitions get a fee path (§7.1 step 5).** A transition's fee was fixed
+    at signing with no way to raise it. It is now a TRUC transaction with one keyless
+    anchor output, so anyone can pay for its confirmation. Stated consequence: about
+    one pending transition confirms per block through public relay.
+27. **A27 — a miner model (§8).** A new subsection separates the consensus rules
+    this design can rely on from the relay policy it cannot. "An unbumped root cannot
+    confirm" is corrected in §7.5, §8 and A17: it cannot *relay*. The value that can
+    change hands between two on-chain pool outputs is capped at `v_max`, and a fee
+    reserve sized against timelock bribery backs the extension duty (§7.4a, §9.4).
+28. **A29 — deposit inputs (§7.1, §7.4a).** A pending transition may spend only
+    inputs their owner cannot respend alone, each with a deadline of its own.
+29. **A30 — Δ is a block count (§4, §6, §8, §11).**
+30. **A31 — no eviction window on an old pool output (§7.4a, §7.5, §13.4).** The
+    §7.5 answer to a broadcast root assumed the Operator could still spend the pool
+    output first. A root can be broadcast only once it is already mature, so that
+    window does not exist. Deployments choose between a keep-alive heartbeat and
+    accepting that an idle pool can be unwound for the price of one root.
+31. **§9.4 worked example made consistent.** It had a daily heartbeat and no value
+    for Δ; it now carries Δ, `margin_a`, `v_max` and the fee reserve.
+32. **A new formal module, [`formal/Anchor.tla`](./formal/Anchor.tla).** It
+    model-checks the invariant of item 24 at two sets of small bounds. Four further
+    configurations each remove one defence, or thin the margin, and reproduce the
+    rollback; three more are reachability witnesses. Assumptions, bounds and results
+    are in [`formal/VERIFICATION-2.4.md`](./formal/VERIFICATION-2.4.md). That some
+    holder broadcasts by the deadline, and that miners include a broadcast transition
+    within a bounded number of blocks, are assumptions of the model, not results.
+33. **An alternative is recorded and not adopted (§7.4a, §12.1 item 8):** a
+    pre-signed kickoff transaction that would start the delay only when someone
+    moves.
+
+Standing limits of this revision: that a holder acts in time and that miners include
+its transaction are assumed, never derived; the bribery bound is taken from the cited
+analysis and neither re-derived nor modeled here; the model checks safety only, so
+nothing is shown about a pool making progress under these rules; and findings A27–A31
+have no formal counterpart.
+
 ---
 
 ## 1. Plain-language explainers
@@ -223,14 +285,20 @@ The pool is a **group piggy bank held at a bank** (the Arkade Operator).
 - **The bank cannot quietly stop your cheque.** If a cheque is in motion and the bank
   wants to keep the piggy bank together, the rules allow exactly one way to intervene:
   **pay that person their full balance on the spot**. A cheque in motion ends only two
-  ways — it clears, or you are paid. (A prankster who cashes someone else's cheque just
-  pays the fees to hand them their money early.)
+  ways — it clears, or you are paid.
 - You never have to show up when other people transact. Your escape cheque is kept
   current by whoever *is* in the room, and a **watchdog service** can cash it for you
   if the bank goes dark.
 - Periodically (the **heartbeat**), the whole arrangement is refreshed on the actual
   blockchain, like renewing a lease. That is the "recurrent" rhythm: many off-chain
   **pulses** between on-chain heartbeats.
+- **Old cheques are never torn up. They are beaten to the counter.** Every stack of
+  cheques has a waiting period, and its clock starts when the piggy bank it was
+  written for was last recorded on the blockchain — not when someone tries to cash
+  one. A newer arrangement wins only if it is recorded before that clock runs out. So
+  the heartbeat comes round more often than the waiting period, and if the bank is
+  late, the watchdog or the panel records the newer paperwork instead. This is the
+  one chore that cannot be skipped.
 
 ### 1.2 The plain-language walkthrough (no math, no cryptography)
 
@@ -258,6 +326,18 @@ without any math.
   clerk teaming up with *everyone* who was in the room), doing it leaves a
   self-incriminating paper trail. Either way, one set counts, and you hold your copy.
 
+- **Older tickets lose only because newer paperwork is recorded first.** Nobody tears
+  up the tickets from an earlier move. Every set has a waiting period before it can
+  be cashed, and that clock starts when the jar it was written for was last recorded
+  on the public ledger, not when someone tries to cash a ticket. So the clerk records
+  the newer paperwork on a schedule shorter than the waiting period. If the clerk is
+  late, your watchdog or the independent panel records it instead: they already hold
+  everything needed, and it costs them a ledger fee. This is the one chore that
+  cannot be skipped. If nobody did it in time, someone holding an older ticket with a
+  better number could cash it. The rules cap how much may change hands between two
+  recordings, so the worst case stays small and the ledger fee is always worth
+  paying.
+
 - **A public headcount protects the people not in the room.** You don't have to show up
   every time others transact. So how do you know *your* ticket still says the right number
   when you weren't watching? Each time, the clerk publishes a **signed headcount** — a
@@ -279,8 +359,9 @@ without any math.
   say nothing. If it is short, or the new ticket never arrives, you cash the last ticket
   that was right. The clerk can stop that cash-out only by paying you your full balance
   and taking you off the books. A made-up complaint just withdraws your own money. You
-  cannot hold the jar shut. You do have to look before the contest window ends; missing
-  it means you accept the new number, and nobody else's ticket waits on you.
+  cannot hold the jar shut. You do have to look before the new paperwork is recorded
+  on the public ledger; missing that means you accept the new number, and nobody
+  else's ticket waits on you.
 
 - **If the clerk lies, they lose a cash deposit** (optional backstop). Before running the
   jar, the Operator can put up a **security deposit** held by an independent referee
@@ -304,8 +385,9 @@ without any math.
 
 - **Why "recurrent."** Tickets don't last forever. Every so often the whole arrangement is
   renewed on the public ledger, like resigning a lease, which keeps everyone's tickets
-  fresh and cheap to cash. The practical upshot: don't go *completely* dark forever —
-  check in now and then (or let your watchdog do it), and your money stays yours.
+  fresh and cheap to cash, and is what makes the newest tickets the ones that count.
+  The practical upshot: don't go *completely* dark forever — check in now and then (or
+  let your watchdog do it), and your money stays yours.
 
 ---
 
@@ -357,9 +439,13 @@ PULSE closes this gap.
    else's exit).
 3. **Finality on state updates, not on new on-chain outputs.** A pool transition is
    final when its pulse ceremony completes and is sealed, decoupled from block
-   production.
+   production — as long as the on-chain pool output it rests on is before its anchor
+   deadline. On an older output a pulse is final only when its transition confirms
+   (§7.4a).
 4. **Bounded lifetime.** The pool's `renew` expiry forces a recurrent on-chain refresh
-   (the heartbeat), which resets exit cost and re-protects the full membership.
+   (the heartbeat), which resets exit cost and re-protects the full membership. The
+   exit delay Δ bounds the refresh more tightly than `renew` does: pulses stay
+   off-chain for less than Δ after the last on-chain pool output (§7.4a).
 5. **Exit-or-payout.** The only conforming way to displace an in-flight exit of the
    current state is to pay the exiting member in full, on-chain, in the displacing
    transition (§7.5). Nothing else may void a current-state exit.
@@ -372,7 +458,7 @@ PULSE closes this gap.
 | **State table `S_k`** | The full balance table at epoch `k`: every member's `(memberPk, balance)` |
 | **Pulse** | One off-chain cooperative state transition `S_k → S_{k+1}`, consuming `U_k`, producing `U_{k+1}` |
 | **Transacting parties `M_k`** | The parties whose balances change in pulse `k` — whoever is depositing, withdrawing, or trading (online by definition; typically 1–2) |
-| **Transition tx `T_k`** | The plain, fully-signed, broadcastable transaction implementing pulse `k` |
+| **Transition tx `T_k`** | The plain, fully-signed, broadcastable transaction implementing pulse `k`. It carries one keyless fee anchor so that any holder can pay for its confirmation (§7.1 step 5) |
 | **Epoch key `P_k`** | MuSig2 aggregate of *ephemeral, sign-once* keys of `{Operator} ∪ M_k`. Passive members are **never** in the aggregate |
 | **Exit lattice `L_k`** | Fully pre-signed splitting tree spending `U_k`'s exit leaf into one slot per member, per `S_k` |
 | **Slot** | A lattice leaf output: `SingleSig(memberPk)` with the member's own exit CSV |
@@ -382,8 +468,13 @@ PULSE closes this gap.
 | **Seal set** | The k-of-n entities issuing epoch seals — independent of the Operator; defaults to the referee federation of §9. Never in the exit path |
 | **Exit notice `X_k(m)`** | Member `m`'s signed declaration invoking unilateral exit at epoch `k`; sealed notices are objective, timestamped evidence (§7.5) |
 | **Eviction pulse** | A transition consuming `U_k` while an exit is in flight; conforming **only if** it pays the noticed/claiming member(s) in full on-chain (§7.5) |
-| **Heartbeat** | A pulse whose transition tx lands on-chain, re-anchoring the pool tip with a freshly built full lattice |
-| **Δ (`exit`)** | The exit leaf's relative timelock — the contest window |
+| **Heartbeat** | A pulse whose transition tx lands on-chain, re-anchoring the pool tip with a freshly built full lattice. Landing it confirms every pending transition before it, in order (§7.2); it is due before the anchor deadline (§7.4a) |
+| **Anchor `U_a`** | The pool output currently confirmed on-chain; `H_a` is the height of the block that confirmed it. It moves each time a transition confirms, whoever broadcast it |
+| **Pending chain** | The signed, unconfirmed transitions `T_{a+1} … T_k` between the anchor and the sealed tip; `D` is its length |
+| **Δ (`exit`)** | The exit leaf's relative timelock, a block count measured from the confirmation of the pool output the leaf sits on. It is a contest window only while that output is younger than Δ (§6, §7.4a) |
+| **Anchor deadline** | `H_a + Δ − margin_a`: the height by which the first pending transition `T_{a+1}` must be broadcast so that it confirms before `L_a` matures at `H_a + Δ`. From this height on, no off-chain pulse is admitted on `U_a` (§7.4a) |
+| **Extension duty** | The obligation of every holder of the pending chain to broadcast and fee-bump `T_{a+1}` once the anchor deadline is reached with it still unconfirmed (§7.4a) |
+| **Rollback exposure `E`, cap `v_max`** | The total debited from member balances by the pending pulses. It bounds what any group of members would regain if the pool fell back to the anchor state or to any pending epoch. Capped at `v_max` per anchor window (§7.4a, §8) |
 | **`renew`** | The pool's absolute expiry, after which the Operator's sweep path eventually matures |
 | **Bond** | The Operator's optional on-chain security deposit, held by a `k`-of-`n` federation of referees independent of the Operator; pays victims on objective evidence or returns to the Operator at expiry (§9) |
 | **`requiredCoverage`** | The minimum bond size for a given adversary class — quantified per class in §9.4 (revision 2.1 corrects revision 2's at-risk-per-epoch claim) |
@@ -405,11 +496,11 @@ PULSE closes this gap.
 
 | Role | Signs | Online when | Notes |
 |---|---|---|---|
-| **Passive member** | **Nothing after deposit** | Own deposit/withdraw only | Must *retain* exit artifacts (or delegate to a watchtower); interactivity is borne by transactors |
+| **Passive member** | **Nothing after deposit** | Own deposit/withdraw only — but they, or a watchtower for them, look at the chain at least once per watch interval (§7.4a) | Must *retain* exit artifacts and the pending chain (or delegate to a watchtower, §8); interactivity is borne by transactors |
 | **Transacting parties** | Lattice + transition + `h_k`, in **one ceremony** (two MuSig2 rounds, one network round-trip) | Their own transaction | Typically 1–2 parties |
-| **Operator** | Every pulse + attestation + commitment | Always-on | Absence ⇒ freeze ⇒ everyone exits via lattices |
-| **Seal set** | Epoch seals only | Per pulse (k-of-n threshold) | Data-availability custodian; never in the exit path; a stalled seal set is a visible liveness fault (§7.1 step 6) |
-| **Watchtower** | Nothing (lattice is fully pre-signed) | Monitoring only | Can broadcast *anyone's* exit and file the owner's exit notice if delegated; non-custodial |
+| **Operator** | Every pulse + attestation + commitment | Always-on | Lands the pending chain before each anchor deadline (§7.4a). Absence ⇒ freeze ⇒ holders extend the chain, then everyone exits via lattices |
+| **Seal set** | Epoch seals only | Per pulse (k-of-n threshold) | Data-availability custodian; never in the exit path; a stalled seal set is a visible liveness fault (§7.1 step 6). It holds every pending transition, so it carries the extension duty as broadcaster of last resort (§7.4a): a fee wallet, still no key and no pool funds |
+| **Watchtower** | Nothing (lattice and transitions are fully pre-signed) | Watching blocks, at least once per watch interval | Can broadcast *anyone's* exit and file the owner's exit notice if delegated; **must** extend the chain at the anchor deadline (§7.4a); non-custodial, but needs fee funds of its own |
 | **Heartbeat participants** | Operator + that pulse's transacting parties only | — | Passive members are **not** needed at heartbeats |
 | **Genesis** | Operator only, if the pool starts empty and members join via deposit pulses | — | **No all-hands N-of-N ceremony ever exists** |
 
@@ -434,6 +525,16 @@ emits — instead of a fixed-key CHECKSIG:
   anyone holding a newer signed transition can extend the chain on-chain, consuming
   `U_k` and voiding a stale lattice. This *chain-extension dominance* replaces
   revocation/punishment for the stale-state case.
+- **Δ counts from confirmation, not from broadcast.** The delay is a consensus rule
+  ([BIP 68](https://github.com/bitcoin/bips/blob/master/bip-0068.mediawiki) /
+  [BIP 112](https://github.com/bitcoin/bips/blob/master/bip-0112.mediawiki)): the
+  lattice root is invalid in every block lower than `Δ` above the block that confirmed
+  `U_k`, and valid in every block from there on. Nothing restarts the count when
+  someone decides to exit. So Δ is a contest window only for an output that was *just*
+  confirmed. An output that has been on-chain for Δ blocks has no window left: its
+  lattice can confirm in the next block. Stale-state safety therefore needs a second
+  ordering invariant — no pool output reaches that age while a final pulse is pending
+  on it (§7.4a, A26). `Δ` is a block count, not a duration (A30).
 - **Chain-extension is symmetric, and revision 2 constrains the other direction.** The
   same no-CSV property that lets honest holders kill a *stale* lattice also lets a
   *live* Operator displace an exit of the **current** state. That displacement is
@@ -453,7 +554,8 @@ emits — instead of a fixed-key CHECKSIG:
    pulses, so no all-hands ceremony exists. (If a pre-seeded genesis is used instead,
    every genesis member must be online once to co-sign `L_0`.)
 4. The Operator publishes `h_0`, obtains the seal `σ_0` per §7.1 step 6, and anchors
-   `U_0` in a batch transaction.
+   `U_0` in a batch transaction. `U_0` is the first anchor: the block that confirms it
+   starts the first anchor window (§7.4a).
 
 ### 7.1 Pulse ceremony (D1) — atomic; order is load-bearing
 
@@ -469,7 +571,9 @@ about which epoch clients *select*, not a guarantee that its input is still unsp
    parties' balances. The Operator emulates the contract's introspection covenant
    against it. `S_{k+1} = S_k` with only `M_{k+1}` slots changed. If any exit notice
    is outstanding against `U_k` (§7.5), the proposal **must** include the noticed
-   members' full payouts, or it is non-conforming from the start.
+   members' full payouts, or it is non-conforming from the start. Any input other
+   than `U_k` — a deposit — must be one its owner cannot respend alone, and an
+   off-chain pulse is proposed only on an anchor that is before its deadline (§7.4a).
 2. **Attest.** The continuity attestation `A_{k+1}` is signed over the Merkle root of
    the *entire* `S_{k+1}` — every member, not just the transacting parties. One Schnorr
    signature (threshold-signed in the primary model, §9); O(1) on-chain footprint;
@@ -507,9 +611,26 @@ about which epoch clients *select*, not a guarantee that its input is still unsp
    - (d) the pulse's net on-chain outflow respects the pool's `w_max` cap, and — if
      the deployment is bonded — coverage per §9.4 still holds;
    - (e) **its own lattice branch is in its hands** — *"no lattice in my hands, no
-     pulse."* Publication to the relay mesh alone is never trusted.
+     pulse."* Publication to the relay mesh alone is never trusted;
+   - (f) **the anchor is before its deadline, the pulse keeps the rollback exposure
+     within `v_max`, and every deposit input is one its owner cannot respend alone**
+     (§7.4a). If the anchor is at or past its deadline the pulse can only be an
+     on-chain one, final when `T_{k+1}` confirms.
 5. **Transition signing.** Only now do the Operator + transacting parties sign
-   `T_{k+1}` (SIGHASH_ALL, nSequence final).
+   `T_{k+1}` (SIGHASH_ALL, nSequence final). `T_{k+1}` uses the fee plumbing of a
+   lattice node: a TRUC (version 3) transaction with **one keyless P2A anchor
+   output**. Its own fee is fixed at signing and can never be raised — a re-signed
+   transition would be a second spend of `U_k` — so the anchor is its only fee path,
+   and it is what lets a party with no key in the pool pay for its confirmation
+   (A28). Two consequences of
+   [TRUC](https://github.com/bitcoin/bips/blob/master/bip-0431.mediawiki)'s
+   one-parent-one-child limit, both relay policy rather than consensus (§8):
+   - pending transitions confirm **about one per block** through public relay,
+     because `T_{k+2}` cannot enter a mempool while `T_{k+1}` is unconfirmed. Since
+     every transition confirms eventually (§7.2), a pool that relies on public relay
+     sustains at most one pulse per block; a pulse may batch any number of parties;
+   - a transition must fit TRUC's 10,000-vB limit, which bounds how many payouts one
+     eviction pulse (§7.5) can carry.
 6. **Commit and seal.** `h_{k+1}` is **co-signed by the Operator + a threshold `t` of
    `M_{k+1}`** so the Operator cannot unilaterally author forks (`t ≥ 1`; a fork then
    requires `t` contradicting signatures, so higher `t` is more fork-resistant at the
@@ -518,11 +639,14 @@ about which epoch clients *select*, not a guarantee that its input is still unsp
    mesh, content-addressed by `h_{k+1}`, **and to the seal set**, which issues the
    epoch seal `σ_{k+1}` only after (i) recomputing the §7.1a predicate and (ii)
    confirming the full bundle is *in its hands* — the seal is a **data-availability
-   receipt**, not a mere countersignature. **The next pulse is invalid until `σ_k` is
-   issued.** Sealing is off-chain and per-pulse, so pulse rate is decoupled from block
-   production (principle 3); the Operator's next on-chain batch commits the current
-   **seal-chain head**, so a withheld seal or a withheld batch commitment is a
-   *visible liveness fault* within one batch interval that trips auto-exit (§7.3).
+   receipt**, not a mere countersignature. The bundle includes `T_{k+1}` itself and
+   every transaction needed to bring its deposit inputs on-chain, and the seal set
+   does not seal an off-chain pulse on an anchor at or past its deadline (§7.4a).
+   **The next pulse is invalid until `σ_k` is issued.** Sealing is off-chain and
+   per-pulse, so pulse rate is decoupled from block production (principle 3); the
+   Operator's next on-chain batch commits the current **seal-chain head**, so a
+   withheld seal or a withheld batch commitment is a *visible liveness fault* within
+   one batch interval that trips auto-exit (§7.3).
    (Revision 1 required `h_k` itself on-chain before the next pulse, which serialized
    pulses at batch cadence; the seal restores throughput while keeping withholding
    visible. A deployment unwilling to depend on a third-party seal set for liveness
@@ -575,6 +699,17 @@ residual is a counterparty who already treated pulse `k` as final off-chain befo
 checking — so external settlement must gate finality on this same predicate (in
 practice: on the epoch seal, which implies it).
 
+**A third condition comes from the chain, not from the pulse (revision 2.4).** The two
+checks above say the pulse is well-formed. They do not say it will outlive the lattice
+of the anchor beneath it. A conforming client therefore treats a sealed pulse as final
+only while, in its own view of the chain, the anchor is before its deadline and the
+rollback exposure is within `v_max` (§7.4a). If the anchor has reached its deadline
+with the pulse's ancestors still unconfirmed, the client does two things: it performs
+the extension duty, and it treats the pending pulses as unsettled until `T_{a+1}`
+confirms. External settlement gates on the same pair — the seal *and* the anchor's
+age. Unlike a failure of checks 1–2, this is no reason to exit on `k−1`: the pulse is
+valid and only needs to reach the chain.
+
 ### 7.2 Heartbeat (D2) — there is no cheap operator-only re-anchor
 
 A forced design finding: re-anchoring `U_k` under a new on-chain output changes its
@@ -587,10 +722,24 @@ outpoints (§12.2), the heartbeat must itself be a cooperative on-chain pulse**:
   over all of `S_k`** under a fresh epoch key.
 - It resets virtual-chain depth (unilateral exit cost is bounded by *pulses since the
   last heartbeat* plus one lattice branch) and re-protects every current member.
+- **Landing a heartbeat confirms the whole pending chain.** `T_{k+1}` spends `U_k`,
+  so the tip cannot reach the chain without every transition before it, in order,
+  about one per block (§7.1 step 5). Pulses defer the pool's on-chain transactions
+  and take finality off the block clock; they do not remove the transactions. There
+  is no shortcut: a transition that spent the on-chain pool output directly, skipping
+  the pending ones, would be a second spend of that output — a commitment fork (§8a).
 - The Operator cannot heartbeat unilaterally; it can only propose one. Cadence is
   quorum- and economics-gated: required frequency rises with pool TVL so that
   **at-risk-per-epoch stays ≤ the Operator bond** (§9) — and, independently, so the
   virtual-chain-depth cap of §7.4 holds.
+- **Proposing needs a ceremony; landing does not.** The pending transitions are
+  already fully signed, so whoever holds them can broadcast them and pay their fees.
+  The extension duty of §7.4a relies on exactly that. Only a pool with nothing
+  pending needs a new cooperative pulse to move its anchor.
+- **Cadence is also a safety bound, independent of economics (revision 2.4).**
+  Whenever a pulse is pending, the first pending transition confirms before the
+  anchor's own lattice matures. As a parameter rule:
+  `heartbeatInterval + margin_a ≤ Δ` (§7.4a).
 - **Eviction pulses land on-chain by definition** (§7.5). A well-run Operator folds
   them into the heartbeat schedule — an eviction is simply a heartbeat that also pays
   the leavers — so the cost of defending against exit griefing amortizes into
@@ -601,10 +750,13 @@ outpoints (§12.2), the heartbeat must itself be a cooperative on-chain pulse**:
 1. A trigger fires — **voluntary**: the member (or their watchtower) files an exit
    notice `X_k(m)` (§7.5) and proceeds regardless of Operator health; or
    **defensive**: a missed epoch seal or batch commitment, `height ≥ renew − Δ −
-   margin`, or a **conflicting published artifact**.
-2. Broadcast the chain tip if needed (any unconfirmed transitions since the last
-   heartbeat), then the **lattice root**, spending `U_k`'s exit leaf after the Δ
-   contest window.
+   margin`, or a **conflicting published artifact**. (A missed anchor deadline is a
+   trigger too, but for extending the chain rather than for exiting — see below.)
+2. Broadcast the pending chain if there is one: the unconfirmed transitions since the
+   anchor, in order, each fee-bumped through its anchor output, about one confirming
+   per block (§7.1 step 5). Then, once `U_k` has been confirmed for Δ blocks,
+   broadcast the **lattice root**, spending `U_k`'s exit leaf. If `U_k` is an anchor
+   that is already older than Δ, the root is valid at once (§6).
 3. Broadcast the member's **branch path** (log N transactions), CPFP-bumping via the
    node anchors.
 4. After the slot's own CSV matures, sweep `SingleSig(memberPk)` to a wallet.
@@ -612,6 +764,13 @@ outpoints (§12.2), the heartbeat must itself be a cooperative on-chain pulse**:
 **Outcome guarantee.** The walk ends in the slot sweep — or, if a conforming eviction
 pulse displaces it, in an immediate on-chain payout of the member's full balance
 (§7.5). Both are exits; neither requires the Operator's goodwill.
+
+**A missed anchor deadline starts with extension, not exit.** When the anchor reaches
+its deadline with a sealed pulse still pending, every holder broadcasts the pending
+chain (§7.4a). That is the first half of step 2 and nothing more: it restores safety
+and leaves the pool running on a fresh anchor. A missed deadline is a visible Operator
+fault, like a missed seal. Whether one miss also trips auto-exit is deployment policy;
+the extension itself is not optional.
 
 ### 7.4 Expiry (D4) and the timelock ordering invariant
 
@@ -635,6 +794,160 @@ Clients therefore also enforce a **cap on `D`** (pulses since the last heartbeat
 the same cap that keeps at-risk-per-epoch ≤ bond (§9). Wallets and watchtowers
 auto-exit if the pool has not heartbeat by `renew − Δ − margin`.
 
+### 7.4a Anchor age: the second ordering invariant
+
+§7.4 orders the Operator's sweep after the exit. A second ordering was missing until
+revision 2.4, and without it the first row of §8 is false (A26).
+
+**The gap.** Call the pool output currently confirmed on-chain the **anchor** `U_a`,
+and `H_a` the height of the block that confirmed it. The delay on its exit leaf counts
+from `H_a` (§6), so the root of its lattice `L_a` becomes valid at height `H_a + Δ`
+whether or not anyone has asked to exit, and stays valid for as long as `U_a` is
+unspent. Every pulse after the anchor makes `L_a` stale, but nothing on-chain says so
+while the transitions `T_{a+1} … T_k` — the **pending chain** — are unconfirmed. From
+`H_a + Δ` on, the stale root and `T_{a+1}` are two equally valid spends of `U_a`, and
+the stale root needs one block. If it confirms, every pulse since the anchor is void,
+seals and attestations included, and the pool pays out `S_a`. Whoever was better off
+at `S_a` regains what they have paid away since. They need no accomplice: the root is
+pre-signed and mesh-published, and a fee-bumped broadcast is enough.
+
+**The invariant.**
+
+```
+if a final pulse is pending on U_a, T_{a+1} confirms below height H_a + Δ
+```
+
+No pool output stays unspent on-chain for Δ blocks while a pulse that counts as final
+is waiting on it. A pulse that is not yet final — the on-chain pulse of duty 2 below
+— is outside the rule: if the anchor's lattice beats it, nothing anyone relied on is
+undone. The rule is stated on the anchor, and the anchor moves every time a
+transition confirms, whoever broadcast it: the Operator's heartbeat, a watcher, a
+member starting an exit, or an adversary landing part of the chain to attack from a
+later stale epoch. Each transition gets a fresh Δ from the confirmation of its own
+parent, so only one transition is ever under a deadline — the first pending one.
+(Under the two-tier sharding of §7.1 step 3 the rule applies to every output that
+pulses spend, the hot band's as well as the pool's.)
+
+**Anchor deadline and `margin_a`.** The deadline is `H_a + Δ − margin_a`. The
+Operator broadcasts `T_{a+1}` before the chain reaches that height. If `T_{a+1}` is
+still unconfirmed there, the holders of the pending chain take over (duty 3), and
+`margin_a` is the number of blocks they need. It is the sum of:
+
+- the **watch interval** — the longest gap between two looks at the chain by the
+  parties relied on to act if the Operator does not. An always-on watchtower
+  contributes one block; a wallet that syncs once a day contributes 144;
+- the **unconfirmed ancestry** of a pending transition outside the pool chain: every
+  transaction that must confirm before it can (a deposit made from a virtual output
+  brings that output's path and its checkpoint with it), about one per block;
+- a **non-inclusion allowance** `n = ⌈ln ε / ln q⌉`: enough blocks that miners holding
+  a share `q` of the hash power mine all of them with probability at most `ε` (§8).
+  `q = 0.5` and `ε = 10⁻⁶` give 20 blocks; `q = 0.9` gives 132;
+- the **fee-spike buffer** of §7.4 and the deployment's reorg depth.
+
+Three duties keep the invariant. The first is the normal case. The other two are what
+make it hold when the Operator is late, dark, or not on the honest side.
+
+1. **Cadence — the Operator.** Whenever the pending chain is not empty, the Operator
+   lands it so that `T_{a+1}` is broadcast before the anchor deadline. That is the
+   heartbeat (§7.2). As a parameter rule that the ABI template carries and wallets
+   check (§11):
+
+   ```
+   heartbeatInterval + margin_a ≤ Δ
+   ```
+
+   `heartbeatInterval` is the most blocks the Operator lets pass between an anchor's
+   confirmation and its own broadcast of `T_{a+1}`.
+
+2. **Admission — the signing threshold, the seal set, every client.** An off-chain
+   pulse is final on its seal, so it is admitted only on an anchor that is **before
+   its deadline**, and only if it keeps the rollback exposure within `v_max` (below).
+   At or past the deadline nothing new is final until a transition has confirmed and
+   a younger anchor exists. This also covers a pool that has been idle past Δ: its
+   next pulse is an **on-chain pulse** — signed, broadcast at once, final when
+   `T_{a+1}` confirms. Until then the anchor's own lattice can still beat it, which
+   only means the pulse did not happen.
+3. **Extension — every holder of the pending chain.** If the anchor reaches its
+   deadline and `T_{a+1}` is still unconfirmed, every party that holds it broadcasts
+   it with a fee-paying child on its anchor output and raises the fee until it
+   confirms. Each confirmation moves the anchor and opens a fresh window; if the
+   Operator stays silent the holders do the same for `T_{a+2}` and the rest at each
+   new deadline, or at once if they mean to exit (§7.3). Holders are the transacting
+   parties, watchtowers, the seal set (which receipted the whole bundle, §7.1 step
+   6), mesh archivers, and any member who retained the pending chain (§8). A
+   self-sealed deployment has no seal set apart from the Operator, so there the
+   fallback is the rest of that list. Several holders acting at once cost one fee,
+   not several: only one child of an anchor output can confirm. The duty covers
+   transitions of **sealed, undisputed pulses** only — a holder never extends through
+   a pulse it holds a dispute against, or through a transition that skips a noticed
+   member's payout (§7.5, §7.6). Every trigger is a fact recorded in blocks: the
+   anchor's height, its age, the confirmation of a transition or of a deposit's
+   ancestor. None is a mempool observation.
+
+A missed deadline is objective — the anchor's height and the seal chain show it — so a
+bonded deployment can make the Operator repay the fees others spent extending. That is
+deployment policy; the duties are not.
+
+**Exposure cap.** The **rollback exposure** is the total debited from member balances
+by the pending pulses:
+
+```
+E = Σ_{i=a+1..k} Σ_m max(0, S_{i−1}(m) − S_i(m))
+```
+
+It is public arithmetic over committed tables, and it bounds what any group of members
+would regain if the pool fell back to the anchor state or to any pending epoch.
+Admission refuses an off-chain pulse that would lift `E` above `v_max`; the pool lands
+a heartbeat first, which brings `E` back to zero. The cap exists because the fee
+needed to keep miners from waiting scales with what an attacker stands to gain (§8),
+and because it bounds the loss if every duty above fails. Behind the extension duty
+sits a **fee reserve** of at least `λ_min · v_max` beyond the ordinary fees for landing
+`D` transitions, held by the Operator and by the watchtowers and sealers that carry
+the duty. `v_max` is a different quantity from `w_max`, which limits net on-chain
+outflow per pulse and says nothing about balance changing hands inside the pool.
+
+**Inputs from outside the pool (A29).** A transition that also spends a deposit is
+valid only while that deposit is unspent. If its owner can spend it elsewhere before
+the transition confirms, they void that transition and every one after it: a rollback
+with no lattice involved. So a pending transition spends, besides `U_k`, only inputs
+whose owner **cannot respend them alone** — outputs that need the Operator's
+co-signature for any other spend until a stated height, such as an Arkade boarding
+output before its timeout path opens, or an Arkade VTXO spent through a checkpoint
+transaction. Each such input has a **respend height**: the first height at which one
+party alone could spend it some other way — the owner through a timeout path, or the
+Operator by sweeping an expired batch — and the pending chain through that
+transition confirms `margin_a` blocks before it. The same applies when the input's
+own ancestry appears on-chain: if a deposited virtual output is unrolled, its delays
+start to run, and holders respond by confirming its checkpoint and then the pending
+chain through that transition before they expire. An input without this protection
+is admissible only in an on-chain pulse. Until the transition confirms, what protects
+it is the Operator threshold's refusal to co-sign a conflicting spend — the trusted
+layer of §9, not consensus.
+
+**Idle pools, and what an old anchor does to §7.5 (A31).** With nothing pending the
+invariant asks for nothing: the anchor may sit past `H_a + Δ`, and its lattice is
+then the *current* state's exit with no wait at the root — the standing exit at its
+strongest. The price is that the eviction window of §7.5 does not exist on such an
+anchor. A current root that someone fee-bumps, or hands to a miner, confirms before
+the Operator can answer, and the pool unwinds. A deployment that wants the eviction
+defence at all times keeps the anchor young even when idle, with a **keep-alive
+heartbeat** inside every `Δ − margin_a` blocks: a full pulse each time, with a
+co-signer besides the Operator (§7.2), an on-chain transaction, and the O(N)
+re-sign. A deployment that does not accepts that anyone can unwind an idle pool for
+the price of one root. This is a cost-against-griefing choice, declared in the ABI
+template (§11); neither option affects the safety of balances.
+
+**What the invariant costs.** Δ used to be only the wait before an exit. It is now
+also the ceiling on how long pulses stay off-chain. A short Δ means fast exits and
+frequent landings; a long Δ means the reverse. The coupling exists because the delayed
+leaf sits directly on the pool output, so its clock starts when that output confirms
+rather than when someone contests it. A pre-signed **kickoff** transaction between the
+pool output and the delayed leaf would start the clock only when the kickoff
+confirms, which removes the periodic deadline. It costs one more pre-signed
+transaction, and one more on-chain transaction, for every pool output it protects,
+and it still needs the same watcher once a kickoff appears. Revision 2.4 does not
+adopt it (§12.1 item 8).
+
 ### 7.5 Exit notice and eviction-with-payout (D5)
 
 Revision 1 analyzed stale-lattice broadcasts, commitment withholding, and fresh
@@ -643,12 +956,19 @@ current state, broadcast while the Operator is alive.** Chain-extension dominanc
 both ways, and both directions were unhandled:
 
 - **Griefing (A17).** The current lattice root is fully pre-signed and mesh-published
-  *by design* — anyone can broadcast it. An unbumped root is inert (a TRUC zero-fee
-  parent cannot confirm without a CPFP child), but a **bumped** root forces a choice:
-  let it mature — a forced mass exit in which the griefer pays for one root and one
-  branch while every other member pays their own branch walk (≈N× damage leverage) —
-  or displace it, which costs the Operator an on-chain transaction **plus a full O(N)
-  lattice re-sign**. Retries cost the attacker nothing until one confirms.
+  *by design* — anyone can broadcast it, once the pool output it spends has been
+  confirmed for Δ blocks (§6). Getting that output on-chain, if it is still virtual,
+  costs the griefer the pending chain's fees. An unbumped root does not *relay* (a
+  TRUC zero-fee parent needs a CPFP child to enter a mempool), but that is relay
+  policy, not consensus: a miner handed a mature root directly can include it with
+  no fee at all (A27). A current root that confirms is a forced mass exit in which
+  the griefer pays for one root and one branch while every other member pays their
+  own branch walk (≈N× damage leverage). The only way to prevent it is to spend the
+  pool output **before the root matures**, which costs the Operator an on-chain
+  transaction **plus a full O(N) lattice re-sign**, again and again for as long as
+  the threat stands. The griefer spends nothing until a root confirms. (Revision 2
+  described the Operator's move as a response to a *bumped root in flight*. There is
+  no such moment: a root that can be broadcast is already mature — A31.)
 - **Exit denial (A16) — the worse direction.** The only defense (displace within Δ via
   a no-CSV transition) is equally available to a *malicious live* Operator against a
   *legitimate* exit — repeatably, forever, at one on-chain transaction per attempt.
@@ -704,18 +1024,27 @@ Consequences:
   member immediately (a *faster* exit). A live adversarial Operator can no longer
   stall an exit; a dark one never could. Refusing to pulse at all is the remaining
   option, and it is a **visible stall** — missed seal, missed batch commitment — that
-  trips pool-wide auto-exit (§7.3).
-- **Griefing is repriced into a self-service exit.** Broadcasting the current root now
-  *is* requesting eviction: the "griefer" is paid out in full and removed from the
-  pool (re-entry costs an ordinary deposit pulse). A third party bumping someone
-  else's root is paying fees to hand that member a fast exit. A flood of simultaneous
-  notices degenerates into a cooperative unwind — which is the correct limit for a
-  pool most of whose members want out.
-- **The honest Operator's defense playbook is now legitimate and cheap.** Ignore
-  unbumped roots (they cannot confirm). On a bumped root or sealed notice, evict with
-  payout — folded into the next heartbeat (§7.2), so the defense cost amortizes into
-  scheduled maintenance. Never displace without paying: that is the one forbidden
-  move, and it is the one that creates evidence.
+  trips pool-wide auto-exit (§7.3). (The window is what is left of Δ on the pool
+  output in question. On an anchor already older than Δ nothing is left: the lattice
+  is mature and the exit simply proceeds — §7.4a.)
+- **Griefing is repriced into a self-service exit — while the anchor is young.** As
+  long as the pool output is spent before it reaches Δ confirmations, no root is ever
+  broadcastable; the only request the Operator has to answer is a notice, and
+  filing one *is* requesting eviction: the "griefer" is paid out in full and removed
+  from the pool (re-entry costs an ordinary deposit pulse). A third party who lands
+  the pending chain has paid for the Operator's heartbeat and nothing more. A flood
+  of simultaneous notices degenerates into a cooperative unwind — which is the
+  correct limit for a pool most of whose members want out. On an anchor that has aged
+  past Δ none of this applies: a root cannot be answered, and the pool unwinds at the
+  price of one root. Whether a pool is ever in that state is the keep-alive choice of
+  §7.4a (A31).
+- **The honest Operator's defense playbook is now legitimate and cheap.** Do not
+  watch the mempool for roots: an unbumped one never shows up there, and a mature one
+  can be mined without passing through it (§8). Act on what is objective — a notice
+  — and evict with payout before the pool output's anchor deadline, folded into the
+  heartbeat that deadline requires anyway (§7.2, §7.4a), so the defense cost
+  amortizes into scheduled maintenance. Never displace without paying: that is the
+  one forbidden move, and it is the one that creates evidence.
 - **Denial now leaves a trail.** The Operator's options against a noticed exit are:
   honor it (payout), let it mature (exit), or stall visibly (mass auto-exit). The
   evidence-free denial loop of revision 1 no longer exists.
@@ -746,10 +1075,12 @@ member's node keeps the last branch whose slot matched the balance they accepted
 and checks one number in each new lattice: their own slot.
 
 - **The number matches.** They store the new branch and send nothing.
-- **The number is short, or the branch never arrives.** They broadcast the last good
-  branch during the contest window Δ (§7.3). A live Operator displaces that broadcast
-  only by an eviction pulse that pays their full balance on-chain and removes them
-  (§7.5). The next pulse continues for everyone else, with that payout included.
+- **The number is short, or the branch never arrives.** They file an exit notice and
+  walk the last good epoch (§7.3): land its pool output if it is not on-chain yet,
+  then broadcast the root and their branch once that output is Δ blocks old (§6). A
+  live Operator displaces that exit only by an eviction pulse that pays their full
+  balance on-chain and removes them (§7.5). The next pulse continues for everyone
+  else, with that payout included.
 
 Silence is not a veto. An offline node does not freeze the pool, and the ceremony
 has no signature of theirs to wait for. A false complaint only withdraws their own
@@ -759,20 +1090,22 @@ pulse (§7.5), which is what keeps a withdraw-and-rejoin loop from being a free
 repeated halt.
 
 The remaining requirement is local. The member, or a watchtower holding that one
-branch, must notice a short slot before Δ ends. Missing the window means they accept
-the new amount. It does not stop anyone else's pulse. This is amount enforcement by
-exit-or-payout of a single slot (§13.1). It does not prevent the signing set from
-producing the short tree; a fully compromised set can still win the race of §8a,
-because the displacing transition carries no CSV. What it does prevent is a member
-having to sit in the ceremony, and a pool having to stop when they don't.
+branch, must notice a short slot before the transition that shortened it confirms
+on-chain. A heartbeat lands it less than Δ after the previous on-chain pool output
+(§7.4a), and a compromised signing set can land it sooner. Missing the window means
+they accept the new amount. It does not stop anyone else's pulse. This is amount
+enforcement by exit-or-payout of a single slot (§13.1). It does not prevent the
+signing set from producing the short tree; a fully compromised set can still win the
+race of §8a, because the displacing transition carries no CSV. What it does prevent
+is a member having to sit in the ceremony, and a pool having to stop when they don't.
 
 ## 8. Invalidation model
 
 | Threat | Mechanism | Nature |
 |---|---|---|
-| **Stale lattice broadcast** (old epoch's exit) | Chain-extension dominance: transitions have no CSV, exits wait Δ; any holder of a newer `T` extends the chain and voids the stale lattice | Trustless race the honest side structurally wins |
+| **Stale lattice broadcast** (old epoch's exit) | Chain-extension dominance: transitions have no CSV; a lattice root is invalid until its pool output has Δ confirmations; a holder of the next `T` confirms it first and voids the stale lattice. Holds only under the anchor-age invariant (§7.4a): cadence, admission, extension duty | A race the honest side wins **if** one holder of the pending chain acts by the anchor deadline and the transition is mined within `margin_a` (conditions below). Revisions before 2.4 graded it unconditional (A26) |
 | **Commitment withholding / forks** | Chained seal dependency + co-signed commitments: a missing seal stalls the pool visibly and trips auto-exit; a forked `h_k` carries a contradictory signature | Detection + liveness fallback |
-| **Spurious current-state exit broadcast** (griefing — A17) | Unbumped roots cannot confirm (TRUC); a bumped root is met with a conforming eviction pulse: the broadcaster's slot is paid out in full and the pool continues (§7.5) | Priced, self-limiting; defense folds into heartbeat cadence |
+| **Spurious current-state exit broadcast** (griefing — A17) | No root can be mined while its pool output is younger than Δ, so with the anchor kept young (§7.4a) there is nothing to broadcast; a notice is met with a conforming eviction pulse: the member's slot is paid out in full and the pool continues (§7.5). On an anchor older than Δ a root confirms as soon as a miner has it, bumped or handed over directly — "unbumped roots cannot confirm" was relay policy, not consensus (A27) — and the pool unwinds (A31) | Priced, self-limiting; defense folds into heartbeat cadence — while the anchor is young. An unanswerable forced unwind on an aged one |
 | **Live-Operator exit denial** (A16) | Displacing a *noticed* exit without the payout is an unlawful eviction — non-final, unsealable, enclave-unsignable, bond-slashable; stalling instead is a visible liveness fault → auto-exit | Exit-or-payout guarantee (§7.5) |
 | **Fresh colluding theft** (Operator + all of `M_k`, resurrected keys) | **Not a race** — the theft tx has no CSV and beats the Δ-delayed lattice. Defense is the equivocation proof: the victim holds `L_k` (a `P_k` signature) and the theft tx is a *second* `P_k` signature on a conflicting spend → dispute halt + bond slash where bonded (§9) | Economic deterrent |
 
@@ -784,6 +1117,12 @@ is non-custodial, *any* surviving copy (the relay mesh, the seal set, an archiva
 watchtower) lets anyone reconstruct and broadcast on the victim's behalf, so the data
 only needs to exist *somewhere*, not necessarily with the victim. The seal set's
 data-availability receipt (§7.1 step 6) makes it the custodian of last resort.
+
+Revision 2.4 adds a second retained set, with a different job: **every transition
+since the current anchor, together with the transactions needed to bring their
+deposit inputs on-chain.** Without them a member can neither walk their own exit
+(§7.3 step 2) nor perform the extension duty (§7.4a). They are small, and each can be
+dropped once it has confirmed.
 
 **The contest window Δ is also a dispute window.** No published evidence can freeze
 `U_k` on-chain — there is no covenant to freeze it. But a standardized,
@@ -797,6 +1136,95 @@ until sealed and honest sealers will not seal a disputed tip, a credible dispute
 **halts state progression** — the closest no-covenant analogue to a freeze. It stops
 the attacker finding fresh victims; it does not, by itself, claw back the specific
 contested coins.
+
+### What the stale-lattice race requires
+
+The first row above is a race, and revision 2.4 states what winning it takes. The
+stale lattice is certain to lose only if the successor transition confirms before the
+stale root can be mined. That needs all four of:
+
+1. **Someone holds the successor.** Every pending transition of a sealed pulse is in
+   the bundle the seal set receipted (§7.1 step 6), on the relay mesh, with its
+   signers, and in each member's or watchtower's retained set (above).
+2. **Someone looks at the chain in time.** One of those holders checks the chain at
+   least once per watch interval and acts at the anchor deadline (§7.4a). What they
+   check is recorded in blocks. Nothing depends on seeing a stale root in a mempool;
+   it may never be in one (below).
+3. **Someone pays.** A transition's own fee is fixed and may be zero. Whoever
+   broadcasts it attaches a child to its anchor output (§7.1 step 5) and needs funds
+   of their own to do so — the fee reserve of §7.4a.
+4. **Miners include it within `margin_a`.** An assumption about hash power,
+   quantified next.
+
+This is the kind of assumption a payment channel makes of each party or its
+watchtower, with two differences. The party who must act is **any one** holder rather
+than a named counterparty — 1-of-N again (§13.1). And the deadline is not set off by
+a cheat: it comes round on every anchor whether or not anyone is attacking, which is
+why the Operator's ordinary heartbeat discharges it and the holders' duty is the
+fallback. If any one of the four fails, a sealed pulse is reversible by anyone
+holding an older lattice, and the loss is bounded by `v_max`.
+
+### Miners: consensus versus relay policy
+
+Earlier revisions treated mempool behaviour as if it bound miners. It does not. A
+miner can include any valid transaction it is handed directly, paid for outside the
+transaction, and relay policy never sees it. What a miner cannot do is break a
+consensus rule: every node rejects the block.
+
+| Rule this design leans on | Kind | Binds a miner paid directly? |
+|---|---|---|
+| Exit-leaf delay: no root until its pool output has Δ confirmations (BIP 68/112) | Consensus | **Yes** |
+| Valid signatures; one spend per output | Consensus | **Yes** |
+| A zero-fee parent needs a fee-paying child (package relay) | Relay policy | No |
+| One unconfirmed parent, one unconfirmed child, size limits (TRUC) | Relay policy | No |
+| A higher fee replaces a lower one; sibling eviction | Relay policy | No |
+| Whichever spend reached mempools first | Not a rule | No |
+
+Three consequences.
+
+**While the delay runs, no one can mine a stale root.** Paying a miner directly buys
+nothing, because the block would be invalid. All that colluding miners can do for a
+stale state in that period is keep the successor transition out of **every** block
+until the delay ends. With a share `q` of the hash power that succeeds with
+probability `q^n` over the `n` blocks between the successor's broadcast and the
+root's maturity — and `n` is the non-inclusion allowance inside `margin_a`, not Δ,
+because the successor may be broadcast as late as the anchor deadline. Twenty blocks
+hold `q = 0.5` to about one in a million; `q = 0.9` needs 132. Above one half the
+same miners can reorganise the chain, and no timelock in any off-chain protocol
+holds.
+
+**Bribing miners to wait has a price the honest side can make unaffordable.** Paying
+miners to ignore the successor until the stale root matures is the timelock-bribery
+game analysed for HTLCs. For every miner to prefer waiting, the bribe must exceed the
+successor's fee premium over an ordinary fee, divided by the smallest miner's share
+of the hash power ([MAD-HTLC](https://arxiv.org/abs/2006.12031), Theorem 2): a miner
+that finds few blocks is unlikely to collect the later bribe and takes the fee in
+hand. Turned around (Corollary 2 there), a successor whose fee can be raised to about
+`λ_min · E` — `E` the rollback exposure, `λ_min` the smallest relevant miner's share
+— makes the required bribe larger than the prize. That analysis estimates
+`λ_min ≈ 0.01`, so the budget is on the order of **1% of the exposure**, and it is
+spent only if someone actually bribes. Two limits, from the same source. More blocks
+do not help against miners who are all rational in this sense; only the fee does.
+Conversely, one miner that simply takes the best fee on offer, finding one block in
+the window, defeats the bribe whatever its size. (The analysis assumes that neither
+side mines or colludes with a miner; an attacker with hash power of its own is the
+previous case.) This is the reason for `v_max` and the fee reserve of §7.4a.
+
+**Once the delay has run, only relay policy is left, so the pool must never be in
+that state with a pulse pending.** On an anchor older than Δ, one miner, or just a
+fee-bumped broadcast, confirms a root. With a pulse pending that root is stale, which
+is what the anchor-age invariant forbids. With nothing pending it is the current
+state's exit: fine for the member, and the forced unwind of A31 for the pool. For the
+same reason "an unbumped root cannot confirm" was wrong as a safety statement — it
+cannot *relay*. Every trigger in this document is keyed to blocks.
+
+**Count Δ in blocks.** A delay denominated in time (BIP 68's 512-second units) is
+measured on median-time-past, which miners producing six of eleven consecutive blocks
+can push up to about two hours ahead of real time, ending the delay early. It also
+contains fewer blocks when blocks are slow, while everything the honest side needs is
+counted in confirmations. `Δ` and `margin_a` are therefore block counts (A30), and a
+`pulse` leaf with a time-based delay is rejected (§11). The slot-level delay (§7.1
+step 3) is not part of this race and may stay as the deployment has it.
 
 ## 8a. Recourse: when the count doesn't check out
 
@@ -862,10 +1290,12 @@ lattice root cannot be mined until **Δ blocks after `U_k` confirmed**. The atta
 consuming transition carries **no CSV** (`nSequence` final, by design — §6, §8): it is
 spendable immediately and confirms in the next block. So a colluding Operator consumes
 `U_k` roughly Δ blocks before your exit is even valid, and your correct `L_k` becomes
-un-broadcastable (its input is spent). Chain-extension dominance is a race the honest
-side wins **only when the honest side holds the newer transition**; when the *thief*
-holds the newer (bad) state, the same Δ that gives honest holders a contest window is a
-head start handed to the attacker.
+un-broadcastable (its input is spent). (On an anchor already older than Δ — an idle
+pool — your root is valid at once and the head start shrinks to an ordinary fee
+race; §7.4a.) Chain-extension dominance is a race the honest side wins **only when
+the honest side holds the newer transition**; when the *thief* holds the newer (bad)
+state, the same Δ that gives honest holders a contest window is a head start handed
+to the attacker.
 
 This mechanical asymmetry is permanent — it is what A5 exists to prevent anyone from
 forgetting — and revision 2 does not repeal it; it **re-prices it**. Under §7.5 the
@@ -908,7 +1338,17 @@ FROST share** to any pulse that violates it:
 - a pulse proposed before the previous epoch's seal `σ_k` exists (§7.1 step 6);
 - **a displacement of a sealed exit notice that omits the member's full payout**
   (§7.5);
-- a pulse whose net on-chain outflow exceeds the pool's `w_max` cap (§9.4).
+- a pulse whose net on-chain outflow exceeds the pool's `w_max` cap (§9.4);
+- an off-chain pulse on an anchor at or past its anchor deadline, or one that lifts
+  the rollback exposure above `v_max` (§7.4a);
+- a second spend of a deposit input that a transition it already signed consumes
+  (§7.4a).
+
+One caveat on the first of the two revision-2.4 items. An enclave learns the chain
+tip from its host, which can show it an old one. Its refusal of late off-chain pulses
+is therefore a second line: the checks that count are the seal set's and each
+client's own (§7.1 step 4f, step 6), made against chain views the Operator does not
+supply.
 
 So a lattice that shorts a passive member — or an unlawful eviction — **cannot be
 signed at all**: strictly stronger than "it can be signed but you are compensated," and
@@ -942,11 +1382,16 @@ The epoch seal (§7.1 step 6) needs issuers. Requirements and honest costs:
 
 - **Duties:** recompute the §7.1a predicate; verify possession of the full artifact
   bundle (the seal *is* a data-availability receipt); countersign `h_k`; seal exit
-  notices (§7.5); refuse to seal a disputed tip (§8). Nothing else — sealers are never
-  in the exit path and hold no funds. Seals are **EOTS-bound per epoch** (§9.2), so
-  sealing two conflicting tips leaks the sealer's key and burns its fidelity bond; and
-  sealers double as **witnesses of the commitment transparency log** (§9.3), signing
-  tree heads whose consistency anyone can gossip-check.
+  notices (§7.5); refuse to seal a disputed tip (§8); refuse to seal an off-chain
+  pulse on an anchor at or past its deadline, or one that lifts the rollback exposure
+  above `v_max` (§7.4a); and, holding every pending transition, broadcast and
+  fee-bump the pending chain when an anchor deadline arrives with pulses pending (the
+  extension duty, §7.4a). Nothing else — sealers are never in the exit path and hold
+  no keys to pool funds. The extension duty does mean each sealer needs a small fee
+  wallet of its own. Seals are **EOTS-bound per epoch** (§9.2), so sealing two
+  conflicting tips leaks the sealer's key and burns its fidelity bond; and sealers
+  double as **witnesses of the commitment transparency log** (§9.3), signing tree
+  heads whose consistency anyone can gossip-check.
 - **Default composition: the referee federation of the bonded backstop below,
   Operator excluded** — the same conflict rule as the slashing quorum (§9.1). The jobs
   compose naturally: referees need the artifacts to adjudicate anyway, and holding the
@@ -1214,9 +1659,10 @@ Parameters: pool TVL `T`; passive fraction `p` (passive value `P = p·T`); opera
 threshold `t`-of-`n` with per-member fidelity bond `b_m`; seal set `k_s`-of-`n_s`
 with per-seat bond `b_s`; referee quorum `k_r`-of-`n_r` with per-seat bond `b_r`
 (bonded mode only); operator backstop `B_op = c·P` with coverage ratio `c ∈ [0,1]`;
-equivocation bond `B_eq`; per-pulse net outflow cap `w_max`; detection-to-halt lag
-`d` epochs (honest sealers: `d = 1`); settlement-gating gossip lag `g` epochs; cost
-of capital `r`; annual pool volume `V`.
+equivocation bond `B_eq`; per-pulse net outflow cap `w_max`; rollback-exposure cap
+`v_max` per anchor window and smallest relevant miner share `λ_min` (§7.4a, §8);
+detection-to-halt lag `d` epochs (honest sealers: `d = 1`); settlement-gating gossip
+lag `g` epochs; cost of capital `r`; annual pool volume `V`.
 
 **Per adversary class** — what can be taken, what bounds it, and what capital answers
 it:
@@ -1229,10 +1675,18 @@ it:
 | Equivocation / fork (double-sign class) | ≈ value released against fake finality during `g`: ≤ `w_max · g` through the pool, plus whatever external credit integrators extend off-seal | universal seal-gating + transparency log (§9.3) | `B_eq ≥ s · w_max · g` (safety factor `s` ≈ 2–3) — **self-executing** (§9.2) |
 | Operator-set Sybil (fake threshold) | `P` | fidelity-bonded admission | `t · b_m ≥ P` |
 | Seal-set Sybil (detection blackout inside the set) | enables the above to go unsealed-yet-unnoticed *inside* the set; public log gossip still detects outside it | bonded admission + log gossip | `k_s · b_s` ≥ an operational floor; secondary, because safety-detection is 1-of-N beyond the set (§9.3) |
+| Stale-lattice rollback (A26) — needs no signer at all, only an old lattice | ≤ `v_max` | the anchor-age invariant (§7.4a); admission caps the exposure | a **fee reserve** ≥ `λ_min · v_max`, spent only if miners are actually bribed. The defence is a transaction, not compensation. A bonded deployment may also treat a confirmed stale root with sealed successors as a compensable Operator fault |
 
 **Worked example.** `T = 10` BTC, `p = 0.8` (`P = 8`), hourly pulses, daily heartbeat
 (`D ≤ 24`), `w_max = 0.2` (2% of TVL per pulse), `g = 2`, `s = 2.5` ⇒ `B_eq = 1`;
-threshold 5-of-9; sealers 3-of-7; referees 3-of-5 in bonded mode.
+threshold 5-of-9; sealers 3-of-7; referees 3-of-5 in bonded mode. For the anchor
+window: `Δ = 432` blocks (about three days) and `margin_a = 288` (144 for a wallet
+that syncs daily, 132 against miners holding 90% of the hash power, 12 for ancestry,
+fee spikes and reorgs), so the anchor deadline falls 144 blocks after each anchor and the
+daily heartbeat meets it; `v_max = 1` and `λ_min = 0.01` ⇒ a fee reserve of `0.01`
+BTC, and a pool that moves more than 1 BTC between members inside a day lands its
+heartbeat early. (Earlier revisions gave this example a daily heartbeat and no value
+for Δ. A daily heartbeat needs Δ to exceed one day by the whole of `margin_a`.)
 
 | Deployment | Locked capital | Against 10 BTC TVL |
 |---|---|---|
@@ -1272,11 +1726,13 @@ and threshold members rotate out without coverage ever dipping.
 
 ## 10. Attack analysis appendix
 
-Twenty-five adversarial findings shaped this spec — A1–A13 from the protocol
+Thirty-one adversarial findings shaped this spec — A1–A13 from the protocol
 red-team, A14–A15 from the recourse analysis (§8a), A16–A17 from the revision-2
 current-state exit analysis (§7.5), A18–A23 from the revision-2.1 red-team of the
-self-enforcing bond and federation-hardening layers (§9.2–§9.4), and A24 from the
-revision-2.2 formal-verification passes (§0). Severity:
+self-enforcing bond and federation-hardening layers (§9.2–§9.4), A24–A25 from the
+revision-2.2 formal-verification passes (§0), and A26–A31 from the revision-2.4
+review of the stale-state race against Bitcoin's timelock and mining rules (§7.4a,
+§8). Severity:
 **CRITICAL** (breaks the safety claim), **HIGH** (loses funds or bricks exit under a
 realistic adversary), **MED** (griefing/liveness/cost).
 
@@ -1298,7 +1754,7 @@ realistic adversary), **MED** (griefing/liveness/cost).
 | A14 | **Buggy-honest conservation failure** — a ceremony bug makes `Σ(slots) ≠ value(U_k)` while `A_k` matches the buggy lattice, so there is no lie and no slashable evidence → silent unbacked loss | HIGH | Public finality predicate (§7.1a): conservation + consistency are recomputable from committed data and are a precondition of the seal; failure makes pulse `k` non-final and forces auto-exit on `k−1` |
 | A15 | **Sub-dust no-exit** — balances below the 330-sat floor sit in a cooperative-only dust slot with no unilateral exit | MED | Named as a permanent, bounded recourse gap (§8a, §12.1 item 6); mitigated by client below-floor warnings and attesting the dust aggregate so over-debit is compensation-provable |
 | A16 | **Live-Operator exit denial** — chain-extension displaces a *legitimate current-state* exit; each displacement carries balances forward correctly, so under revision 1 denial produced **no slashable evidence** (no equivocation, clean attestation); composes with expiry into theft-at-`renew` | HIGH (CRITICAL near `renew` absent §7.5) | Exit notices + **eviction-with-payout** (§7.5): displacing a noticed exit without the full on-chain payout is non-final, unsealable, enclave-unsignable, and bond-slashable; stalling instead is a visible fault → pool-wide auto-exit. Guarantee becomes **exit-or-payout** |
-| A17 | **Current-root broadcast griefing** — the fully pre-signed, mesh-published root is broadcastable by anyone; a fee-bumped root forces mass exit (≈N× fee leverage) or a defensive displacement costing an on-chain tx + O(N) re-sign; retries ≈ free (supersedes the full-root case of A7, which revision 1 graded "harmless") | HIGH | §7.5 repricing: unbumped roots are inert (TRUC zero-fee parent); a bumped root is answered by a conforming eviction pulse — the broadcaster is **paid out in full and removed at their own request**; defense folds into heartbeat cadence (§7.2); third-party bumps gift the member a fast exit |
+| A17 | **Current-root broadcast griefing** — the fully pre-signed, mesh-published root is broadcastable by anyone; a fee-bumped root forces mass exit (≈N× fee leverage) or a defensive displacement costing an on-chain tx + O(N) re-sign; retries ≈ free (supersedes the full-root case of A7, which revision 1 graded "harmless") | HIGH | §7.5 repricing, as corrected in revision 2.4: while the anchor is younger than Δ no root can be mined, so the only request to answer is a notice, and it is answered by a conforming eviction pulse — the member is **paid out in full and removed at their own request**; defense folds into heartbeat cadence (§7.2). The earlier wording ("unbumped roots are inert"; "a bumped root is answered") rested on relay policy and on a response window that does not exist once a root is mature — see A27 and A31 |
 | A18 | **Accidental self-slash / induced double-sign** — a crash-restart re-signs an epoch under the committed nonce on a different message (the Lightning state-loss classic; Babylon operators have paid this tax), or an attacker feeds a signer two candidate versions of one epoch; an *honest* signer's key leaks and its bond burns | HIGH (operational) | Durable, attested sign-once state per epoch inside the enclave; restart resumes from the sealed chain head and never re-signs a sealed epoch; burn-not-transfer slashing removes the attacker's direct profit from inducing it (§9.2) |
 | A19 | **Nonce-chain exhaustion / withholding** — the signer stops committing nonce chains (or "loses" them), so no valid attestation can exist and pulses stall | MED | Commitment horizon must cover ≥ next heartbeat + margin; a missing nonce commitment is a visible liveness fault — same class as a withheld seal: stall ⇒ auto-exit (§9.2, §7.3) |
 | A20 | **Burn-tx pinning** — the pre-signed burn is fixed-fee; a cheater pins it or rides a fee spike through the reclaim CLTV, then reclaims the bond intact | MED | P2A anchor on the burn (any executor CPFPs); TRUC topology; reclaim CLTV sized ≥ dispute window + fee-spike margin (§9.2, §7.4) |
@@ -1307,6 +1763,12 @@ realistic adversary), **MED** (griefing/liveness/cost).
 | A23 | **Correlated per-identity bonds** — one identity's fidelity bond, amortized across many pools, under-collateralizes a correlated theft across its whole book | MED→HIGH | The §9.4 aggregation rule: `b_identity ≥ Σ(marginal exposure)` across the identity's book, else the fractional-reserve ratio is computed, displayed, and the identity is excluded from `t`/`k` counts by conforming clients |
 | A24 | **Honest-operation self-slash via per-epoch nonce reuse** — the operator threshold signs both `A_k` and `h_k` in epoch `k`; under a nonce schedule indexed by epoch alone, those two distinct messages share one committed `R_k`, which is exactly the EOTS extraction condition. A fully honest, protocol-following operator leaks its own key and its bond is burned by any observer. Distinct from A18, which is a crash/restart fault: this one fires on the specified happy path | CRITICAL (for any deployment of §9.2 as previously written) | Nonce index is the *(epoch, artifact role)* pair, not the epoch: commit `R_{k,A}`, `R_{k,h}`, `R_{k,σ}` separately, or give each artifact role its own key (§9.2). Message-level role separation is explicitly **not** a fix. Surfaced by the Lean formalization of §9.2, which showed extraction needs distinct challenges rather than distinct messages |
 | A25 | **Pre-seal eviction window** — the payout obligation was keyed to the moment a notice *is sealed*, but the only leg that prevents a spend (threshold refusal, §7.5) was gated on the same condition. Between filing and the seal set's receipt the Operator owes nothing, so it may evict paying zero — with an intact signing policy and a fully healthy seal set — and may widen the window by stalling the sealers | HIGH | The obligation attaches on the **validly signed notice** presented to the signing threshold, which can check that signature without anyone's receipt; the seal governs third-party adjudication only (§7.5). Surfaced and its fix verified by the revision-2.2 expansion pass, which also showed the seal set cannot veto a spend at all |
+| A26 | **Stale lattice on an aged anchor** — the exit-leaf delay counts from the confirmation of the pool output, not from an exit attempt. Once the last on-chain pool output is Δ blocks old, the root of *its* lattice is valid, and so is the first pending transition. If the stale root confirms first, every pulse since that output is void and the pool pays out the old table. Any member holding that lattice can do it alone, with a live and honest Operator, between two heartbeats. Earlier revisions graded the stale-lattice race as one "the honest side structurally wins" | CRITICAL | The anchor-age invariant (§7.4a): no pool output stays unspent for Δ blocks while a final pulse is pending on it. Kept by cadence (`heartbeatInterval + margin_a ≤ Δ`), admission (no off-chain pulse on an anchor at or past its deadline), and the extension duty (any holder of the pending chain lands it at the deadline). Model-checked at small bounds in `formal/Anchor.tla`; that a holder acts by the deadline and that miners include the transition within the margin are assumptions there, not results (§8) |
+| A27 | **Relay policy mistaken for consensus** — "an unbumped root cannot confirm", first-seen ordering and fee replacement are mempool rules. A miner handed a transaction directly, and paid outside it, is bound by none of them; and miners can be paid to leave a transition out until a stale root matures | HIGH with A26; MED alone | Safety statements rest on consensus rules only: the delay, signatures, one spend per output (§8, "Miners: consensus versus relay policy"). Against censorship, `margin_a` carries a non-inclusion allowance. Against bribery, the rollback exposure is capped at `v_max` and a fee reserve ≥ `λ_min · v_max` backs the transition (§7.4a). Above half the hash power nothing holds, here or in any timelocked protocol |
+| A28 | **A transition with no fee path** — the transition's fee is fixed when the cosigners sign and nothing said how it is paid or raised. A transition signed at a low fee cannot be confirmed on demand, which the heartbeat, the exit walk and the extension duty all require | HIGH | TRUC transition with one keyless anchor output; whoever broadcasts attaches the fee (§7.1 step 5). Consequence stated: pending transitions confirm about one per block through public relay, which bounds the sustained pulse rate and adds `D` blocks to an exit walk (§7.2, §7.3) |
+| A29 | **Respendable deposit inputs** — a pending transition that spends a deposit is void if the depositor spends that deposit elsewhere first, and so is every transition after it: a rollback with no lattice involved and no timelock to wait for | HIGH | A pending transition spends only inputs whose owner cannot respend alone, each with a respend height the pending chain must beat by `margin_a`; anything else is admitted only in an on-chain pulse; the enclave refuses to co-sign a conflicting spend (§7.4a, §9). The protection of such an input before confirmation is the Operator threshold, not consensus — stated as such |
+| A30 | **Time-denominated Δ** — a delay in 512-second units is measured on median-time-past, which miners producing six of eleven consecutive blocks can advance by about two hours, and it holds fewer blocks when blocks are slow | MED | Δ and `margin_a` are block counts; the validator rejects a time-based `exit` in a `pulse` leaf (§8, §11) |
+| A31 | **No eviction window on an aged anchor** — the §7.5 response to a broadcast root assumed the Operator can still spend the pool output first. A root can be broadcast only when it is already mature, so there is no such window: on an idle pool whose anchor is older than Δ, one fee-bumped root unwinds the pool. This is A17 again, by a path §7.5 did not close | MED | Stated in §7.5 and §8. Deployments choose: a keep-alive heartbeat inside every `Δ − margin_a` blocks keeps the window open at the cost of an on-chain pulse per interval, or the pool accepts that it can be unwound while idle (§7.4a). Balances are safe either way |
 
 ## 11. Compiler surface (future work — gated zones)
 
@@ -1323,7 +1785,7 @@ leaves; the former `options { ... }` block and `serverVariant` shape no longer e
       // covenant functions (cooperative path, Operator-emulated) ...
 
       function unilateral(signature pulseSig) tapscript {
-          require(older(exit));            // Δ, the contest window
+          require(older(exit));            // Δ in blocks, from this output's confirmation
           require(checkSig(pulseSig, pulse));
       }
   }
@@ -1355,12 +1817,19 @@ leaves; the former `options { ... }` block and `serverVariant` shape no longer e
   §7.4; the margin inputs (virtual-chain-depth cap, stampede buffer) live in the ABI
   lattice template.
 
+- **Anchor-age invariant (revision 2.4)**: the lattice template also carries
+  `heartbeatInterval`, the inputs of `margin_a` (watch interval, ancestry depth,
+  non-inclusion allowance, fee and reorg buffer), `v_max`, and whether the
+  deployment runs a keep-alive heartbeat. The validator rejects configurations with
+  `heartbeatInterval + margin_a > exit`, and an `exit` that is not a BIP 68 block
+  count (type flag set), per §7.4a and §8.
+
 - **Explicitly absent**: any "operator-only re-anchor" construct (A1), and any
   displacement path that skips the §7.5 payout.
 
-Everything else — ceremony ordering, artifact retention, watchtower triggers, TRUC
-packaging, seal-set membership, coverage refusal — is SDK/ceremony policy, not
-compiler surface.
+Everything else — ceremony ordering, artifact retention, watchtower triggers, anchor
+deadlines, admission and the extension duty, TRUC packaging, seal-set membership,
+coverage refusal — is SDK/ceremony policy, not compiler surface.
 
 ## 12. The no-fork endgame, and the GSR annex
 
@@ -1385,7 +1854,10 @@ with its compensating discipline:
 2. **Heartbeats stay quorum-gated ceremonies.** Re-anchoring invalidates SIGHASH_ALL
    signatures, so every heartbeat is a full pulse. Discipline: heartbeat cadence is a
    protocol parameter enforced client-side; pools that cannot sustain their cadence
-   should not grow.
+   should not grow. Since revision 2.4 the cadence also has a hard ceiling that is
+   about safety, not cost: `heartbeatInterval ≤ Δ − margin_a` (§7.4a). What clients
+   enforce is the admission rule — no off-chain pulse on an anchor at or past its
+   deadline.
 3. **The defender stays slower than the thief.** The theft path has no CSV; the
    lattice waits Δ. Only the enforcement stack deters collusion: if `theft value >
    bond`, collusion of the Operator + all transacting parties of an epoch is
@@ -1409,6 +1881,18 @@ with its compensating discipline:
    evidence outlives the stack), client dispute-halt on any unlawful eviction, and the
    `renew`-adjacent auto-exit margin (§7.4). Under GSR (item 3 below) the displacement
    path disappears structurally and the rule becomes moot.
+8. **Someone must watch, every anchor window.** Old lattices are never revoked. They
+   are outrun: each stays harmless only because a successor transition confirms
+   before its delay ends (§7.4a). That takes one honest holder of the pending chain
+   who looks at the chain inside every anchor window and can pay a fee, and enough
+   hash power that is not colluding to mine the transition within `margin_a` (§8).
+   Discipline: the heartbeat cadence of item 2, the extension duty carried by
+   watchtowers and the seal set, the exposure cap `v_max`, and its fee reserve. A
+   pre-signed kickoff transaction between the pool output and the delayed leaf would
+   replace the periodic deadline with one that starts only when someone moves, and
+   would give §7.5 a response window on every anchor (A31), at the cost of one more
+   transaction off-chain and on-chain for every pool output it protects. Revision
+   2.4 records that alternative and does not adopt it.
 
 Worst-case for a passive member shorted by an actively-colluding Operator, recourse is
 the bond (compensation), not coin recovery (§8a) — the bond is therefore a *cap on
@@ -1473,6 +1957,17 @@ conflating them is the central error to avoid:
 | **Exit mechanism** (can I get *out*?) | **1-of-N, plus exit-or-payout** | The lattice is fully pre-signed and non-custodial; *any one* honest data-holder in `{you, your watchtowers, the seal set, mesh archivers}` can broadcast it. You yourself suffice (1-of-1). Against a **dark** Operator, exit always completes on pure mechanics. Against a **live racing** Operator, §7.5 makes the only conforming displacement a full payout — exit-or-payout — with the honest caveat that the *payout leg* is enforced by the trusted layer (next row), not by consensus. |
 | **Exit amount** (is the *number* in my slot right?) | **Enforced — not a clean 1-of-N** | The set whose honesty protects a passive member's balance in a pulse is `{Operator ∪ M_k}` — the Operator plus whoever is transacting. One honest member of that set refuses the bad pulse at the gate (§7.1 step 4b). But that set **excludes the victim** and can be **as small as two** (Operator + one transacting party — and if both collude, the honest count in it is zero). Below "1 honest in that set," safety degrades to the enforcement stack: enclave-threshold refusal in the primary model, *bonded compensation* in the backstop (§9) — an enforced layer, not a cryptographic one. For the *equivocation* subclass specifically, deterrence needs only **one honest observer**: EOTS-bound artifacts make any double-sign self-slashing (§9.2). |
 
+**Both rows rest on a timing condition that revision 2.4 makes explicit.** Old
+lattices are never revoked. Each one is outrun, by a successor transition that
+confirms before its delay ends (§7.4a). So *which table gets paid out* is itself
+1-of-N **on a deadline**: one holder of the pending chain — the Operator, a
+watchtower, a sealer, an archiver, or the member — must look at the chain inside
+every anchor margin and be able to pay a fee, and enough hash power must stand
+outside any collusion to mine that transition within `margin_a` (§8). Nothing in it
+depends on observing a mempool. If it fails, a sealed pulse can be undone by anyone
+holding an older lattice, with the loss capped at `v_max`. Payment channels make the
+same kind of assumption; earlier revisions of this document did not state it.
+
 **Why the amount model is weaker than the systems PULSE resembles.** In a statechain or
 a coinpool, every signer is checking *their own* balance and updates are N-of-N, so any
 one refusal blocks — a true 1-of-N where the honest party is *defending their own funds*.
@@ -1513,10 +2008,11 @@ not a defect to be patched.
 | Pre-signed lattices give passive members a standing unilateral exit with no covenant | The lattice is signed only by `{Operator + transacting parties}`, never the victim — a unilateral exit to an amount *someone else wrote* | **Self-custody of the exit mechanism, delegated (enforced) custody of the exit amount** |
 | Recurrent pulses keep the exit fresh | Recurrence puts the Operator in every pulse — perpetual operator dependency | Liveness of *progress* is operator-gated; liveness of *exit* is operator-free (you hold the last lattice), and displacement of an exit owes you a payout (§7.5) |
 | Enforcement stack + equivocation proof deters theft | Economic/enclave security ≠ cryptographic; above the bond theft is +EV; and the preventing check has no incentive behind it | A cryptographically-enforced *mechanism* around an institutionally-enforced *amount* — a hybrid, not trustless |
+| A newer state beats an older one by extending the chain; nothing has to be revoked | The older lattice is never revoked, and its delay runs from confirmation: it matures on schedule whether or not anyone is attacking | **Latest-state-wins is 1-of-N on a deadline**: a heartbeat cadence inside Δ, any holder of the pending chain as fallback, exposure capped at `v_max` (§7.4a) |
 
 ### 13.4 Can anyone halt epoch creation?
 
-Five vectors — four bounded, one intentional:
+Six vectors — five bounded, one intentional:
 
 1. **The Operator can halt *all* epoch creation unilaterally** (it is a mandatory signer
    of every pulse). This is a real censorship/liveness power, but it is **bounded to
@@ -1552,6 +2048,13 @@ Five vectors — four bounded, one intentional:
    continue (§7.5). Putting their key into `P_k` so that they "can enforce" would
    create the halt §7.6 rejects: the pool would stop whenever that node was down or
    refused. A false complaint withdraws only the complaining member.
+
+6. **Anyone holding the current lattice can end an idle pool whose anchor is older
+   than Δ** (A31). The root is mature, so it confirms before the Operator can answer
+   with an eviction pulse, and the pool unwinds. Bounded the same way as vector 1:
+   everyone leaves with their current balance, and nothing is stolen. A deployment
+   closes it with the keep-alive heartbeat of §7.4a, at the price of an on-chain
+   pulse per interval.
 
 ### 13.5 Is the Operator always the exit-creator? (and the federation fix)
 
@@ -1628,7 +2131,9 @@ covenant-free — so the construction is buildable on Bitcoin today with no soft
   caveat: a P2A-bearing lattice transaction only propagates across peers on Core ≥28.0
   (or equivalent relay policy), and a lattice that does not propagate is a failed
   exit — so wallets should broadcast through P2A-aware relay rather than assume
-  universal support.
+  universal support. Since revision 2.4 the transitions use the same plumbing (§7.1
+  step 5), so the same caveat applies to the heartbeat and to the extension duty
+  (§7.4a).
 - **The off-chain artifacts:** exit notices and epoch seals (§7.5, §7.1 step 6) are
   plain signed messages with no consensus footprint — they constrain *conforming
   software and federations*, not Bitcoin.
@@ -1662,9 +2167,14 @@ lattice *cryptography*.)
 > self-slashing**: attestations, seals, and commitments are EOTS-bound, so a
 > double-sign leaks the signer's key and lets anyone burn its plain-BTC bond — no
 > judges, no token (§9.2) — leaving the judicial layer only lie-once compensation, and
-> pricing the deterrence stack in basis points rather than TVL (§9.4). Either way the
-> amount — and the payout leg of
-> exit-or-payout — rests on enclave-threshold or committee trust, not cryptographic
+> pricing the deterrence stack in basis points rather than TVL (§9.4). **Both models
+> rest on a timing condition** (revision 2.4): old lattices are never revoked, only
+> outrun, so a sealed pulse stays final only if the first unconfirmed transition
+> beneath it confirms before the pool output it spends is Δ blocks old. The
+> Operator's heartbeat does that in the normal case and any one holder of the pending
+> chain otherwise, and it needs miners that include the transition within the margin
+> (§7.4a, §8). Either way the amount — and the payout leg of exit-or-payout — rests
+> on enclave-threshold or committee trust, not cryptographic
 > self-custody — the **trilemma** (§13.2): with non-interactive passive members and no
 > covenant, amount-safety *must* be enforced by a trusted layer rather than by
 > consensus. Covenant-grade trustlessness of the amount is reachable only through the
