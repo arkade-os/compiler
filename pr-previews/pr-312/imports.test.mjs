@@ -233,23 +233,31 @@ context.window = { arkadeUseDocs: docs => { context.usedDocs = docs; } };
 context.monaco = { languages: { setMonarchTokensProvider() {} } };
 context.lint = () => {};
 // Production starts the latest release, or the bundled build when it is unlisted or fails;
-// elsewhere the bundled build starts, and a requested compiler is never replaced.
+// elsewhere the bundled build starts, and a requested compiler is never replaced. The bundled build
+// and the latest release then start in the background.
 const working = { builtinDocs, compile, check, completionsAt, symbolAt, version };
+const compilersStarted = [];
 const started = async (hostname, search, failing = []) => {
     context.location = { hostname, pathname: '/compiler/', search, hash: '' };
+    compilersStarted.length = 0;
     context.importCompiler = async choice => {
+        compilersStarted.push(choice);
         if (failing.includes(choice)) throw new Error(`${choice} failed`);
         return working;
     };
     vm.runInContext('compilerName = null', context);
     await context.loadCompiler();
+    await new Promise(resolve => setImmediate(resolve));
     return vm.runInContext('compilerName', context);
 };
 context.compilerReleases = async () => ({ latest: '0.1.0', stable: ['0.1.0'] });
 assert.equal(await started('arkade-os.github.io', ''), '0.1.0');
+assert.deepEqual(compilersStarted, ['0.1.0', 'master', '0.1.0']);
 assert.equal(await started('arkade-os.github.io', '', ['0.1.0']), 'master');
 assert.equal(await started('localhost', ''), 'master');
+assert.deepEqual(compilersStarted, ['master', 'master', '0.1.0']);
 assert.equal(await started('arkade-os.github.io', '?compiler=0.1.0-rc.1'), '0.1.0-rc.1');
+assert.deepEqual(compilersStarted, ['0.1.0-rc.1', 'master', '0.1.0']);
 await assert.rejects(started('arkade-os.github.io', '?compiler=9.9.9', ['9.9.9']), /9\.9\.9 failed/);
 context.compilerReleases = async () => ({ latest: null, stable: [] });
 assert.equal(await started('arkade-os.github.io', ''), 'master');
