@@ -28,6 +28,10 @@ const artifactOrLibrary = async input => {
 const source = fs.readFileSync(new URL('./main.js', import.meta.url), 'utf8');
 vm.runInContext(source.replace(/^import .*;$/gm, ''), context);
 
+// Keyed nodes with 50 or more inner lines fold; smaller ones, array items and the root stay open.
+context.text = JSON.stringify({ name: 'x', asm: Array(50).fill('OP_1'), small: Array(49).fill(1), items: [{ asm: Array(50).fill('OP_2') }] }, null, 2);
+assert.deepEqual([...vm.runInContext('largeNodes(text)', context)], [2, 107, 105]);
+
 const warningSource = 'contract HasWarnings(int value) { function spend() { require(true); } }';
 const detailed = await compile({ entry: 'main.ark', files: { 'main.ark': warningSource } }, { optimize: false });
 const warningArtifact = detailed.artifact;
