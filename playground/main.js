@@ -1574,17 +1574,25 @@ function displayJson(artifact) {
         fontSize: 13,
         foldingStrategy: 'indentation',
         showFoldingControls: 'always',
+        ariaLabel: 'Artifact JSON',
     });
     const text = JSON.stringify(artifact, null, 2);
-    // Folds land a few hundred milliseconds after the text, so the text stays hidden until then.
-    container.style.visibility = 'hidden';
+    // Folds land a few hundred milliseconds after the text, so the text stays transparent until then.
+    // Opacity rather than visibility keeps keyboard focus in the editor.
+    container.style.opacity = '0';
     jsonEditor.setValue(text);
-    jsonEditor.getAction('editor.fold').run({ levels: 1, selectionLines: largeNodes(text) })
-        .finally(() => { container.style.visibility = ''; });
+    const model = jsonEditor.getModel();
+    const version = model.getVersionId();
+    const current = () => model.getVersionId() === version;
+    // unfoldAll resolves once the latest text's fold regions exist; a superseded call then folds nothing.
+    jsonEditor.getAction('editor.unfoldAll').run()
+        .then(() => current() && jsonEditor.getAction('editor.fold').run({ levels: 1, selectionLines: largeNodes(text) }))
+        .finally(() => { if (current()) container.style.opacity = ''; });
 }
 
 // The 0-based first lines of keyed arrays and objects with 50 or more lines inside their brackets.
-// ponytail: reads JSON.stringify's indented layout, where only a node's own brackets end a line.
+// ponytail: reads JSON.stringify(_, null, 2)'s layout, where only a node's own brackets end a line;
+// walk the parsed value instead if the text ever comes from elsewhere.
 function largeNodes(text) {
     const open = [], large = [];
     text.split('\n').forEach((line, i) => {

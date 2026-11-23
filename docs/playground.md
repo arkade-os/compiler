@@ -19,7 +19,7 @@ Pick a contract from the Explorer and edit it. Errors and warnings appear as you
 
 | Tab | What you get |
 |---|---|
-| JSON Output | The full artifact, the same bytes `arkadec` writes to disk |
+| JSON Output | The full artifact, the same bytes `arkadec` writes to disk, with sections of 50 or more lines folded |
 | Assembly | Every spend group: its Arkade Script ASM and each tapscript leaf |
 | Diagnostics | Every compiler error and warning with its location, updated as you type |
 
