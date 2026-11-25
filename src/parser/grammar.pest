@@ -73,7 +73,8 @@ function = {
 function_visibility = @{ ("private" | "static") ~ !(ASCII_ALPHANUMERIC | "_") }
 function_keyword = @{ "function" ~ !(ASCII_ALPHANUMERIC | "_") }
 tapscript_keyword = @{ "tapscript" ~ !(ASCII_ALPHANUMERIC | "_") }
-tapscript_block = { "{" ~ tap_require_stmt* ~ "}" }
+// Any statement parses, so that the parser can refuse the ones a tapscript function cannot hold.
+tapscript_block = { "{" ~ (tap_require_stmt | statement)* ~ "}" }
 tap_require_stmt = { "require" ~ "(" ~ tap_require_expression ~ ("," ~ string_literal)? ~ ","? ~ ")" ~ ";" }
 tap_require_expression = _{
     ((check_sig | check_multisig | time_comparison | hash_comparison) ~ &("," | ")")) |

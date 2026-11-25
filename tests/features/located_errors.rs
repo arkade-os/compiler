@@ -228,6 +228,38 @@ fn a_tapscript_require_is_located_at_its_condition() {
 }
 
 #[test]
+fn a_tapscript_statement_other_than_a_require_is_located() {
+    let source = |statement: &str| {
+        format!("contract C(pubkey o, int n) {{\n  function f(signature s) tapscript {{\n    {statement}\n    require(checkSig(s, o));\n  }}\n}}\n")
+    };
+    for statement in [
+        "if (n == 1) { require(older(operatorExitDelay)); }",
+        "for (2) { require(after(n)); }",
+        "for (i) in 0..2 { require(after(n)); }",
+        "for (i, x) in [1, 2] { require(after(n)); }",
+        "let key = tweak(operator, f);",
+        "int x = n;",
+        "n = 1;",
+        "helper(n);",
+        "older(operatorExitDelay);",
+        "return;",
+        "require();",
+        "require(older(operatorExitDelay), n);",
+    ] {
+        let (line, text, message) = at_line(&source(statement));
+        assert_eq!((line, text.as_str()), (3, statement), "{message}");
+        assert_eq!(
+            message,
+            "a tapscript function can hold only `require(condition)` or \
+             `require(condition, \"message\")` statements"
+        );
+    }
+    let attribute = "@allow(dust-output, \"checked\")";
+    let text = at_line(&source(&format!("{attribute} require(after(n));"))).1;
+    assert_eq!(text, attribute);
+}
+
+#[test]
 fn a_require_condition_of_the_wrong_type_is_located_at_the_condition() {
     let source = "contract C(pubkey o) {\n  function f(signature s) {\n    require(\"dupa\");\n    require(checkSig(s, o));\n  }\n}\n";
     let (line, text, message) = at_line(source);
