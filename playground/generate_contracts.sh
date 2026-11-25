@@ -9,30 +9,38 @@ PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 EXAMPLES_DIR="$PROJECT_DIR/examples"
 OUTPUT="$SCRIPT_DIR/contracts.js"
 
-echo "Generating contracts.js from examples/*.ark..."
+echo "Generating contracts.js from examples/**/*.ark..."
 
 node -e "
 const fs = require('fs');
 const path = require('path');
-const root = '$EXAMPLES_DIR';
+const dir = '$EXAMPLES_DIR';
+const entries = [];
 
-function walk(dir) {
-  const out = [];
-  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-    const full = path.join(dir, entry.name);
-    if (entry.isDirectory()) out.push(...walk(full));
-    else if (entry.isFile() && entry.name.endsWith('.ark')) out.push(full);
+// Root-level .ark files
+for (const f of fs.readdirSync(dir).sort()) {
+  if (f.endsWith('.ark')) {
+    entries.push({ name: f.replace('.ark', ''), file: path.join(dir, f) });
   }
-  return out;
 }
 
-const files = walk(root).sort();
+// One level of subdirectories — each subdir becomes a namespace prefix
+for (const d of fs.readdirSync(dir).sort()) {
+  const subdir = path.join(dir, d);
+  if (fs.statSync(subdir).isDirectory()) {
+    for (const f of fs.readdirSync(subdir).sort()) {
+      if (f.endsWith('.ark')) {
+        entries.push({ name: d + '_' + f.replace('.ark', ''), file: path.join(subdir, f) });
+      }
+    }
+  }
+}
+
 let out = '// Auto-generated from examples/**/*.ark — do not edit\n// Regenerate: ./playground/generate_contracts.sh\n\n';
-for (const full of files) {
-  const name = path.basename(full, '.ark');
-  const code = fs.readFileSync(full, 'utf-8');
+for (const { name, file } of entries) {
+  const code = fs.readFileSync(file, 'utf-8');
   out += 'export const ' + name + ' = ' + JSON.stringify(code) + ';\n\n';
 }
 fs.writeFileSync('$OUTPUT', out);
-console.log('  Written ' + files.length + ' contracts to contracts.js');
+console.log('  Written ' + entries.length + ' contracts to contracts.js');
 "

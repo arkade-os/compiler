@@ -38,7 +38,17 @@ const projects = {
             'cp_deposit.ark': contracts.cp_deposit,
             'cp_exit.ark': contracts.cp_exit,
         }
-    }
+    },
+    vault_lending: {
+        name: 'Vault + Lending',
+        description: 'Morpho-style lending pool: ERC-4626 vault with isolated per-borrower lending markets',
+        files: {
+            'vault_covenant.ark': contracts.vault_lending_vault_covenant,
+            'lending_market.ark': contracts.vault_lending_lending_market,
+            'supply_flow.ark': contracts.vault_lending_supply_flow,
+            'repay_flow.ark': contracts.vault_lending_repay_flow,
+        }
+    },
 };
 
 // Single file examples
