@@ -1,0 +1,453 @@
+// PerpPosition Contract
+//
+// A perpetual futures position backed by BTC collateral.
+// Supports both long and short directions with oracle-based PnL settlement,
+// continuous funding payments, margin top-up, and liquidation.
+//
+// This contract is the live position VTXO. It is opened by PerpOffer.fill()
+// and holds the combined collateral of the trader and the exchange's
+// insurance/counterparty fund.
+//
+// HyperLiquid-style design notes:
+//   - Positions are isolated-margin: each position is a separate VTXO.
+//   - The exchange acts as counterparty for all positions (like HL's clearinghouse).
+//   - Funding is continuously accrued and periodically settled by the exchange.
+//   - Liquidation is permissionless: anyone can trigger it when margin < maintenance.
+//
+// Position PnL math (all values in BTC sats, prices in USD cents × 1e8):
+//   For a long:
+//     unrealizedPnL = positionUSD × (markPrice - entryPrice) × 1e8 / (entryPrice × markPrice)
+//                   = positionUSD × (1/entryPrice - 1/markPrice) × 1e8
+//   Simplified at settlement:
+//     traderSats = positionUSD × 1e8 / markPrice     (what the USD position is worth at mark)
+//     pnl        = traderSats - initialMarginSats     (gain/loss vs entry)
+//
+//   For a short:
+//     traderSats = positionUSD × 1e8 / entryPrice    (USD locked at entry)
+//                - positionUSD × 1e8 / markPrice    (USD cost to buy back)
+//   Simplified:
+//     traderSats = initialMarginSats + (entryPrice - markPrice) × positionUSD × 1e8
+//                  / (entryPrice × markPrice)
+//
+// To avoid large intermediate values we collapse to:
+//   Long:  traderPayout = positionUSD × 1e8 / markPrice
+//   Short: traderPayout = 2 × initialMarginSats - positionUSD × 1e8 / markPrice
+//   Both clamped to [0, totalCollateral].
+//
+// Funding model (mirrors StabilityVault):
+//   elapsed           = tx.offchainTime - lastFundingUpdate
+//   fundingDelta      = positionUSD × fundingRatePerSec × elapsed / 1e12
+//   If long: trader owes fundingDelta (deducted from traderMargin conceptually).
+//   If short: trader receives fundingDelta.
+//   The exchange settles funding periodically by calling fundingSettle(),
+//   which updates entryPrice to reflect accrued funding and sets a new rate.
+//   This keeps the position VTXO value unchanged while shifting the break-even.
+//
+// Oracle model (same as StabilityVault / StabilityOffer):
+//   oracleMsg = sha256(ticker || oraclePrice || oracleTime)
+//   Freshness: tx.offchainTime - oracleTime <= 600 seconds.
+//
+// Maintenance margin:
+//   maintenanceMargin = positionUSD × 1e8 / entryPrice × maintenanceMarginBps / 10000
+//   Liquidation is allowed when: traderMarginSats < maintenanceMargin
+//   where traderMarginSats is the trader's share of totalCollateral at current mark.
+//
+// Construction:
+//   initialMarginSats = positionUSD × 1e8 / entryPrice / leverage
+//   totalCollateral   = initialMarginSats + exchangeMarginSats
+//   exchangeMarginSats covers the exchange's max loss (counterparty insurance).
+
+import "single_sig.ark";
+
+options {
+  server = server;
+  exit = exit;
+}
+
+contract PerpPosition(
+  pubkey  traderPk,              // position holder
+  pubkey  exchangePk,            // exchange/clearinghouse key
+  pubkey  oraclePk,              // price oracle
+  bytes32 ticker,                // market identifier, e.g. sha256("BTC-PERP")
+  int     isLong,                // 1 = long, 0 = short
+  int     positionUSD,           // notional in USD cents (e.g. 100000 = $1000.00)
+  int     entryPrice,            // oracle price at open, USD cents per BTC
+  int     initialMarginSats,     // trader's margin at open (sats)
+  int     totalCollateral,       // total sats locked in this VTXO
+  int     leverage,              // e.g. 10 for 10x
+  int     maintenanceMarginBps,  // e.g. 50 = 0.5% of notional
+  int     fundingRatePerSec,     // signed fixed-point at scale 1e12; positive = longs pay shorts
+  int     lastFundingUpdate,     // unix seconds; basis for funding accrual
+  int     liquidationFeeBps,     // liquidator reward, e.g. 25 = 0.25% of notional
+  int     exit                   // exit timelock in blocks
+) {
+
+  // -------------------------------------------------------------------------
+  // CLOSE — Trader exits at the oracle-attested mark price.
+  //
+  // PnL is settled between trader and exchange:
+  //   Long:  traderPayout = positionUSD × 1e8 / markPrice
+  //   Short: traderPayout = 2 × initialMarginSats - positionUSD × 1e8 / markPrice
+  //   Both clamped to [0, totalCollateral].
+  //   exchangePayout = totalCollateral - traderPayout  (remainder)
+  //
+  // Accrued funding is folded into the payout calculation via entryPrice
+  // adjustment; if the exchange has settled funding recently the error is small.
+  //
+  // Transaction layout:
+  //   input[0]:  this PerpPosition VTXO
+  //   output[0]: trader receives their payout     (if > 330 sats, else dust)
+  //   output[1]: exchange receives remainder       (if > 330 sats, else dust)
+  // -------------------------------------------------------------------------
+  function close(
+    signature traderSig,
+    int       markPrice,
+    int       oracleTime,
+    signature oracleSig
+  ) {
+    require(checkSig(traderSig, traderPk), "invalid trader sig");
+    require(markPrice > 0, "invalid mark price");
+
+    int oracleAge = tx.offchainTime - oracleTime;
+    require(oracleAge >= 0, "future-dated oracle");
+    require(oracleAge <= 600, "stale oracle");
+
+    let oracleMsg = sha256(ticker + markPrice + oracleTime);
+    require(checkSigFromStack(oracleSig, oraclePk, oracleMsg), "invalid oracle sig");
+
+    // Compute trader payout based on direction.
+    // positionUSD is in USD cents; prices are USD cents per BTC.
+    // positionUSD × 1e8 / markPrice gives sats worth of position at mark.
+    int markValueSats = positionUSD * 100000000 / markPrice;
+
+    int traderPayout;
+    if (isLong == 1) {
+      // Long: gains when price rises. Worth markValueSats at close.
+      traderPayout = markValueSats;
+    } else {
+      // Short: gains when price falls.
+      // At entry, position was worth initialMarginSats in the long direction.
+      // Profit = initialMarginSats - markValueSats, so payout = 2×initial - markValue.
+      traderPayout = 2 * initialMarginSats - markValueSats;
+    }
+
+    // Clamp to [0, totalCollateral]
+    if (traderPayout < 0) {
+      traderPayout = 0;
+    }
+    if (traderPayout > totalCollateral) {
+      traderPayout = totalCollateral;
+    }
+
+    int exchangePayout = totalCollateral - traderPayout;
+
+    // Pay trader
+    if (traderPayout > 330) {
+      require(
+        tx.outputs[0].scriptPubKey == new SingleSig(traderPk),
+        "output 0 not trader"
+      );
+      require(tx.outputs[0].value >= traderPayout, "trader underpaid");
+    }
+
+    // Pay exchange remainder
+    if (exchangePayout > 330) {
+      require(
+        tx.outputs[1].scriptPubKey == new SingleSig(exchangePk),
+        "output 1 not exchange"
+      );
+      require(tx.outputs[1].value >= exchangePayout, "exchange underpaid");
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // LIQUIDATE — Anyone can liquidate the position when the trader's margin
+  // falls below the maintenance threshold at the current mark price.
+  //
+  // Maintenance margin check:
+  //   markValueSats       = positionUSD × 1e8 / markPrice
+  //   maintenanceSats     = markValueSats × maintenanceMarginBps / 10000
+  //   Long:  traderMargin = markValueSats - initialMarginSats  (pnl + initial)
+  //          effective trader equity = markValueSats (claim on collateral)
+  //          → undercollateralized when markValueSats < maintenanceSats
+  //   Short: traderMargin = 2×initialMarginSats - markValueSats
+  //          → undercollateralized when (2×initial - markValue) < maintenanceSats
+  //
+  // Liquidation payout:
+  //   liquidationFee      = markValueSats × liquidationFeeBps / 10000
+  //   traderResidue       = clamp(traderPayout - liquidationFee, 0, totalCollateral)
+  //   exchangePayout      = totalCollateral - traderResidue - liquidationFee
+  //
+  // Transaction layout:
+  //   input[0]:  this PerpPosition VTXO
+  //   output[0]: liquidator receives liquidation fee
+  //   output[1]: exchange receives remainder (bad debt absorbed here)
+  //   output[2]: trader residual (only if > 330 sats after fee deduction)
+  // -------------------------------------------------------------------------
+  function liquidate(
+    pubkey    liquidatorPk,
+    int       markPrice,
+    int       oracleTime,
+    signature oracleSig
+  ) {
+    require(markPrice > 0, "invalid mark price");
+
+    int oracleAge = tx.offchainTime - oracleTime;
+    require(oracleAge >= 0, "future-dated oracle");
+    require(oracleAge <= 600, "stale oracle");
+
+    let oracleMsg = sha256(ticker + markPrice + oracleTime);
+    require(checkSigFromStack(oracleSig, oraclePk, oracleMsg), "invalid oracle sig");
+
+    int markValueSats     = positionUSD * 100000000 / markPrice;
+    int maintenanceSats   = markValueSats * maintenanceMarginBps / 10000;
+
+    // Verify position is actually liquidatable
+    if (isLong == 1) {
+      // Long is liquidatable when mark value < maintenance margin
+      require(markValueSats < maintenanceSats, "long not liquidatable");
+    } else {
+      // Short is liquidatable when short payout < maintenance margin
+      int shortPayout = 2 * initialMarginSats - markValueSats;
+      require(shortPayout < maintenanceSats, "short not liquidatable");
+    }
+
+    // Compute trader's gross payout before fee
+    int grossTraderPayout;
+    if (isLong == 1) {
+      grossTraderPayout = markValueSats;
+    } else {
+      grossTraderPayout = 2 * initialMarginSats - markValueSats;
+    }
+    if (grossTraderPayout < 0) {
+      grossTraderPayout = 0;
+    }
+    if (grossTraderPayout > totalCollateral) {
+      grossTraderPayout = totalCollateral;
+    }
+
+    // Liquidation fee taken from notional (not from trader's payout share only)
+    int liquidationFee = markValueSats * liquidationFeeBps / 10000;
+
+    // Trader residual after fee deduction (may be zero in bad-debt scenarios)
+    int traderResidue = grossTraderPayout - liquidationFee;
+    if (traderResidue < 0) {
+      traderResidue = 0;
+    }
+
+    int exchangePayout = totalCollateral - traderResidue - liquidationFee;
+    if (exchangePayout < 0) {
+      exchangePayout = 0;
+    }
+
+    // Liquidator receives fee
+    require(
+      tx.outputs[0].scriptPubKey == new SingleSig(liquidatorPk),
+      "output 0 not liquidator"
+    );
+    require(tx.outputs[0].value >= liquidationFee, "liquidator underpaid");
+
+    // Exchange receives remainder
+    if (exchangePayout > 330) {
+      require(
+        tx.outputs[1].scriptPubKey == new SingleSig(exchangePk),
+        "output 1 not exchange"
+      );
+      require(tx.outputs[1].value >= exchangePayout, "exchange underpaid");
+    }
+
+    // Trader residual (dust threshold: return only if worth it)
+    if (traderResidue > 330) {
+      require(
+        tx.outputs[2].scriptPubKey == new SingleSig(traderPk),
+        "output 2 not trader"
+      );
+      require(tx.outputs[2].value >= traderResidue, "trader residual underpaid");
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // ADD MARGIN — Trader tops up collateral to improve margin ratio.
+  //
+  // No oracle required: adding margin always improves the position.
+  // The position VTXO is recreated with increased totalCollateral and
+  // initialMarginSats (reflecting the additional deposit).
+  //
+  // Transaction layout:
+  //   input[0]:  this PerpPosition VTXO
+  //   input[1]:  trader's additional margin (amount sats BTC)
+  //   output[0]: new PerpPosition with updated collateral
+  // -------------------------------------------------------------------------
+  function addMargin(signature traderSig, int amount) {
+    require(checkSig(traderSig, traderPk), "invalid trader sig");
+    require(amount > 0, "zero amount");
+
+    int newTotalCollateral    = totalCollateral + amount;
+    int newInitialMarginSats  = initialMarginSats + amount;
+
+    require(
+      tx.outputs[0].scriptPubKey == new PerpPosition(
+        traderPk, exchangePk, oraclePk, ticker,
+        isLong, positionUSD, entryPrice,
+        newInitialMarginSats, newTotalCollateral,
+        leverage, maintenanceMarginBps,
+        fundingRatePerSec, lastFundingUpdate,
+        liquidationFeeBps, exit
+      ),
+      "invalid position output"
+    );
+    require(tx.outputs[0].value >= newTotalCollateral, "collateral not deposited");
+  }
+
+  // -------------------------------------------------------------------------
+  // TRANSFER POSITION — Trader assigns the position to a new holder.
+  //
+  // All position parameters are preserved; only traderPk changes.
+  // Useful for OTC transfers or portfolio management.
+  //
+  // Transaction layout:
+  //   input[0]:  this PerpPosition VTXO
+  //   output[0]: new PerpPosition with newTraderPk
+  // -------------------------------------------------------------------------
+  function transferPosition(signature traderSig, pubkey newTraderPk) {
+    require(checkSig(traderSig, traderPk), "invalid trader sig");
+
+    require(
+      tx.outputs[0].scriptPubKey == new PerpPosition(
+        newTraderPk, exchangePk, oraclePk, ticker,
+        isLong, positionUSD, entryPrice,
+        initialMarginSats, totalCollateral,
+        leverage, maintenanceMarginBps,
+        fundingRatePerSec, lastFundingUpdate,
+        liquidationFeeBps, exit
+      ),
+      "invalid transfer output"
+    );
+    require(tx.outputs[0].value >= totalCollateral, "collateral not preserved");
+  }
+
+  // -------------------------------------------------------------------------
+  // FUNDING SETTLE — Exchange periodically rolls accrued funding into entryPrice.
+  //
+  // Funding model:
+  //   elapsed          = tx.offchainTime - lastFundingUpdate
+  //   fundingDelta     = positionUSD × fundingRatePerSec × elapsed / 1e12
+  //   Long traders pay shorts when fundingRatePerSec > 0.
+  //   This is reflected by adjusting entryPrice so that the trader's P&L
+  //   at the same mark price is reduced by the funding payment:
+  //
+  //   For long (fundingRate > 0, trader pays):
+  //     fundingPaidSats  = positionUSD × fundingRatePerSec × elapsed / 1e12
+  //     Equivalent entry adjustment: newEntryPrice = entryPrice × positionUSD
+  //                                   / (positionUSD - fundingPaidSats × entryPrice / 1e8)
+  //   In practice we store entryPrice as-is and apply funding at settlement
+  //   by adjusting initialMarginSats directly:
+  //     newInitialMarginSats = initialMarginSats - fundingPaidSats  (long pays)
+  //     newInitialMarginSats = initialMarginSats + fundingPaidSats  (short receives)
+  //
+  // The exchange can also update the funding rate for the next period.
+  // newFundingRatePerSec sign convention:
+  //   positive → longs pay shorts (bullish market, shorts in demand)
+  //   negative → shorts pay longs (bearish market, longs in demand)
+  //
+  // Transaction layout:
+  //   input[0]:  this PerpPosition VTXO
+  //   output[0]: updated PerpPosition with new initialMarginSats and fundingRate
+  // -------------------------------------------------------------------------
+  function fundingSettle(signature exchangeSig, int newFundingRatePerSec) {
+    require(checkSig(exchangeSig, exchangePk), "invalid exchange sig");
+
+    int elapsed = tx.offchainTime - lastFundingUpdate;
+    require(elapsed >= 0, "clock regression");
+
+    // fundingDelta in sats = positionUSD × fundingRatePerSec × elapsed / 1e12
+    // Scale: positionUSD (cents) × 1e8 / price = sats, so
+    // fundingDeltaSats = positionUSD × fundingRatePerSec × elapsed / 1e12
+    // where positionUSD is in cents and fundingRatePerSec is at 1e12 scale.
+    int fundingDeltaSats = positionUSD * fundingRatePerSec / 1000000 * elapsed / 1000000;
+
+    int newInitialMarginSats;
+    if (isLong == 1) {
+      // Long pays when fundingRatePerSec > 0
+      newInitialMarginSats = initialMarginSats - fundingDeltaSats;
+    } else {
+      // Short receives when fundingRatePerSec > 0
+      newInitialMarginSats = initialMarginSats + fundingDeltaSats;
+    }
+
+    // Guard: funding must not wipe out trader margin entirely (liquidate instead)
+    require(newInitialMarginSats > 0, "funding wiped margin; liquidate instead");
+
+    require(
+      tx.outputs[0].scriptPubKey == new PerpPosition(
+        traderPk, exchangePk, oraclePk, ticker,
+        isLong, positionUSD, entryPrice,
+        newInitialMarginSats, totalCollateral,
+        leverage, maintenanceMarginBps,
+        newFundingRatePerSec, tx.offchainTime,
+        liquidationFeeBps, exit
+      ),
+      "invalid funding settle output"
+    );
+    require(tx.outputs[0].value >= totalCollateral, "collateral not preserved");
+  }
+
+  // -------------------------------------------------------------------------
+  // FORCE CLOSE — Exchange can force-close any position at oracle price.
+  //
+  // Used for risk management: close underwater positions before they become
+  // bad debt, or wind down a market. Settlement math is identical to close().
+  //
+  // Transaction layout: same as close().
+  // -------------------------------------------------------------------------
+  function forceClose(
+    signature exchangeSig,
+    int       markPrice,
+    int       oracleTime,
+    signature oracleSig
+  ) {
+    require(checkSig(exchangeSig, exchangePk), "invalid exchange sig");
+    require(markPrice > 0, "invalid mark price");
+
+    int oracleAge = tx.offchainTime - oracleTime;
+    require(oracleAge >= 0, "future-dated oracle");
+    require(oracleAge <= 600, "stale oracle");
+
+    let oracleMsg = sha256(ticker + markPrice + oracleTime);
+    require(checkSigFromStack(oracleSig, oraclePk, oracleMsg), "invalid oracle sig");
+
+    int markValueSats = positionUSD * 100000000 / markPrice;
+
+    int traderPayout;
+    if (isLong == 1) {
+      traderPayout = markValueSats;
+    } else {
+      traderPayout = 2 * initialMarginSats - markValueSats;
+    }
+
+    if (traderPayout < 0) {
+      traderPayout = 0;
+    }
+    if (traderPayout > totalCollateral) {
+      traderPayout = totalCollateral;
+    }
+
+    int exchangePayout = totalCollateral - traderPayout;
+
+    if (traderPayout > 330) {
+      require(
+        tx.outputs[0].scriptPubKey == new SingleSig(traderPk),
+        "output 0 not trader"
+      );
+      require(tx.outputs[0].value >= traderPayout, "trader underpaid");
+    }
+
+    if (exchangePayout > 330) {
+      require(
+        tx.outputs[1].scriptPubKey == new SingleSig(exchangePk),
+        "output 1 not exchange"
+      );
+      require(tx.outputs[1].value >= exchangePayout, "exchange underpaid");
+    }
+  }
+}
