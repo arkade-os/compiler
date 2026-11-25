@@ -687,7 +687,7 @@ fn check_reports_unknown_tx_and_this_members_at_their_path() {
         ("tx.outputs[0].assets.frob(1, 2)", "unknown member 'frob' of 'tx.outputs[0].assets'; expected one of has, length, lookup, tryLookup"),
         ("tx.inputs[0].packet.foo", "unknown member 'foo' of 'tx.inputs[0].packet'; expected one of has"),
         ("tx.assetGroups.foo", "unknown member 'foo' of 'tx.assetGroups'; expected one of "),
-        ("tx.intent.foo", "unknown member 'foo' of 'tx.intent'; expected one of field, has"),
+        ("tx.proof.foo", "unknown member 'foo' of 'tx.proof'; expected one of field, has"),
         ("tx.input.foo", "unknown member 'foo' of 'tx.input'; expected one of current"),
         ("tx.outputs[0].assets", "'tx.outputs[0].assets' is not a value on its own"),
         ("foo.bar", "binding 'foo' is undefined"),

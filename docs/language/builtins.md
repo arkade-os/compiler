@@ -221,21 +221,25 @@ Byte builtins (`substr`, `cat`, `bytes2int`, `bytes2uint`, `reverseBytes`, `size
 
 Both forms still fail the spend for a type outside `0..255`, an input index out of range, or a packet over 520 bytes.
 
-## Intent messages
+## Proof messages
 
-- `tx.intent.field("type")` returns the encoded field bytes and fails the spend when it is absent.
-- `tx.intent.has("type")` returns presence without keeping the value.
+While the operator checks a proof, such as one that registers for a batch, an Arkade Script function can read the fields of the message the proof signs:
+
+- `tx.proof.field("type")` returns the encoded field bytes and fails the spend when it is absent.
+- `tx.proof.has("type")` returns presence without keeping the value.
+
+`tx.intent.field` and `tx.intent.has` are deprecated aliases, and 0.2 removes them.
 
 **Paths** use dot-separated lowercase keys or canonical decimal indexes, such as `"cosigners.0"`. Queries, wildcards, leading-zero indexes, and indexes at or above 1048576 are invalid:
 
 - for a quoted literal path, they are rejected at compile time;
-- for a path from any other `bytes` expression, such as a witness `path`, `field` and `has` fail the spend inside an intent proof.
+- for a path from any other `bytes` expression, such as a witness `path`, `field` and `has` fail the spend inside a proof.
 
 **Values.**
 
 - Present false, zero, and empty strings still count as present.
-- Integer fields use Script-number encoding: `bytes2int(tx.intent.field("expire_at"))`.
-- Require `tx.intent.field("type") == "register"` before relying on register-specific fields.
+- Integer fields use Script-number encoding: `bytes2int(tx.proof.field("expire_at"))`.
+- Require `tx.proof.field("type") == "register"` before relying on register-specific fields.
 - Missing context, null, missing fields, and non-integer numbers are misses: `field` fails the spend on a miss and `has` returns false.
 - Both use the emulator's result-size and compute limits.
 

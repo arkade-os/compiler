@@ -8,18 +8,18 @@ import (
 	"github.com/arkade-os/emulator/pkg/arkade"
 )
 
-func TestRuntimeIntentPaths(t *testing.T) {
-	source := filepath.Join(t.TempDir(), "intent.ark")
+func TestRuntimeProofPaths(t *testing.T) {
+	source := filepath.Join(t.TempDir(), "proof.ark")
 	err := os.WriteFile(source, []byte(`
-contract IntentPath() {
+contract ProofPath() {
     function spend(bytes path, bytes expected, int present) {
-        require(tx.intent.has(path) == (present == 1));
+        require(tx.proof.has(path) == (present == 1));
         if (present == 1) {
-            require(tx.intent.field(path) == expected);
+            require(tx.proof.field(path) == expected);
         }
     }
     function read(bytes path, bytes expected) {
-        require(tx.intent.field(path) == expected);
+        require(tx.proof.field(path) == expected);
     }
 }`), 0600)
 	if err != nil {

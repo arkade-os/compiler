@@ -47,10 +47,11 @@ pub(crate) fn parse_tx_chain(
     let start = tx.span.start;
     let (kind, end, rest) = match suffixes {
         [] | [Index(..), ..] => return apply_suffixes(tx, false, suffixes),
-        [Field("intent", _), Call(member @ ("field" | "has"), args, end), rest @ ..]
+        // ponytail: `tx.intent` is the deprecated spelling of `tx.proof`; remove it in 0.2.
+        [Field("proof" | "intent", _), Call(member @ ("field" | "has"), args, end), rest @ ..]
             if args.len() == 1 =>
         {
-            let path = Box::new(parse_intent_path(&args[0])?);
+            let path = Box::new(parse_proof_path(&args[0])?);
             let presence_only = *member == "has";
             (
                 ExprKind::IntentInspect {
@@ -303,16 +304,16 @@ fn operand(pair: &Pair<Rule>) -> Result<Box<Expression>, String> {
     parse_general_expression(pair.clone()).map(Box::new)
 }
 
-/// An intent path operand; a lone string literal is checked at compile time, any other bytes
-/// expression by the VM.
-fn parse_intent_path(operand: &Pair<Rule>) -> Result<Expression, String> {
+/// A proof message path operand; a lone string literal is checked at compile time, any other
+/// bytes expression by the VM.
+fn parse_proof_path(operand: &Pair<Rule>) -> Result<Expression, String> {
     let literal = lone(operand);
     if literal.as_rule() != Rule::string_literal {
         return parse_general_expression(operand.clone());
     }
     let text = parse_string_literal(literal.as_str())?;
-    if !is_intent_path(&text) {
-        return Err(format!("invalid intent message path '{text}'"));
+    if !is_proof_path(&text) {
+        return Err(format!("invalid proof message path '{text}'"));
     }
     let span = literal.as_span().into();
     Ok(Expression::new(
@@ -322,7 +323,7 @@ fn parse_intent_path(operand: &Pair<Rule>) -> Result<Expression, String> {
 }
 
 /// The VM's simple path syntax: dot-separated lowercase keys and array indexes.
-fn is_intent_path(path: &str) -> bool {
+fn is_proof_path(path: &str) -> bool {
     path.len() <= 520
         && path
             .split('.')

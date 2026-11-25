@@ -77,13 +77,13 @@ func TestOpcodeExecutionContext(t *testing.T) {
 		{name: "past clock", function: "clock", inputs: map[string][]byte{"deadline": scriptInt(t, 0)}},
 		{name: "future clock", function: "clock", inputs: map[string][]byte{"deadline": scriptInt(t, 9223372036854775807)}, wantErr: "OP_VERIFY failed"},
 		{name: "negative clock", function: "clock", inputs: map[string][]byte{"deadline": scriptInt(t, -1)}, wantErr: "negative timestamp"},
-		{name: "intent fields including false zero and empty", function: "intent", options: []arkade.ExecuteOption{message}},
-		{name: "missing intent", function: "intent", wantErr: "OP_VERIFY failed"},
-		{name: "missing field", function: "intent", options: []arkade.ExecuteOption{arkade.WithIntentMessage(`{"type":"register"}`)}, wantErr: "OP_VERIFY failed"},
-		{name: "fractional field", function: "intent", options: []arkade.ExecuteOption{arkade.WithIntentMessage(`{"type":"register","expire_at":0.5}`)}, wantErr: "OP_VERIFY failed"},
-		{name: "null field", function: "intent", options: []arkade.ExecuteOption{arkade.WithIntentMessage(`{"type":"register","expire_at":null}`)}, wantErr: "OP_VERIFY failed"},
-		{name: "has without context", function: "noIntent"},
-		{name: "has with context", function: "noIntent", options: []arkade.ExecuteOption{message}, wantErr: "false stack entry"},
+		{name: "proof fields including false zero and empty", function: "proof", options: []arkade.ExecuteOption{message}},
+		{name: "missing proof", function: "proof", wantErr: "OP_VERIFY failed"},
+		{name: "missing field", function: "proof", options: []arkade.ExecuteOption{arkade.WithIntentMessage(`{"type":"register"}`)}, wantErr: "OP_VERIFY failed"},
+		{name: "fractional field", function: "proof", options: []arkade.ExecuteOption{arkade.WithIntentMessage(`{"type":"register","expire_at":0.5}`)}, wantErr: "OP_VERIFY failed"},
+		{name: "null field", function: "proof", options: []arkade.ExecuteOption{arkade.WithIntentMessage(`{"type":"register","expire_at":null}`)}, wantErr: "OP_VERIFY failed"},
+		{name: "has without context", function: "noProof"},
+		{name: "has with context", function: "noProof", options: []arkade.ExecuteOption{message}, wantErr: "false stack entry"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			group := arkadeScriptGroup(t, contract, test.function)

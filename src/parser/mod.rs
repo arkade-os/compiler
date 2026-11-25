@@ -2072,7 +2072,7 @@ contract Demo(pubkey first, pubkey second) {{
                 let h = sha256(cat(id, id,),);
                 let v = int(0x01,);
                 let l = tx.inputs[0].assets.lookup(AssetId { txid: id, gidx: 0, },);
-                let f = tx.intent.field("type",);
+                let f = tx.proof.field("type",);
                 let t = this.tunnel(0, { script: true, value: true, assets: true, }, [id,],);
                 require(checkMultisig([k, k,], [s, s,], 2,), "m",);
                 require(n > 0,);
@@ -2087,9 +2087,9 @@ contract Demo(pubkey first, pubkey second) {{
         assert_eq!(contract.parameters.len(), 2);
         assert_eq!(contract.functions[0].parameters.len(), 3);
         assert_eq!(contract.functions[0].statements.len(), 10);
-        // A lone quoted intent path is still checked at compile time.
-        let error = parse(r#"contract C() { function spend() { let f = tx.intent.field("Bad Path",); require(f == f); } }"#).unwrap_err();
-        assert!(error.contains("invalid intent message path"), "{error}");
+        // A lone quoted proof path is still checked at compile time.
+        let error = parse(r#"contract C() { function spend() { let f = tx.proof.field("Bad Path",); require(f == f); } }"#).unwrap_err();
+        assert!(error.contains("invalid proof message path"), "{error}");
         for list in [
             "f(,)",
             "f(n,,)",

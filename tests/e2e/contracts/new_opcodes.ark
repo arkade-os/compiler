@@ -15,19 +15,19 @@ contract Continuation() {
         require(!checkTime(9223372036854775807));
     }
 
-    function intent() {
-        require(tx.intent.field("type") == "register");
-        require(bytes2int(tx.intent.field("expire_at")) == 0);
-        require(tx.intent.has("enabled"));
-        require(tx.intent.field("enabled") == "");
-        require(tx.intent.has("empty"));
-        require(tx.intent.field("empty") == "");
-        require(!tx.intent.has("missing"));
-        require(bytes2int(tx.intent.field("items.0")) == 7);
+    function proof() {
+        require(tx.proof.field("type") == "register");
+        require(bytes2int(tx.proof.field("expire_at")) == 0);
+        require(tx.proof.has("enabled"));
+        require(tx.proof.field("enabled") == "");
+        require(tx.proof.has("empty"));
+        require(tx.proof.field("empty") == "");
+        require(!tx.proof.has("missing"));
+        require(bytes2int(tx.proof.field("items.0")) == 7);
     }
 
-    function noIntent() {
-        require(!tx.intent.has("type"));
+    function noProof() {
+        require(!tx.proof.has("type"));
     }
 
     function all(int outputIndex) {

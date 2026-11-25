@@ -505,12 +505,13 @@ const SPELLED: &[Spelled] = &[
          spend when the transaction has no asset packet.",
     ),
     Spelled {
-        name: "tx.intent",
+        name: "tx.proof",
         params: None,
         ty: None,
         index: None,
         tapscript: false,
-        doc: "Fields of the intent message, set only while the emulator checks an intent proof.",
+        doc: "Fields of the message a proof signs, set only while the operator checks a proof, \
+              such as one that registers for a batch.",
     },
     method(
         "tx.packet",
@@ -527,20 +528,20 @@ const SPELLED: &[Spelled] = &[
          0 to 255 or a packet over 520 bytes fails the spend.",
     ),
     method(
-        "tx.intent.field",
+        "tx.proof.field",
         &["bytes path"],
         "bytes",
-        "The intent field at a dot-separated path of lowercase keys and indexes such as \
+        "The proof message field at a dot-separated path of lowercase keys and indexes such as \
          \"cosigners.0\": a string's bytes, an integer as a Script number, true as 0x01, false as \
-         empty, an object or array as JSON. Fails the spend outside an intent proof, and inside \
+         empty, an object or array as JSON. Fails the spend outside a proof, and inside \
          one when the path is malformed or the field is missing, null, fractional or over 520 \
          bytes.",
     ),
     method(
-        "tx.intent.has",
+        "tx.proof.has",
         &["bytes path"],
         "bool",
-        "Whether tx.intent.field(path) has a value; false outside an intent proof. Inside one, a \
+        "Whether tx.proof.field(path) has a value; false outside a proof. Inside one, a \
          malformed path or a value over 520 bytes fails the spend.",
     ),
     property(

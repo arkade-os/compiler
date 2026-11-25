@@ -611,7 +611,8 @@ pub enum ExprKind {
     /// A value the Arkade Script generator takes out of an expression to emit itself.
     #[doc(hidden)]
     Extracted(usize),
-    /// Query a hex-encoded UTF-8 intent path; presence-only queries return bool.
+    /// `tx.proof.field(path)` or `tx.proof.has(path)`, at a hex-encoded UTF-8 proof message path;
+    /// presence-only queries return bool.
     IntentInspect {
         path: Box<Expression>,
         presence_only: bool,
