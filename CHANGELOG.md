@@ -2,7 +2,7 @@
 
 All notable changes to the Arkade Compiler are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html). `arkade-compiler` and `@arkade-os/compiler` share one version.
 
-## [0.1.1] - Unreleased
+## [0.1.1] - 2026-11-25
 
 - `tx.intent.field(path)` and `tx.intent.has(path)` are now `tx.proof.field(path)` and `tx.proof.has(path)`, since "intent" names Arkade Intents. `tx.intent` remains a deprecated alias that compiles to the same script, and 0.2 removes it.
 - Diagnostics and docs name the operator instead of arkd or the emulator, an asset group record of type 2 is a proof input, and the npm description says Arkade Language.
