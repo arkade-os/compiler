@@ -28,7 +28,7 @@ Every settlement has the pool at input 0 and one standing order at input 1. Outp
 
 The pool has no tapscript leaf. `swap`, `deposit`, and `withdraw` are emulated spending paths, and each one asks for the operator's signature. If the operator is unavailable, a funded order can still be recovered by its owner, and the pool reserves cannot move.
 
-The pool prices the step and keeps its own output. The order checks the same numbers and pins `payScript`. A swap spends no LP tokens. A deposit mints LP and ledger by the same amount, and both groups must be controlled by the pool's control unit. A withdrawal burns the LP tokens and the same amount of ledger.
+The pool prices the step and keeps its own output. The order checks the same numbers and pins `payScript`. A swap spends no LP tokens. A deposit mints LP and ledger by the same amount. The operator refuses that mint unless the transaction spends the pool's control unit, which the pool keeps. A withdrawal burns the LP tokens and the same amount of ledger.
 
 An empty pool (330 sats and the control unit) accepts the first deposit at the depositor's ratio, one share per sat of BTC. Burning the whole supply returns every sat and every quote unit and leaves that empty pool, which a later deposit can re-open. A partial exit leaves both reserves and the ledger in place, and pays only the side that rounds to at least one. A position that rounds to 0 on both sides stays until a burn that pays at least one unit.
 
