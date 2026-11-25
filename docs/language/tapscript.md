@@ -12,7 +12,7 @@ A tapscript body is `require` statements only, and must follow the closure templ
 
 Hash plus CSV is a recognized shape. Hash plus CLTV is not, so split it into two leaves.
 
-arkd accepts only N-of-N leaves, so a tapscript `checkMultisig([keys], [sigs])` takes no threshold, and each signature must be a declared `signature` input aligned 1:1 with its key.
+The operator accepts only N-of-N leaves, so a tapscript `checkMultisig([keys], [sigs])` takes no threshold, and each signature must be a declared `signature` input aligned 1:1 with its key.
 
 ## Fixed values and witness values
 

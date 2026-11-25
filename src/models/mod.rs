@@ -145,7 +145,7 @@ pub fn builtin_struct_fields(
         "ScriptPubKey" => Some(&[("program", "bytes"), ("version", "int")]),
         "AssetEntry" => Some(&[("assetId", "AssetId"), ("amount", "int")]),
         "AssetLookup" => Some(&[("amount", "int"), ("found", "bool")]),
-        // Asset group records without the txid, which only an intent input has.
+        // Asset group records without the txid, which only a proof input has.
         "AssetGroupInput" | "AssetGroupOutput" => {
             Some(&[("type", "int"), ("index", "int"), ("amount", "int")])
         }

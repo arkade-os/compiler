@@ -1,6 +1,6 @@
 # @arkade-os/compiler
 
-Compile Arkade source projects in Node.js and browser applications. The package includes prebuilt WebAssembly, generated bindings, and TypeScript declarations. Consumers do not need Rust or wasm-pack, and compilation requires no wallet, provider, or Arkade network connection.
+Compile Arkade Language contracts in Node.js and browser applications. The package includes prebuilt WebAssembly, generated bindings, and TypeScript declarations. Consumers do not need Rust or wasm-pack, and compilation requires no wallet, provider, or operator connection.
 
 Install and pin the compiler with `npm install --save-exact @arkade-os/compiler`. Release candidates are published under the `next` dist-tag: `npm install --save-exact @arkade-os/compiler@next`. Each GitHub release also carries the package tarball, which installs without the registry (`npm install ./arkade-os-compiler-<version>.tgz`), as does a local build made with `npm pack` in this directory. Keep your application lockfile. Use a development dependency for build-time compilation, or a runtime dependency when your application compiles source at runtime.
 

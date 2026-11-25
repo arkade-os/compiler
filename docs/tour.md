@@ -67,9 +67,9 @@ contract HTLC(
 - Here each Arkade Script function is a covenant: it pays at least the input's value to the receiver on `claim` or the sender on `refund`, at the output with the input's own index. The leaf with the same name is the L1 shape for that path.
 - Each leaf signs with `tweak(operator, fn)`, the operator key tweaked by its function's Arkade Script hash, so the operator cosigns only once that Arkade Script passes.
 - `operator` is the reserved key role the Arkade operator signs for, so its signatures, bare or tweaked, are marked `injected` in the artifact.
-- Neither covenant checks a signature, so each allows the `unsigned-spend-path` [lint](lints.md) with a reason: the leaf supplies the preimage or the timeout, and the output is pinned. `new SingleSig(...)` is explained [next](#recursive-vtxos-with-new).
+- Neither covenant checks a signature, so each allows the `unsigned-spend-path` [lint](lints.md) with a reason: the leaf supplies the preimage or the timeout, and the output is pinned. `new SingleSig(...)` is explained [next](#recursive-contracts-with-new).
 
-## Recursive VTXOs with `new`
+## Recursive contracts with `new`
 
 ```solidity
 import "single_sig.ark";
@@ -174,7 +174,7 @@ contract StructVault(Policy policy) {
 
 | Directory | Shows |
 |---|---|
-| [`single_sig`](../examples/single_sig), [`htlc`](../examples/htlc) | Minimum viable VTXO and hash/time locks |
+| [`single_sig`](../examples/single_sig), [`htlc`](../examples/htlc) | Minimum viable contract and hash/time locks |
 | [`escrow`](../examples/escrow) | Oracle release to a committed script, timeout refund, joint CSV exit signed by both parties; `escrow.md` |
 | [`non_interactive_swap`](../examples/non_interactive_swap) | Atomic asset swap with `new SingleSig(...)` payout and locktime-gated cancel |
 | [`constant_product`](../examples/constant_product) | Shared constant-product pool: one standing swap, deposit, or exit per virtual transaction; `constant_product.md` |

@@ -22,11 +22,12 @@ fn arkade_script_opcodes_report_their_context_in_tapscript() {
             "checkSigFromStackVerify(...)",
         ),
         (
-            "tx.intent.field(\"type\") == \"register\"",
-            "tx.intent.field(...)",
+            "tx.proof.field(\"type\") == \"register\"",
+            "tx.proof.field(...)",
         ),
+        ("tx.proof.has(\"type\")", "tx.proof.has(...)"),
+        ("!tx.proof.has(\"type\")", "tx.proof.has(...)"),
         ("tx.intent.has(\"type\")", "tx.intent.has(...)"),
-        ("!tx.intent.has(\"type\")", "tx.intent.has(...)"),
     ] {
         let source =
             format!("contract C() {{ function spend() tapscript {{ require({expression}); }} }}");
@@ -190,19 +191,19 @@ fn expiry_is_an_integer_in_arkade_script_functions_only() {
 }
 
 #[test]
-fn intent_fields_assert_presence_and_has_keeps_the_flag() {
+fn proof_fields_assert_presence_and_has_keeps_the_flag() {
     let output = compile(
         r#"
-        contract Intent() {
-            private function kind() bytes { return tx.intent.field("type"); }
+        contract Proof() {
+            private function kind() bytes { return tx.proof.field("type"); }
             function spend() {
                 require(kind() == "register");
-                int expiry = bytes2int(tx . intent . field("expire_at"));
+                int expiry = bytes2int(tx . proof . field("expire_at"));
                 require(expiry >= 0);
-                bool present = tx.intent.has("cosigners.0");
+                bool present = tx.proof.has("cosigners.0");
                 require(present);
-                require(!tx.intent.has("missing"));
-                require(size(tx.intent.field("items.0")) >= 0);
+                require(!tx.proof.has("missing"));
+                require(size(tx.proof.field("items.0")) >= 0);
             }
         }
     "#,
@@ -229,11 +230,10 @@ fn intent_fields_assert_presence_and_has_keeps_the_flag() {
 }
 
 #[test]
-fn intent_paths_match_the_emulator_restrictions() {
+fn proof_paths_match_the_emulator_restrictions() {
     for path in ["type", "_key.a1", "items.0", "items.1048575", "0"] {
-        let source = format!(
-            "contract C() {{ function spend() {{ require(tx.intent.has(\"{path}\")); }} }}"
-        );
+        let source =
+            format!("contract C() {{ function spend() {{ require(tx.proof.has(\"{path}\")); }} }}");
         compile(&source).unwrap();
     }
     for path in [
@@ -253,26 +253,36 @@ fn intent_paths_match_the_emulator_restrictions() {
         "a.+1",
         "é",
     ] {
-        let source = format!(
-            "contract C() {{ function spend() {{ require(tx.intent.has(\"{path}\")); }} }}"
-        );
+        let source =
+            format!("contract C() {{ function spend() {{ require(tx.proof.has(\"{path}\")); }} }}");
         assert!(compile(&source).is_err(), "{path}");
     }
     let long_path = "a".repeat(521);
     assert!(compile(&format!(
-        "contract C() {{ function spend() {{ require(tx.intent.has(\"{long_path}\")); }} }}"
+        "contract C() {{ function spend() {{ require(tx.proof.has(\"{long_path}\")); }} }}"
     ))
     .is_err());
     let escaped =
-        compile(r#"contract C() { function spend() { require(tx.intent.has("typ\u0065")); } }"#)
+        compile(r#"contract C() { function spend() { require(tx.proof.has("typ\u0065")); } }"#)
             .unwrap();
     assert!(arkade_asm(&escaped, "spend").contains("0x74797065 OP_INSPECTINTENTMESSAGE OP_NIP"));
 }
 
 #[test]
-fn intent_paths_can_be_runtime_bytes() {
+fn deprecated_intent_spelling_compiles_as_proof() {
+    let asm = |owner: &str| {
+        let source = format!(
+            r#"contract C() {{ function spend() {{ require(tx.{owner}.has("type")); require(tx.{owner}.field("type") == "register"); }} }}"#
+        );
+        arkade_asm(&compile(&source).unwrap(), "spend")
+    };
+    assert_eq!(asm("intent"), asm("proof"));
+}
+
+#[test]
+fn proof_paths_can_be_runtime_bytes() {
     let output = compile(
-        "contract C(bytes path) { function spend(bytes key) { require(tx.intent.has(path)); require(tx.intent.field(key) == path); } }",
+        "contract C(bytes path) { function spend(bytes key) { require(tx.proof.has(path)); require(tx.proof.field(key) == path); } }",
     )
     .expect("runtime paths compile");
     let asm = arkade_asm(&output, "spend");
@@ -281,7 +291,7 @@ fn intent_paths_can_be_runtime_bytes() {
     assert!(!asm.contains("0x"), "paths come from the stack: {asm}");
 
     let output = compile(
-        "contract C() { function spend(bytes i) { require(tx.intent.has(\"cosigners.\" + i)); } }",
+        "contract C() { function spend(bytes i) { require(tx.proof.has(\"cosigners.\" + i)); } }",
     )
     .expect("a quoted prefix starts a runtime path");
     let asm = arkade_asm(&output, "spend");
@@ -290,28 +300,28 @@ fn intent_paths_can_be_runtime_bytes() {
         "{asm}"
     );
 
-    let error = compile("contract C() { function spend(int n) { require(tx.intent.has(n)); } }")
+    let error = compile("contract C() { function spend(int n) { require(tx.proof.has(n)); } }")
         .expect_err("a path is bytes")
         .to_string();
     assert!(
-        error.contains("tx.intent operand has type 'int', expected 'bytes'"),
+        error.contains("tx.proof operand has type 'int', expected 'bytes'"),
         "{error}"
     );
 }
 
 #[test]
-fn intent_accessors_validate_arity_types_and_context() {
+fn proof_accessors_validate_arity_types_and_context() {
     for body in [
-        "require(tx.intent.has());",
-        "require(tx.intent.has({ txid: \"type\", gidx: \"other\" }));",
-        "require(tx.intent.has(1));",
-        "int value = tx.intent.field(\"expire_at\");",
-        "bytes value = tx.intent.has(\"type\");",
+        "require(tx.proof.has());",
+        "require(tx.proof.has({ txid: \"type\", gidx: \"other\" }));",
+        "require(tx.proof.has(1));",
+        "int value = tx.proof.field(\"expire_at\");",
+        "bytes value = tx.proof.has(\"type\");",
     ] {
         let source = format!("contract C(bytes path) {{ function spend() {{ {body} }} }}");
         assert!(compile(&source).is_err(), "{source}");
     }
-    for call in ["tx.intent.field(\"type\")", "tx.intent.has(\"type\")"] {
+    for call in ["tx.proof.field(\"type\")", "tx.proof.has(\"type\")"] {
         assert!(compile(&format!(
             "contract C() {{ function spend() tapscript {{ require({call}); }} }}"
         ))

@@ -287,7 +287,7 @@ fn declaration_errors_are_located_at_the_declared_name() {
     for (source, expected_message, context, name) in [
         (
             "contract C(pubkey o) { function f(signature operator) tapscript { require(checkSig(operator, o)); } }",
-            "tapscript 'f' input 'operator' collides with a reserved arkd name",
+            "tapscript 'f' input 'operator' collides with a reserved name",
             "f(signature operator",
             "operator",
         ),
@@ -317,7 +317,7 @@ fn declaration_errors_are_located_at_the_declared_name() {
         ),
         (
             "contract C(pubkey operator) { function f(signature s) { require(checkSig(s, operator)); } }",
-            "constructor parameter 'operator' collides with a reserved arkd name",
+            "constructor parameter 'operator' collides with a reserved name",
             "C(pubkey operator",
             "operator",
         ),

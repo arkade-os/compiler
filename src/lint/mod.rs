@@ -166,7 +166,7 @@ lints! {
     SignerFromWitness: "signer-from-witness", Security, Warn, "a signature key or multisig threshold taken from the witness as given";
     DuplicateMultisigKey: "duplicate-multisig-key", Security, Warn, "a key listed twice in checkMultisig, so one signer counts twice";
     AmbiguousHashConcat: "ambiguous-hash-concat", Security, Warn, "a hash of two concatenated variable-length parameters, which other values can match";
-    OffchainLocktime: "offchain-locktime", Correctness, Deny, "tx.locktime in an Arkade Script function, which arkd sets to 0 offchain";
+    OffchainLocktime: "offchain-locktime", Correctness, Deny, "tx.locktime in an Arkade Script function, which the operator sets to 0 offchain";
     DivideBeforeMultiply: "divide-before-multiply", Correctness, Warn, "(a / b) * c, which truncates before it scales";
     SelfComparison: "self-comparison", Correctness, Warn, "a comparison or logical operator with the same operand on both sides";
     UnusedParameter: "unused-parameter", Correctness, Warn, "a constructor parameter no function reads";

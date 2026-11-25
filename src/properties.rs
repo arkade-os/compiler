@@ -52,9 +52,9 @@ properties!(
         Value => ("value", "int", "Input value in satoshis."),
         WitnessVersion => ("witnessVersion", "int", "Witness version (0-16) of the input's script, past any checkpoint, or -1 for a non-witness script."),
         Sequence => ("sequence", "int", "Input nSequence."),
-        Outpoint => ("outpoint", "Outpoint", "Outpoint the input spends: {txid, vout}, txid in internal byte order. In an Ark transaction it is the checkpoint output, not the VTXO."),
-        ArkadeScriptHash => ("arkadeScriptHash", "bytes32", "ArkScriptHash tagged hash of the input's Arkade script. Fails the spend when the input has none."),
-        ArkadeWitnessHash => ("arkadeWitnessHash", "bytes32", "ArkWitnessHash tagged hash of the input's Arkade witness; 32 zero bytes when it is empty. Fails the spend when the input has no Arkade script."),
+        Outpoint => ("outpoint", "Outpoint", "Outpoint the input spends: {txid, vout}, txid in internal byte order. In an Arkade transaction it is the checkpoint output, not the virtual output."),
+        ArkadeScriptHash => ("arkadeScriptHash", "bytes32", "ArkScriptHash tagged hash of the input's Arkade Script. Fails the spend when the input has none."),
+        ArkadeWitnessHash => ("arkadeWitnessHash", "bytes32", "ArkWitnessHash tagged hash of the input's Arkade witness; 32 zero bytes when it is empty. Fails the spend when the input has no Arkade Script."),
         Script => ("script", "ScriptPubKey", "The input's witness program and version, {program, version}, from one inspection, past any checkpoint. A non-witness script gives its SHA-256 and -1."),
     }
 );
@@ -72,7 +72,7 @@ properties!(
     /// `this.<property>`
     ThisProperty {
         ActiveInputIndex => ("activeInputIndex", "int", "Index of the input being spent."),
-        Expiry => ("expiry", "int", "Unix expiry of the executing VTXO, in seconds. Fails the spend when unavailable."),
+        Expiry => ("expiry", "int", "Unix expiry of the virtual output being spent, in seconds. Fails the spend when unavailable."),
     }
 );
 
@@ -96,9 +96,9 @@ properties!(
     /// `group.inputs[j].<property>`, `group.outputs[j].<property>`
     GroupIoProperty {
         Amount => ("amount", "int", "Record amount."),
-        Type => ("type", "int", "1 for a local input, 2 for an intent input; always 1 for an output."),
-        Index => ("index", "int", "An output's vout, a local input's vin, or the output an intent input references."),
-        Txid => ("txid", "bytes32", "An intent input's source transaction. Fails the spend on a local input."),
+        Type => ("type", "int", "1 for a local input, 2 for a proof input; always 1 for an output."),
+        Index => ("index", "int", "An output's vout, a local input's vin, or the output a proof input references."),
+        Txid => ("txid", "bytes32", "A proof input's source transaction. Fails the spend on a local input."),
     }
 );
 

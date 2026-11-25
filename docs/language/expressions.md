@@ -83,7 +83,7 @@ Each value read fails the spend when the value is absent. Its presence test repo
 | `controlAssetId` | `hasControl` |
 | `tx.packet(type)` | `tx.packet.has(type)` |
 | `tx.inputs[i].packet(type)` | `tx.inputs[i].packet.has(type)` |
-| `tx.intent.field(path)` | `tx.intent.has(path)` |
+| `tx.proof.field(path)` | `tx.proof.has(path)` |
 
 ### Outside the builtins
 

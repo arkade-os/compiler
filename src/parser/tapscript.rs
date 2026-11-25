@@ -141,7 +141,7 @@ fn witness_operands<'a>(expr: &Pair<'a, Rule>) -> Vec<Pair<'a, Rule>> {
 }
 
 /// The Arkade-Script-only member a `primary_expr` starts with: `this.expiry`, `this.tunnel(...)`,
-/// `tx.intent.field(...)` or `tx.intent.has(...)`.
+/// `tx.proof.field(...)` or `tx.proof.has(...)`, or the same under the deprecated `tx.intent`.
 fn arkade_script_member(pair: &Pair<Rule>) -> Option<String> {
     let mut inner = pair.clone().into_inner();
     let mut name = inner
@@ -154,11 +154,13 @@ fn arkade_script_member(pair: &Pair<Rule>) -> Option<String> {
         let member = parts.next().filter(|p| p.as_rule() == Rule::identifier)?;
         name = format!("{name}.{}", member.as_str());
         match (name.as_str(), parts.next().is_some()) {
-            ("tx.intent", false) => continue,
+            ("tx.proof" | "tx.intent", false) => continue,
             ("this.expiry", false) => return Some(name),
-            ("this.tunnel" | "tx.intent.field" | "tx.intent.has", true) => {
-                return Some(format!("{name}(...)"))
-            }
+            (
+                "this.tunnel" | "tx.proof.field" | "tx.proof.has" | "tx.intent.field"
+                | "tx.intent.has",
+                true,
+            ) => return Some(format!("{name}(...)")),
             _ => return None,
         }
     }

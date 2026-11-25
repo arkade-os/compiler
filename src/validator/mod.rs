@@ -121,7 +121,7 @@ fn locate(issues: &mut [ValidationIssue], span: crate::diagnostics::Span) {
 /// - Tapscript names are unique within the contract.
 /// - Constructor parameter names are unique.
 /// - Each function's parameter names are unique within that function.
-/// - Tapscript inputs do not collide with reserved arkd names.
+/// - Tapscript inputs do not collide with reserved names.
 /// - Asset ID operands have the expected txid/gidx types.
 ///
 /// Reads `Expression::ty`, so `types::annotate` must run first; an expression it
@@ -252,7 +252,7 @@ pub(crate) fn validate_ast(contract: &Contract, require_entrypoint: bool) -> Vec
         if crate::models::RESERVED_NAMES.contains(&p.name.as_str()) {
             issues.push(
                 ValidationIssue::error(format!(
-                    "constructor parameter '{}' collides with a reserved arkd name",
+                    "constructor parameter '{}' collides with a reserved name",
                     p.name
                 ))
                 .at(p.span),
@@ -270,7 +270,7 @@ pub(crate) fn validate_ast(contract: &Contract, require_entrypoint: bool) -> Vec
             );
             if crate::models::RESERVED_NAMES.contains(&p.name.as_str()) {
                 issues.push(ValidationIssue::error(format!(
-                    "tapscript '{}' input '{}' collides with a reserved arkd name",
+                    "tapscript '{}' input '{}' collides with a reserved name",
                     ts.name, p.name
                 )));
             }
