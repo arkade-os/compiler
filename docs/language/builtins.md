@@ -70,13 +70,13 @@ The VM fails the spend when `proof` is not a multiple of 32 bytes, `branchTag` i
 
 ### `checkTime`
 
-`checkTime(timestamp)` returns whether the emulator's wall clock has reached a Unix timestamp in seconds, including equality. Use `require(checkTime(unlockAt))` to enforce it.
+`checkTime(timestamp)` returns whether the operator's clock has reached a Unix timestamp in seconds, including equality. Use `require(checkTime(unlockAt))` to enforce it.
 
 - A future timestamp returns false.
 - A negative timestamp fails the spend.
 - The check is independent of transaction locktime and sequence.
 
-`tx.locktime` reads the transaction nLockTime using `OP_INSPECTLOCKTIME` as a plain `int`. It is not a clock, and it is not available in tapscripts. Reading it in an Arkade Script function is an error by default (the `offchain-locktime` [lint](../lints.md)), because arkd rebuilds offchain spends with nLockTime 0.
+`tx.locktime` reads the transaction nLockTime using `OP_INSPECTLOCKTIME` as a plain `int`. It is not a clock, and it is not available in tapscripts. Reading it in an Arkade Script function is an error by default (the `offchain-locktime` [lint](../lints.md)), because the operator rebuilds offchain spends with nLockTime 0.
 
 ### `older` and `after`
 
@@ -95,7 +95,7 @@ Wrap a literal or constant in `blocks(n)` or `seconds(n)` to state its unit:
 
 A parameter, or a literal without a unit, is pushed as the raw BIP68 sequence or nLockTime. The compiler warns on a literal or constant without a unit, and rejects a raw `older(n)` literal or constant that sets any bit besides the 16 value bits and the type flag (bit 22).
 
-arkd rejects block-based timelocks unless the operator allows them, so arkd exit leaves should use `older(operatorExitDelay)`.
+The operator rejects block-based timelocks unless it is configured to allow them, so exit leaves should use `older(operatorExitDelay)`.
 
 ## Transaction
 
@@ -108,7 +108,7 @@ arkd rejects block-based timelocks unless the operator allows them, so arkd exit
 | `tx.weight` | Transaction weight without witness data: 4 × the stripped size |
 | `tx.id` | Transaction id, in internal byte order (the reverse of its hex display) |
 | `this.activeInputIndex` | Index of the input being spent |
-| `this.expiry` | The executing VTXO's Unix expiry timestamp in seconds, through `OP_PUSHEXPIRY`; fails the spend when expiry is unavailable |
+| `this.expiry` | The Unix expiry timestamp in seconds of the virtual output being spent, through `OP_PUSHEXPIRY`; fails the spend when expiry is unavailable |
 
 ## Inputs and outputs
 
@@ -185,9 +185,9 @@ A group's `inputs[j]` and `outputs[j]` records have `amount`, `type` and `index`
 |---|---|---|
 | Output | 1 | Its vout |
 | Local input | 1 | Its vin |
-| Intent input | 2 | The output it references in the intent transaction |
+| Proof input | 2 | The output it references in the proof transaction |
 
-An intent input also has `txid`, the intent transaction.
+A proof input also has `txid`, the proof transaction.
 
 - `txid` fails the spend on a local input, so read it behind a type check when the kind is not fixed, such as `g.inputs[j].type == 1 || g.inputs[j].txid == t`.
 - `txid` does not exist on outputs.
@@ -262,7 +262,7 @@ this.tunnel(outputIndex, {script: true, value: true, assets: true}, [feeAsset])
 - At least one property must be selected.
 - A mismatch fails the spend; success returns true.
 - Tunneling is only available in Arkade Script functions.
-- It does not establish intent type, timing, packet preservation, or a unique input-to-output mapping.
+- It does not check the proof message's type, timing, packet preservation, or a unique input-to-output mapping.
 
 ## Arithmetic and curves
 
@@ -287,7 +287,7 @@ this.tunnel(outputIndex, {script: true, value: true, assets: true}, [feeAsset])
 - Destination parameters use `ScriptPubKey`, for example `ScriptPubKey destination = {program: p, version: 1}; require(tx.outputs[0].script == destination);`.
 - Comparing script structs enforces their versions too.
 
-[Imports](modules.md#instantiating-an-imported-contract) and the [tour](../tour.md#recursive-vtxos-with-new) cover how the child contract is resolved.
+[Imports](modules.md#instantiating-an-imported-contract) and the [tour](../tour.md#recursive-contracts-with-new) cover how the child contract is resolved.
 
 ## Constant operand ranges
 

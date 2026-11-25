@@ -136,7 +136,7 @@ pub(super) fn validate_binding_expression(
             "asset group output records have no txid",
         ));
     }
-    // A record value leaves out the txid, which only an intent input has.
+    // A record value leaves out the txid, which only a proof input has.
     let record = match &expression.kind {
         ExprKind::FieldAccess { value, field } if field == "txid" => Some(value.ty.clone()),
         ExprKind::Name(path) => path

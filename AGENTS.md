@@ -54,7 +54,7 @@ Keep Arkade Script assembly and L1 tapleaf assembly distinct in implementation a
 
 Normalize or ignore the dynamic `updatedAt` field in artifact comparisons.
 
-Use “Arkade” in project terminology. The language is Arkade Language. A `function` without a modifier is an Arkade Script function, and its compiled script is Arkade Script; a `tapscript` function is a tapscript function. Call an Arkade Script function a covenant only when it constrains the spending transaction. A spending path is operator-enforced or Bitcoin-enforced.
+Use “Arkade” in project terminology. The language is Arkade Language. A `function` without a modifier is an Arkade Script function, and its compiled script is Arkade Script; a `tapscript` function is a tapscript function. Call an Arkade Script function a covenant only when it constrains the spending transaction. A spending path is operator-enforced or Bitcoin-enforced. Name the operator, not arkd or the emulator, as the party that enforces, cosigns or keeps the clock; keep `arkd` and the emulator only where a reader types or sees that name. "Intent" means Arkade Intents only: the message a user signs for the operator is a proof, and an asset record of type 2 is a proof input. Say "virtual output" in prose, not VTXO.
 
 ## Generated files
 

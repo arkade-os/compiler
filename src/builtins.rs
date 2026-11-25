@@ -271,7 +271,7 @@ pub(crate) const BUILTINS: &[Builtin] = &[
         &[("timestamp", "int")],
         "bool",
         &[CheckTime],
-        "Whether the emulator's clock has reached timestamp, a Unix time in seconds. Independent \
+        "Whether the operator's clock has reached timestamp, a Unix time in seconds. Independent \
          of the transaction locktime and sequence. A negative timestamp fails the spend.",
     ),
     builtin(

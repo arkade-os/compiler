@@ -243,7 +243,7 @@ contract Reserved(pubkey owner) {
 }"#;
     let error = compile(source).unwrap_err().to_string();
     assert!(
-        error.contains("input 'operatorExitDelay' collides with a reserved arkd name"),
+        error.contains("input 'operatorExitDelay' collides with a reserved name"),
         "got: {error}"
     );
 }

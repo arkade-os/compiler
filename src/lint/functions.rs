@@ -272,7 +272,7 @@ fn report(function: &Function, facts: &Facts, findings: &mut Vec<Finding>) {
             Lint::OffchainLocktime,
             span,
             format!(
-                "function '{name}' reads tx.locktime, which arkd sets to 0 when it rebuilds an \
+                "function '{name}' reads tx.locktime, which the operator sets to 0 when it rebuilds an \
                      offchain spend; use checkTime(t) for time"
             ),
         ));

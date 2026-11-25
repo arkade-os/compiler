@@ -288,7 +288,7 @@ impl Generator {
     }
 
     /// One field of a group input record, or the whole record without its txid as
-    /// `[type, vin, amount]`. The record is `[type, txid, vin, amount]` for an intent
+    /// `[type, vin, amount]`. The record is `[type, txid, vin, amount]` for a proof
     /// input and `[type, vin, amount]` for a local one.
     pub(super) fn emit_group_input(&mut self, record: &Expression) -> Result<()> {
         let ExprKind::GroupIOAccess {
@@ -303,13 +303,13 @@ impl Generator {
         self.emit_expression(group)?;
         self.emit_expression(io_index)?;
         self.push_temporary(Int0);
-        // An intent record is four items, and normalizing sizes its txid with the items above
+        // A proof input record is four items, and normalizing sizes its txid with the items above
         // it dropped or parked on the alt stack: counting both stacks, at most five items for
         // a field and six for the whole record.
         let (items, peak) = if property.is_some() { (1, 5) } else { (3, 6) };
         self.apply(InspectAssetGroup, 3, items)?;
         self.max_depth = self.max_depth.max(self.stack.len() - items + peak);
-        // Only an intent input's txid is 32 bytes; the type below it is 1 or 2. Each
+        // Only a proof input's txid is 32 bytes; the type below it is 1 or 2. Each
         // sequence takes back what it puts on the alt stack and leaves the items the
         // model holds, so the stack model needs no update.
         let size_32 = [Size.into(), Op::Push("32".into())];
