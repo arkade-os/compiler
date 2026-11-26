@@ -700,6 +700,20 @@ fn renew_validates_its_arguments_and_window() {
         );
         compile(&source).unwrap_or_else(|error| panic!("{arguments}: {error}"));
     }
+    // An imported constant is in range or not as the contract's own are.
+    let imported = |window: &str| {
+        let main = format!(
+            "import \"lib.ark\"; contract C() {{ function spend() {{ require(this.renew({window})); }} }}"
+        );
+        let library = "library Lib { const int DAY = 86400; }";
+        project("main.ark", &[("main.ark", &main), ("lib.ark", library)])
+    };
+    imported("Lib.DAY").unwrap();
+    let below = imported("Lib.DAY - Lib.DAY").unwrap_err().to_string();
+    assert!(
+        below.contains("this.renew window must be at least 1, got 0"),
+        "{below}"
+    );
     // The policy and exceptions are the tunnel's, and fail as its own do.
     for (literals, message) in [
         (
