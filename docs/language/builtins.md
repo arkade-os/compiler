@@ -117,6 +117,7 @@ The operator rejects block-based timelocks unless it is configured to allow them
 | `tx.inputs[i]` | `value`, `witnessVersion`, `sequence`, `outpoint`, `arkadeScriptHash`, `arkadeWitnessHash`, `script` |
 | `tx.input.current` (the input being spent) | `value`, `witnessVersion`, `sequence`, `outpoint`, `arkadeScriptHash`, `arkadeWitnessHash`, `script` |
 | `tx.outputs[o]` | `value`, `witnessVersion`, `script` |
+| `tx.proof.output` (the output a [proof](#proof-messages) pairs with the input being spent) | `value`, `witnessVersion`, `script` |
 
 `script` is a `ScriptPubKey {program, version}` holding both values from one inspection.
 
@@ -230,6 +231,8 @@ While the operator checks a proof, such as one that registers for a batch, an Ar
 
 `tx.intent.field` and `tx.intent.has` are deprecated aliases, and 0.2 removes them.
 
+In a proof, input `i` continues at output `i - 1`. `tx.proof.output` is that output for the input being spent, the same as `tx.outputs[this.activeInputIndex - 1]`, and has every member of an output: `value`, `witnessVersion`, `script` and `assets`. It has no `tx.intent` spelling.
+
 **Paths** use dot-separated lowercase keys or canonical decimal indexes, such as `"cosigners.0"`. Queries, wildcards, leading-zero indexes, and indexes at or above 1048576 are invalid:
 
 - for a quoted literal path, they are rejected at compile time;
@@ -263,6 +266,56 @@ this.tunnel(outputIndex, {script: true, value: true, assets: true}, [feeAsset])
 - A mismatch fails the spend; success returns true.
 - Tunneling is only available in Arkade Script functions.
 - It does not check the proof message's type, timing, packet preservation, or a unique input-to-output mapping.
+
+## Renewal
+
+A long-lived contract needs a renewal path: an Arkade Script function without the owner's signature, by which anyone can move its virtual output into a new batch before it expires. `require(this.renew())` makes the checks every such path shares, so this function:
+
+```solidity
+function renew() {
+    require(checkTime(this.expiry - renewalWindow), "too early");
+    require(tx.proof.field("type") == "register", "not a registration");
+    require(tx.proof.field("onchain_output_indexes") == "[]", "onchain output");
+    int out = this.activeInputIndex - 1;
+    require(tx.outputs[out].value + maxFee >= tx.input.current.value, "fee");
+    require(this.tunnel(out, {script: true, value: false, assets: true}), "tunnel");
+}
+```
+
+is written:
+
+```solidity
+function renew() {
+    require(this.renew(renewalWindow, {script: true, value: false, assets: true}), "renew");
+    require(tx.proof.output.value + maxFee >= tx.input.current.value, "fee");
+}
+```
+
+`this.renew(window, policy, exceptions)` takes three optional arguments, in this order:
+
+| Argument | Value | Without it |
+|---|---|---|
+| `window` | An `int`: how many seconds before expiry the path opens | `86400`, one day |
+| `policy` | The [`this.tunnel`](#continuation) policy, with its three compile-time boolean fields | Script, value and assets are all preserved |
+| `exceptions` | The `this.tunnel` list of excepted `AssetId` values, allowed only after a policy | No asset is excepted |
+
+`require(this.renew(window, policy, exceptions), message)` compiles to the same Arkade Script as these four statements, in this order:
+
+```solidity
+require(checkTime(this.expiry - window), message);
+require(tx.proof.field("type") == "register", message);
+require(tx.proof.field("onchain_output_indexes") == "[]", message);
+require(this.tunnel(this.activeInputIndex - 1, policy, exceptions), message);
+```
+
+So the spend fails unless the operator's clock is within `window` seconds of `this.expiry` or past it, the operator is checking a proof that registers for a batch with no onchain output, and `tx.proof.output` continues the input being spent as `this.tunnel` requires.
+
+- `this.renew(...)` is only the whole condition of a `require`. It is not a value, so it cannot be bound, negated, combined with `&&` or `||`, or passed to a function.
+- A constant `window` below 1 is a compile error, since such a path never opens before expiry.
+- The policy and exceptions follow the rules of `this.tunnel`.
+- Renewal is only available in Arkade Script functions and the helpers and library functions they call.
+- It does not bound the fee: a policy that leaves out `value` needs a check of its own, such as the one on `tx.proof.output.value` above.
+- The function checks no signature, so the [`unsigned-spend-path` lint](../lints.md) reports it.
 
 ## Arithmetic and curves
 
@@ -303,6 +356,7 @@ These constant operands are checked at compile time, and a value outside the ran
 | `int2bytes` size | 0 to 520 |
 | `checkTime` timestamp, `modExp` exponent | 0 or more |
 | `modExp` modulus | 1 or more |
+| `this.renew` window | 1 or more |
 | Any `modExp` operand | At most 64 Script-number bytes |
 | `merkleRoot` proof | A multiple of 32 bytes |
 

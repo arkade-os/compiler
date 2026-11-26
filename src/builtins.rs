@@ -545,6 +545,12 @@ const SPELLED: &[Spelled] = &[
          malformed path or a value over 520 bytes fails the spend.",
     ),
     property(
+        "tx.proof.output",
+        "Output",
+        "The output a proof pairs with the input being spent, the same as \
+         tx.outputs[this.activeInputIndex - 1].",
+    ),
+    property(
         "tx.inputs[].assets",
         "AssetEntry[]",
         "Assets held by the input.",
@@ -655,6 +661,18 @@ const SPELLED: &[Spelled] = &[
          the policy selects, apart from the excepted assets; otherwise fails the spend. Only in \
          Arkade Script functions.",
     ),
+    Spelled {
+        name: "this.renew",
+        params: Some(&["int window?", "TunnelPolicy policy?", "AssetId[] except?"]),
+        ty: None,
+        index: None,
+        tapscript: false,
+        doc: "Fails the spend unless the virtual output being spent can be renewed: \
+              checkTime(this.expiry - window) holds, for a window of 86400 seconds when none is \
+              given; the proof registers for a batch with no onchain output; and tx.proof.output \
+              keeps this input as this.tunnel requires under the policy and excepted assets. Only \
+              as the whole condition of a require, in Arkade Script functions.",
+    },
 ];
 
 /// Every builtin function and `tx`/`this` member as pretty JSON: calls under
@@ -665,9 +683,12 @@ pub(crate) fn docs() -> String {
 
 /// The names documented directly under `owner`, a member path with indexes written `[]`.
 pub(crate) fn members_of(owner: &str) -> Vec<String> {
+    // `tx.proof.output` is an output.
     // ponytail: output assets share the members documented on input assets; document them
     // separately if the two ever differ.
-    let owner = owner.replace("tx.outputs[].assets", "tx.inputs[].assets");
+    let owner = owner
+        .replace("tx.proof.output", "tx.outputs[]")
+        .replace("tx.outputs[].assets", "tx.inputs[].assets");
     let documented = documented();
     let members = documented["members"]
         .as_object()

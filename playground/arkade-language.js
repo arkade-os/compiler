@@ -150,7 +150,7 @@ let functionItems = [];
 // Members offered after `<path>.`, keyed by the path with indexes collapsed to `[]`.
 let arkadeMembers = {};
 // Paths documented under another path, and the members the alias lacks.
-const memberAliases = [['tx.input.current', 'tx.inputs[]', ['assets', 'packet']], ['tx.outputs[].assets', 'tx.inputs[].assets', []]];
+const memberAliases = [['tx.input.current', 'tx.inputs[]', ['assets', 'packet']], ['tx.outputs[].assets', 'tx.inputs[].assets', []], ['tx.proof.output.assets', 'tx.inputs[].assets', []], ['tx.proof.output', 'tx.outputs[]', []]];
 
 // Snippet arguments: `bytes[] keys` becomes `[${1:keys}]`, and optional parameters are left out.
 const call = (name, params) => `${name}(${params.filter(p => !p.endsWith('?')).map((p, i) => {

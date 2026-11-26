@@ -141,7 +141,8 @@ fn witness_operands<'a>(expr: &Pair<'a, Rule>) -> Vec<Pair<'a, Rule>> {
 }
 
 /// The Arkade-Script-only member a `primary_expr` starts with: `this.expiry`, `this.tunnel(...)`,
-/// `tx.proof.field(...)` or `tx.proof.has(...)`, or the same under the deprecated `tx.intent`.
+/// `this.renew(...)`, `tx.proof.output`, `tx.proof.field(...)` or `tx.proof.has(...)`, or either
+/// of the last two under the deprecated `tx.intent`.
 fn arkade_script_member(pair: &Pair<Rule>) -> Option<String> {
     let mut inner = pair.clone().into_inner();
     let mut name = inner
@@ -155,10 +156,10 @@ fn arkade_script_member(pair: &Pair<Rule>) -> Option<String> {
         name = format!("{name}.{}", member.as_str());
         match (name.as_str(), parts.next().is_some()) {
             ("tx.proof" | "tx.intent", false) => continue,
-            ("this.expiry", false) => return Some(name),
+            ("this.expiry" | "tx.proof.output", false) => return Some(name),
             (
-                "this.tunnel" | "tx.proof.field" | "tx.proof.has" | "tx.intent.field"
-                | "tx.intent.has",
+                "this.tunnel" | "this.renew" | "tx.proof.field" | "tx.proof.has"
+                | "tx.intent.field" | "tx.intent.has",
                 true,
             ) => return Some(format!("{name}(...)")),
             _ => return None,
@@ -347,7 +348,10 @@ fn operand_path(operand: &Expression, constants: &[Constant]) -> Option<crate::m
 }
 
 /// The literal value of the constant `path` names.
-fn constant_value(path: &crate::models::Path, constants: &[Constant]) -> Result<String, String> {
+pub(crate) fn constant_value(
+    path: &crate::models::Path,
+    constants: &[Constant],
+) -> Result<String, String> {
     let key = path.key();
     match constants
         .iter()

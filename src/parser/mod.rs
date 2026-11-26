@@ -637,8 +637,9 @@ fn parse_statements<'a>(
             attributes.push(parse_attribute(pair).map_err(|e| CompileError::from(e).at(span))?);
             continue;
         }
-        let statement = parse_statement(function_name, pair, constants).map_err(|e| e.at(span))?;
-        statements.extend(statement.map(|statement| LocatedStatement {
+        let parsed = parse_statement(function_name, pair, constants).map_err(|e| e.at(span))?;
+        // The attributes are in force over the span every statement of a pair shares.
+        statements.extend(parsed.into_iter().map(|statement| LocatedStatement {
             attributes: std::mem::take(&mut attributes),
             ..statement
         }));
@@ -646,16 +647,17 @@ fn parse_statements<'a>(
     Ok(statements)
 }
 
-/// Parse a statement in a function body (require, let binding, function call, variable declaration)
+/// Parse a statement in a function body (require, let binding, function call, variable
+/// declaration). `require(this.renew(...))` is one `require` for each check it makes, all at its
+/// span and with its message.
 fn parse_statement(
     function_name: &str,
     pair: Pair<Rule>,
     constants: &[Constant],
-) -> Result<Option<LocatedStatement>, CompileError> {
+) -> Result<Vec<LocatedStatement>, CompileError> {
     let mut span: crate::diagnostics::Span = pair.as_span().into();
     let mut names = Vec::new();
     let mut branches: Vec<crate::diagnostics::Span> = Vec::new();
-    let mut message = None;
     let statement = match pair.as_rule() {
         Rule::require_stmt => {
             let mut inner = pair.into_inner();
@@ -668,13 +670,24 @@ fn parse_statement(
                     .into())
                 }
             };
-            let condition = parse_general_expression(expr)?;
+            let conditions = match parse_renew(&expr, constants)? {
+                Some(conditions) => conditions.into(),
+                None => vec![parse_general_expression(expr)?],
+            };
 
-            if let Some(text) = inner.next() {
-                message = Some(parse_string_literal(text.as_str())?);
-            }
-
-            Statement::Require(condition)
+            let message = inner
+                .next()
+                .map(|text| parse_string_literal(text.as_str()))
+                .transpose()?;
+            let require = |condition| LocatedStatement {
+                span,
+                names: Vec::new(),
+                branches: Vec::new(),
+                message: message.clone(),
+                statement: Statement::Require(condition),
+                attributes: Vec::new(),
+            };
+            return Ok(conditions.into_iter().map(require).collect());
         }
         Rule::let_binding => {
             let mut inner = pair.into_inner();
@@ -833,7 +846,9 @@ fn parse_statement(
                 name.push(part.as_str());
             };
             let name = name.join(".");
-            if name == "this.tunnel" || crate::builtins::find(&name).is_some() {
+            if matches!(name.as_str(), "this.tunnel" | "this.renew")
+                || crate::builtins::find(&name).is_some()
+            {
                 return Err(CompileError::from(format!(
                     "`{name}(...)` cannot be a statement; use it inside require()"
                 )));
@@ -876,16 +891,16 @@ fn parse_statement(
                 },
             }
         }
-        _ => return Ok(None),
+        _ => return Ok(Vec::new()),
     };
-    Ok(Some(LocatedStatement {
+    Ok(vec![LocatedStatement {
         span,
         names,
         branches,
-        message,
+        message: None,
         statement,
         attributes: Vec::new(),
-    }))
+    }])
 }
 
 fn parse_assignment_target(pair: Pair<Rule>) -> Result<AssignmentTarget, String> {
@@ -1085,6 +1100,27 @@ mod tests {
         assert!(error
             .unwrap_err()
             .contains("wrong arguments to `this.tunnel`"));
+        // `tx.proof.output` reads an output at the index a proof pairs with the current input.
+        assert!(matches!(
+            value("tx . proof . output.script.program"),
+            Ok(ExprKind::FieldAccess { value, .. }) if matches!(
+                &value.kind,
+                ExprKind::OutputIntrospection { index, .. }
+                    if index.source_text() == "this.activeInputIndex - 1"
+            )
+        ));
+        assert!(matches!(
+            value("tx.proof.output.assets[1].amount"),
+            Ok(ExprKind::AssetAt {
+                property: Some(_),
+                ..
+            })
+        ));
+        assert!(
+            matches!(value("tx.intent.output.value"), Ok(ExprKind::Name(path)) if path.key() == "tx.intent.output.value")
+        );
+        let error = value("this.renew({script: true, value: true, assets: true})");
+        assert!(error.unwrap_err().contains("must be the whole condition"));
         assert!(matches!(value("bytes32(x)"), Ok(ExprKind::Cast { .. })));
         assert!(matches!(value("int(0x0100)"), Ok(ExprKind::Literal(value)) if value == "256"));
         // Fields after a member apply to its value.

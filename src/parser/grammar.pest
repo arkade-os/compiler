@@ -208,7 +208,7 @@ primary_expr = {
 
 // A field, a member call or an index: `.name`, `.name(args)`, `[index]`.
 postfix = { "." ~ identifier ~ call_args? | "[" ~ general_expression ~ "]" }
-// `[]` is an empty list, which only `this.tunnel` takes, for its exceptions.
+// `[]` is an empty list, which only `this.tunnel` and `this.renew` take, for their exceptions.
 call_args = { "(" ~ (call_arg ~ ("," ~ call_arg)* ~ ","?)? ~ ")" }
 call_arg = _{ general_expression | empty_list }
 empty_list = { "[" ~ "]" }

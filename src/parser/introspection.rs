@@ -3,6 +3,7 @@ use super::Rule;
 use super::*;
 use crate::diagnostics::Span;
 use crate::models::*;
+use crate::operators::BinaryOperator;
 use crate::properties::{
     AssetProperty, GroupIoProperty, GroupProperty, InputProperty, OutputProperty, ThisProperty,
     TxProperty,
@@ -15,7 +16,8 @@ type Member<'s, 'a> = (ExprKind, usize, &'s [Suffix<'a>]);
 
 /// Resolve the member chain of `this`: `this.tunnel(...)`, `this.activeInputIndex` or
 /// `this.expiry`, then the suffixes after it. A chain that spells no member reads as the path
-/// it spells, which validation reports.
+/// it spells, which validation reports. `this.renew(...)` is no value: `parse_renew` reads it
+/// as a whole requirement.
 pub(crate) fn parse_this_chain(
     this: Expression,
     suffixes: &[Suffix],
@@ -27,6 +29,13 @@ pub(crate) fn parse_this_chain(
         [Call("tunnel", args, end), rest @ ..] => {
             let span = Span { start, end: *end };
             Some((parse_tunnel(args, span)?, *end, rest))
+        }
+        [Call("renew", ..), ..] => {
+            return Err(
+                "`this.renew(...)` must be the whole condition of a require, as in \
+                 `require(this.renew())`"
+                    .to_string(),
+            )
         }
         [Field(name, end), rest @ ..] => {
             ThisProperty::from_name(name).map(|property| (ExprKind::This(property), *end, rest))
@@ -94,6 +103,24 @@ pub(crate) fn parse_tx_chain(
                 rest,
             )
         }
+        // The output a proof pairs with the current input, read by an output's members.
+        [Field("proof", _), Field("output", end), members @ ..] => {
+            let index = Box::new(proof_output_index(Span { start, end: *end }));
+            let member = match members {
+                [Field("assets", _), assets @ ..] => {
+                    asset_member(AssetLookupSource::Output, index, assets)?
+                }
+                [Field(name, end), rest @ ..] => OutputProperty::from_name(name).map(|property| {
+                    let kind = ExprKind::OutputIntrospection { index, property };
+                    (kind, *end, rest)
+                }),
+                _ => None,
+            };
+            match member {
+                Some(member) => member,
+                None => return Ok(member_path(text, start)),
+            }
+        }
         [Field(io @ ("inputs" | "outputs"), _), Field("length", end), rest @ ..] => {
             let property = match *io {
                 "inputs" => TxProperty::NumInputs,
@@ -107,7 +134,7 @@ pub(crate) fn parse_tx_chain(
                 "inputs" => AssetLookupSource::Input,
                 _ => AssetLookupSource::Output,
             };
-            match asset_member(source, index, assets)? {
+            match asset_member(source, operand(index)?, assets)? {
                 Some(member) => member,
                 None => return Ok(member_path(text, start)),
             }
@@ -201,10 +228,9 @@ fn member_value(
 /// The member read on the assets of input or output `index`, if `assets` spells one.
 fn asset_member<'s, 'a>(
     source: AssetLookupSource,
-    index: &Pair<Rule>,
+    index: Box<Expression>,
     assets: &'s [Suffix<'a>],
 ) -> Result<Option<Member<'s, 'a>>, String> {
-    let index = operand(index)?;
     Ok(Some(match assets {
         [Index(asset, end), rest @ ..] => {
             let read = match rest {
@@ -344,20 +370,36 @@ fn is_proof_path(path: &str) -> bool {
 /// `this.tunnel(outputIndex, policy?, exceptions?)`, its policy a struct literal and its
 /// exceptions a list literal.
 fn parse_tunnel(args: &[Pair<Rule>], span: Span) -> Result<ExprKind, String> {
-    let literal = |at: usize, rules: &[Rule]| match args.get(at).map(lone) {
-        Some(arg) if rules.contains(&arg.as_rule()) => Ok(Some(arg)),
-        Some(_) => Err(()),
-        None => Ok(None),
-    };
-    let (Some(index), Ok(policy), Ok(exceptions)) = (
-        args.first().filter(|_| args.len() <= 3),
-        literal(1, &[Rule::struct_literal]),
-        literal(2, &[Rule::array_literal, Rule::empty_list]),
-    ) else {
+    let literals = tunnel_literals(args.get(1..).unwrap_or_default());
+    let (Some(index), Some([policy, exceptions])) = (args.first(), literals) else {
         // Arguments no tunnel takes read as a call, which reports the signature.
         return parse_call("this.tunnel".to_string(), args.to_vec(), span).map(|call| call.kind);
     };
     let output_index = parse_general_expression(index.clone())?;
+    tunnel(output_index, policy, exceptions, span)
+}
+
+/// The policy and the exceptions `literals` spell, a struct literal and then a list literal,
+/// each optional; `None` for any other arguments.
+fn tunnel_literals<'a>(literals: &[Pair<'a, Rule>]) -> Option<[Option<Pair<'a, Rule>>; 2]> {
+    let literal = |at: usize, rules: &[Rule]| match literals.get(at).map(lone) {
+        Some(literal) if rules.contains(&literal.as_rule()) => Some(Some(literal)),
+        Some(_) => None,
+        None => Some(None),
+    };
+    let policy = literal(0, &[Rule::struct_literal])?;
+    let exceptions = literal(1, &[Rule::array_literal, Rule::empty_list])?;
+    (literals.len() <= 2).then_some([policy, exceptions])
+}
+
+/// The tunnel that continues the current input at `output_index`, preserving what the `policy`
+/// literal selects, or everything without one, apart from the `exceptions` literal's assets.
+fn tunnel(
+    output_index: Expression,
+    policy: Option<Pair<Rule>>,
+    exceptions: Option<Pair<Rule>>,
+    span: Span,
+) -> Result<ExprKind, String> {
     let policy = if let Some(policy) = policy {
         let ExprKind::StructLiteral { fields, .. } = parse_primary_expr(policy)?.kind else {
             return Err("tunnel policy must be a struct literal".to_string());
@@ -396,6 +438,91 @@ fn parse_tunnel(args: &[Pair<Rule>], span: Span) -> Result<ExprKind, String> {
         policy: Box::new(policy),
         exceptions,
     })
+}
+
+/// Seconds before expiry at which `this.renew` opens when it names no window.
+const RENEWAL_WINDOW: &str = "86400";
+
+/// The requirements `this.renew(window?, policy?, exceptions?)` stands for when `condition` is
+/// that call alone: the window before expiry is open, the proof registers for a batch, it has no
+/// onchain output, and the output it pairs with the current input tunnels it under the policy
+/// and exceptions, which are `this.tunnel`'s. Each is a `require` of its own, since `&&` would
+/// branch around the later ones.
+pub(crate) fn parse_renew(
+    condition: &Pair<Rule>,
+    constants: &[Constant],
+) -> Result<Option<[Expression; 4]>, CompileError> {
+    let call = lone(condition);
+    if call.as_rule() != Rule::primary_expr {
+        return Ok(None);
+    }
+    let mut chain = call.into_inner();
+    let this = chain.next().ok_or("Empty primary expression")?;
+    let suffixes = suffixes(chain)?;
+    let ("this", [Call("renew", args, end)]) = (this.as_str(), suffixes.as_slice()) else {
+        return Ok(None);
+    };
+    let span = Span {
+        start: this.as_span().start(),
+        end: *end,
+    };
+    // A struct or list literal is the tunnel's, so only another first argument is the window.
+    let tunnel_rules = [Rule::struct_literal, Rule::array_literal, Rule::empty_list];
+    let (window, literals) = match args.split_first() {
+        Some((window, literals)) if !tunnel_rules.contains(&lone(window).as_rule()) => {
+            (Some(window), literals)
+        }
+        _ => (None, args.as_slice()),
+    };
+    let Some([policy, exceptions]) = tunnel_literals(literals) else {
+        // Arguments no renewal takes read as a call, which reports the signature.
+        return parse_call("this.renew".to_string(), args.clone(), span)
+            .map(|_| None)
+            .map_err(CompileError::from);
+    };
+    let at = |kind| Expression::new(kind, span);
+    let window = match window {
+        Some(window) => parse_general_expression(window.clone())?,
+        None => at(ExprKind::Literal(RENEWAL_WINDOW.to_string())),
+    };
+    let mut constant = |path: &Path| constant_value(path, constants);
+    let range = crate::validator::constant_domain_error("this.renew", 0, &window, &mut constant);
+    if let Some(message) = range {
+        return Err(CompileError::from(message).at(window.span));
+    }
+    let binary = |left, op, right: Expression| {
+        let (left, right) = (Box::new(at(left)), Box::new(right));
+        at(ExprKind::BinaryOp { left, op, right })
+    };
+    let text = |text: &str| at(ExprKind::Literal(bytes_literal(text)));
+    let field = |path: &str, value: &str| {
+        let (path, presence_only) = (Box::new(text(path)), false);
+        let field = ExprKind::IntentInspect {
+            path,
+            presence_only,
+        };
+        binary(field, BinaryOperator::Eq, text(value))
+    };
+    let expiry = ExprKind::This(ThisProperty::Expiry);
+    let builtin = crate::builtins::find("checkTime").expect("checkTime is a builtin");
+    let args = vec![binary(expiry, BinaryOperator::Sub, window)];
+    Ok(Some([
+        at(ExprKind::Builtin { builtin, args }),
+        field("type", "register"),
+        field("onchain_output_indexes", "[]"),
+        at(tunnel(proof_output_index(span), policy, exceptions, span)?),
+    ]))
+}
+
+/// `this.activeInputIndex - 1`, the index of the output a proof pairs with the current input.
+fn proof_output_index(span: Span) -> Expression {
+    let at = |kind| Box::new(Expression::new(kind, span));
+    let kind = ExprKind::BinaryOp {
+        left: at(ExprKind::This(ThisProperty::ActiveInputIndex)),
+        op: BinaryOperator::Sub,
+        right: at(ExprKind::Literal("1".to_string())),
+    };
+    Expression::new(kind, span)
 }
 
 /// `tx.inputs[this.activeInputIndex].<property>`, which `tx.input.current.*` spells.

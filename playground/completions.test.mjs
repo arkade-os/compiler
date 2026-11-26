@@ -59,6 +59,10 @@ assert.deepEqual(labels('tx.outputs[o].assets[0].'), ['amount', 'assetId']);
 assert(labels('tx.assetGroups[k].').includes('sumOutputs'));
 assert(labels('tx.input.current.').includes('value'));
 assert(labels('this.').includes('activeInputIndex'));
+assert(labels('this.').includes('renew') && labels('tx.proof.').includes('output'));
+assert.deepEqual(labels('tx.proof.output.'), labels('tx.outputs[0].'));
+assert.deepEqual(labels('tx.proof.output.assets.'), labels('tx.outputs[0].assets.'));
+assert.deepEqual(labels('tx . proof . output.assets[0].'), ['amount', 'assetId']);
 assert(labels('group.', table).includes('controlIs'));
 assert.deepEqual(labels('group.inputs[j].', table), ['amount', 'index', 'txid', 'type']);
 assert.deepEqual(labels('tx.assetGroups[k].outputs[0].'), ['amount', 'index', 'type']);
@@ -84,7 +88,7 @@ for (const prefix of ['tx.inputs[0].', 'tx.input.current.', 'tx.outputs[0].']) {
     assert(!labels(prefix).includes('scriptPubKey'));
 }
 assert(labels('').includes('ScriptPubKey'));
-for (const path of ['destination', 'destinations[0]', 'segment.script', 'tx.outputs[0].script', 'tx.inputs[0].script', 'tx.input.current.script']) {
+for (const path of ['destination', 'destinations[0]', 'segment.script', 'tx.outputs[0].script', 'tx.proof.output.script', 'tx.inputs[0].script', 'tx.input.current.script']) {
     assert.deepEqual(labels(`${path}.`, table), ['program', 'version']);
 }
 assert.deepEqual(labels('destinations.', table), ['length']);
@@ -110,6 +114,9 @@ assert.equal(describe('require(', 'sha256', null).declaration, 'function sha256(
 assert.equal(describe('tx.outputs[o].assets.', 'lookup', null).key, 'tx.inputs[].assets.lookup');
 assert.equal(describe('tx.assetGroups.', 'lookup', null).declaration, 'function tx.assetGroups.lookup(AssetId assetId) AssetGroup');
 assert.equal(describe('tx.input.current.', 'value', null).key, 'tx.inputs[].value');
+assert.equal(describe('tx.proof.output.', 'value', null).key, 'tx.outputs[].value');
+assert.equal(describe('tx.proof.output.assets.', 'lookup', null).key, 'tx.inputs[].assets.lookup');
+assert.equal(describe('this.', 'renew', null).declaration, 'function this.renew(int window?, TunnelPolicy policy?, AssetId[] except?)');
 assert.equal(describe('tx.input.current.', 'assets', null), null);
 assert.equal(describe('tx.input.current.assets.', 'length', null), null);
 assert.deepEqual(labels('tx.input.current.assets.'), []);
