@@ -41,6 +41,7 @@ use shadowing::check_shadowing;
 
 pub(crate) use bindings::binding_types_compatible;
 pub(crate) use functions::falls_through;
+pub(crate) use operands::constant_domain_error;
 pub(crate) use output::validate_output;
 
 // ─── Issue types ──────────────────────────────────────────────────────────────

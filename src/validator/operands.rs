@@ -48,7 +48,49 @@ pub(crate) const CONSTANT_DOMAINS: &[Domain] = &[
     ("modExp", 2, "modulus", &[(1, i128::MAX)]),
     ("tx.packet", 0, "packet type", &[(0, 255)]),
     ("tx.inputs[].packet", 1, "packet type", &[(0, 255)]),
+    // The VM takes any window, but one below 1 never opens before expiry.
+    ("this.renew", 0, "window", &[(1, i128::MAX)]),
 ];
+
+/// Why `operand`, the one at `index` of builtin `name`, is outside its domain, when it has one
+/// and `constant` evaluates it.
+pub(crate) fn constant_domain_error(
+    name: &str,
+    index: usize,
+    operand: &Expression,
+    constant: &mut impl FnMut(&crate::models::Path) -> Result<String, String>,
+) -> Option<String> {
+    let &(.., operand_name, ranges) = CONSTANT_DOMAINS
+        .iter()
+        .find(|(builtin, at, ..)| *builtin == name && *at == index)?;
+    let value = crate::compiler::constants::evaluate(operand, constant).ok()?;
+    let accepted = value.parse::<i128>().map_or_else(
+        |_| {
+            // An i128::MAX upper bound denotes an unbounded domain.
+            !value.starts_with('-') && ranges.iter().any(|(_, high)| *high == i128::MAX)
+        },
+        |value| {
+            ranges
+                .iter()
+                .any(|(low, high)| (*low..=*high).contains(&value))
+        },
+    );
+    if accepted {
+        return None;
+    }
+    let allowed = ranges
+        .iter()
+        .map(|(low, high)| match (*low, *high) {
+            (low, i128::MAX) => format!("at least {low}"),
+            (low, high) if low == high => low.to_string(),
+            (low, high) => format!("{low} to {high}"),
+        })
+        .collect::<Vec<_>>()
+        .join(" or ");
+    Some(format!(
+        "{name} {operand_name} must be {allowed}, got {value}"
+    ))
+}
 
 pub(crate) fn find(name: &str) -> Option<Vec<&'static str>> {
     if let Some(builtin) = crate::builtins::find(name) {

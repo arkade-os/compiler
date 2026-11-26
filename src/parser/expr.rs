@@ -75,7 +75,12 @@ pub(crate) fn reserved_function_signature(name: &str) -> Option<String> {
     if let Some(params) = crate::builtins::tapscript_params(name) {
         return Some(format!("{name}({})", params.join(", ")));
     }
-    (name == "this.tunnel").then(|| "this.tunnel(outputIndex, policy?, exceptions?)".to_string())
+    let signature = match name {
+        "this.tunnel" => "this.tunnel(outputIndex, policy?, exceptions?)",
+        "this.renew" => "this.renew(window?, policy?, exceptions?)",
+        _ => return None,
+    };
+    Some(signature.to_string())
 }
 
 pub(crate) fn parse_string_literal(text: &str) -> Result<String, String> {
@@ -85,15 +90,20 @@ pub(crate) fn parse_string_literal(text: &str) -> Result<String, String> {
 pub(crate) fn parse_named_operand(pair: Pair<Rule>) -> Result<String, String> {
     let text = pair.as_str();
     if text.starts_with('"') {
-        use std::fmt::Write;
-        let mut hex = String::from("0x");
-        for byte in parse_string_literal(text)?.bytes() {
-            write!(hex, "{byte:02x}").expect("writing to String");
-        }
-        Ok(hex)
+        Ok(bytes_literal(&parse_string_literal(text)?))
     } else {
         Ok(text.to_ascii_lowercase())
     }
+}
+
+/// The hex literal of `text`'s UTF-8 bytes.
+pub(crate) fn bytes_literal(text: &str) -> String {
+    use std::fmt::Write;
+    let mut hex = String::from("0x");
+    for byte in text.bytes() {
+        write!(hex, "{byte:02x}").expect("writing to String");
+    }
+    hex
 }
 
 pub(crate) fn parse_primary_expr(pair: Pair<Rule>) -> Result<Expression, String> {
@@ -197,9 +207,11 @@ pub(crate) fn parse_primary_expr(pair: Pair<Rule>) -> Result<Expression, String>
             },
             span,
         )),
-        Rule::empty_list => {
-            Err("`[]` is an empty list, which only `this.tunnel` takes, for its exceptions".into())
-        }
+        Rule::empty_list => Err(
+            "`[]` is an empty list, which only `this.tunnel` and `this.renew` take, for \
+                 their exceptions"
+                .into(),
+        ),
         Rule::constructor => parse_constructor_to_expression(pair),
         _ => {
             // Default to treating as a property string
@@ -231,7 +243,9 @@ pub(crate) enum Suffix<'a> {
 }
 
 /// The suffixes `postfix` or `binding_suffix` pairs spell.
-fn suffixes<'a>(pairs: impl Iterator<Item = Pair<'a, Rule>>) -> Result<Vec<Suffix<'a>>, String> {
+pub(crate) fn suffixes<'a>(
+    pairs: impl Iterator<Item = Pair<'a, Rule>>,
+) -> Result<Vec<Suffix<'a>>, String> {
     pairs
         .map(|pair| {
             // A pair's span can run past its last term over trailing whitespace.

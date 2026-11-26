@@ -378,45 +378,11 @@ pub(super) fn validate_binding_expression(
                     );
                 }
             }
-            for &(_, index, operand_name, ranges) in operands::CONSTANT_DOMAINS
-                .iter()
-                .filter(|(builtin, ..)| *builtin == name)
-            {
-                let Some(operand) = operands.get(index) else {
-                    continue;
-                };
-                let Ok(value) =
-                    crate::compiler::constants::evaluate(operand, &mut |path| Err(path.key()))
-                else {
-                    continue;
-                };
-                let accepted = value.parse::<i128>().map_or_else(
-                    |_| {
-                        // An i128::MAX upper bound denotes an unbounded domain.
-                        !value.starts_with('-') && ranges.iter().any(|(_, high)| *high == i128::MAX)
-                    },
-                    |value| {
-                        ranges
-                            .iter()
-                            .any(|(low, high)| (*low..=*high).contains(&value))
-                    },
-                );
-                if !accepted {
-                    let allowed = ranges
-                        .iter()
-                        .map(|(low, high)| match (*low, *high) {
-                            (low, i128::MAX) => format!("at least {low}"),
-                            (low, high) if low == high => low.to_string(),
-                            (low, high) => format!("{low} to {high}"),
-                        })
-                        .collect::<Vec<_>>()
-                        .join(" or ");
-                    issues.push(
-                        ValidationIssue::error(format!(
-                            "{name} {operand_name} must be {allowed}, got {value}"
-                        ))
-                        .at(operand.span),
-                    );
+            for (index, operand) in operands.iter().enumerate() {
+                let mut constant = |path: &crate::models::Path| Err(path.key());
+                let error = operands::constant_domain_error(name, index, operand, &mut constant);
+                if let Some(message) = error {
+                    issues.push(ValidationIssue::error(message).at(operand.span));
                 }
             }
             if name == "modExp" {

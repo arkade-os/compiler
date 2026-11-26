@@ -1,4 +1,7 @@
-use crate::common::{arkade_asm, arkade_inputs, group, witness_names};
+use crate::common::{
+    arkade_asm, arkade_asm_tokens, arkade_inputs, compile_unoptimized, group, project,
+    witness_names,
+};
 use arkade_compiler::compile;
 
 #[test]
@@ -11,6 +14,14 @@ fn arkade_script_opcodes_report_their_context_in_tapscript() {
         ("this.tunnel(0)", "this.tunnel(...)"),
         ("this.tunnel()", "this.tunnel(...)"),
         ("this.tunnel(0) == true", "this.tunnel(...)"),
+        ("this.renew()", "this.renew(...)"),
+        ("this.renew(1, {script: true})", "this.renew(...)"),
+        ("!this.renew()", "this.renew(...)"),
+        ("tx.proof.output.value > 0", "tx.proof.output"),
+        (
+            "tx . proof . output . script == tx.proof.output",
+            "tx.proof.output",
+        ),
         ("substr(0x00, 0, 1) == 0x00", "substr(...)"),
         ("within(1, 0, 2)", "within(...)"),
         (
@@ -406,6 +417,475 @@ fn tunnel_validates_policy_shape_types_and_exceptions() {
         compile("contract Bad() { function spend() tapscript { require(this.tunnel(0)); } }")
             .is_err()
     );
+}
+
+/// The requirements `require(this.renew(...), "renew")` stands for, for its window and for the
+/// policy and exceptions it gives its tunnel.
+fn renewal(window: &str, tunnel: &str) -> String {
+    format!(
+        r#"require(checkTime(this.expiry - {window}), "renew");
+        require(tx.proof.field("type") == "register", "renew");
+        require(tx.proof.field("onchain_output_indexes") == "[]", "renew");
+        require(this.tunnel(this.activeInputIndex - 1{tunnel}), "renew");"#
+    )
+}
+
+const RENEWAL_POLICY: &str = "{ script: true, value: false, assets: true }";
+
+#[test]
+fn renew_compiles_as_its_four_requirements() {
+    // Each script, and the lints that fire on it.
+    let scripts = |body: &str| {
+        let source = format!(
+            "contract Vault(int window, int maxFee, AssetId feeAsset) {{ private function twice(int x) int {{ return x * 2; }} function renew() {{ require(twice(maxFee) >= 0); {body} }} }}"
+        );
+        [compile(&source), compile_unoptimized(&source)].map(|output| {
+            let output = output.unwrap_or_else(|e| panic!("{body}: {e}"));
+            let lints = output.warnings.iter().map(|warning| {
+                let (lint, _) = warning.split_once(']').expect("a lint id");
+                lint.to_string()
+            });
+            (
+                arkade_asm_tokens(&output, "renew"),
+                lints.collect::<Vec<_>>(),
+            )
+        })
+    };
+    let fee = "require(tx.proof.output.value + maxFee >= tx.input.current.value, \"fee\");";
+    for (arguments, window, tunnel) in [
+        (String::new(), "86400", String::new()),
+        ("window".to_string(), "window", String::new()),
+        (
+            "window * 2 + 1,".to_string(),
+            "(window * 2 + 1)",
+            String::new(),
+        ),
+        ("twice(window)".to_string(), "twice(window)", String::new()),
+        (
+            RENEWAL_POLICY.to_string(),
+            "86400",
+            format!(", {RENEWAL_POLICY}"),
+        ),
+        (
+            format!("{RENEWAL_POLICY}, [feeAsset]"),
+            "86400",
+            format!(", {RENEWAL_POLICY}, [feeAsset]"),
+        ),
+        (
+            format!("window, {RENEWAL_POLICY}"),
+            "window",
+            format!(", {RENEWAL_POLICY}"),
+        ),
+        (
+            format!("window, {RENEWAL_POLICY}, [feeAsset, tx.inputs[0].assets[0].assetId],"),
+            "window",
+            format!(", {RENEWAL_POLICY}, [feeAsset, tx.inputs[0].assets[0].assetId]"),
+        ),
+        (
+            "1, { script: true, value: true, assets: true }, []".to_string(),
+            "1",
+            String::new(),
+        ),
+    ] {
+        let call = format!("require(this . renew({arguments}), \"renew\");");
+        let written = renewal(window, &tunnel);
+        for (before, after) in [
+            ("", String::new()),
+            ("", fee.to_string()),
+            ("require(maxFee > 0);", fee.to_string()),
+            (
+                "if (maxFee > 0) {",
+                format!("}} else {{ require(maxFee == 0); }} {fee}"),
+            ),
+            ("for (i) in 0..2 { require(maxFee > i);", "}".to_string()),
+        ] {
+            assert_eq!(
+                scripts(&format!("{before} {call} {after}")),
+                scripts(&format!("{before} {written} {after}")),
+                "this.renew({arguments}) between `{before}` and `{after}`"
+            );
+        }
+    }
+}
+
+#[test]
+fn renew_defaults_to_a_day_and_keeps_its_checks_out_of_the_leaf() {
+    let output =
+        compile("contract Vault() { function renew() { require(this.renew()); } }").unwrap();
+    assert_eq!(
+        arkade_asm_tokens(&output, "renew"),
+        [
+            "OP_PUSHEXPIRY",
+            "86400",
+            "OP_SUB",
+            "OP_CHECKTIME",
+            "OP_VERIFY",
+            "0x74797065",
+            "OP_INSPECTINTENTMESSAGE",
+            "OP_VERIFY",
+            "0x7265676973746572",
+            "OP_EQUALVERIFY",
+            "0x6f6e636861696e5f6f75747075745f696e6465786573",
+            "OP_INSPECTINTENTMESSAGE",
+            "OP_VERIFY",
+            "0x5b5d",
+            "OP_EQUALVERIFY",
+            "OP_PUSHCURRENTINPUTINDEX",
+            "1",
+            "OP_SUB",
+            "7",
+            "0",
+            "OP_TUNNEL",
+        ]
+    );
+    assert!(arkade_inputs(&output, "renew").is_empty());
+    let renew = group(&output, "renew");
+    assert_eq!(renew.leaves.len(), 1);
+    assert_eq!(renew.leaves[0].asm, ["<OPERATOR_KEY:renew>", "OP_CHECKSIG"]);
+    assert_eq!(
+        witness_names(&output, "renew", &renew.leaves[0].name),
+        ["operatorSig"]
+    );
+    assert!(
+        output
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("unsigned-spend-path")),
+        "{:?}",
+        output.warnings
+    );
+}
+
+#[test]
+fn renew_maps_its_checks_to_the_one_statement_and_message() {
+    let statement = "require(this.renew(window), \"too early or no renewal\");";
+    let source = format!(
+        "contract Vault(int window) {{\n    function renew() {{\n        {statement}\n        require(tx.proof.output.value > 0, \"fee\");\n    }}\n}}"
+    );
+    let output = compile(&source).unwrap();
+    let script = output.functions[0].arkade.as_ref().unwrap();
+    let range = &script.source_map[0];
+    let at = |[line, column]: [usize; 2]| {
+        arkade_compiler::diagnostics::offset(&source, line, column).unwrap()
+    };
+    assert_eq!(&source[at(range.start)..at(range.end)], statement);
+    assert_eq!(range.message.as_deref(), Some("too early or no renewal"));
+    let tokens = &script.asm[range.asm[0]..range.asm[1]];
+    assert_eq!(tokens.first().map(String::as_str), Some("OP_PUSHEXPIRY"));
+    assert_eq!(tokens.last().map(String::as_str), Some("OP_VERIFY"));
+    assert!(tokens.contains(&"OP_TUNNEL".to_string()), "{tokens:?}");
+    assert_eq!(script.source_map[1].message.as_deref(), Some("fee"));
+    assert_eq!(script.source_map[1].asm[0], range.asm[1]);
+}
+
+#[test]
+fn renew_takes_the_lint_attributes_of_its_statement() {
+    let warnings = |attribute: &str, window: &str| {
+        let source = format!(
+            "contract Vault(int window) {{ function renew() {{\n{attribute}\nrequire(this.renew({window}, {RENEWAL_POLICY}, [tx.inputs[0].assets[0].assetId, tx.inputs[0].assets[0].assetId])); }} }}"
+        );
+        compile(&source).map(|output| output.warnings.join("\n"))
+    };
+    let unattributed = warnings("", "window").unwrap();
+    assert!(
+        unattributed.contains("repeated-inspection"),
+        "{unattributed}"
+    );
+    let expected = warnings("@expect(repeated-inspection, \"one read each\")", "window").unwrap();
+    assert!(
+        !expected.contains("repeated-inspection") && !expected.contains("unfulfilled-expectation"),
+        "{expected}"
+    );
+    let unfulfilled = warnings("@expect(self-comparison, \"none\")", "window").unwrap();
+    assert_eq!(
+        unfulfilled.matches("unfulfilled-expectation").count(),
+        1,
+        "{unfulfilled}"
+    );
+    let denied = warnings("", "window + tx.locktime")
+        .unwrap_err()
+        .to_string();
+    assert!(denied.contains("offchain-locktime"), "{denied}");
+    warnings(
+        "@allow(offchain-locktime, \"tested\")",
+        "window + tx.locktime",
+    )
+    .unwrap();
+}
+
+#[test]
+fn renew_works_in_private_helpers_and_imported_libraries() {
+    let helper = |body: &str| {
+        let source = format!(
+            "contract Vault(int window, AssetId feeAsset) {{ private function renewal(int opens) {{ {body} }} function renew() {{ renewal(window); require(window > 0); }} }}"
+        );
+        arkade_asm_tokens(&compile(&source).unwrap(), "renew")
+    };
+    let tunnel = format!(", {RENEWAL_POLICY}, [feeAsset]");
+    let sugared = helper(&format!(
+        "require(this.renew(opens, {RENEWAL_POLICY}, [feeAsset]), \"renew\");"
+    ));
+    assert_eq!(sugared, helper(&renewal("opens", &tunnel)));
+    assert!(sugared.contains(&"OP_TUNNEL".to_string()), "{sugared:?}");
+
+    let library = |body: &str| {
+        let main = "import \"renewal.ark\"; contract Vault(int window) { function renew() { Renewal.check(window); require(window > 0); } }";
+        let library = format!(
+            "library Renewal {{ const int MARGIN = 60; function check(int opens) {{ {body} }} }}"
+        );
+        let output = project("main.ark", &[("main.ark", main), ("renewal.ark", &library)]);
+        arkade_asm_tokens(&output.unwrap(), "renew")
+    };
+    let sugared = library("require(this.renew(opens + MARGIN), \"renew\");");
+    assert_eq!(sugared, library(&renewal("(opens + MARGIN)", "")));
+    assert!(sugared.contains(&"OP_CHECKTIME".to_string()), "{sugared:?}");
+}
+
+#[test]
+fn renew_validates_its_arguments_and_window() {
+    let error = |call: &str| {
+        let source = format!(
+            "contract Bad(AssetId assetId, bool runtime, int window, bytes data) {{ const int ZERO = 0; const int DAY = 86400; function spend() {{ require({call}); }} }}"
+        );
+        match compile(&source) {
+            Ok(_) => panic!("{call} compiles"),
+            Err(error) => error.to_string(),
+        }
+    };
+    for arguments in [
+        "[]",
+        "[assetId]",
+        "window, [assetId]",
+        "window, window",
+        "window, {script: true, value: true, assets: true}, [assetId], 1",
+        "window, {script: true, value: true, assets: true}, window",
+        "{script: true, value: true, assets: true}, window",
+        "{script: true, value: true, assets: true}, {script: true, value: true, assets: true}",
+        "{script: true, value: true, assets: true}, [assetId], window",
+        "window, ({script: true, value: true, assets: true})",
+    ] {
+        let error = error(&format!("this.renew({arguments})"));
+        assert!(
+            error.contains(
+                "wrong arguments to `this.renew`: expected this.renew(window?, policy?, exceptions?)"
+            ),
+            "{arguments}: {error}"
+        );
+    }
+    for (window, ty) in [("true", "bool"), ("runtime", "bool"), ("data", "bytes")] {
+        let error = error(&format!("this.renew({window})"));
+        assert!(
+            error.contains(&format!("operand has type '{ty}', expected 'int'")),
+            "{window}: {error}"
+        );
+    }
+    for (window, value) in [
+        ("0", "0"),
+        ("-1", "-1"),
+        ("ZERO", "0"),
+        ("DAY - DAY - 5", "-5"),
+        ("Bad.ZERO, {script: true, value: true, assets: true}", "0"),
+    ] {
+        let error = error(&format!("this.renew({window})"));
+        assert!(
+            error.contains(&format!(
+                "this.renew window must be at least 1, got {value}"
+            )),
+            "{window}: {error}"
+        );
+    }
+    for arguments in ["1", "DAY", "DAY - 86399", "window", "window - window"] {
+        let source = format!(
+            "contract C(int window) {{ const int DAY = 86400; function spend() {{ require(this.renew({arguments})); }} }}"
+        );
+        compile(&source).unwrap_or_else(|error| panic!("{arguments}: {error}"));
+    }
+    // An imported constant is in range or not as the contract's own are.
+    let imported = |window: &str| {
+        let main = format!(
+            "import \"lib.ark\"; contract C() {{ function spend() {{ require(this.renew({window})); }} }}"
+        );
+        let library = "library Lib { const int DAY = 86400; }";
+        project("main.ark", &[("main.ark", &main), ("lib.ark", library)])
+    };
+    imported("Lib.DAY").unwrap();
+    let below = imported("Lib.DAY - Lib.DAY").unwrap_err().to_string();
+    assert!(
+        below.contains("this.renew window must be at least 1, got 0"),
+        "{below}"
+    );
+    // The policy and exceptions are the tunnel's, and fail as its own do.
+    for (literals, message) in [
+        (
+            "{value: true, assets: true}",
+            "missing tunnel policy field 'script'",
+        ),
+        (
+            "{script: true, value: true, assets: true, other: true}",
+            "unknown tunnel policy field 'other'",
+        ),
+        (
+            "{script: true, value: true, assets: true, value: false}",
+            "duplicate tunnel policy field 'value'",
+        ),
+        (
+            "{script: false, value: false, assets: false}",
+            "tunnel policy must preserve at least one property",
+        ),
+        (
+            "{script: 1, value: true, assets: true}",
+            "tunnel policy fields must be compile-time bool constants",
+        ),
+        (
+            "{script: runtime, value: true, assets: true}",
+            "tunnel policy fields must be compile-time bool constants",
+        ),
+        (
+            "{script: true, value: true, assets: false}, [assetId]",
+            "tunnel exceptions require asset preservation",
+        ),
+        (
+            "{script: true, value: true, assets: true}, [1]",
+            "tunnel exceptions must be AssetId values",
+        ),
+        (
+            "{script: true, value: true, assets: true}, [unknown]",
+            "unknown",
+        ),
+    ] {
+        for call in [
+            format!("this.renew({literals})"),
+            format!("this.renew(window, {literals})"),
+            format!("this.tunnel(0, {literals})"),
+        ] {
+            let error = error(&call);
+            assert!(error.contains(message), "{call}: {error}");
+        }
+    }
+}
+
+#[test]
+fn renew_is_only_the_whole_condition_of_a_require() {
+    for body in [
+        "let renewed = this.renew(); require(renewed);",
+        "bool renewed = this.renew(window); require(renewed);",
+        "bool renewed; renewed = this.renew(); require(renewed);",
+        "if (this.renew()) { require(window > 0); }",
+        "for (this.renew()) { require(window > 0); }",
+        "require(this.renew() && window > 0);",
+        "require(window > 0 || this.renew());",
+        "require(!this.renew());",
+        "require(this.renew() == true);",
+        "require((this.renew()));",
+        "require(this.renew().value);",
+        "require(this.renew()[0]);",
+        "require(this.renew(this.renew()));",
+        "require(checked(this.renew()));",
+        "require(this.tunnel(0, { script: this.renew(), value: true, assets: true }));",
+        "require(this.renew([]) == true);",
+    ] {
+        let source = format!(
+            "contract Bad(int window) {{ private function checked(bool ok) bool {{ return ok; }} function spend() {{\n{body} }} }}"
+        );
+        let error = compile(&source).expect_err(body).to_string();
+        assert!(
+            error.contains("line 2, column ")
+                && error.contains("`this.renew(...)` must be the whole condition of a require"),
+            "{body}: {error}"
+        );
+    }
+    for (source, message) in [
+        (
+            "contract Bad() { private function renewed() bool { return this.renew(); } function spend() { require(renewed()); } }",
+            "`this.renew(...)` must be the whole condition of a require",
+        ),
+        (
+            "contract Bad() { const bool RENEWED = this.renew(); function spend() { require(RENEWED); } }",
+            "`this.renew(...)` must be the whole condition of a require",
+        ),
+        (
+            "contract Bad() { function spend() { this.renew(); } }",
+            "`this.renew(...)` cannot be a statement; use it inside require()",
+        ),
+        (
+            "contract Bad() { function spend() { require(this.renew); } }",
+            "'this.renew' is not a value on its own",
+        ),
+    ] {
+        let error = compile(source).expect_err(source).to_string();
+        assert!(error.contains(message), "{source}: {error}");
+    }
+}
+
+#[test]
+fn proof_output_is_the_output_paired_with_the_current_input() {
+    let script = |output: &str| {
+        let source = format!(
+            r#"contract C(AssetId id, bytes32 program, int maxFee) {{
+                function spend() {{
+                    require({output}.value + maxFee >= tx.input.current.value);
+                    require({output}.witnessVersion == 1);
+                    require({output}.assets.lookup(id) > 0);
+                    require({output}.assets.has(id));
+                    require({output}.assets.tryLookup(id).found);
+                    require({output}.assets.length == 1);
+                    require({output}.assets[0].amount > 0);
+                    require({output}.assets[0].assetId == id);
+                    let script = {output}.script;
+                    require(script.program == program);
+                    require(script.version == 1);
+                }}
+            }}"#
+        );
+        [compile(&source), compile_unoptimized(&source)]
+            .map(|compiled| arkade_asm_tokens(&compiled.unwrap(), "spend"))
+    };
+    let written = script("tx.outputs[this.activeInputIndex - 1]");
+    assert_eq!(script("tx.proof.output"), written);
+    assert_eq!(script("tx . proof /* paired */ . output"), written);
+    let value = [
+        "OP_PUSHCURRENTINPUTINDEX",
+        "1",
+        "OP_SUB",
+        "OP_INSPECTOUTPUTVALUE",
+    ];
+    assert!(
+        written[0].windows(4).any(|tokens| tokens == value),
+        "{written:?}"
+    );
+
+    for (expression, message) in [
+        (
+            "tx.proof.output == tx.proof.output",
+            "'tx.proof.output' is not a value on its own",
+        ),
+        (
+            "tx.proof.output.missing > 0",
+            "unknown member 'missing' of 'tx.proof.output'; expected one of",
+        ),
+        (
+            "tx.proof.output.sequence > 0",
+            "unknown member 'sequence' of 'tx.proof.output'",
+        ),
+        ("tx.proof.output.value(0) > 0", "tx.proof.output.value(0)"),
+        ("tx.proof.output[0].value > 0", "tx.proof.output[0]"),
+        (
+            "tx.proof.outputs[0].value > 0",
+            "unknown member 'outputs' of 'tx.proof'",
+        ),
+        (
+            "tx.intent.output.value > 0",
+            "unknown member 'intent' of 'tx'",
+        ),
+        (
+            "tx.intent.output.assets.length > 0",
+            "unknown member 'intent' of 'tx'",
+        ),
+    ] {
+        let source = format!("contract Bad() {{ function spend() {{ require({expression}); }} }}");
+        let error = compile(&source).expect_err(expression).to_string();
+        assert!(error.contains(message), "{expression}: {error}");
+    }
 }
 
 #[test]

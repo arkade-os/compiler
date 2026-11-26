@@ -7,6 +7,7 @@ import (
 	"github.com/arkade-os/arkd/pkg/ark-lib/asset"
 	"github.com/arkade-os/emulator/pkg/arkade"
 	"github.com/btcsuite/btcd/chainhash/v2"
+	"github.com/btcsuite/btcd/wire/v2"
 	"github.com/consensys/gnark-crypto/ecc/bn254"
 	"github.com/consensys/gnark-crypto/ecc/bn254/fp"
 )
@@ -93,6 +94,59 @@ func TestOpcodeExecutionContext(t *testing.T) {
 				arkadeScriptWitness(t, contract, group, test.inputs))
 			requireVMResult(t, ptx, emulatorKey.PubKey(), test.wantErr, test.options...)
 		})
+	}
+}
+
+func TestRenew(t *testing.T) {
+	contract := compileArtifact(t, "contracts/new_opcodes.ark")
+	serverKey := fixedPrivateKey(1)
+	emulatorKey := fixedPrivateKey(2)
+	// The window before the first expiry opened in 1970; the one before the second never does.
+	const open, never = 86400, 9223372036854775807
+	register := `{"type":"register","onchain_output_indexes":[]}`
+	both := []string{"renew", "renewByHand"}
+	fee := []string{"renewForFee"}
+	for _, test := range []struct {
+		name         string
+		functions    []string
+		vin          int
+		amount       int64
+		changeScript bool
+		expiry       int64
+		message      string
+		wantErr      string
+	}{
+		{name: "in the window", functions: both, vin: 1, amount: 10000, expiry: open, message: register},
+		{name: "too early", functions: both, vin: 1, amount: 10000, expiry: never, message: register, wantErr: "OP_VERIFY failed"},
+		{name: "not a registration", functions: both, vin: 1, amount: 10000, expiry: open, message: `{"type":"delete","onchain_output_indexes":[]}`, wantErr: "OP_EQUALVERIFY failed"},
+		{name: "onchain output", functions: both, vin: 1, amount: 10000, expiry: open, message: `{"type":"register","onchain_output_indexes":[0]}`, wantErr: "OP_EQUALVERIFY failed"},
+		{name: "missing field", functions: both, vin: 1, amount: 10000, expiry: open, message: `{"type":"register"}`, wantErr: "OP_VERIFY failed"},
+		{name: "missing proof", functions: both, vin: 1, amount: 10000, expiry: open, wantErr: "OP_VERIFY failed"},
+		{name: "value mismatch", functions: both, vin: 1, amount: 9999, expiry: open, message: register, wantErr: "does not preserve source value"},
+		{name: "script mismatch", functions: both, vin: 1, amount: 10000, changeScript: true, expiry: open, message: register, wantErr: "does not preserve source script"},
+		{name: "first input", functions: both, vin: 0, amount: 10000, expiry: open, message: register, wantErr: "output index out of range"},
+		{name: "fee within its bound", functions: fee, vin: 1, amount: 9900, expiry: open, message: register},
+		{name: "fee above its bound", functions: fee, vin: 1, amount: 9899, expiry: open, message: register, wantErr: "false stack entry"},
+	} {
+		for _, function := range test.functions {
+			t.Run(test.name+"/"+function, func(t *testing.T) {
+				group := arkadeScriptGroup(t, contract, function)
+				instance := instantiateGroup(t, contract, function, nil, serverKey.PubKey(), emulatorKey.PubKey())
+				deployment := fundingTx(instance.pkScript, 10000)
+				outputScript := instance.pkScript
+				if test.changeScript {
+					outputScript = p2trScript(t, []byte{0x51})
+				}
+				ptx := spendingPSBTAt(t, deployment, instance, test.vin, 0,
+					[]*wire.TxOut{{Value: test.amount, PkScript: outputScript}},
+					arkadeScriptWitness(t, contract, group, nil))
+				options := []arkade.ExecuteOption{arkade.WithExpiry(test.expiry)}
+				if test.message != "" {
+					options = append(options, arkade.WithIntentMessage(test.message))
+				}
+				requireVMResult(t, ptx, emulatorKey.PubKey(), test.wantErr, options...)
+			})
+		}
 	}
 }
 
