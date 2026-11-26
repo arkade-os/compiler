@@ -461,16 +461,38 @@ func spendingPSBTOutputs(
 ) *psbt.Packet {
 	t.Helper()
 
-	outpoint := wire.OutPoint{Hash: prevTx.TxHash(), Index: 0}
+	return spendingPSBTAt(t, prevTx, group, 0, lockTime, outputs, witness, packets...)
+}
+
+// spendingPSBTAt spends the contract at input vin, after inputs that spend other outputs.
+func spendingPSBTAt(
+	t *testing.T,
+	prevTx *wire.MsgTx,
+	group instantiatedGroup,
+	vin int,
+	lockTime uint32,
+	outputs []*wire.TxOut,
+	witness wire.TxWitness,
+	packets ...extension.Packet,
+) *psbt.Packet {
+	t.Helper()
+
+	prevTxs := make([]*wire.MsgTx, vin, vin+1)
+	for i := range prevTxs {
+		prevTxs[i] = fundingTx(p2trScript(t, []byte{0x51}), int64(1000+i))
+	}
+	prevTxs = append(prevTxs, prevTx)
 	tx := wire.NewMsgTx(2)
 	tx.LockTime = lockTime
-	tx.AddTxIn(&wire.TxIn{PreviousOutPoint: outpoint})
+	for _, prev := range prevTxs {
+		tx.AddTxIn(&wire.TxIn{PreviousOutPoint: wire.OutPoint{Hash: prev.TxHash(), Index: 0}})
+	}
 	for _, output := range outputs {
 		tx.AddTxOut(output)
 	}
 
 	emulatorPacket, err := arkade.NewPacket(arkade.EmulatorEntry{
-		Vin:     0,
+		Vin:     uint16(vin),
 		Script:  group.arkadeScript,
 		Witness: witness,
 	})
@@ -489,11 +511,13 @@ func spendingPSBTOutputs(
 	if err != nil {
 		t.Fatalf("PSBT: %v", err)
 	}
-	ptx.Inputs[0].WitnessUtxo = prevTx.TxOut[0]
-	ptx.Inputs[0].TaprootLeafScript = []*psbt.TaprootTapLeafScript{group.tapLeafScript}
-	if err := txutils.SetArkPsbtField(ptx, 0, arkade.PrevArkTxField, *prevTx); err != nil {
-		t.Fatalf("previous Ark transaction: %v", err)
+	for i, prev := range prevTxs {
+		ptx.Inputs[i].WitnessUtxo = prev.TxOut[0]
+		if err := txutils.SetArkPsbtField(ptx, i, arkade.PrevArkTxField, *prev); err != nil {
+			t.Fatalf("previous Ark transaction: %v", err)
+		}
 	}
+	ptx.Inputs[vin].TaprootLeafScript = []*psbt.TaprootTapLeafScript{group.tapLeafScript}
 	return ptx
 }
 

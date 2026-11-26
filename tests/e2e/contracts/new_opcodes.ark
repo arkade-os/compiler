@@ -47,6 +47,22 @@ contract Continuation() {
         }, [tx.inputs[0].assets[0].assetId]));
     }
 
+    function renew() {
+        require(this.renew());
+    }
+
+    function renewByHand() {
+        require(checkTime(this.expiry - 86400));
+        require(tx.proof.field("type") == "register");
+        require(tx.proof.field("onchain_output_indexes") == "[]");
+        require(this.tunnel(this.activeInputIndex - 1));
+    }
+
+    function renewForFee() {
+        require(this.renew(7200, {script: true, value: false, assets: true}));
+        require(tx.proof.output.value + 100 >= tx.input.current.value);
+    }
+
     function pairing(ECPoint[2] g1, G2Point[2] g2) {
         require(ecPairing(g1, g2, 2));
     }
