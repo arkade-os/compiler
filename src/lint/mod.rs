@@ -5,6 +5,7 @@
 
 use std::collections::BTreeMap;
 use std::str::FromStr;
+use std::{error, fmt};
 
 use crate::diagnostics::{Diagnostic, Span};
 use crate::models::{Contract, TapItem, TapOperand};
@@ -200,15 +201,36 @@ impl Lint {
     }
 }
 
-impl FromStr for Lint {
-    type Err = String;
+/// An id that names no [`Lint`], category or group.
+#[derive(Clone, PartialEq, Eq)]
+pub struct UnknownLint {
+    id: String,
+}
 
-    fn from_str(id: &str) -> Result<Self, String> {
+impl fmt::Display for UnknownLint {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "unknown lint '{}'", self.id)
+    }
+}
+
+/// The message's `Debug`, as `arkadec` printed it when this error was a `String`.
+impl fmt::Debug for UnknownLint {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Debug::fmt(&self.to_string(), f)
+    }
+}
+
+impl error::Error for UnknownLint {}
+
+impl FromStr for Lint {
+    type Err = UnknownLint;
+
+    fn from_str(id: &str) -> Result<Self, UnknownLint> {
         Lint::ALL
             .iter()
             .copied()
             .find(|lint| lint.id() == id)
-            .ok_or_else(|| format!("unknown lint '{id}'"))
+            .ok_or_else(|| UnknownLint { id: id.to_string() })
     }
 }
 
@@ -227,7 +249,7 @@ impl Levels {
 
     /// Sets the lints `id` names: one lint, a category (`security`, `correctness`,
     /// `performance`, `style`), `all`, or `warnings` for every finding left at warn.
-    pub fn set_named(&mut self, id: &str, level: Level) -> Result<(), String> {
+    pub fn set_named(&mut self, id: &str, level: Level) -> Result<(), UnknownLint> {
         if id == "warnings" {
             self.warnings = Some(level);
             return Ok(());
