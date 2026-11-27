@@ -1,0 +1,5 @@
+error[validation]: a tapscript function can hold only `require(condition)` or `require(condition, "message")` statements
+  --> 8:5
+8 |     if (early) { require(older(operatorExitDelay)); }
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+

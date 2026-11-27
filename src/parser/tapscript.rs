@@ -108,6 +108,18 @@ pub(crate) fn parse_named_tapscript(
             if let Some(message) = inner.next() {
                 parse_string_literal(message.as_str())?;
             }
+        } else {
+            let start = stmt.as_span().start();
+            // An `if` also takes the whitespace and comments before where an `else` would be.
+            let end = start + trim_trivia_end(stmt.as_str()).len();
+            let message = if stmt.as_rule() == Rule::attribute {
+                "a statement in a tapscript function cannot have an attribute; \
+                 put it before the function"
+            } else {
+                "a tapscript function can hold only `require(condition)` or \
+                 `require(condition, \"message\")` statements"
+            };
+            return Err(CompileError::from(message).at(crate::diagnostics::Span { start, end }));
         }
     }
     Ok(crate::models::NamedTapscript {
