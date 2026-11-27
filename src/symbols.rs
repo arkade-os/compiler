@@ -308,7 +308,6 @@ impl Collector<'_> {
         frame.insert(name.to_string(), id);
     }
 
-    /// A local named at `span`, usable from `start` to `end`.
     fn local(&mut self, name: &str, ty: Option<TypeName>, span: Span, start: usize, end: usize) {
         let visible = Some(Span { start, end });
         self.bind(name, SymbolKind::Variable, ty, span, visible);

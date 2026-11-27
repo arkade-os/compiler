@@ -443,7 +443,6 @@ fn fold_expression(
             expression.kind = ExprKind::Literal(value.clone());
             return;
         }
-        // `KEY.length` is the length of the constant's value.
         if let Some((constant, "length")) = path.split_last() {
             if let Some(value) = values.get(&constant.key()) {
                 uses.push((constant, expression.span));

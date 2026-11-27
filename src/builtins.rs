@@ -729,7 +729,6 @@ fn documented() -> serde_json::Value {
     }
     for &p in GroupIoProperty::ALL {
         property("tx.assetGroups[].inputs[]", p.describe());
-        // Output records have no txid.
         if p != GroupIoProperty::Txid {
             property("tx.assetGroups[].outputs[]", p.describe());
         }

@@ -219,7 +219,6 @@ fn check(
     Ok(())
 }
 
-/// One block per Arkade Script with its resource usage.
 fn print_report(output: &ContractJson) {
     let width = output
         .functions

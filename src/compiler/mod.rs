@@ -46,7 +46,7 @@ enum BindingKind {
     FunctionInput,
     Local,
     /// A wide literal bound once and read wherever the function would push it, static helpers
-    /// included; it is named by the literal, which no source name can be.
+    /// included. It is bound under the literal's own text, which no source name can collide with.
     Constant,
 }
 
@@ -82,7 +82,7 @@ struct Generator {
     max_depth: usize,
     scopes: Vec<(usize, types::Scope)>,
     deferred: HashSet<String>,
-    /// Placeholders of constructor parameters that flatten to other leaves.
+    /// Composite constructor parameters and their leaf placeholders, so `new` can pass one whole.
     constructor_expansions: Vec<(String, Vec<String>)>,
     structs: Vec<StructDefinition>,
     scope: types::Scope,
@@ -103,7 +103,6 @@ struct Generator {
     read_cursor: Option<usize>,
     preserve_bindings: bool,
     pinned_stack_len: usize,
-    // Rebinding the top slot can consume its old value without changing a branch join.
     replacement: Option<Replacement>,
     /// How often each literal that takes 4 or more bytes is pushed.
     wide_pushes: BTreeMap<String, usize>,
@@ -180,7 +179,8 @@ impl Generator {
                 }
                 _ => continue,
             };
-            // The copy, its size and the expected width.
+            // Extra items at the peak: the picked copy (only when depth > 0), its size and the
+            // expected width.
             prologue_peak = prologue_peak.max(2 + usize::from(depth > 0));
             if depth > 0 {
                 asm.extend([Op::push_int(depth), Opcode::Pick.into()]);
@@ -229,7 +229,8 @@ impl Generator {
 
     fn lower_raw_opcode(&mut self, opcode: Opcode) -> Result<()> {
         match opcode {
-            // These move bindings as well as temporaries.
+            // NIP and SWAP can move bindings, not only temporaries, so they keep their own stack
+            // bookkeeping.
             Opcode::Nip => self.nip(),
             Opcode::Swap => self.swap(),
             Opcode::Tunnel => {

@@ -29,7 +29,6 @@ pub(super) struct Walk<'a> {
 }
 
 impl<'a> Walk<'a> {
-    /// A walk that follows calls into `contract`'s helpers.
     pub(super) fn into_helpers(contract: &'a Contract) -> Self {
         Walk {
             helpers: Some(contract),

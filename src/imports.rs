@@ -57,7 +57,6 @@ pub struct Analysis {
 }
 
 impl Analysis {
-    /// Load `entry` and its imports through `read`, collecting their symbols when `symbols`.
     fn load(
         entry: String,
         mut read: impl FnMut(&str) -> Result<String, String>,
@@ -81,7 +80,6 @@ impl Analysis {
         }
     }
 
-    /// An analysis that failed before reading `entry`.
     fn failed(entry: &str, message: String, filesystem: bool) -> Self {
         Analysis {
             entry: entry.to_string(),
@@ -249,8 +247,6 @@ pub(crate) fn analyze(entry: &str, files: &BTreeMap<String, String>, symbols: bo
     Analysis::load(entry, read, false, symbols)
 }
 
-/// Analyze the entry file at `path` and its imports, read from the filesystem, collecting their
-/// symbols when `symbols`.
 pub(crate) fn analyze_file(path: &Path, symbols: bool) -> Analysis {
     let entry = path::absolute(path)
         .map_err(|e| e.to_string())
@@ -346,7 +342,6 @@ fn import_path(importer: &str, import: &str) -> Result<String, String> {
 
 const LIBRARY_ENTRY: &str = "entry file must declare a contract, not a library";
 
-/// Every module of a program, prepared.
 struct Loaded {
     modules: BTreeMap<String, Module>,
 }
@@ -378,7 +373,6 @@ impl Loaded {
         Ok(loaded)
     }
 
-    /// Each module's lint diagnostics at `levels`.
     fn warnings<'a>(
         &'a self,
         entry: &'a str,
@@ -636,7 +630,7 @@ fn load(
             None => declare(path, &contract, declarations).map_err(LoadError::from),
         };
         if let Err(error) = declared {
-            // Untyped, so a `let` without a declared type has no type.
+            // The contract is not typed yet, so an inferred `let` gets no type in its symbol.
             if let Some(symbols) = &mut symbols {
                 symbols.collect(path, source, &contract, &own_structs, &dependencies, &[]);
             }
@@ -683,7 +677,7 @@ fn load(
         let constant_uses = match checked {
             Ok(uses) => uses,
             Err(error) => {
-                // Untyped, so a `let` without a declared type has no type.
+                // The contract is not typed yet, so an inferred `let` gets no type in its symbol.
                 if let Some(symbols) = &mut symbols {
                     symbols.collect(path, source, &contract, &own_structs, &dependencies, &[]);
                 }

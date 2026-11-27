@@ -575,7 +575,6 @@ impl Expression {
         }
     }
 
-    /// A node replacing this one, at the same source position.
     pub(crate) fn with_kind(&self, kind: ExprKind) -> Self {
         Self::new(kind, self.span)
     }

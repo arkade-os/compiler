@@ -119,7 +119,6 @@ fn satisfies(operator: &str, wanted: [u64; 3], version: [u64; 3]) -> bool {
     }
 }
 
-/// Parse a source file, naming expected tokens in source terms instead of grammar rules.
 #[cfg(test)]
 pub(crate) fn parse_main(source: &str) -> Result<Pairs<'_, Rule>, String> {
     try_parse(source).map_err(|e| format!("Parse error: {e}"))
@@ -203,7 +202,6 @@ fn missing_at(source: &str, at: usize) -> usize {
     }
 }
 
-/// `text` without the whitespace and comments that end it.
 pub(crate) fn trim_trivia_end(text: &str) -> &str {
     &text[..code_end(text, text.len())]
 }
@@ -213,7 +211,6 @@ fn code_end(source: &str, at: usize) -> usize {
     code(&source[..at]).last().map_or(0, |code| code.end)
 }
 
-/// `text` without the whitespace and comments the grammar allows between terms.
 pub(crate) fn without_trivia(text: &str) -> String {
     code(text).map(|code| &text[code]).collect()
 }
@@ -1821,7 +1818,7 @@ contract C() {
             panic!("{right:?}");
         };
         assert!(matches!(&script.kind, ExprKind::OutputIntrospection { .. }));
-        // A grouped binding keeps its binding path.
+        // A parenthesized binding, `(p).x`, still parses as the plain path `p.x`.
         assert!(matches!(
             &statements[1].statement,
             Statement::Require(Expression { kind: ExprKind::BinaryOp { left, .. }, .. })

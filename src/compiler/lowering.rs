@@ -73,7 +73,6 @@ pub(super) fn contains_return(body: &[Lowered]) -> bool {
     })
 }
 
-/// Whether some path through `body` reaches its end.
 fn falls_through(body: &[Lowered]) -> bool {
     body.iter().all(|item| match item {
         Lowered::Simple(_) => !item.is_return(),
@@ -453,7 +452,6 @@ pub(super) fn check_folded(
         if !checked.insert((name.clone(), literals)) {
             continue;
         }
-        // As at a call: the constructor's bindings, or none for a static helper, and the parameters.
         let mut scope = if helper.is_static {
             types::Scope::new()
         } else {

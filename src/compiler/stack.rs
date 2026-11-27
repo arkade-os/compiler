@@ -85,7 +85,8 @@ impl Generator {
             {
                 self.final_reads[previous] = false;
             }
-            // Arrays and outer scope slots stay pinned unless reassignment restores the slot.
+            // Only a read whose slot nothing needs later may consume it: arrays and outer-scope
+            // slots stay, unless the in-place rebinding refills the slot.
             self.final_reads.push(
                 take || (!self.preserve_bindings
                     && index >= self.pinned_stack_len

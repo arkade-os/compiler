@@ -556,7 +556,6 @@ pub(super) fn validate_binding_expression(
         ExprKind::Name(path) if path.segments.is_empty() => {
             validate_named_binding(&path.root, None, "binding", scopes, issues);
         }
-        // A path under an unbound root reports the root.
         ExprKind::Name(path) | ExprKind::ArrayIndex { array: path, .. }
             if find_binding(scopes, &path.root).is_none() =>
         {
@@ -763,7 +762,8 @@ pub(super) fn validate_array_index(
     array_info.map(|(element_type, _, source)| (element_type, source))
 }
 
-/// Validate an int index into `array`: how diagnostics spell it, and its length.
+/// `array` is the indexed array as diagnostics spell it, with its length; without it the index is
+/// not range-checked.
 fn validate_index(
     index: &Expression,
     array: Option<(String, usize)>,

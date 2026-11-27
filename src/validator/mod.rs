@@ -42,7 +42,6 @@ pub struct ValidationIssue {
     pub suggestion: Option<IssueSuggestion>,
 }
 
-/// A replacement that may fix an issue.
 #[derive(Debug, Clone)]
 pub struct IssueSuggestion {
     pub replacement: String,
@@ -142,7 +141,6 @@ pub(crate) fn validate_ast(contract: &Contract, require_entrypoint: bool) -> Vec
     for (context, name, span) in declarations {
         let first = issues.len();
         validate_source_identifier(name, context, &mut issues);
-        // A builtin's name is reserved for its calls.
         if matches!(context, "function" | "tapscript")
             && parser::reserved_function_signature(name).is_some()
         {
@@ -866,7 +864,7 @@ contract Demo() {
     #[test]
     fn valid_contract_has_no_issues() {
         let mut contract = make_contract("Simple");
-        // `flag` is only read by the branch tests.
+        // This body never reads the `flag` parameter, so drop it to avoid an unused-input error.
         contract.functions[0].parameters.pop();
         let issues = validate(&contract);
         assert!(issues.is_empty());

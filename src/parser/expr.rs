@@ -8,7 +8,6 @@ use crate::models::{ExprKind, Expression, Path};
 use crate::operators::BinaryOperator;
 use pest::iterators::Pair;
 
-/// Whether `rule` is one of the grammar's binary-operator precedence levels.
 pub(crate) fn is_operator_level(rule: Rule) -> bool {
     matches!(
         rule,
@@ -141,7 +140,7 @@ pub(crate) fn parse_primary_expr(pair: Pair<Rule>) -> Result<Expression, String>
             Ok(value)
         }
         rule if is_operator_level(rule) => {
-            // Parenthesized expression
+            // An operator level in operand position is a parenthesized subexpression.
             parse_general_expression(pair)
         }
         Rule::identifier => Ok(Expression::new(
@@ -231,7 +230,6 @@ pub(crate) enum Suffix<'a> {
     Index(Pair<'a, Rule>, usize),
 }
 
-/// The suffixes `postfix` or `binding_suffix` pairs spell.
 fn suffixes<'a>(pairs: impl Iterator<Item = Pair<'a, Rule>>) -> Result<Vec<Suffix<'a>>, String> {
     pairs
         .map(|pair| {
@@ -340,7 +338,7 @@ pub(crate) fn apply_suffixes(
                 (ExprKind::IndexAccess { value, index }, end)
             }
         };
-        // A call's value is no binding.
+        // Suffixes after a call apply to a computed value, so they no longer extend a binding path.
         plain &= !matches!(suffix, Suffix::Call(..));
         value = Expression::new(kind, Span { start, end: *end });
     }

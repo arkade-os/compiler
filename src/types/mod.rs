@@ -54,7 +54,6 @@ impl ArkType {
         )
     }
 
-    /// Whether a value of type `actual` can be bound where `self` is expected.
     pub(crate) fn accepts(&self, actual: &ArkType) -> bool {
         self == actual
             || *self == ArkType::Bytes && actual.is_bytes_like()
@@ -70,7 +69,6 @@ impl ArkType {
         TypeName::parse(s).ark_type()
     }
 
-    /// The type a builtin or struct name denotes.
     pub(crate) fn named(s: &str) -> ArkType {
         match s {
             "signature" => ArkType::Signature,
@@ -261,7 +259,6 @@ pub(crate) fn annotate_statements(
     .statements(statements, scope);
 }
 
-/// Type one expression of code that has not been annotated.
 pub(crate) fn annotate_expression(
     expression: &mut Expression,
     scope: &Scope,
@@ -319,7 +316,7 @@ impl Typing<'_> {
                     if let Some(declared_type) = declared_type {
                         self.expect(value, &declared_type.ark_type());
                     }
-                    // A binding holds a value, so one of a void initializer has no type.
+                    // A void initializer leaves no stack value to bind, so the binding is Unknown.
                     let ty = match (declared_type.as_ref(), &value.ty) {
                         (Some(declared_type), _) => declared_type.ark_type(),
                         (None, ArkType::Void) => ArkType::Unknown,
@@ -365,7 +362,7 @@ impl Typing<'_> {
                     body,
                 } => {
                     self.expression(iterable, scope);
-                    // A literal's elements after the first take the first's type.
+                    // Expecting its own type gives a literal's later elements the first one's type.
                     self.expect(iterable, &iterable.ty.clone());
                     let mut body_scope = scope.clone();
                     body_scope.insert(index_var.clone(), ArkType::Int);
@@ -421,7 +418,6 @@ impl Typing<'_> {
         }
         self.expect_operands(expression);
         expression.ty = match &expression.kind {
-            // An unknown function, which validation reports, has no result type.
             ExprKind::Call { name, .. }
                 if self
                     .signatures
@@ -429,8 +425,9 @@ impl Typing<'_> {
             {
                 ArkType::Unknown
             }
-            // A computed value's member, or one whose path an out-of-range constant index leaves
-            // unbound, is typed as the same member of a binding of its type.
+            // A field of a computed value, or of a path an out-of-range constant index leaves
+            // unbound, has no entry in `scope`: bind the value's type under a placeholder name and
+            // look the field up there.
             // TODO(ir): scopes key types by binding path, hence the made-up name `$`.
             ExprKind::FieldAccess { value, field }
                 if expression
@@ -444,7 +441,6 @@ impl Typing<'_> {
             }
             _ => infer_type(expression, scope),
         };
-        // A named literal's own type types its nested literals.
         if matches!(
             expression.kind,
             ExprKind::StructLiteral { name: Some(_), .. }
@@ -453,12 +449,11 @@ impl Typing<'_> {
         }
     }
 
-    /// Types the literal operands of a builtin or an asset lookup from its signature.
     fn expect_operands(&self, expression: &mut Expression) {
         match &mut expression.kind {
             ExprKind::Builtin { builtin, args } => {
                 for (arg, (_, parameter)) in args.iter_mut().zip(builtin.params) {
-                    // `T[]` takes its length from the operand.
+                    // `T[]` accepts any length; `expect` replaces this 0 with the operand's length.
                     let ty = match parameter.strip_suffix("[]") {
                         Some(element) => ArkType::Array(Box::new(ArkType::parse(element)), 0),
                         None => ArkType::parse(parameter),
@@ -492,7 +487,6 @@ impl Typing<'_> {
                 }
             }
             (ExprKind::StructLiteral { name, fields }, ArkType::Struct(_)) => {
-                // A named literal's fields follow its own name.
                 let own = name.as_ref().map(|name| ArkType::Struct(name.clone()));
                 let mut members = Scope::new();
                 let struct_type = own.unwrap_or_else(|| ty.clone());
@@ -675,7 +669,6 @@ pub(crate) fn group_io_source(name: &str) -> Option<GroupIOSource> {
     }
 }
 
-/// Whether a value of type `t` can be compared with `hash_fn`'s digest.
 pub(crate) fn digest_accepts(hash_fn: &HashFn, t: &ArkType) -> bool {
     *t == ArkType::Bytes || *t == ArkType::parse(hash_fn.digest_type())
 }
@@ -799,7 +792,6 @@ fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
     }
 }
 
-/// Byte length of `expr` when it is known at compile time.
 pub(crate) fn static_byte_width(expr: &Expression) -> Option<usize> {
     match &expr.kind {
         ExprKind::Literal(value) if value.starts_with("0x") => Some((value.len() - 2) / 2),
@@ -835,7 +827,6 @@ pub(crate) fn resolved(ty: &ArkType) -> bool {
     }
 }
 
-/// Whether values of the type are script numbers.
 pub(crate) fn is_numeric(t: &ArkType) -> bool {
     t.encoding() == "scriptnum"
 }

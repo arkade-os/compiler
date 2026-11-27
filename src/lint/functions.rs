@@ -41,7 +41,6 @@ impl fmt::Display for OutputIndex {
     }
 }
 
-/// What one output has checked.
 #[derive(Default)]
 struct OutputChecks {
     script: Option<Span>,
@@ -105,7 +104,6 @@ struct Facts {
 }
 
 impl Facts {
-    /// Where a finding at `span` belongs in the walked file.
     fn at(&self, span: Span) -> Span {
         self.import_call.map_or(span, |(call, _)| call)
     }

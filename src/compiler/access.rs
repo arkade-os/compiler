@@ -216,7 +216,6 @@ impl Generator {
         Ok(())
     }
 
-    /// Emit a builtin call with argument `position` evaluated once.
     fn emit_with_bound_arg(
         &mut self,
         call: &Expression,

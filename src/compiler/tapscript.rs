@@ -369,7 +369,6 @@ pub fn validate_arkd_rules(
             ));
         }
     }
-    // Every tweak must name the same function.
     shared_tweak_func(&ts.name, &c.keys)?;
 
     let sig_input = |name: &str| -> bool {
@@ -1498,7 +1497,6 @@ mod tests {
                 OP_CHECKSIG.to_string(),
             ]
         );
-        // Signatures are witness, not script.
         assert!(!asm.iter().any(|t| t.contains("Sig")));
         let w = leaf_witness(&leaf);
         let names: Vec<_> = w.iter().map(|e| e.name.clone()).collect();

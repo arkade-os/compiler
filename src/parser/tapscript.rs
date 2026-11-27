@@ -177,7 +177,6 @@ fn arkade_script_member(pair: &Pair<Rule>) -> Option<String> {
     None
 }
 
-/// Interpret one `require(...)` inner expression as a tapscript item.
 pub(crate) fn parse_tap_item(pair: Pair<Rule>, constants: &[Constant]) -> Result<TapItem, String> {
     use crate::models::{HashFn, TapItem, TapOperand};
     match pair.as_rule() {
@@ -346,7 +345,6 @@ fn operand_path(operand: &Expression, constants: &[Constant]) -> Option<Path> {
     }
 }
 
-/// The literal value of the constant `path` names.
 fn constant_value(path: &Path, constants: &[Constant]) -> Result<String, String> {
     let key = path.key();
     match constants
@@ -359,7 +357,6 @@ fn constant_value(path: &Path, constants: &[Constant]) -> Result<String, String>
     }
 }
 
-/// The binding a `named_binding` operand reads.
 fn parse_binding(pair: Pair<Rule>, constants: &[Constant]) -> Result<Path, String> {
     let binding = expr::parse_property_access(pair)?;
     operand_path(&binding, constants).ok_or_else(|| {

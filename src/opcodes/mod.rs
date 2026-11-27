@@ -112,7 +112,7 @@ opcodes! {
     EcMulScalarVerify = OP_ECMULSCALARVERIFY => (3, 0),
     TweakVerify = OP_TWEAKVERIFY => (3, 0),
 
-    // Conditionals
+    // Boolean logic and flow control
     BoolAnd = OP_BOOLAND => (2, 1),
     Not = OP_NOT => (1, 1),
     False = OP_FALSE,
@@ -148,10 +148,14 @@ opcodes! {
     // Verify variants
     EqualVerify = OP_EQUALVERIFY => (2, 0),
     NumEqualVerify = OP_NUMEQUALVERIFY => (2, 0),
+
+    // Boolean logic
     BoolOr = OP_BOOLOR,
 
-    // Stack manipulation (extended)
+    // Numeric push
     Negate1 = OP_1NEGATE,
+
+    // Stack manipulation (extended)
     Dup = OP_DUP => (1, 2),
     Rot = OP_ROT => (3, 3),
     Over = OP_OVER => (2, 3),
