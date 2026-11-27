@@ -54,7 +54,7 @@ This artifact is `examples/htlc` compiled, with `"..."` marking omitted values:
 | `arkade` | `{ inputs, asm }`; absent for groups made only of standalone leaves |
 | `leaves[]` | `{ name, witness, asm }`; `witness` lists spend-time values in source order, `injected: true` marks operator signatures |
 | `contracts` | The `codeHash` of each contract a `<CONTRACT:Name(...)>` placeholder names, keyed by name; absent when there is none |
-| `codeHash` | SHA-256 of compact artifact JSON with only the fields before it, `formatVersion` through `contracts`, which determine the scripts; `source`, `compiler`, `updatedAt` and `fingerprint` are left out |
+| `codeHash` | SHA-256 of the compact JSON of a canonical copy of the fields before it, `formatVersion` through `contracts`, which determine the scripts; the copy renames every identifier by position (see [Verifying artifacts](#verifying-artifacts)), so names are not covered, and `source`, `compiler`, `updatedAt` and `fingerprint` are left out; `fingerprint` covers the names |
 | `source` | `{ entry, files }`: original entry source and every recursively imported file, including comments |
 | `compiler.options` | Effective compilation settings; `optimize` enables constant folding, static branch removal, and assembly optimization for Arkade Scripts |
 | `updatedAt` | Changes on every compile; ignore it when diffing artifacts |
@@ -71,14 +71,29 @@ Witness `encoding` values are `schnorr-64`, `raw`, `raw-20`, `raw-32` and `scrip
 
 A contract compiled on its own has the `codeHash` that an artifact instantiating it records in `contracts`, given the same compiler and options. So a client resolving `<CONTRACT:Name(...)>` from a separately supplied artifact can pin it to `contracts.Name`, in either of two ways:
 
-- **Recompute its `codeHash`:** SHA-256 of the compact JSON, without whitespace, of the artifact's fields from `formatVersion` through `contracts` in serialized order, prefixed with `sha256:`. Compare that with `contracts.Name`.
+- **Recompute its `codeHash`:** copy the artifact and rename every identifier in the copy to `$` and its zero-based position:
+  - `contractName` becomes `""`.
+  - Struct `k` in `structs` becomes `$k`, and its field `j` becomes `$j`. Every type naming a struct, in `structs`, `constructorInputs`, `arkade.inputs` and `witness`, uses the new name and keeps its array sizes, so `Policy[2]` becomes `$0[2]`.
+  - Constructor input `i` becomes `$i`.
+  - Spend group `g` becomes `$g`, leaf `l` within its group becomes `$l`, and Arkade Script input `i` and witness element `i` become `$i`.
+  - In every `asm`, Arkade Script and leaves alike, a constructor placeholder takes its renamed path: the parameter and the struct fields along it are renamed, and array indexes and builtin struct fields stay, so with `pubkey user`, `Policy p` and `pubkey[2] keys` as the constructor inputs, `<user>`, `<p.maximum>` and `<keys.1>` become `<$0>`, `<$1.$0>` and `<$2.1>`. `<OPERATOR_KEY:f>` and `<TWEAK:base:f>` take the renamed group and path, and `<CONTRACT:Name(args)>` becomes `<CONTRACT:hash(args)>`, where `hash` is `contracts.Name` and every placeholder in `args` is renamed. `<OPERATOR_KEY>`, `<OPERATOR_EXIT_DELAY>` and every other token stay as they are.
+  - `contracts` is left out, since each `<CONTRACT:...>` token now carries its contract's `codeHash`.
+
+  Then take the SHA-256 of the compact JSON, without whitespace, of the copy's fields from `formatVersion` through `contracts` in serialized order, prefixed with `sha256:`, and compare that with `contracts.Name`. For `contract SingleSig(pubkey user) { function spend(signature userSig) { require(checkSig(userSig, user)); } }`, the hashed JSON is the following, and its `codeHash` is `sha256:b7c92bb98913e4a6fb8a57a76cfca211bd23581b383fa0b175b22bd8d4b9b485`:
+
+  ```json
+  {"formatVersion":1,"contractName":"","constructorInputs":[{"name":"$0","type":"pubkey"}],"functions":[{"name":"$0","arkade":{"inputs":[{"name":"$0","type":"signature"}],"asm":["<$0>","OP_CHECKSIG"]},"leaves":[{"name":"$0","witness":[{"name":"$0","type":"signature","encoding":"schnorr-64","injected":true}],"asm":["<OPERATOR_KEY:$0>","OP_CHECKSIG"]}]}]}
+  ```
+
 - **Recompile its `source`** with a trusted compiler and the artifact's `compiler.options`, compare the recompiled `codeHash` with `contracts.Name`, and use the recompiled artifact.
+
+The copy renames placeholders and never substitutes values for them, so a contract reading a parameter and one with the same value as a literal have different `codeHash` values.
 
 What changes the `codeHash`:
 
-- Edits outside the hashed fields, such as to comments or formatting, keep the `codeHash`.
-- Edits inside them change it even when the scripts stay the same, such as renaming a witness parameter or reordering struct declarations.
-- An instantiated contract's own `contracts` are part of its `codeHash`, so the pin covers indirect instantiations too.
+- Edits that leave the scripts unchanged keep the `codeHash`: comments, formatting, and renaming the contract, a function, a constructor or function parameter, a witness, a struct, a struct field or an instantiated contract.
+- Reordering parameters, functions, leaves or struct declarations changes it, since positions bind arguments and order leaves, and so does any change to the scripts, the parameter, input or witness types, the struct layouts, the witness encodings or `injected`.
+- An instantiated contract's `codeHash` is part of the instantiating contract's `codeHash`, so the pin covers indirect instantiations too.
 
 ## Spend group order
 
