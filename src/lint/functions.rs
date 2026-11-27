@@ -11,7 +11,7 @@ use crate::models::{
     AssetLookupSource, Contract, ExprKind, Expression, Function, KeyExpr, LocatedStatement,
     Statement, TapItem,
 };
-use crate::properties::{OutputProperty, ThisProperty, TxProperty};
+use crate::properties::{OutputProperty, TxProperty};
 
 /// An output the function constrains at a fixed place; outputs at a computed index are not
 /// tracked.
@@ -25,7 +25,7 @@ impl OutputIndex {
     fn of(index: &Expression) -> Option<Self> {
         match index.literal_index() {
             Some(literal) => Some(OutputIndex::Literal(literal)),
-            None => is_active_input(index).then_some(OutputIndex::ActiveInput),
+            None => index.is_active_input().then_some(OutputIndex::ActiveInput),
         }
     }
 }
@@ -327,7 +327,7 @@ impl<'a> Visitor<'a> for Facts {
                 facts.path.signed = true;
             }
             ExprKind::OutputIntrospection { index, property } => {
-                facts.bounds_inputs |= is_active_input(index);
+                facts.bounds_inputs |= index.is_active_input();
                 let Some(index) = OutputIndex::of(index) else {
                     return;
                 };
@@ -366,7 +366,7 @@ impl<'a> Visitor<'a> for Facts {
                 property: TxProperty::NumInputs,
             } => facts.bounds_inputs = true,
             ExprKind::BinaryOp { left, op, right } if op.compares() => {
-                facts.bounds_inputs |= [left, right].iter().any(|side| is_active_input(side))
+                facts.bounds_inputs |= [left, right].iter().any(|side| side.is_active_input())
             }
             ExprKind::InputIntrospection { property, .. } => {
                 facts.bounds_inputs |=
@@ -462,11 +462,4 @@ fn find_witness_choices(
 fn never_passes(condition: &Expression) -> bool {
     let mut no_names = |_: &crate::models::Path| Err(String::new());
     crate::compiler::constants::evaluate(condition, &mut no_names).as_deref() == Ok("false")
-}
-
-fn is_active_input(expression: &Expression) -> bool {
-    matches!(
-        expression.kind,
-        ExprKind::This(ThisProperty::ActiveInputIndex)
-    )
 }

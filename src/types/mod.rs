@@ -55,6 +55,26 @@ pub enum ArkType {
 }
 
 impl ArkType {
+    /// Whether the type widens to `bytes`: it can be concatenated with `+` and compared or
+    /// bound to `bytes`, but never to another sized type.
+    pub(crate) fn is_bytes_like(&self) -> bool {
+        matches!(
+            self,
+            ArkType::Bytes | ArkType::Bytes20 | ArkType::Bytes32 | ArkType::Signature
+        )
+    }
+
+    /// Whether a value of type `actual` can be bound where `self` is expected.
+    pub(crate) fn accepts(&self, actual: &ArkType) -> bool {
+        self == actual
+            || *self == ArkType::Bytes && actual.is_bytes_like()
+            || matches!(
+                (self, actual),
+                (ArkType::Array(expected, expected_len), ArkType::Array(actual, actual_len))
+                    if expected_len == actual_len && expected.accepts(actual)
+            )
+    }
+
     /// Parse from a grammar `data_type` string (e.g., `"pubkey"`, `"bytes32[4]"`).
     pub fn parse(s: &str) -> ArkType {
         crate::models::TypeName::parse(s).ark_type()
@@ -631,7 +651,7 @@ fn resolve_length(expression: &mut Expression, scope: &Scope) {
         _ => None,
     };
     let resolved = match value.kind {
-        _ if is_bytes_like(&value.ty) => Some(ExprKind::Builtin {
+        _ if value.ty.is_bytes_like() => Some(ExprKind::Builtin {
             builtin: crate::builtins::find("size").expect("size is a builtin"),
             args: vec![value],
         }),
@@ -793,7 +813,7 @@ fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
                 // bytes-like on either side → concatenation (result Bytes).
                 OperatorClass::Arithmetic
                     if *op == BinaryOperator::Add
-                        && (is_bytes_like(&left.ty) || is_bytes_like(&right.ty)) =>
+                        && (left.ty.is_bytes_like() || right.ty.is_bytes_like()) =>
                 {
                     ArkType::Bytes
                 }
@@ -846,15 +866,6 @@ pub(crate) fn resolved(ty: &ArkType) -> bool {
 /// Whether values of the type are script numbers.
 pub(crate) fn is_numeric(t: &ArkType) -> bool {
     t.encoding() == "scriptnum"
-}
-
-/// Returns true when the type widens to `bytes`: it can be concatenated with
-/// `+` and compared or bound to `bytes`, but never to another sized type.
-pub fn is_bytes_like(t: &ArkType) -> bool {
-    matches!(
-        t,
-        ArkType::Bytes | ArkType::Bytes20 | ArkType::Bytes32 | ArkType::Signature
-    )
 }
 
 #[cfg(test)]

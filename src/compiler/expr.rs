@@ -340,7 +340,7 @@ pub(crate) fn emit_binary_op_asm(
     let concat = op == BinaryOperator::Add
         && [left, right]
             .iter()
-            .any(|operand| crate::types::is_bytes_like(&operand.ty));
+            .any(|operand| operand.ty.is_bytes_like());
     if concat {
         asm.push(Cat.into());
     } else {

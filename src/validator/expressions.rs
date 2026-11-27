@@ -43,7 +43,7 @@ fn validate_comparison(
         composite |= whole;
     }
     let (left, right) = (&left.ty, &right.ty);
-    let bytes_like = crate::types::is_bytes_like;
+    let bytes_like = ArkType::is_bytes_like;
     let compatible = match op.class() {
         class if composite && class != OperatorClass::Equality => false,
         _ if issues.len() != before => return,
@@ -190,7 +190,7 @@ pub(super) fn validate_binding_expression(
         ExprKind::BinaryOp { left, op, right } if op.class() == OperatorClass::Bytewise => {
             for operand in [left, right] {
                 let actual = operand.ty.clone();
-                if !binding_types_compatible(&ArkType::Bytes, &actual) {
+                if !ArkType::Bytes.accepts(&actual) {
                     issues.push(
                         ValidationIssue::error(format!(
                             "bytewise '{op}' operand has type '{}', expected 'bytes'",
@@ -223,14 +223,13 @@ pub(super) fn validate_binding_expression(
             };
             let types = [left, right].map(|operand| operand.ty.clone());
             // Bytes-like `+` is concatenation.
-            let concat =
-                *op == BinaryOperator::Add && types.iter().any(crate::types::is_bytes_like);
+            let concat = *op == BinaryOperator::Add && types.iter().any(ArkType::is_bytes_like);
             if concat {
                 // The width and byte order of a converted number are consensus-visible, so the author picks them.
                 for ((side, operand), actual) in
                     [("left", left), ("right", right)].iter().zip(&types)
                 {
-                    if !crate::types::is_bytes_like(actual) {
+                    if !actual.is_bytes_like() {
                         let hint = match actual {
                             ArkType::Int => "convert it explicitly with bytes(value) for minimal Script-number encoding or int2bytes(value, width) for fixed-width encoding",
                             ArkType::Bool => "convert it explicitly with bytes(value) for minimal Script-number encoding",
@@ -283,7 +282,7 @@ pub(super) fn validate_binding_expression(
         ExprKind::Unary { op, value } => {
             let (operator, expected) = (op.symbol(), ArkType::parse(op.operand_type()));
             let actual = value.ty.clone();
-            if !binding_types_compatible(&expected, &actual) {
+            if !expected.accepts(&actual) {
                 issues.push(
                     ValidationIssue::error(format!(
                         "unary '{}' operand has type '{}', expected '{}'",
@@ -344,7 +343,7 @@ pub(super) fn validate_binding_expression(
                                 &format!("{name} operand, element {index}"),
                                 issues,
                             );
-                        } else if !binding_types_compatible(element, actual) {
+                        } else if !element.accepts(actual) {
                             issues.push(
                                 ValidationIssue::error(format!(
                                     "{name} '{}' has type '{}', expected '{}'",
@@ -367,7 +366,7 @@ pub(super) fn validate_binding_expression(
                     }
                     continue;
                 }
-                if !binding_types_compatible(&expected, &actual) {
+                if !expected.accepts(&actual) {
                     issues.push(
                         ValidationIssue::error(format!(
                             "{name} operand has type '{}', expected '{}'",
@@ -492,7 +491,7 @@ pub(super) fn validate_binding_expression(
             };
             // Same-type casts are no-ops; emission drops them.
             if actual != source
-                && !binding_types_compatible(&ArkType::parse(target), &actual)
+                && !ArkType::parse(target).accepts(&actual)
                 && !(target == "bytes" && actual == ArkType::Bool)
             {
                 issues.push(ValidationIssue::error(format!(

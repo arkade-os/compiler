@@ -77,18 +77,6 @@ pub(crate) const MAX_LOOP_ITERATIONS: usize = 10_000;
 /// Bytes the VM allows in one stack element (`txscript.MaxScriptElementSize`).
 const MAX_ELEMENT_SIZE: usize = 520;
 
-fn integer_op(value: usize) -> Op {
-    use crate::opcodes::Opcode::*;
-    const SMALL: [Opcode; 17] = [
-        Int0, Int1, Int2, Int3, Int4, Int5, Int6, Int7, Int8, Int9, Int10, Int11, Int12, Int13,
-        Int14, Int15, Int16,
-    ];
-    match SMALL.get(value) {
-        Some(&opcode) => opcode.into(),
-        None => Op::Push(value.to_string()),
-    }
-}
-
 struct Generator {
     optimize: bool,
     asm: ir::Assembly,
@@ -184,7 +172,7 @@ impl Generator {
                     prologue_peak = prologue_peak.max(2);
                     asm.extend(match depth {
                         0 => vec![Dup.into()],
-                        _ => vec![integer_op(depth), Pick.into()],
+                        _ => vec![Op::push_int(depth), Pick.into()],
                     });
                     asm.extend([Dup.into(), NotEqual0.into(), EqualVerify.into()]);
                     continue;
@@ -194,7 +182,7 @@ impl Generator {
             // The copy, its size and the expected width.
             prologue_peak = prologue_peak.max(2 + usize::from(depth > 0));
             if depth > 0 {
-                asm.extend([integer_op(depth), Pick.into()]);
+                asm.extend([Op::push_int(depth), Pick.into()]);
             }
             asm.extend([Size.into(), Op::Push(width.into()), EqualVerify.into()]);
             if depth > 0 {

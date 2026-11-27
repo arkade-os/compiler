@@ -44,16 +44,6 @@ pub(super) fn find_binding<'a>(scopes: &'a BindingScopes, name: &str) -> Option<
     scopes.iter().rev().find_map(|frame| frame.get(name))
 }
 
-pub(crate) fn binding_types_compatible(expected: &ArkType, actual: &ArkType) -> bool {
-    expected == actual
-        || *expected == ArkType::Bytes && crate::types::is_bytes_like(actual)
-        || matches!(
-            (expected, actual),
-            (ArkType::Array(expected, expected_len), ArkType::Array(actual, actual_len))
-                if expected_len == actual_len && binding_types_compatible(expected, actual)
-        )
-}
-
 pub(super) fn check_binding_semantics(contract: &Contract, issues: &mut Vec<ValidationIssue>) {
     for function in contract.functions.iter().filter(|f| !f.is_imported()) {
         let mut root = HashMap::new();
@@ -154,7 +144,7 @@ fn validate_binding_statements(
                     .map_or_else(|| inferred.clone(), TypeName::ark_type);
                 if issues.len() == first
                     && declared_type.is_some()
-                    && !binding_types_compatible(&binding_type, &inferred)
+                    && !binding_type.accepts(&inferred)
                 {
                     issues.push(ValidationIssue::error(format!(
                         "binding '{}' declares type '{}' but initializer has type '{}'",
@@ -260,7 +250,7 @@ fn validate_binding_statements(
                     valid
                         && *target != ArkType::Unknown
                         && !matches!(&value.kind, ExprKind::ArrayLiteral(_))
-                        && !binding_types_compatible(target, &value.ty)
+                        && !target.accepts(&value.ty)
                 };
                 match target {
                     AssignmentTarget::Access(access) => {

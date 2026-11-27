@@ -928,10 +928,7 @@ fn validate_scope(
                         types::annotate_expression(&mut arg, &scope, &contract.structs);
                         let actual = arg.ty;
                         if actual != types::ArkType::Unknown
-                            && !crate::validator::binding_types_compatible(
-                                &param.param_type.ark_type(),
-                                &actual,
-                            )
+                            && !param.param_type.ark_type().accepts(&actual)
                         {
                             return Err(format!(
                                 "constructor '{contract_name}' argument '{}' expects {}, got {}",

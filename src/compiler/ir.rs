@@ -108,6 +108,31 @@ impl From<Opcode> for Op {
 }
 
 impl Op {
+    /// The instruction that pushes `value`: `OP_0` to `OP_16`, else a number push.
+    pub(crate) fn push_int(value: usize) -> Op {
+        use Opcode::{
+            Int0, Int1, Int10, Int11, Int12, Int13, Int14, Int15, Int16, Int2, Int3, Int4, Int5,
+            Int6, Int7, Int8, Int9,
+        };
+        const SMALL: [Opcode; 17] = [
+            Int0, Int1, Int2, Int3, Int4, Int5, Int6, Int7, Int8, Int9, Int10, Int11, Int12, Int13,
+            Int14, Int15, Int16,
+        ];
+        match SMALL.get(value) {
+            Some(&opcode) => opcode.into(),
+            None => Op::Push(value.to_string()),
+        }
+    }
+
+    /// Whether this is `opcode`; a literal `1` assembles to `OP_1`, so it counts as one.
+    pub(crate) fn is(&self, opcode: Opcode) -> bool {
+        match self {
+            Op::Opcode(op) => *op == opcode,
+            Op::Push(value) => value == "1" && opcode == Opcode::Int1,
+            _ => false,
+        }
+    }
+
     /// The assembly token, as an artifact placeholder spells nested arguments.
     pub(crate) fn spell(&self) -> String {
         match self {

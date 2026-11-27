@@ -127,7 +127,7 @@ impl Generator {
     }
 
     pub(super) fn push_integer_temporary(&mut self, value: usize) {
-        self.push_temporary(integer_op(value));
+        self.push_temporary(Op::push_int(value));
     }
 
     pub(super) fn check_array_index(&mut self, length: usize) -> Result<()> {

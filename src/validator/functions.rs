@@ -291,7 +291,7 @@ pub(super) fn validate_value(
         }
         _ => {
             let actual = &value.ty;
-            if !binding_types_compatible(&expected_type, actual) {
+            if !expected_type.accepts(actual) {
                 issues.push(ValidationIssue::error(format!(
                     "{context}: expected '{expected}', got '{}'",
                     actual.as_str()

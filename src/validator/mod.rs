@@ -39,7 +39,6 @@ use assets::check_asset_id_operands;
 use bindings::check_binding_semantics;
 use shadowing::check_shadowing;
 
-pub(crate) use bindings::binding_types_compatible;
 pub(crate) use functions::falls_through;
 pub(crate) use output::validate_output;
 

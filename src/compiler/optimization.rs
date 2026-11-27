@@ -4,7 +4,7 @@ use crate::opcodes::Opcode::{self, *};
 use crate::operators::{BinaryOperator, UnaryOperator};
 use crate::types::{ArkType, Scope};
 
-use super::{Op, Spanned};
+use super::Spanned;
 
 const MAX_SCRIPT_ELEMENT_SIZE: usize = 520;
 
@@ -270,29 +270,16 @@ const REWRITES: &[(&[Opcode], &[Opcode])] = &[
     (&[NotEqual0, Not], &[Not]),
 ];
 
-/// Whether `op` is `opcode`; a literal `1` assembles to `OP_1`, so it counts as one.
-fn matches(op: &Op, opcode: Opcode) -> bool {
-    match op {
-        Op::Opcode(op) => *op == opcode,
-        Op::Push(value) => value == "1" && opcode == Int1,
-        _ => false,
-    }
-}
-
 /// The optimized instructions, and how many items the rewrites can add to the unoptimized
 /// stack peak.
 pub(super) fn optimize(mut asm: Vec<Spanned>) -> (Vec<Spanned>, usize) {
     // The NIPs clear every item below the final truthy value. The final clean-stack truth check
     // already enforces a trailing `Verify Int1`, so a failing last requirement reports a false
     // stack entry instead when the NIPs are kept.
-    let nips = asm
-        .iter()
-        .rev()
-        .take_while(|(op, _)| matches(op, Nip))
-        .count();
+    let nips = asm.iter().rev().take_while(|(op, _)| op.is(Nip)).count();
     let body = asm.len() - nips;
     let mut kept = asm.clone();
-    if body >= 2 && matches(&kept[body - 2].0, Verify) && matches(&kept[body - 1].0, Int1) {
+    if body >= 2 && kept[body - 2].0.is(Verify) && kept[body - 1].0.is(Int1) {
         kept.drain(body - 2..body);
     }
     // Verifying the final value first lets the cleared items go in pairs with Drop2; a failing
@@ -321,10 +308,10 @@ fn rewrite(asm: Vec<Spanned>) -> (Vec<Spanned>, usize) {
         loop {
             let len = optimized.len();
             if len >= 2
-                && matches(&optimized[len - 1].0, NotEqual0)
+                && optimized[len - 1].0.is(NotEqual0)
                 && BOOLEAN_RESULTS
                     .iter()
-                    .any(|&opcode| matches(&optimized[len - 2].0, opcode))
+                    .any(|&opcode| optimized[len - 2].0.is(opcode))
             {
                 optimized.pop();
                 continue;
@@ -334,7 +321,7 @@ fn rewrite(asm: Vec<Spanned>) -> (Vec<Spanned>, usize) {
                     && optimized[len - from.len()..]
                         .iter()
                         .zip(*from)
-                        .all(|((op, _), &opcode)| matches(op, opcode))
+                        .all(|((op, _), &opcode)| op.is(opcode))
             }) else {
                 break;
             };
@@ -372,6 +359,7 @@ fn peak(ops: &[Opcode]) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::compiler::Op;
     use crate::opcodes::*;
 
     /// Instructions for assembly tokens: opcodes, `<binding>` reads and constants.

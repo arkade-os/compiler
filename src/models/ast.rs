@@ -576,6 +576,13 @@ impl Expression {
         Self::new(kind, self.span)
     }
 
+    pub(crate) fn is_active_input(&self) -> bool {
+        matches!(
+            self.kind,
+            ExprKind::This(crate::properties::ThisProperty::ActiveInputIndex)
+        )
+    }
+
     /// The type analysis gave this expression; `Unknown` before analysis.
     pub fn ty(&self) -> &crate::types::ArkType {
         &self.ty
