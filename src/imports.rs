@@ -7,6 +7,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{self, Component, Path, PathBuf};
 use std::{error, fmt, fs};
 
+use crate::compiler::error::InternalError;
 use crate::diagnostics::{self, CompileError, Diagnostic, Severity, Span};
 use crate::lint::{Levels, Lints};
 use crate::models::{
@@ -52,9 +53,6 @@ pub(crate) enum LoadError {
     },
     ImportTooDeep,
     LibraryEntry,
-    ContractNotLoaded {
-        name: String,
-    },
     DependencyFails {
         name: String,
         path: String,
@@ -143,7 +141,6 @@ impl fmt::Display for LoadError {
             LoadError::LibraryEntry => {
                 f.write_str("entry file must declare a contract, not a library")
             }
-            LoadError::ContractNotLoaded { name } => write!(f, "contract '{name}' is not loaded"),
             LoadError::DependencyFails {
                 name,
                 path,
@@ -208,12 +205,6 @@ impl fmt::Display for LoadError {
 }
 
 impl error::Error for LoadError {}
-
-impl From<LoadError> for CompileError {
-    fn from(error: LoadError) -> Self {
-        error.to_string().into()
-    }
-}
 
 // Dependency definitions are copied per module; use a shared symbol table if quadratic copying becomes costly.
 struct Module {
@@ -713,7 +704,7 @@ impl Loaded {
             .find(|(_, module)| module.contract.name == name)
             .ok_or_else(|| {
                 let name = name.to_string();
-                CompileError::internal(LoadError::ContractNotLoaded { name }.to_string())
+                CompileError::from(InternalError::ContractNotLoaded { name })
             })?;
         let source = files.get(path).map_or("", String::as_str);
         // Loading prepared this module as an import, without the checks only an entry gets.
@@ -979,7 +970,7 @@ fn load(
     active.pop();
     result.map_err(|error| match error {
         LoadFailure::Message(error) => {
-            let code = if error.internal {
+            let code = if error.is_internal() {
                 "internal"
             } else {
                 "validation"

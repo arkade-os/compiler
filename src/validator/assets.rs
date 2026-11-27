@@ -103,7 +103,7 @@ pub(super) fn validate_gidx(fields: &[(String, Expression)], issues: &mut Vec<Va
     if gidx.ty != ArkType::Int || !is_constant(gidx) {
         return;
     }
-    match constants::evaluate(gidx, &mut |path| Err(path.key())) {
+    match constants::evaluate(gidx, &mut constants::no_names) {
         Ok(v) if v.parse::<u16>().is_ok() => {}
         Ok(v) => issues.push(
             ValidationIssue::error(format!("asset id gidx {v} is out of range 0..65535"))

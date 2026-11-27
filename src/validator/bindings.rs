@@ -510,8 +510,8 @@ fn validate_binding_statements(
                 end,
                 body,
             } => {
-                if let Err(message) = models::loop_range(start, end) {
-                    issues.push(ValidationIssue::error(message));
+                if let Err(error) = models::loop_range(start, end) {
+                    issues.push(ValidationIssue::error(error.to_string()));
                 }
                 let index = BindingInfo {
                     binding_type: ArkType::Int,

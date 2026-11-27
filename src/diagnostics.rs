@@ -1,10 +1,15 @@
 //! Compiler errors and warnings as structured diagnostics: spans, line and column conversion,
 //! the JSON form tools read, and the joined string the `compile*` functions return.
 
-use std::fmt;
+use std::{error, fmt};
 
+use crate::compiler::constants::ConstantError;
+use crate::compiler::error::{CompileErrorKind, InternalError};
 use crate::errors::ErrorCode;
+use crate::imports::LoadError;
 use crate::lint::Lint;
+use crate::parser::ParseError;
+
 /// A byte-offset range into one file's source text.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub struct Span {
@@ -172,29 +177,24 @@ impl Diagnostic {
 /// A code generation failure: a problem in the source, or a broken compiler invariant.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct CompileError {
-    pub message: String,
+    pub kind: CompileErrorKind,
     pub span: Option<Span>,
-    pub internal: bool,
 }
 
 impl CompileError {
-    pub(crate) fn internal(message: impl Into<String>) -> Self {
-        Self {
-            message: message.into(),
-            span: None,
-            internal: true,
-        }
-    }
-
     /// Locates the error at `span` unless a narrower span already does.
     pub(crate) fn at(mut self, span: Span) -> Self {
         self.span.get_or_insert(span);
         self
     }
 
+    pub(crate) fn is_internal(&self) -> bool {
+        matches!(self.kind, CompileErrorKind::Internal(_))
+    }
+
     pub(crate) fn diagnostic(&self, file: &str) -> Diagnostic {
         Diagnostic::error(file, self.to_string())
-            .with_code(if self.internal {
+            .with_code(if self.is_internal() {
                 "internal"
             } else {
                 "emission"
@@ -205,26 +205,39 @@ impl CompileError {
 
 impl fmt::Display for CompileError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.internal {
-            f.write_str("internal compiler error: ")?;
-        }
-        f.write_str(&self.message)
+        self.kind.fmt(f)
     }
 }
 
-impl From<String> for CompileError {
-    fn from(message: String) -> Self {
-        Self {
-            message,
-            span: None,
-            internal: false,
-        }
+impl error::Error for CompileError {}
+
+impl From<CompileErrorKind> for CompileError {
+    fn from(kind: CompileErrorKind) -> Self {
+        Self { kind, span: None }
     }
 }
 
-impl From<&str> for CompileError {
-    fn from(message: &str) -> Self {
-        message.to_string().into()
+impl From<InternalError> for CompileError {
+    fn from(error: InternalError) -> Self {
+        CompileErrorKind::Internal(error).into()
+    }
+}
+
+impl From<ParseError> for CompileError {
+    fn from(error: ParseError) -> Self {
+        CompileErrorKind::Parse(error).into()
+    }
+}
+
+impl From<LoadError> for CompileError {
+    fn from(error: LoadError) -> Self {
+        CompileErrorKind::Load(Box::new(error)).into()
+    }
+}
+
+impl From<ConstantError> for CompileError {
+    fn from(error: ConstantError) -> Self {
+        CompileErrorKind::Constant(error).into()
     }
 }
 
@@ -290,7 +303,7 @@ mod tests {
     #[test]
     fn compile_errors_keep_the_narrowest_span_and_mark_internal_ones() {
         let narrow = Span { start: 4, end: 9 };
-        let error = CompileError::from("bad index")
+        let error = CompileError::from(CompileErrorKind::InvalidCallMarker)
             .at(narrow)
             .at(Span { start: 0, end: 20 });
         assert_eq!(error.span, Some(narrow));
@@ -298,10 +311,10 @@ mod tests {
             error.diagnostic("main.ark").code.as_deref(),
             Some("emission")
         );
-        let internal = CompileError::internal("unbalanced scope");
+        let internal = CompileError::from(InternalError::UnbalancedScope);
         assert_eq!(
             internal.to_string(),
-            "internal compiler error: unbalanced scope"
+            "internal compiler error: unbalanced generator scope"
         );
         assert_eq!(
             internal.diagnostic("main.ark").code.as_deref(),

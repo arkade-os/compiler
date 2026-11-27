@@ -1533,7 +1533,7 @@ contract C(pubkey k, int unused) {
         }
         let error = check("^1.0.0 || >=2.0.0 // range\n <3.0.0", "0.1.0-rc.1").unwrap_err();
         assert_eq!(
-            error.message,
+            error.to_string(),
             "pragma requires arkade ^1.0.0 || >=2.0.0 <3.0.0, but this compiler is version 0.1.0-rc.1"
         );
     }

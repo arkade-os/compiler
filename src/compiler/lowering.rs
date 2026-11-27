@@ -4,6 +4,7 @@
 use std::collections::HashSet;
 use std::{iter, slice};
 
+use super::error::CompileErrorKind;
 use super::ir::Op;
 use super::{loops, optimization, Result};
 use crate::diagnostics::{CompileError, Span};
@@ -209,7 +210,7 @@ fn lower_statement(
             body,
         } => {
             let types::ArkType::Array(_, length) = iterable.ty else {
-                return Err("unsupported loop iterable".into());
+                return Err(CompileErrorKind::UnsupportedLoopIterable.into());
             };
             // A runtime-indexed access is bound only when the body writes nothing it reads, so the
             // copy matches a live read and folding an index to a literal never changes results.
@@ -286,7 +287,7 @@ fn lower_statement(
                 ExprKind::Literal(count) => count.parse::<usize>().ok(),
                 _ => None,
             }
-            .ok_or("loop count must be a non-negative integer compile-time constant")?;
+            .ok_or(CompileErrorKind::LoopCountNotConstant)?;
             unroll(span, iter::repeat_n(body, count), scope, structs, fold)?
         }
         Statement::ForRange {

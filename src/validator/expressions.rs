@@ -7,7 +7,8 @@ use super::bindings::{
 };
 use super::{operands, ValidationIssue};
 use crate::builtins;
-use crate::compiler::{constants, Op};
+use crate::compiler::constants::{self, ConstantError};
+use crate::compiler::Op;
 use crate::diagnostics::Span;
 use crate::models::{self, ExprKind, Expression, GroupIOSource, Path, Segment};
 use crate::operators::{BinaryOperator, OperatorClass, UnaryOperator};
@@ -393,7 +394,7 @@ pub(super) fn validate_binding_expression(
                 let Some(operand) = operands.get(index) else {
                     continue;
                 };
-                let Ok(value) = constants::evaluate(operand, &mut |path| Err(path.key())) else {
+                let Ok(value) = constants::evaluate(operand, &mut constants::no_names) else {
                     continue;
                 };
                 let accepted = value.parse::<i128>().map_or_else(
@@ -430,7 +431,7 @@ pub(super) fn validate_binding_expression(
                     if operand.ty != ArkType::Int {
                         continue;
                     }
-                    if let Ok(value) = constants::evaluate(operand, &mut |path| Err(path.key())) {
+                    if let Ok(value) = constants::evaluate(operand, &mut constants::no_names) {
                         if Op::Push(value).pushes_more_than(64) {
                             issues.push(
                                 ValidationIssue::error(format!(
@@ -446,7 +447,7 @@ pub(super) fn validate_binding_expression(
             if let ("checkMultisig", Some(ArkType::Array(_, count)), Some(threshold)) =
                 (name, operands.first().map(|keys| &keys.ty), operands.get(2))
             {
-                if let Ok(value) = constants::evaluate(threshold, &mut |path| Err(path.key())) {
+                if let Ok(value) = constants::evaluate(threshold, &mut constants::no_names) {
                     if value
                         .parse::<usize>()
                         .map_or(true, |t| t == 0 || t > *count)
@@ -789,7 +790,7 @@ fn validate_index(
                 binding_type: ArkType::Array(_, length),
                 ..
             }) => Ok(length.to_string()),
-            _ => Err(path.key()),
+            _ => Err(ConstantError::unknown(path)),
         }
     })
     .ok()

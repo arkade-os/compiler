@@ -3,6 +3,7 @@
 
 use std::iter;
 
+use super::error::CompileErrorKind;
 use super::Spanned;
 use crate::builtins::Lowering;
 use crate::models::{self, AssignmentTarget, ExprKind, Expression, Statement};
@@ -10,7 +11,10 @@ use crate::opcodes::Opcode;
 use crate::operators::{BinaryOperator, UnaryOperator};
 use crate::types::{ArkType, Scope};
 
-pub(super) fn fold_statement(statement: &mut Statement, scope: &Scope) -> Result<(), String> {
+pub(super) fn fold_statement(
+    statement: &mut Statement,
+    scope: &Scope,
+) -> Result<(), CompileErrorKind> {
     match statement {
         Statement::Call(value)
         | Statement::Return(Some(value))
@@ -72,7 +76,7 @@ pub(super) fn known_bool(condition: &Expression) -> Option<bool> {
     }
 }
 
-fn fold_expression(expression: &mut Expression, scope: &Scope) -> Result<(), String> {
+fn fold_expression(expression: &mut Expression, scope: &Scope) -> Result<(), CompileErrorKind> {
     if let ExprKind::BinaryOp { left, op, right } = &mut expression.kind {
         if matches!(op, BinaryOperator::And | BinaryOperator::Or) {
             fold_expression(left, scope)?;
@@ -122,9 +126,10 @@ fn fold_expression(expression: &mut Expression, scope: &Scope) -> Result<(), Str
             if !index.parse::<usize>().is_ok_and(|index| index < *length) {
                 // A computed array is spelled by its type, as in 'int[2]'.
                 let array = array.map_or_else(|| ty.as_str(), |array| format!("{array}[{length}]"));
-                return Err(format!(
-                    "array index '{index}' is out of range for '{array}'"
-                ));
+                return Err(CompileErrorKind::IndexOutOfRange {
+                    index: index.clone(),
+                    array,
+                });
             }
         }
     }
@@ -158,7 +163,7 @@ fn fold_expression(expression: &mut Expression, scope: &Scope) -> Result<(), Str
             op: UnaryOperator::Neg,
             value,
         } if matches!(value.kind, ExprKind::Literal(_)) => {
-            super::constants::evaluate(expression, &mut |_| Err("runtime value".into()))
+            super::constants::evaluate(expression, &mut super::constants::no_names)
                 .ok()
                 .and_then(|value| value.parse::<i128>().ok())
                 .map(|value| value.to_string())
@@ -178,7 +183,7 @@ fn fold_expression(expression: &mut Expression, scope: &Scope) -> Result<(), Str
         {
             // LIMITATION: the evaluator uses i128, so larger or failing computations stay at
             // runtime; fold them with a bignum evaluator if contracts need them.
-            super::constants::evaluate(expression, &mut |_| Err("runtime value".into())).ok()
+            super::constants::evaluate(expression, &mut super::constants::no_names).ok()
         }
         _ => None,
     };

@@ -5,7 +5,6 @@ use std::{error, fmt, result};
 use pest::error::Error as PestError;
 
 use super::Rule;
-use crate::diagnostics::CompileError;
 use crate::models::Path;
 use crate::properties::InputProperty;
 
@@ -319,9 +318,3 @@ impl fmt::Display for ParseError {
 }
 
 impl error::Error for ParseError {}
-
-impl From<ParseError> for CompileError {
-    fn from(error: ParseError) -> Self {
-        error.to_string().into()
-    }
-}

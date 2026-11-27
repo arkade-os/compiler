@@ -5,6 +5,7 @@ use std::ops::Range;
 
 use super::{Parameter, StructDefinition, TypeName};
 use crate::builtins::Builtin;
+use crate::compiler::error::CompileErrorKind;
 use crate::diagnostics::Span;
 use crate::opcodes::Opcode;
 use crate::operators::{BinaryOperator, UnaryOperator};
@@ -334,16 +335,19 @@ impl Statement {
 
 /// The indexes `for (i) in start..end` visits; both bounds must be non-negative integer
 /// literals with `start <= end`.
-pub(crate) fn loop_range(start: &Expression, end: &Expression) -> Result<Range<usize>, String> {
+pub(crate) fn loop_range(
+    start: &Expression,
+    end: &Expression,
+) -> Result<Range<usize>, CompileErrorKind> {
     let bound = |bound: &Expression| match &bound.kind {
         ExprKind::Literal(value) => value.parse::<usize>().ok(),
         _ => None,
     };
     let (Some(start), Some(end)) = (bound(start), bound(end)) else {
-        return Err("loop range bounds must be non-negative integer compile-time constants".into());
+        return Err(CompileErrorKind::LoopRangeNotConstant);
     };
     if start > end {
-        return Err(format!("loop range start {start} exceeds its end {end}"));
+        return Err(CompileErrorKind::LoopRangeReversed { start, end });
     }
     Ok(start..end)
 }

@@ -10,7 +10,7 @@ use crate::compiler::constants;
 use crate::compiler::tapscript::{keeps_default_leaf, shared_tweak_func};
 use crate::diagnostics::Span;
 use crate::models::{
-    self, AssetLookupSource, Contract, ExprKind, Expression, Function, KeyExpr, LocatedStatement,
+    AssetLookupSource, Contract, ExprKind, Expression, Function, KeyExpr, LocatedStatement,
     Statement, TapItem,
 };
 use crate::properties::{InputProperty, OutputProperty, TxProperty};
@@ -459,6 +459,5 @@ fn find_witness_choices(
 
 /// A requirement the constant folder evaluates to false, as in a disabled function.
 fn never_passes(condition: &Expression) -> bool {
-    let mut no_names = |_: &models::Path| Err(String::new());
-    constants::evaluate(condition, &mut no_names).as_deref() == Ok("false")
+    constants::evaluate(condition, &mut constants::no_names).as_deref() == Ok("false")
 }

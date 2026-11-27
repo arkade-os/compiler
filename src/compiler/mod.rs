@@ -18,6 +18,7 @@ use crate::models::{
 use crate::opcodes::Opcode;
 use crate::validator::{self, references};
 use crate::{imports, types};
+use error::{CompileErrorKind, InternalError};
 
 pub mod tapscript;
 
@@ -27,6 +28,7 @@ mod access;
 mod asset;
 mod comparison;
 pub(crate) mod constants;
+pub(crate) mod error;
 pub(crate) use constants::{fold as fold_constants, resolve as resolve_constants};
 mod expr;
 mod functions;
@@ -243,13 +245,13 @@ impl Generator {
                         _ => None,
                     })
                     .and_then(|count| count.checked_mul(2)?.checked_add(3))
-                    .ok_or("invalid tunnel exception count")?;
+                    .ok_or(CompileErrorKind::InvalidTunnelExceptionCount)?;
                 self.apply(opcode, inputs, 1)
             }
             _ => {
-                let (inputs, outputs) = opcode.stack_effect().ok_or_else(|| {
-                    CompileError::internal(format!("unknown expression opcode {opcode}"))
-                })?;
+                let (inputs, outputs) = opcode
+                    .stack_effect()
+                    .ok_or(InternalError::UnknownExpressionOpcode { opcode })?;
                 self.apply(opcode, inputs, outputs)
             }
         }
@@ -295,21 +297,17 @@ impl Generator {
                 self.push_temporary(Op::Contract { name, args });
                 Ok(())
             }
-            Op::Value(_) => Err(CompileError::internal(
-                "extracted value outside an expression",
-            )),
-            Op::Param(_) => Err(CompileError::internal(
-                "constructor parameter inside an expression",
-            )),
+            Op::Value(_) => Err(InternalError::ValueOutsideExpression.into()),
+            Op::Param(_) => Err(InternalError::ParameterInsideExpression.into()),
         }
     }
 
     fn emit_expression(&mut self, expression: &Expression) -> Result<()> {
         if matches!(&expression.kind, ExprKind::ArrayLiteral(_)) {
-            return Err("array literals may only initialize an array declaration; composite values are not supported".into());
+            return Err(CompileErrorKind::CompositeArrayLiteral.into());
         }
         if matches!(&expression.kind, ExprKind::StructLiteral { .. }) {
-            return Err("struct literals may only initialize a typed struct declaration; composite values are not supported".into());
+            return Err(CompileErrorKind::CompositeStructLiteral.into());
         }
         self.emit_expression_items(expression, 1)
     }
@@ -341,7 +339,7 @@ impl Generator {
                 Op::Opcode(token @ (Opcode::Else | Opcode::EndIf)) => {
                     self.pop_temporaries(1, token)?;
                     if branches.last() != Some(&self.stack) {
-                        return Err("logical branch must produce exactly one stack item".into());
+                        return Err(CompileErrorKind::LogicalBranchItems.into());
                     }
                     if token == Opcode::EndIf {
                         branches.pop();
@@ -350,12 +348,14 @@ impl Generator {
                     self.asm.push(token.into());
                 }
                 Op::Value(index) => {
-                    let value = values.get(index).ok_or("invalid call marker")?;
+                    let value = values
+                        .get(index)
+                        .ok_or(CompileErrorKind::InvalidCallMarker)?;
                     if let ExprKind::BinaryOp { left, op, right } = &value.kind {
                         let ty = self
                             .composite_type(left)
                             .or_else(|| self.composite_type(right))
-                            .ok_or("invalid comparison marker")?;
+                            .ok_or(CompileErrorKind::InvalidComparisonMarker)?;
                         self.emit_composite_comparison(left, *op, right, &ty, false)?;
                     } else if matches!(&value.kind, ExprKind::Call { .. }) {
                         self.emit_call(value)?;
@@ -382,7 +382,7 @@ impl Generator {
         }
         self.preserve_bindings = preserved;
         if !branches.is_empty() {
-            return Err("unclosed logical branch".into());
+            return Err(CompileErrorKind::UnclosedLogicalBranch.into());
         }
         let after = self
             .stack
@@ -397,10 +397,10 @@ impl Generator {
                 .take(expected)
                 .any(|item| !matches!(item, StackItem::Temporary))
         {
-            return Err(format!(
-                "expression produces {} stack items; exactly {expected} required",
-                after.saturating_sub(before),
-            )
+            return Err(CompileErrorKind::ExpressionItems {
+                produced: after.saturating_sub(before),
+                expected,
+            }
             .into());
         }
         Ok(())
@@ -409,7 +409,7 @@ impl Generator {
     /// The Arkade Script's instructions, each with its statement's span, and its stack peak.
     fn finish(mut self) -> Result<(Vec<Spanned>, usize)> {
         if !self.scopes.is_empty() {
-            return Err(CompileError::internal("unbalanced generator scope"));
+            return Err(InternalError::UnbalancedScope.into());
         }
         self.asm.set_span(None);
         self.push_temporary(Opcode::Int1);
@@ -417,9 +417,7 @@ impl Generator {
             self.nip()?;
         }
         if self.stack != vec![StackItem::Temporary] {
-            return Err(CompileError::internal(
-                "Arkade Script did not finish cleanly",
-            ));
+            return Err(InternalError::UnfinishedScript.into());
         }
         Ok((self.asm.into_spanned(), self.max_depth))
     }
@@ -471,8 +469,8 @@ pub(crate) fn prepare(
     for ts in &contract.tapscripts {
         match tapscript::check_tapscript(contract, ts) {
             Ok(leaf) => leaves.push(leaf),
-            Err(message) => leaf_errors.push(
-                Diagnostic::error(file, message)
+            Err(error) => leaf_errors.push(
+                Diagnostic::error(file, error.to_string())
                     .with_code("validation")
                     .with_span(ts.span),
             ),
@@ -546,12 +544,11 @@ pub(crate) fn emit(
 
     let output_issues = validator::validate_output(&json);
     if !output_issues.is_empty() {
-        return Err(output_issues
-            .iter()
-            .map(|issue| format!("output validation error: {}", issue.message))
-            .collect::<Vec<_>>()
-            .join("; ")
-            .into());
+        let messages = output_issues.into_iter().map(|issue| issue.message);
+        return Err(CompileErrorKind::OutputValidation {
+            messages: messages.collect(),
+        }
+        .into());
     }
     let instantiated: BTreeSet<String> = json
         .functions
@@ -566,7 +563,9 @@ pub(crate) fn emit(
     }
     // Serialized field order is part of both hashes; reordering artifact fields changes them.
     let sha256 = |json: &ContractJson| -> Result<String> {
-        let bytes = serde_json::to_vec(json).map_err(|error| error.to_string())?;
+        let bytes = serde_json::to_vec(json).map_err(|error| CompileErrorKind::Serialize {
+            message: error.to_string(),
+        })?;
         let digest = Sha256::digest(bytes);
         Ok(format!(
             "sha256:{}",
@@ -673,9 +672,7 @@ fn arkade_script_for(
         generator.read_cursor = Some(0);
         emit_function(&body, &mut generator, hoisted)?;
         if generator.read_cursor != Some(generator.final_reads.len()) {
-            return Err(CompileError::internal(
-                "final-use analysis diverged from emission",
-            ));
+            return Err(InternalError::FinalUseDiverged.into());
         }
         let (mut ops, mut peak) = generator.finish()?;
         if optimize {
@@ -696,7 +693,9 @@ fn arkade_script_for(
     let (mut ops, mut peak) = emit(analysis, &[])?;
     let mut widths = HashMap::new();
     for parameter in &retained_parameters {
-        for leaf in models::flatten_parameter(parameter, structs)? {
+        for leaf in
+            models::flatten_value(&Path::new(&parameter.name), &parameter.param_type, structs)?
+        {
             let width = match leaf.leaf_type.ark_type() {
                 types::ArkType::Signature => 64,
                 types::ArkType::Bytes32 => 32,
@@ -723,27 +722,27 @@ fn arkade_script_for(
         }
     }
     if peak > MAX_STACK_ITEMS {
-        return Err(format!(
-            "function '{}' can hold {peak} stack items, above the VM limit of {MAX_STACK_ITEMS}",
-            function.name
-        )
+        return Err(CompileErrorKind::StackLimit {
+            function: function.name.clone(),
+            peak,
+        }
         .into());
     }
     let size = size_of(&ops);
     if size > MAX_SCRIPT_SIZE {
-        return Err(format!(
-            "function '{}' assembles to at least {size} bytes, above the VM limit of {MAX_SCRIPT_SIZE}",
-            function.name
-        ).into());
+        return Err(CompileErrorKind::ScriptSizeLimit {
+            function: function.name.clone(),
+            size,
+        }
+        .into());
     }
     if ops
         .iter()
         .any(|(op, _)| op.pushes_more_than(MAX_ELEMENT_SIZE))
     {
-        return Err(format!(
-            "function '{}' pushes a value above the VM element limit of {MAX_ELEMENT_SIZE}",
-            function.name
-        )
+        return Err(CompileErrorKind::ElementSizeLimit {
+            function: function.name.clone(),
+        }
         .into());
     }
     let mut executions = most_executions(&ops, &mut 0);
@@ -864,7 +863,7 @@ fn for_each_expanded_param(
     structs: &[StructDefinition],
     mut f: impl FnMut(String, Path, TypeName),
 ) -> Result<()> {
-    for leaf in models::flatten_parameter(param, structs)? {
+    for leaf in models::flatten_value(&Path::new(&param.name), &param.param_type, structs)? {
         f(leaf.emitted_name, leaf.access, leaf.leaf_type);
     }
     Ok(())

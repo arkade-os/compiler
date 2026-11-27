@@ -7,7 +7,7 @@ use std::{iter, slice};
 use super::error::{ParseError, Result};
 use super::{expr, Rule};
 use crate::builtins;
-use crate::compiler::constants;
+use crate::compiler::constants::{self, ConstantError};
 use crate::diagnostics::CompileError;
 use crate::models::{
     Constant, ExprKind, Expression, HashFn, KeyExpr, NamedTapscript, Path, TapItem, TapOperand,
@@ -337,7 +337,8 @@ fn parse_time_operand(
 fn parse_time_value(pair: Pair<Rule>, constants: &[Constant]) -> Result<TapOperand> {
     use crate::models::TapOperand;
     let value = expr::parse_general_expression(pair)?;
-    let mut constant = |path: &Path| constant_value(path, constants).ok_or_else(String::new);
+    let mut constant =
+        |path: &Path| constant_value(path, constants).ok_or_else(|| ConstantError::unknown(path));
     if let Ok(literal) = constants::evaluate(&value, &mut constant) {
         return Ok(TapOperand::Literal(literal));
     }
@@ -352,7 +353,9 @@ fn parse_time_value(pair: Pair<Rule>, constants: &[Constant]) -> Result<TapOpera
 /// any other expression or an index that is not constant.
 fn operand_path(operand: &Expression, constants: &[Constant]) -> Option<Path> {
     let index = |index: &Expression| {
-        let mut constant = |path: &Path| constant_value(path, constants).ok_or_else(String::new);
+        let mut constant = |path: &Path| {
+            constant_value(path, constants).ok_or_else(|| ConstantError::unknown(path))
+        };
         constants::evaluate(index, &mut constant).ok()?.parse().ok()
     };
     match &operand.kind {

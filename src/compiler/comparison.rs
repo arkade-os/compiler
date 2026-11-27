@@ -1,5 +1,6 @@
 //! Compares array and struct values for equality one flattened leaf at a time.
 
+use super::error::CompileErrorKind;
 use super::{Generator, Result};
 use crate::models::{self, Expression, Path, TypeName};
 use crate::opcodes::Opcode;
@@ -33,7 +34,7 @@ impl Generator {
         verify: bool,
     ) -> Result<()> {
         if op.class() != OperatorClass::Equality {
-            return Err(format!("'{op}' is not defined for '{ty}' values").into());
+            return Err(CompileErrorKind::UndefinedComparison { op, ty: ty.clone() }.into());
         }
         let leaves = models::flatten_value(&Path::new(""), ty, &self.structs)?;
         let width = leaves.len();
