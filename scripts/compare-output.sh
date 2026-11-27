@@ -1,7 +1,7 @@
 #!/bin/sh
 # Compile every contract with the compiler at <ref> and with the working tree, optimized and
-# not, and list each one whose artifact differs. updatedAt, fingerprint and compiler.version
-# are ignored: they change on every build or version bump without changing any script.
+# not, and list each one whose codeHash differs. codeHash covers every artifact field that
+# determines the scripts and none of source, compiler, updatedAt or fingerprint.
 # The corpus is examples/, tests/e2e/contracts/ and the differential fuzzer's cases.
 # Exits like diff: 0 when every artifact matches, 1 when any differs, 2 when a step fails
 # or the working tree's arkadec crashes.
@@ -16,6 +16,10 @@ trap 'rm -rf "$work"' EXIT
 fail() {
   echo "compare-output: $1" >&2
   exit 2
+}
+
+code_hash() {
+  sed -n 's/^  "codeHash": "\(sha256:[0-9a-f]*\)",$/\1/p' "$1" | grep .
 }
 
 mkdir "$work/base" "$work/fuzz" || fail "cannot create $work"
@@ -47,27 +51,12 @@ while IFS= read -r contract; do
       continue
     fi
     [ "$h" = 0 ] || continue
-    python3 - "$work/base.json" "$work/head.json" <<'EOF' && same=0 || same=$?
-import json, sys
-
-def normalized(path):
-    artifact = json.load(open(path))
-    for key in ("updatedAt", "fingerprint"):
-        artifact.pop(key, None)
-    artifact.get("compiler", {}).pop("version", None)
-    return artifact
-
-try:
-    sys.exit(1 if normalized(sys.argv[1]) != normalized(sys.argv[2]) else 0)
-except (OSError, ValueError) as error:
-    print(error, file=sys.stderr)
-    sys.exit(2)
-EOF
-    case $same in
-      0) ;;
-      1) echo "${contract#"$work/fuzz/"} $flag: artifact differs"; changed=$((changed + 1)) ;;
-      *) fail "cannot compare the artifacts of $contract" ;;
-    esac
+    b=$(code_hash "$work/base.json") && h=$(code_hash "$work/head.json") ||
+      fail "no codeHash in the artifacts of $contract"
+    if [ "$b" != "$h" ]; then
+      echo "${contract#"$work/fuzz/"} $flag: codeHash differs"
+      changed=$((changed + 1))
+    fi
   done
 done <"$work/corpus"
 
