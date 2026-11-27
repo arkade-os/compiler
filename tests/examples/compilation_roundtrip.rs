@@ -125,9 +125,9 @@ fn fingerprint_identifies_artifact_content() {
     let mut pinned = first.clone();
     pinned.fingerprint = None;
     pinned.updated_at = None;
-    let digest = |artifact: &arkade_compiler::ContractJson| {
+    let sha256_of = |bytes: &[u8]| {
         use sha2::Digest;
-        let digest = sha2::Sha256::digest(serde_json::to_vec(artifact).unwrap());
+        let digest = sha2::Sha256::digest(bytes);
         format!(
             "sha256:{}",
             digest
@@ -136,16 +136,23 @@ fn fingerprint_identifies_artifact_content() {
                 .collect::<String>()
         )
     };
+    let digest = |artifact: &arkade_compiler::ContractJson| {
+        sha256_of(&serde_json::to_vec(artifact).unwrap())
+    };
     assert_eq!(digest(&pinned), fingerprint);
-    let mut code = pinned.clone();
-    (code.code_hash, code.source, code.compiler) = (None, None, None);
-    assert_eq!(Some(digest(&code)), first.code_hash);
+    // `codeHash` hashes the name-free canonical copy, pinned here exactly.
+    let single_sig = arkade_compiler::compile("contract SingleSig(pubkey user) {\n  function spend(signature userSig) { require(checkSig(userSig, user)); }\n}\n").unwrap();
+    let canonical = r#"{"formatVersion":1,"contractName":"","constructorInputs":[{"name":"$0","type":"pubkey"}],"functions":[{"name":"$0","arkade":{"inputs":[{"name":"$0","type":"signature"}],"asm":["<$0>","OP_CHECKSIG"]},"leaves":[{"name":"$0","witness":[{"name":"$0","type":"signature","encoding":"schnorr-64","injected":true}],"asm":["<OPERATOR_KEY:$0>","OP_CHECKSIG"]}]}]}"#;
+    assert_eq!(
+        single_sig.code_hash.as_deref(),
+        Some(sha256_of(canonical.as_bytes()).as_str())
+    );
     // This value pins the artifact's exact serialization, including field order, with the
     // compiler version fixed so releases leave it unchanged.
     pinned.compiler.as_mut().unwrap().version = "0.0.0".into();
     assert_eq!(
         digest(&pinned),
-        "sha256:9cc92f65be1f7ed85f2f58890b6b1718df435d9730669c727d436820db414900"
+        "sha256:7d5202a2912d27e3bb85c10cd4f3a0b6b84431ab3296390b0f4bfb8d5f60e79f"
     );
     assert_eq!(first.fingerprint, second.fingerprint);
     let commented = arkade_compiler::compile(&format!("{source}\n// comment\n")).unwrap();

@@ -609,12 +609,119 @@ pub(crate) fn emit(
         ))
     };
     let (source, compiler) = (json.source.take(), json.compiler.take());
-    json.code_hash = Some(sha256(&json)?);
+    json.code_hash = Some(sha256(&canonical(&json)?)?);
     (json.source, json.compiler) = (source, compiler);
     json.fingerprint = Some(sha256(&json)?);
     json.updated_at = Some(Utc::now().to_rfc3339());
 
     Ok(json)
+}
+
+/// The copy of `json` that `codeHash` hashes: every identifier is renamed to `$` and its position,
+/// each `<CONTRACT:...>` names its child by `codeHash`, and `contracts` is empty. Placeholders are
+/// renamed, never replaced by values, so a parameter read never hashes like a literal.
+fn canonical(json: &ContractJson) -> Result<ContractJson> {
+    use std::collections::HashMap;
+    let position = |index: usize| format!("${index}");
+    let structs: HashMap<&str, String> = json
+        .structs
+        .iter()
+        .enumerate()
+        .map(|(k, definition)| (definition.name.as_str(), position(k)))
+        .collect();
+    // A struct type keeps its array suffixes: `Policy[2]` becomes `$0[2]`.
+    let retype = |ty: &str| {
+        let (base, sizes) = ty.split_at(ty.find('[').unwrap_or(ty.len()));
+        format!("{}{sizes}", structs.get(base).map_or(base, String::as_str))
+    };
+    let rename = |parameters: &mut [Parameter]| {
+        for (i, parameter) in parameters.iter_mut().enumerate() {
+            parameter.name = position(i);
+            parameter.param_type = TypeName::parse(&retype(&parameter.param_type.to_string()));
+        }
+    };
+    let mut canonical = json.clone();
+    canonical.name = String::new();
+    canonical.contracts.clear();
+    for definition in &mut canonical.structs {
+        definition.name = structs[definition.name.as_str()].clone();
+        rename(&mut definition.fields);
+    }
+    rename(&mut canonical.parameters);
+    let paths: HashMap<String, String> =
+        expanded_placeholder_params(&json.parameters, &json.structs)?
+            .into_iter()
+            .zip(expanded_placeholder_params(
+                &canonical.parameters,
+                &canonical.structs,
+            )?)
+            .map(|(old, new)| (old.name, new.name))
+            .collect();
+    let groups: HashMap<&str, String> = json
+        .functions
+        .iter()
+        .enumerate()
+        .map(|(g, group)| (group.name.as_str(), position(g)))
+        .collect();
+    let unknown = |name: &str| CompileError::internal(format!("codeHash: unknown name '{name}'"));
+    let path = |name: &str| paths.get(name).ok_or_else(|| unknown(name));
+    let group = |name: &str| groups.get(name).ok_or_else(|| unknown(name));
+    let placeholder = |token: &str| -> Result<String> {
+        let Some(name) = token.strip_prefix('<').and_then(|t| t.strip_suffix('>')) else {
+            return Ok(token.to_string());
+        };
+        Ok(format!("<{}>", path(name)?))
+    };
+    let token = |token: &String| -> Result<String> {
+        let Some(inner) = token.strip_prefix('<').and_then(|t| t.strip_suffix('>')) else {
+            return Ok(token.clone());
+        };
+        if inner == "OPERATOR_KEY" || inner == "OPERATOR_EXIT_DELAY" {
+            return Ok(token.clone());
+        }
+        if let Some(func) = inner.strip_prefix("OPERATOR_KEY:") {
+            return Ok(format!("<OPERATOR_KEY:{}>", group(func)?));
+        }
+        if let Some((base, func)) = inner.strip_prefix("TWEAK:").and_then(|t| t.split_once(':')) {
+            return Ok(format!("<TWEAK:{}:{}>", path(base)?, group(func)?));
+        }
+        let child = inner.strip_prefix("CONTRACT:");
+        if let Some((name, args)) = child.and_then(|t| t.strip_suffix(')')?.split_once('(')) {
+            let hash = json.contracts.get(name).ok_or_else(|| unknown(name))?;
+            let args = args
+                .split(',')
+                .map(|arg| {
+                    Ok(arg
+                        .split(' ')
+                        .map(placeholder)
+                        .collect::<Result<Vec<_>>>()?
+                        .join(" "))
+                })
+                .collect::<Result<Vec<_>>>()?
+                .join(",");
+            return Ok(format!("<CONTRACT:{hash}({args})>"));
+        }
+        placeholder(token)
+    };
+    for (g, function) in canonical.functions.iter_mut().enumerate() {
+        function.name = position(g);
+        if let Some(arkade) = &mut function.arkade {
+            for (i, input) in arkade.inputs.iter_mut().enumerate() {
+                input.name = position(i);
+                input.param_type = retype(&input.param_type);
+            }
+            arkade.asm = arkade.asm.iter().map(token).collect::<Result<_>>()?;
+        }
+        for (l, leaf) in function.leaves.iter_mut().enumerate() {
+            leaf.name = position(l);
+            for (i, element) in leaf.witness.iter_mut().enumerate() {
+                element.name = position(i);
+                element.elem_type = retype(&element.elem_type);
+            }
+            leaf.asm = leaf.asm.iter().map(token).collect::<Result<_>>()?;
+        }
+    }
+    Ok(canonical)
 }
 
 /// The placeholder namespace a parameter list emits: array types (e.g.
