@@ -3,7 +3,7 @@
 
 use std::cmp::Reverse;
 
-use super::{Finding, Level, Lint};
+use super::{Finding, FindingKind, Level, Lint};
 use crate::diagnostics::Span;
 use crate::models::{Attribute, AttributeArg, Contract};
 use crate::validator::ValidationError;
@@ -97,9 +97,8 @@ pub(super) fn levels(contract: &Contract, findings: Vec<Finding>) -> Vec<(Findin
                         fulfilled: false,
                     }),
                     Err(_) => unknown.push(Finding::new(
-                        Lint::UnknownLint,
                         *name_span,
-                        format!("unknown lint '{name}'"),
+                        FindingKind::UnknownLint { name: name.clone() },
                     )),
                 }
             }
@@ -114,8 +113,8 @@ pub(super) fn levels(contract: &Contract, findings: Vec<Finding>) -> Vec<(Findin
         .iter()
         .filter(|entry| entry.kind == Kind::Expect && !entry.fulfilled)
         .map(|entry| {
-            let message = format!("'{}' is expected here but does not fire", entry.lint.id());
-            Finding::new(Lint::UnfulfilledExpectation, entry.name_span, message)
+            let kind = FindingKind::UnfulfilledExpectation { lint: entry.lint };
+            Finding::new(entry.name_span, kind)
         })
         .collect();
     for finding in unfulfilled {
@@ -133,7 +132,7 @@ fn level(entries: &mut [Entry], finding: &Finding) -> Option<Level> {
         .iter()
         .enumerate()
         .filter(|(_, entry)| {
-            entry.lint == finding.lint
+            entry.lint == finding.kind.lint()
                 && entry.scope.start <= finding.span.start
                 && finding.span.end <= entry.scope.end
         })

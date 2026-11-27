@@ -1,8 +1,7 @@
 //! Lints on single expressions, in every function and helper, and on tapscript multisig keys.
 
 use super::walk::{Visitor, Walk};
-use super::{Finding, Lint};
-use crate::diagnostics::Span;
+use super::{Finding, FindingKind};
 use crate::models::{Contract, ExprKind, Expression, Function, HashFn, KeyExpr, TapItem, TypeName};
 use crate::operators::BinaryOperator;
 use crate::types::ArkType;
@@ -31,7 +30,10 @@ pub(super) fn check(contract: &Contract, findings: &mut Vec<Finding>) {
                     KeyExpr::Literal(key) => key.clone(),
                     KeyExpr::Tweak { base, func } => format!("tweak({base}, {func})"),
                 };
-                findings.push(duplicate_key(&key, tapscript.span));
+                findings.push(Finding::new(
+                    tapscript.span,
+                    FindingKind::DuplicateMultisigKey { key },
+                ));
             }
         }
     }
@@ -50,7 +52,8 @@ impl<'a> Visitor<'a> for Expressions<'_, '_> {
                 if (op.compares() || matches!(op, BinaryOperator::And | BinaryOperator::Or))
                     && same(left, right)
                 {
-                    self.findings.push(self_comparison(expression.span));
+                    self.findings
+                        .push(Finding::new(expression.span, FindingKind::SelfComparison));
                 }
                 // `(a / b) * b` rounds down to a multiple of b on purpose.
                 let divides = |side: &Expression, scale: &Expression| {
@@ -63,10 +66,8 @@ impl<'a> Visitor<'a> for Expressions<'_, '_> {
                 };
                 if *op == BinaryOperator::Mul && (divides(left, right) || divides(right, left)) {
                     self.findings.push(Finding::new(
-                        Lint::DivideBeforeMultiply,
                         expression.span,
-                        "this divides before it multiplies, so the remainder is lost before it \
-                         is scaled; multiply first",
+                        FindingKind::DivideBeforeMultiply,
                     ));
                 }
             }
@@ -83,15 +84,11 @@ impl<'a> Visitor<'a> for Expressions<'_, '_> {
                         .collect();
                     if variable.len() >= 2 {
                         self.findings.push(Finding::new(
-                            Lint::AmbiguousHashConcat,
                             data.span,
-                            format!(
-                                "{} hashes {} joined together, which vary in length, so other \
-                                 values joined the same way can give the same bytes; give them a \
-                                 fixed length, such as bytes32",
-                                builtin.name,
-                                variable.join(" + "),
-                            ),
+                            FindingKind::AmbiguousHashConcat {
+                                hash: builtin.name,
+                                parts: variable,
+                            },
                         ));
                     }
                 }
@@ -103,7 +100,10 @@ impl<'a> Visitor<'a> for Expressions<'_, '_> {
                     });
                     if let Some(key) = repeated {
                         let key = format!("'{}'", key.source_text());
-                        self.findings.push(duplicate_key(&key, expression.span));
+                        self.findings.push(Finding::new(
+                            expression.span,
+                            FindingKind::DuplicateMultisigKey { key },
+                        ));
                     }
                 }
             }
@@ -133,22 +133,6 @@ fn same(left: &Expression, right: &Expression) -> bool {
     !matches!(left.kind, ExprKind::Literal(_))
         && !text.contains("<expr>")
         && text == right.source_text()
-}
-
-fn self_comparison(span: Span) -> Finding {
-    Finding::new(
-        Lint::SelfComparison,
-        span,
-        "both sides of this comparison are the same, so its result never depends on them",
-    )
-}
-
-fn duplicate_key(key: &str, span: Span) -> Finding {
-    Finding::new(
-        Lint::DuplicateMultisigKey,
-        span,
-        format!("checkMultisig lists {key} more than once, so its one signature counts for each"),
-    )
 }
 
 /// The operands of a chain of `+` on bytes, in order.

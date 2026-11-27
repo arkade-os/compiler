@@ -4,7 +4,7 @@
 use std::collections::HashSet;
 
 use super::walk::{Visitor, Walk};
-use super::{Finding, Lint};
+use super::{Finding, FindingKind};
 use crate::diagnostics::Span;
 use crate::models::{
     AssetLookupSource, AssignmentTarget, Contract, ExprKind, Expression, LocatedStatement,
@@ -49,15 +49,12 @@ pub(super) fn check(contract: &Contract, findings: &mut Vec<Finding>) {
             });
             if together {
                 warned.insert(read.whole.clone());
-                findings.push(
-                    Finding::new(Lint::RepeatedInspection, read.span, format!(
-                        "`{}` is inspected more than once in function '{}'; bind `let x = {};` once and read {}",
-                        read.whole,
-                        function.name,
-                        read.whole,
-                        read.fields
-                    )),
-                );
+                let kind = FindingKind::RepeatedInspection {
+                    whole: read.whole.clone(),
+                    function: function.name.clone(),
+                    fields: read.fields,
+                };
+                findings.push(Finding::new(read.span, kind));
             }
         }
     }
