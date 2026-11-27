@@ -77,9 +77,16 @@ impl Pushed {
 pub struct LeafScript {
     /// The digest, the preimage width it pins, and the hash the preimage must match.
     condition: Option<(HashFn, Option<usize>, Pushed)>,
-    /// The bound, and whether it is a CSV rather than a CLTV.
-    timelock: Option<(Pushed, bool)>,
+    timelock: Option<(Pushed, TimelockKind)>,
     keys: Vec<Pushed>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TimelockKind {
+    /// `older`: relative, checked by `OP_CHECKSEQUENCEVERIFY`.
+    Csv,
+    /// `after`: absolute, checked by `OP_CHECKLOCKTIMEVERIFY`.
+    Cltv,
 }
 
 /// Enforces the `condition? · timelock? · multisig` template in source order. The compiler does
@@ -448,16 +455,18 @@ pub fn validate_arkd_rules(
                 condition = Some((hash_fn.clone(), c.preimage_width, hash_operand));
             }
             TapItem::Older { value, unit } | TapItem::After { value, unit } => {
-                let csv = matches!(item, TapItem::Older { .. });
-                let call = if csv { "older" } else { "after" };
+                let (kind, call) = match item {
+                    TapItem::Older { .. } => (TimelockKind::Csv, "older"),
+                    _ => (TimelockKind::Cltv, "after"),
+                };
                 let value = value.to_string();
                 let operand = match unit {
                     Some(TimeUnit::Blocks) => format!("blocks({value})"),
                     Some(TimeUnit::Seconds) => format!("seconds({value})"),
                     None => value.clone(),
                 };
-                timelock = Some((timelock_operand(&value, *unit, csv), csv));
-                if csv && value == OPERATOR_EXIT_DELAY {
+                timelock = Some((timelock_operand(&value, *unit, kind), kind));
+                if kind == TimelockKind::Csv && value == OPERATOR_EXIT_DELAY {
                     if unit.is_some() {
                         return Err(format!(
                             "tapscript `{}`: operatorExitDelay has its own unit; write older(operatorExitDelay)",
@@ -497,26 +506,28 @@ pub fn validate_arkd_rules(
                     }
                 };
                 let max = i128::from(u32::MAX);
-                let (valid, expected) = match (csv, unit) {
+                let (valid, expected) = match (kind, unit) {
                     // BIP68 ignores bits 16-21 and 23-30, and bit 31 disables the lock.
-                    (true, None) => (
+                    (TimelockKind::Csv, None) => (
                         n & !(0xffff | 1 << 22) == 0,
                         "a BIP68 sequence that sets only the 16 value bits and the type flag \
                          (bit 22); write blocks(n) or seconds(n)",
                     ),
-                    (true, Some(TimeUnit::Blocks)) => {
+                    (TimelockKind::Csv, Some(TimeUnit::Blocks)) => {
                         ((1..=0xffff).contains(&n), "1..=65535 blocks")
                     }
-                    (true, Some(TimeUnit::Seconds)) => (
+                    (TimelockKind::Csv, Some(TimeUnit::Seconds)) => (
                         (1..=0xffff * 512).contains(&n) && n % 512 == 0,
                         "a multiple of 512 in 512..=33553920 seconds",
                     ),
-                    (false, None) => ((0..=max).contains(&n), "a locktime in 0..=4294967295"),
-                    (false, Some(TimeUnit::Blocks)) => (
+                    (TimelockKind::Cltv, None) => {
+                        ((0..=max).contains(&n), "a locktime in 0..=4294967295")
+                    }
+                    (TimelockKind::Cltv, Some(TimeUnit::Blocks)) => (
                         (1..500_000_000).contains(&n),
                         "a block height in 1..=499999999",
                     ),
-                    (false, Some(TimeUnit::Seconds)) => (
+                    (TimelockKind::Cltv, Some(TimeUnit::Seconds)) => (
                         (500_000_000..=max).contains(&n),
                         "a Unix timestamp in 500000000..=4294967295",
                     ),
@@ -567,12 +578,12 @@ fn timelock_number(value: &str) -> Option<i128> {
 /// A timelock operand: `operatorExitDelay` as the operator's unilateral exit delay,
 /// `seconds(n)` in a CSV as its BIP68 time-based sequence, any other number
 /// as-is, else the constructor parameter pushing the raw value.
-fn timelock_operand(value: &str, unit: Option<TimeUnit>, csv: bool) -> Pushed {
+fn timelock_operand(value: &str, unit: Option<TimeUnit>, kind: TimelockKind) -> Pushed {
     if value == OPERATOR_EXIT_DELAY {
         return Pushed::Operator("OPERATOR_EXIT_DELAY");
     }
     match timelock_number(value) {
-        Some(n) if csv && unit == Some(TimeUnit::Seconds) => {
+        Some(n) if kind == TimelockKind::Csv && unit == Some(TimeUnit::Seconds) => {
             Pushed::Literal(((n / 512) | (1 << 22)).to_string())
         }
         Some(n) => Pushed::Literal(n.to_string()),
@@ -609,12 +620,11 @@ pub fn emit_leaf_asm(script: &LeafScript) -> Vec<String> {
         asm.push(OP_VERIFY.to_string());
     }
 
-    if let Some((bound, csv)) = &script.timelock {
+    if let Some((bound, kind)) = &script.timelock {
         asm.push(bound.asm());
-        let op = if *csv {
-            OP_CHECKSEQUENCEVERIFY
-        } else {
-            OP_CHECKLOCKTIMEVERIFY
+        let op = match kind {
+            TimelockKind::Csv => OP_CHECKSEQUENCEVERIFY,
+            TimelockKind::Cltv => OP_CHECKLOCKTIMEVERIFY,
         };
         asm.push(op.to_string());
         asm.push(OP_DROP.to_string());
@@ -1316,16 +1326,19 @@ mod tests {
     #[test]
     fn only_csv_seconds_are_encoded() {
         use TimeUnit::{Blocks, Seconds};
-        let asm = |value, unit, csv| timelock_operand(value, unit, csv).asm();
-        assert_eq!(asm("1024", Some(Seconds), true), "4194306");
-        assert_eq!(asm("144", Some(Blocks), true), "144");
-        assert_eq!(asm("144", None, true), "144");
-        assert_eq!(asm("exitDelay", None, true), "<exitDelay>");
+        let asm = |value, unit, kind| timelock_operand(value, unit, kind).asm();
+        assert_eq!(asm("1024", Some(Seconds), TimelockKind::Csv), "4194306");
+        assert_eq!(asm("144", Some(Blocks), TimelockKind::Csv), "144");
+        assert_eq!(asm("144", None, TimelockKind::Csv), "144");
+        assert_eq!(asm("exitDelay", None, TimelockKind::Csv), "<exitDelay>");
         assert_eq!(
-            asm("operatorExitDelay", None, true),
+            asm("operatorExitDelay", None, TimelockKind::Csv),
             "<OPERATOR_EXIT_DELAY>"
         );
-        assert_eq!(asm("1700000000", Some(Seconds), false), "1700000000");
+        assert_eq!(
+            asm("1700000000", Some(Seconds), TimelockKind::Cltv),
+            "1700000000"
+        );
     }
 
     #[test]

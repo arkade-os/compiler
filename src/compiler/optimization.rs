@@ -10,8 +10,6 @@ use crate::opcodes::Opcode;
 use crate::operators::{BinaryOperator, UnaryOperator};
 use crate::types::{ArkType, Scope};
 
-const MAX_SCRIPT_ELEMENT_SIZE: usize = 520;
-
 pub(super) fn fold_statement(statement: &mut Statement, scope: &Scope) -> Result<(), String> {
     match statement {
         Statement::Call(value)
@@ -173,7 +171,7 @@ fn fold_expression(expression: &mut Expression, scope: &Scope) -> Result<(), Str
                         matches!(value.as_str(), "true" | "false")
                             || value.parse::<i128>().is_ok()
                             || (value.starts_with("0x")
-                                && value.len() <= 2 + 2 * MAX_SCRIPT_ELEMENT_SIZE)
+                                && value.len() <= 2 + 2 * super::MAX_ELEMENT_SIZE)
                     }
                     _ => false,
                 }) =>
@@ -191,7 +189,7 @@ fn fold_expression(expression: &mut Expression, scope: &Scope) -> Result<(), Str
 }
 
 fn fixed_bytes(value: i128, width: usize) -> Option<String> {
-    if width > MAX_SCRIPT_ELEMENT_SIZE {
+    if width > super::MAX_ELEMENT_SIZE {
         return None;
     }
     let mut bytes = value.unsigned_abs().to_le_bytes().to_vec();

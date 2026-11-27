@@ -66,6 +66,14 @@ pub(crate) const MAX_LOOP_ITERATIONS: usize = 10_000;
 /// Bytes the VM allows in one stack element (`txscript.MaxScriptElementSize`).
 const MAX_ELEMENT_SIZE: usize = 520;
 
+/// A binding on the top slot that the assignment being emitted rebinds in place.
+#[derive(Clone)]
+struct Replacement {
+    target: Path,
+    kind: BindingKind,
+    start: usize,
+}
+
 struct Generator {
     optimize: bool,
     asm: ir::Assembly,
@@ -96,7 +104,7 @@ struct Generator {
     preserve_bindings: bool,
     pinned_stack_len: usize,
     // Rebinding the top slot can consume its old value without changing a branch join.
-    replacement: Option<(Path, BindingKind, usize)>,
+    replacement: Option<Replacement>,
     /// How often each literal that takes 4 or more bytes is pushed.
     wide_pushes: BTreeMap<String, usize>,
 }
@@ -443,11 +451,11 @@ pub(crate) fn prepare(
         return Err(ast_issues
             .iter()
             .map(|i| {
-                let suggestions = i.suggestion.iter().filter_map(|(replacement, span)| {
+                let suggestions = i.suggestion.iter().filter_map(|suggestion| {
                     Some(Suggestion {
-                        message: format!("replace with '{replacement}'"),
-                        span: span.or(i.span)?,
-                        replacement: replacement.clone(),
+                        message: format!("replace with '{}'", suggestion.replacement),
+                        span: suggestion.span.or(i.span)?,
+                        replacement: suggestion.replacement.clone(),
                     })
                 });
                 Diagnostic::error(file, i.message.clone())

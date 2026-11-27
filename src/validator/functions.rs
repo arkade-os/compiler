@@ -60,8 +60,8 @@ pub(super) fn validate_functions(contract: &Contract, issues: &mut Vec<Validatio
         unrolled_function(function, contract, &mut unrolled, issues);
     }
     for function in contract.functions.iter().filter(|f| !f.is_imported()) {
-        let flow = flow_block(&function.statements, 1, &guarantees);
-        if function.is_private && function.return_type.is_some() && flow.fallthrough != 0 {
+        let flow = flow_block(&function.statements, Paths::UNENFORCED, &guarantees);
+        if function.is_private && function.return_type.is_some() && flow.fallthrough.any() {
             issues.push(
                 ValidationIssue::error(format!(
                     "private function '{}' must return a value on every path",
@@ -70,7 +70,7 @@ pub(super) fn validate_functions(contract: &Contract, issues: &mut Vec<Validatio
                 .at(function.span),
             );
         }
-        if !function.is_private && (flow.fallthrough | flow.returned) & 1 != 0 {
+        if !function.is_private && flow.has_unenforced() {
             issues.push(ValidationIssue::error(format!("function '{}' has a spend path with no require(); every branch must enforce at least one condition", function.name)).at(function.span));
         }
     }
@@ -393,11 +393,8 @@ fn analyze_function(
     }
     visiting.push(function.name.clone());
     analyze_calls(&function.statements, contract, visiting, guarantees)?;
-    let flow = flow_block(&function.statements, 1, guarantees);
-    guarantees.insert(
-        function.name.clone(),
-        (flow.fallthrough | flow.returned) & 1 == 0,
-    );
+    let flow = flow_block(&function.statements, Paths::UNENFORCED, guarantees);
+    guarantees.insert(function.name.clone(), !flow.has_unenforced());
     visiting.pop();
     Ok(())
 }
@@ -579,11 +576,48 @@ fn unrolled_calls(
     most
 }
 
-// Each mask records paths without (1) and with (2) an enforced requirement.
-#[derive(Default)]
+/// Which paths reach a point: some without an enforced requirement, some with one.
+#[derive(Clone, Copy)]
+struct Paths {
+    unenforced: bool,
+    enforced: bool,
+}
+
+impl Paths {
+    const NONE: Paths = Paths {
+        unenforced: false,
+        enforced: false,
+    };
+    const UNENFORCED: Paths = Paths {
+        unenforced: true,
+        enforced: false,
+    };
+    const ENFORCED: Paths = Paths {
+        unenforced: false,
+        enforced: true,
+    };
+
+    fn any(self) -> bool {
+        self.unenforced || self.enforced
+    }
+
+    fn or(self, other: Paths) -> Paths {
+        Paths {
+            unenforced: self.unenforced || other.unenforced,
+            enforced: self.enforced || other.enforced,
+        }
+    }
+}
+
 struct Flow {
-    fallthrough: u8,
-    returned: u8,
+    fallthrough: Paths,
+    returned: Paths,
+}
+
+impl Flow {
+    fn has_unenforced(&self) -> bool {
+        self.fallthrough.unenforced || self.returned.unenforced
+    }
 }
 
 fn expression_enforces(expression: &Expression, guarantees: &HashMap<String, bool>) -> bool {
@@ -601,15 +635,15 @@ fn expression_enforces(expression: &Expression, guarantees: &HashMap<String, boo
 
 fn flow_block(
     statements: &[LocatedStatement],
-    incoming: u8,
+    incoming: Paths,
     guarantees: &HashMap<String, bool>,
 ) -> Flow {
     let mut flow = Flow {
         fallthrough: incoming,
-        returned: 0,
+        returned: Paths::NONE,
     };
     for statement in statements {
-        if flow.fallthrough == 0 {
+        if !flow.fallthrough.any() {
             break;
         }
         let statement = &statement.statement;
@@ -618,13 +652,13 @@ fn flow_block(
             .into_iter()
             .any(|e| expression_enforces(e, guarantees))
         {
-            flow.fallthrough = 2;
+            flow.fallthrough = Paths::ENFORCED;
         }
         match statement {
-            Statement::Require(_) => flow.fallthrough = 2,
+            Statement::Require(_) => flow.fallthrough = Paths::ENFORCED,
             Statement::Return(_) => {
-                flow.returned |= flow.fallthrough;
-                flow.fallthrough = 0;
+                flow.returned = flow.returned.or(flow.fallthrough);
+                flow.fallthrough = Paths::NONE;
             }
             Statement::IfElse {
                 then_body,
@@ -637,8 +671,8 @@ fn flow_block(
                     flow.fallthrough,
                     guarantees,
                 );
-                flow.fallthrough = left.fallthrough | right.fallthrough;
-                flow.returned |= left.returned | right.returned;
+                flow.fallthrough = left.fallthrough.or(right.fallthrough);
+                flow.returned = flow.returned.or(left.returned).or(right.returned);
             }
             Statement::ForIn { body, .. }
             | Statement::ForCount { body, .. }
@@ -646,7 +680,7 @@ fn flow_block(
                 // A loop that runs zero times is an error, so every loop executes at least once.
                 let body = flow_block(body, flow.fallthrough, guarantees);
                 flow.fallthrough = body.fallthrough;
-                flow.returned |= body.returned;
+                flow.returned = flow.returned.or(body.returned);
             }
             Statement::Declaration { .. }
             | Statement::Call(_)
@@ -659,5 +693,7 @@ fn flow_block(
 
 /// Whether any path reaches the next statement, independent of spend conditions.
 pub(crate) fn falls_through(statements: &[LocatedStatement]) -> bool {
-    flow_block(statements, 1, &HashMap::new()).fallthrough != 0
+    flow_block(statements, Paths::UNENFORCED, &HashMap::new())
+        .fallthrough
+        .any()
 }

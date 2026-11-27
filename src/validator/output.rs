@@ -30,7 +30,7 @@ pub(crate) fn validate_output(output: &ContractJson) -> Vec<ValidationIssue> {
             }
             // A constructor placeholder is pushed at most once: in the prologue, or inline
             // at its single read.
-            let leaves =
+            let placeholders =
                 match compiler::expanded_placeholder_params(&output.parameters, &output.structs) {
                     Ok(parameters) => parameters
                         .into_iter()
@@ -53,7 +53,7 @@ pub(crate) fn validate_output(output: &ContractJson) -> Vec<ValidationIssue> {
                         && token.ends_with('>')
                         && !token.starts_with("<CONTRACT:")
                 })
-                .any(|token| !leaves.contains(token) || !pushed.insert(token))
+                .any(|token| !placeholders.contains(token) || !pushed.insert(token))
             {
                 issues.push(ValidationIssue::error(format!(
                     "group '{}' Arkade Script has an invalid constructor placeholder",

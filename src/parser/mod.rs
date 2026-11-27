@@ -22,7 +22,7 @@ use crate::{builtins, compiler};
 #[grammar = "parser/grammar.pest"]
 pub struct ArkadeParser;
 
-mod crypto;
+mod casts;
 mod expr;
 mod introspection;
 mod tapscript;
@@ -172,11 +172,11 @@ fn readable_error(error: PestError<Rule>, source: &str) -> PestError<Rule> {
     let mut at = attempts.max_position;
     if let Some(open) = unterminated {
         at = open;
-    } else if let Some((word, start, end)) = lone_word(source, at) {
-        let message = format!("`{word}` on its own is not a statement");
+    } else if let Some(word) = lone_word(source, at) {
+        let message = format!("`{}` on its own is not a statement", &source[word.clone()]);
         return match (
-            pest::Position::new(source, start),
-            pest::Position::new(source, end),
+            pest::Position::new(source, word.start),
+            pest::Position::new(source, word.end),
         ) {
             (Some(start), Some(end)) => {
                 Error::new_from_span(ErrorVariant::CustomError { message }, start.span(&end))
@@ -266,9 +266,9 @@ pub(crate) fn comment_len(text: &str) -> Option<usize> {
     Some(body.find("*/").map_or(text.len(), |end| end + 4))
 }
 
-/// A word that starts a statement and ends the code before `at`, as `dasd` on its own line:
-/// `(word, start, end)`.
-fn lone_word(source: &str, at: usize) -> Option<(&str, usize, usize)> {
+/// The range of a word that starts a statement and ends the code before `at`, as `dasd` on its
+/// own line.
+fn lone_word(source: &str, at: usize) -> Option<Range<usize>> {
     let end = code_end(source, at);
     let start = source[..end]
         .trim_end_matches(|c: char| c.is_ascii_alphanumeric() || c == '_')
@@ -282,7 +282,7 @@ fn lone_word(source: &str, at: usize) -> Option<(&str, usize, usize)> {
         && starts_statement
         && !keyword
         && !split;
-    lone.then_some((word, start, end))
+    lone.then_some(start..end)
 }
 
 fn rule_term(rule: &Rule) -> Option<String> {

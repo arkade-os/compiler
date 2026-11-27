@@ -6,7 +6,7 @@ use std::slice;
 
 use super::ir::Op;
 use super::lowering::{self, Lowered};
-use super::{BindingKind, Generator, Result, StackItem};
+use super::{BindingKind, Generator, Replacement, Result, StackItem};
 use crate::builtins::Builtin;
 use crate::builtins::Lowering::Check;
 use crate::diagnostics::CompileError;
@@ -254,11 +254,11 @@ fn emit_statement(stmt: &LocatedStatement, generator: &mut Generator) -> Result<
                         && *kind != BindingKind::Constructor
                         && !generator.preserve_bindings =>
                 {
-                    Some((
-                        name.clone(),
-                        kind.clone(),
-                        generator.read_cursor.unwrap_or(generator.final_reads.len()),
-                    ))
+                    Some(Replacement {
+                        target: name.clone(),
+                        kind: kind.clone(),
+                        start: generator.read_cursor.unwrap_or(generator.final_reads.len()),
+                    })
                 }
                 _ => None,
             };

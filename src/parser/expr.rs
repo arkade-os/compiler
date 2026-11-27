@@ -1,7 +1,7 @@
 //! Expressions: folds the grammar's precedence levels into left-associative `BinaryOp`s and
 //! resolves each operand's suffix chain into a binding path, access, call or introspection.
 
-use super::{crypto, introspection, Rule};
+use super::{casts, introspection, Rule};
 use crate::builtins;
 use crate::diagnostics::Span;
 use crate::models::{ExprKind, Expression, Path};
@@ -262,7 +262,7 @@ fn parse_chain(head: Pair<Rule>, suffixes: Vec<Suffix>, text: &str) -> Result<Ex
             let name = inner.next().ok_or("Missing function name")?.as_str();
             let args: Vec<_> = inner.collect();
             let value = match args.as_slice() {
-                [data] if crypto::is_cast(name) => crypto::parse_cast(name, data.clone(), span)?,
+                [data] if casts::is_cast(name) => casts::parse_cast(name, data.clone(), span)?,
                 _ => parse_call(name.to_string(), args, span)?,
             };
             return apply_suffixes(value, false, &suffixes);

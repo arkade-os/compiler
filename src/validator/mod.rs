@@ -39,8 +39,15 @@ pub struct ValidationIssue {
     pub span: Option<Span>,
     /// Diagnostic code: `validation`, or `type` for operand type mismatches.
     pub code: &'static str,
-    /// A replacement that may fix it, and the span it replaces when not the issue's own.
-    pub suggestion: Option<(String, Option<Span>)>,
+    pub suggestion: Option<IssueSuggestion>,
+}
+
+/// A replacement that may fix an issue.
+#[derive(Debug, Clone)]
+pub struct IssueSuggestion {
+    pub replacement: String,
+    /// The span it replaces, when not the issue's own.
+    pub span: Option<Span>,
 }
 
 impl ValidationIssue {
@@ -67,7 +74,10 @@ impl ValidationIssue {
     fn suggest(mut self, replacement: &str, span: Option<Span>) -> Self {
         self.message
             .push_str(&format!("; did you mean '{replacement}'?"));
-        self.suggestion = Some((replacement.to_string(), span));
+        self.suggestion = Some(IssueSuggestion {
+            replacement: replacement.to_string(),
+            span,
+        });
         self
     }
 

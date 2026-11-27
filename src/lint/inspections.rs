@@ -13,12 +13,12 @@ use crate::models::{
 use crate::properties::{InputProperty, OutputProperty, ThisProperty};
 
 /// The `if` arms a read sits in, as (if id, then-arm) pairs.
-type Path = Vec<(usize, bool)>;
+type Arms = Vec<(usize, bool)>;
 
 struct Read {
     whole: String,
     fields: &'static str,
-    path: Path,
+    arms: Arms,
     span: Span,
 }
 
@@ -29,7 +29,7 @@ pub(super) fn check(contract: &Contract, findings: &mut Vec<Finding>) {
         let mut walk = Reads {
             assigned: assigned.0,
             reads: Vec::new(),
-            path: Vec::new(),
+            arms: Vec::new(),
         };
         Walk::default().statements(&function.statements, &mut walk);
         let mut warned = HashSet::new();
@@ -45,7 +45,7 @@ pub(super) fn check(contract: &Contract, findings: &mut Vec<Finding>) {
             let together = same.iter().enumerate().any(|(j, a)| {
                 same[j + 1..]
                     .iter()
-                    .any(|b| !a.path.iter().any(|(id, arm)| b.path.contains(&(*id, !arm))))
+                    .any(|b| !a.arms.iter().any(|(id, arm)| b.arms.contains(&(*id, !arm))))
             });
             if together {
                 warned.insert(read.whole.clone());
@@ -83,7 +83,7 @@ impl<'a> Visitor<'a> for Assigned {
 struct Reads {
     assigned: HashSet<String>,
     reads: Vec<Read>,
-    path: Path,
+    arms: Arms,
 }
 
 impl<'a> Visitor<'a> for Reads {
@@ -92,18 +92,18 @@ impl<'a> Visitor<'a> for Reads {
             self.reads.push(Read {
                 whole,
                 fields,
-                path: self.path.clone(),
+                arms: self.arms.clone(),
                 span: expression.span,
             });
         }
     }
 
     fn enter_arm(&mut self, id: usize, then: bool, _body: &'a [LocatedStatement]) {
-        self.path.push((id, then));
+        self.arms.push((id, then));
     }
 
     fn exit_arm(&mut self) {
-        self.path.pop();
+        self.arms.pop();
     }
 }
 

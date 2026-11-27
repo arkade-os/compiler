@@ -4,7 +4,7 @@
 use std::iter;
 
 use super::ir::Op;
-use super::{BindingKind, Generator, Result, StackItem};
+use super::{BindingKind, Generator, Replacement, Result, StackItem};
 use crate::diagnostics::CompileError;
 use crate::models::{AssignmentTarget, Expression, Path, Segment};
 use crate::opcodes::Opcode;
@@ -99,7 +99,7 @@ impl Generator {
                     }) || self
                         .replacement
                         .as_ref()
-                        .is_some_and(|(target, _, _)| target == name))),
+                        .is_some_and(|replacement| replacement.target == *name))),
             );
             false
         };
@@ -252,7 +252,12 @@ impl Generator {
                 "aliased parameter '{name}' is assigned"
             )));
         }
-        if let Some((target, kind, start)) = self.replacement.clone() {
+        if let Some(Replacement {
+            target,
+            kind,
+            start,
+        }) = self.replacement.clone()
+        {
             if target == name && !self.preserve_bindings {
                 if !matches!(self.stack.last(), Some(StackItem::Temporary)) {
                     return Err(CompileError::internal("assignment has no result value"));
