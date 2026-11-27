@@ -456,7 +456,10 @@ pub fn validate_arkd_rules(
             TapItem::Older { value, unit } | TapItem::After { value, unit } => {
                 let (kind, call) = match item {
                     TapItem::Older { .. } => (TimelockKind::Csv, "older"),
-                    _ => (TimelockKind::Cltv, "after"),
+                    TapItem::After { .. } => (TimelockKind::Cltv, "after"),
+                    TapItem::Hash { .. } | TapItem::Sig { .. } => {
+                        unreachable!("the outer arm matches only timelocks")
+                    }
                 };
                 let value = value.to_string();
                 let operand = match unit {
@@ -1497,7 +1500,10 @@ mod tests {
                 OP_CHECKSIG.to_string(),
             ]
         );
-        assert!(!asm.iter().any(|t| t.contains("Sig")));
+        assert!(
+            !asm.iter().any(|t| t.contains("Sig")),
+            "signatures are witness, not script"
+        );
         let w = leaf_witness(&leaf);
         let names: Vec<_> = w.iter().map(|e| e.name.clone()).collect();
         assert_eq!(names, vec!["preimage", "operatorSig"]);
