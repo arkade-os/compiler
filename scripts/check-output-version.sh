@@ -7,12 +7,16 @@ set -eu
 root=$(cd "$(dirname "$0")/.." && pwd)
 last=$(git -C "$root" describe --tags --abbrev=0 --match 'v[0-9]*.[0-9]*.[0-9]*' --exclude '*-*' HEAD)
 version=$(cargo metadata --manifest-path "$root/Cargo.toml" --no-deps --format-version 1 |
-  python3 -c 'import json, sys; print(json.load(sys.stdin)["packages"][0]["version"])')
+  python3 -c 'import json, sys; print({p["name"]: p for p in json.load(sys.stdin)["packages"]}["arkade-compiler"]["version"])')
 npm_version=$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["version"])' "$root/npm/package.json")
 
-if "$root/scripts/compare-output.sh" "$last"; then
-  exit 0
-fi
+status=0
+"$root/scripts/compare-output.sh" "$last" || status=$?
+case $status in
+  0) exit 0 ;;
+  1) ;;
+  *) echo "::error::scripts/compare-output.sh failed (exit $status) before it could compare the contracts."; exit "$status" ;;
+esac
 
 python3 - "${last#v}" "$version" "$npm_version" <<'EOF'
 import sys
