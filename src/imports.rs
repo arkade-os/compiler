@@ -692,15 +692,17 @@ fn load(
                 return Err(error.into());
             }
         };
-        let mut structs: BTreeMap<_, _> = contract
-            .structs
-            .iter()
-            .map(|s| (s.name.clone(), s.clone()))
-            .collect();
+        // Own types in declaration order, then each dependency's in import order: `codeHash`
+        // names a type by its position, so a rename must never move it.
+        let mut seen: HashSet<_> = contract.structs.iter().map(|s| s.name.clone()).collect();
         let mut helpers = BTreeMap::new();
         for dependency in &dependencies {
             let imported = &loaded.modules[dependency].contract;
-            structs.extend(imported.structs.iter().map(|s| (s.name.clone(), s.clone())));
+            let unseen = imported
+                .structs
+                .iter()
+                .filter(|s| seen.insert(s.name.clone()));
+            contract.structs.extend(unseen.cloned());
             for function in imported.functions.iter().filter(|f| f.is_static) {
                 let mut function = function.clone();
                 if !function.is_imported() {
@@ -717,13 +719,6 @@ fn load(
                 helpers.insert(function.name.clone(), function);
             }
         }
-        // Keep standalone declaration order; append dependency types deterministically.
-        let own_names: HashSet<_> = contract.structs.iter().map(|s| s.name.clone()).collect();
-        contract.structs.extend(
-            structs
-                .into_values()
-                .filter(|s| !own_names.contains(&s.name)),
-        );
         let owner = contract.name.clone();
         for function in &mut contract.functions {
             visit_statements(&mut function.statements, &mut |expression| {

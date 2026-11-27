@@ -758,6 +758,22 @@ fn code_hash_survives_renames() {
 }
 
 #[test]
+fn code_hash_survives_renaming_imported_structs() {
+    // `Window` -> `Aperture` sorts it before `Policy`, which must not change its position.
+    let compile = |policy: &str, window: &str| {
+        let types =
+            format!("struct {policy} {{ int maximum; }}\nstruct {window} {{ int start; }}\n");
+        let main = format!("import \"types.ark\";\ncontract C({policy} p, {window} w, pubkey k) {{\n  function spend(signature s) {{\n    require(tx.input.current.value >= p.maximum);\n    require(tx.numOutputs >= w.start);\n    require(checkSig(s, k));\n  }}\n}}\n");
+        let files = [("types.ark", types), ("main.ark", main)]
+            .map(|(path, source)| (path.to_string(), source))
+            .into();
+        arkade_compiler::compile_sources("main.ark", &files).unwrap()
+    };
+    let (original, renamed) = (compile("Policy", "Window"), compile("Policy", "Aperture"));
+    assert_eq!(original.code_hash, renamed.code_hash);
+}
+
+#[test]
 fn code_hash_follows_parameter_positions() {
     let body = "{\n  function spend(signature s, signature t) {\n    require(checkSig(s, a));\n    require(checkSig(t, b));\n  }\n}\n";
     let first =
