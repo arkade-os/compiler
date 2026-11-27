@@ -76,8 +76,10 @@ A contract compiled on its own has the `codeHash` that an artifact instantiating
   - Struct `k` in `structs` becomes `$k`, and its field `j` becomes `$j`. Every type naming a struct, in `structs`, `constructorInputs`, `arkade.inputs` and `witness`, uses the new name and keeps its array sizes, so `Policy[2]` becomes `$0[2]`.
   - Constructor input `i` becomes `$i`.
   - Spend group `g` becomes `$g`, leaf `l` within its group becomes `$l`, and Arkade Script input `i` and witness element `i` become `$i`.
-  - In every `asm`, Arkade Script and leaves alike, a constructor placeholder takes its renamed path: the parameter and the struct fields along it are renamed, and array indexes and builtin struct fields stay, so with `pubkey user`, `Policy p` and `pubkey[2] keys` as the constructor inputs, `<user>`, `<p.maximum>` and `<keys.1>` become `<$0>`, `<$1.$0>` and `<$2.1>`. `<OPERATOR_KEY:f>` and `<TWEAK:base:f>` take the renamed group and path, and `<CONTRACT:Name(args)>` becomes `<CONTRACT:hash(args)>`, where `hash` is `contracts.Name` and every placeholder in `args` is renamed. `<OPERATOR_KEY>`, `<OPERATOR_EXIT_DELAY>` and every other token stay as they are.
+  - In every `asm`, Arkade Script and leaves alike, a constructor placeholder takes its renamed path: the parameter and the struct fields along it are renamed, and array indexes and builtin struct fields stay, so with `pubkey user`, `Policy p` and `pubkey[2] keys` as the constructor inputs and `maximum` as `Policy`'s first field, `<user>`, `<p.maximum>` and `<keys.1>` become `<$0>`, `<$1.$0>` and `<$2.1>`. `<OPERATOR_KEY:f>` and `<TWEAK:base:f>` take the renamed group and path, and `<CONTRACT:Name(args)>` becomes `<CONTRACT:hash(args)>`, where `hash` is `contracts.Name` and every placeholder in `args` is renamed. `<OPERATOR_KEY>`, `<OPERATOR_EXIT_DELAY>` and every other token stay as they are.
   - `contracts` is left out, since each `<CONTRACT:...>` token now carries its contract's `codeHash`.
+
+  Reject the artifact instead when this renaming is not one-to-one, since an artifact that names two constructor inputs alike could otherwise share the `codeHash` of one that binds its arguments differently. The names of constructor inputs, structs, struct fields and spend groups must be identifiers (a letter, then letters, digits or underscores), no two alike among the constructor inputs, the structs, one struct's fields or the spend groups, and no struct may be named like a builtin type. Every name a placeholder uses, other than in `<OPERATOR_KEY>` and `<OPERATOR_EXIT_DELAY>`, must resolve to a constructor input path, a spend group or a `contracts` entry.
 
   Then take the SHA-256 of the compact JSON, without whitespace, of the copy's fields from `formatVersion` through `contracts` in serialized order, prefixed with `sha256:`, and compare that with `contracts.Name`. For `contract SingleSig(pubkey user) { function spend(signature userSig) { require(checkSig(userSig, user)); } }`, the hashed JSON is the following, and its `codeHash` is `sha256:b7c92bb98913e4a6fb8a57a76cfca211bd23581b383fa0b175b22bd8d4b9b485`:
 
@@ -89,10 +91,12 @@ A contract compiled on its own has the `codeHash` that an artifact instantiating
 
 The copy renames placeholders and never substitutes values for them, so a contract reading a parameter and one with the same value as a literal have different `codeHash` values.
 
+Names are not covered, so an artifact that matches `contracts.Name`, recomputed or recompiled, can still name its spend groups, inputs and witness elements differently from the contract the parent instantiates. Rely on their positions, not their names.
+
 What changes the `codeHash`:
 
-- Edits that leave the scripts unchanged keep the `codeHash`: comments, formatting, and renaming the contract, a function, a constructor or function parameter, a witness, a struct, a struct field or an instantiated contract.
-- Reordering parameters, functions, leaves or struct declarations changes it, since positions bind arguments and order leaves, and so does any change to the scripts, the parameter, input or witness types, the struct layouts, the witness encodings or `injected`.
+- These edits keep the `codeHash`: comments, formatting, and renaming the contract, a function, a constructor or function parameter, a witness, a struct, a struct field or an instantiated contract.
+- Reordering parameters, functions, leaves, struct declarations or the imports that bring in structs changes it, since positions bind arguments and order leaves, and so does any change to the scripts, the parameter, input or witness types, the struct layouts, the witness encodings or `injected`.
 - An instantiated contract's `codeHash` is part of the instantiating contract's `codeHash`, so the pin covers indirect instantiations too.
 
 ## Spend group order
