@@ -57,6 +57,24 @@ func TestDifferentialFuzz(t *testing.T) {
 	}
 }
 
+// With ARKADE_FUZZ_CORPUS set, writes the same cases there as contracts for
+// scripts/compare-output.sh instead of running them.
+func TestWriteFuzzCorpus(t *testing.T) {
+	dir := os.Getenv("ARKADE_FUZZ_CORPUS")
+	if dir == "" {
+		t.Skip("ARKADE_FUZZ_CORPUS is not set")
+	}
+	seed := envInt(t, "ARKADE_FUZZ_SEED", 1)
+	cases := envInt(t, "ARKADE_FUZZ_CASES", 200)
+	for index := int64(0); index < cases; index++ {
+		r := rand.New(rand.NewSource(seed*1_000_003 + index))
+		name := filepath.Join(dir, fmt.Sprintf("seed%d_case%d.ark", seed, index))
+		if err := os.WriteFile(name, []byte(generateProgram(r).source), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
 func TestFuzzCasesReplayFromTheirSeed(t *testing.T) {
 	generate := func() (string, string) {
 		r := rand.New(rand.NewSource(42))
