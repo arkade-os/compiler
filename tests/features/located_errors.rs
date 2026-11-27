@@ -255,8 +255,12 @@ fn a_tapscript_statement_other_than_a_require_is_located() {
         );
     }
     let attribute = "@allow(dust-output, \"checked\")";
-    let text = at_line(&source(&format!("{attribute} require(after(n));"))).1;
-    assert_eq!(text, attribute);
+    let (line, text, message) = at_line(&source(&format!("{attribute} require(after(n));")));
+    assert_eq!((line, text.as_str()), (3, attribute));
+    assert_eq!(
+        message,
+        "a statement in a tapscript function cannot have an attribute; put it before the function"
+    );
 }
 
 #[test]

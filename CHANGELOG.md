@@ -4,7 +4,7 @@ All notable changes to the Arkade Compiler are documented here. The format follo
 
 ## [0.1.2] - Unreleased
 
-- A statement other than `require` in a tapscript function is reported at that statement. It was reported as `unknown type 'tapscript'`, or as an `older`, `after` or `tweak` outside a tapscript function.
+- A statement other than `require` in a tapscript function is reported at that statement, and an attribute on one of its statements at the attribute. It was reported as `unknown type 'tapscript'`, or as an `older`, `after` or `tweak` outside a tapscript function.
 
 ## [0.1.1] - 2026-11-25
 
