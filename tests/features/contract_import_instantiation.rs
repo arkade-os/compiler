@@ -680,3 +680,115 @@ fn test_instantiation_loops_are_rejected() {
         "{error}"
     );
 }
+
+// ─── Rename-stable codeHash ───────────────────────────────────────────────────
+
+const GRAND: &str = "contract {Grand}(pubkey {k}) {\n  function {go}(signature {s}) { require(checkSig({s}, {k})); }\n}\n";
+const CHILD: &str = "import \"grand.ark\";\ncontract {Child}(pubkey {owner}) {\n  function {go}(signature {s}) {\n    require(tx.outputs[0].script == new {Grand}({owner}));\n    require(checkSig({s}, {owner}));\n  }\n}\n";
+const MAIN: &str = "pragma arkade ^0.1.0;\nimport \"child.ark\";\nstruct {Policy} { int {maximum}; }\ncontract {Main}(pubkey {user}, pubkey {insurer}, {Policy} {p}, pubkey[2] {keys}) {\n  function {claim}(signature {sig}, {Policy} {q}) {\n    require(tx.input.current.value >= {p}.{maximum});\n    require(tx.input.current.value >= {q}.{maximum});\n    require(tx.outputs[0].script == new {Child}({user}));\n    require(checkSig({sig}, {keys}[1]));\n  }\n  function {late}(signature {insurerSig}) tapscript {\n    require(older(blocks(10)));\n    require(checkSig({insurerSig}, tweak({insurer}, {claim})));\n  }\n}\n";
+
+const ORIGINAL: &[(&str, &str)] = &[
+    ("Grand", "Grand"),
+    ("k", "k"),
+    ("go", "go"),
+    ("s", "s"),
+    ("Child", "Child"),
+    ("owner", "owner"),
+    ("Policy", "Policy"),
+    ("maximum", "maximum"),
+    ("Main", "Main"),
+    ("user", "user"),
+    ("insurer", "insurer"),
+    ("p", "p"),
+    ("keys", "keys"),
+    ("claim", "claim"),
+    ("sig", "sig"),
+    ("q", "q"),
+    ("late", "late"),
+    ("insurerSig", "insurerSig"),
+];
+const RENAMED: &[(&str, &str)] = &[
+    ("Grand", "Root"),
+    ("k", "key"),
+    ("go", "run"),
+    ("s", "witnessSig"),
+    ("Child", "Kid"),
+    ("owner", "holder"),
+    ("Policy", "Rule"),
+    ("maximum", "cap"),
+    ("Main", "Primary"),
+    ("user", "alice"),
+    ("insurer", "bob"),
+    ("p", "rule"),
+    ("keys", "signers"),
+    ("claim", "take"),
+    ("sig", "takerSig"),
+    ("q", "limit"),
+    ("late", "slow"),
+    ("insurerSig", "bobSig"),
+];
+
+/// The fixture's `Main`, with `{name}` tokens filled from `names`.
+fn chain(names: &[(&str, &str)]) -> arkade_compiler::ContractJson {
+    let fill = |template: &str| {
+        names.iter().fold(template.to_string(), |text, (from, to)| {
+            text.replace(&format!("{{{from}}}"), to)
+        })
+    };
+    let files = [
+        ("grand.ark", GRAND),
+        ("child.ark", CHILD),
+        ("main.ark", MAIN),
+    ]
+    .map(|(path, template)| (path.to_string(), fill(template)))
+    .into();
+    arkade_compiler::compile_sources_with_options("main.ark", &files, crate::common::options(true))
+        .unwrap()
+}
+
+#[test]
+fn code_hash_survives_renames() {
+    let (original, renamed) = (chain(ORIGINAL), chain(RENAMED));
+    assert_eq!(original.code_hash, renamed.code_hash);
+    assert_eq!(
+        original.contracts.get("Child"),
+        renamed.contracts.get("Kid")
+    );
+    assert_ne!(original.fingerprint, renamed.fingerprint);
+}
+
+#[test]
+fn code_hash_survives_renaming_imported_structs() {
+    // `Window` -> `Aperture` sorts it before `Policy`, which must not change its position.
+    let compile = |policy: &str, window: &str| {
+        let types =
+            format!("struct {policy} {{ int maximum; }}\nstruct {window} {{ int start; }}\n");
+        let main = format!("import \"types.ark\";\ncontract C({policy} p, {window} w, pubkey k) {{\n  function spend(signature s) {{\n    require(tx.input.current.value >= p.maximum);\n    require(tx.numOutputs >= w.start);\n    require(checkSig(s, k));\n  }}\n}}\n");
+        let files = [("types.ark", types), ("main.ark", main)]
+            .map(|(path, source)| (path.to_string(), source))
+            .into();
+        arkade_compiler::compile_sources("main.ark", &files).unwrap()
+    };
+    let (original, renamed) = (compile("Policy", "Window"), compile("Policy", "Aperture"));
+    assert_eq!(original.code_hash, renamed.code_hash);
+}
+
+#[test]
+fn code_hash_follows_parameter_positions() {
+    let body = "{\n  function spend(signature s, signature t) {\n    require(checkSig(s, a));\n    require(checkSig(t, b));\n  }\n}\n";
+    let first =
+        arkade_compiler::compile(&format!("contract C(pubkey a, pubkey b) {body}")).unwrap();
+    let swapped =
+        arkade_compiler::compile(&format!("contract C(pubkey b, pubkey a) {body}")).unwrap();
+    assert_ne!(first.code_hash, swapped.code_hash);
+}
+
+#[test]
+fn code_hash_tells_a_parameter_from_a_literal() {
+    let contract = |value: &str, outputs: &str| {
+        format!("contract C(pubkey k, int min) {{\n  function spend(signature s) {{\n    require(tx.input.current.value >= {value});\n    require(tx.numOutputs >= {outputs});\n    require(checkSig(s, k));\n  }}\n}}\n")
+    };
+    let read_first = arkade_compiler::compile(&contract("min", "0")).unwrap();
+    let read_second = arkade_compiler::compile(&contract("0", "min")).unwrap();
+    assert_ne!(read_first.code_hash, read_second.code_hash);
+}

@@ -2,6 +2,10 @@
 
 All notable changes to the Arkade Compiler are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html). `arkade-compiler` and `@arkade-os/compiler` share one version.
 
+## [Unreleased]
+
+- `codeHash` now hashes a name-free canonical copy of the artifact, so renaming the contract, a function, a parameter, a witness, a struct, a struct field or an instantiated contract keeps it, and a rename in an instantiated contract no longer breaks the `contracts` pin of the contracts that instantiate it. `structs` lists imported structs in import order instead of by name, so renaming one never moves it. Every `codeHash` and `contracts` value changes, and clients that recompute `codeHash` must canonicalize the artifact first and reject one whose names do not rename one-to-one, as [docs/artifact.md](docs/artifact.md#verifying-artifacts) describes.
+
 ## [0.1.1] - 2026-11-25
 
 - `tx.intent.field(path)` and `tx.intent.has(path)` are now `tx.proof.field(path)` and `tx.proof.has(path)`, since "intent" names Arkade Intents. `tx.intent` remains a deprecated alias that compiles to the same script, and 0.2 removes it.

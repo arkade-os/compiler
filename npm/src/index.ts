@@ -130,7 +130,7 @@ export interface CompilerArtifact {
     functions: SpendGroup[];
     /** The `codeHash` of each contract a `<CONTRACT:Name(...)>` placeholder names, by name. */
     contracts?: Record<string, string>;
-    /** `sha256:` and the SHA-256 of the fields above, which determine the scripts. */
+    /** `sha256:` and the SHA-256 of the fields above in a canonical copy that renames every identifier by position, so names are not covered. */
     codeHash?: string;
     source?: SourceBundle;
     compiler?: CompilerInfo;
