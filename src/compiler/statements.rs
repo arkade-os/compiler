@@ -1,4 +1,5 @@
-//! Emission of lowered statements onto the generator.
+//! Emits lowered statements onto the generator's stack model, joining both arms of a branch to
+//! one stack layout.
 
 use std::collections::HashSet;
 use std::slice;
@@ -95,11 +96,10 @@ impl Generator {
     }
 }
 
-/// Emit a public function's `body` after binding each `hoisted` literal, so every push of it
-/// reads the binding instead. A binding serves several statements, so, like the prologue, it
-/// maps to no statement.
-// ponytail: only Arkade Scripts hoist; tapscript leaves are assembled elsewhere in the fixed
-// closure shapes arkd matches.
+/// Every push of a `hoisted` literal reads its binding instead. A binding serves several
+/// statements, so, like the prologue, it maps to no statement.
+// LIMITATION: only Arkade Scripts hoist; tapscript leaves are assembled elsewhere in the fixed
+// closure shapes arkd matches, and could hoist only if arkd stopped matching those shapes.
 pub(super) fn emit_function(
     body: &[Lowered],
     generator: &mut Generator,
@@ -117,7 +117,7 @@ pub(super) fn emit_function(
     Ok(())
 }
 
-/// Emit `body` and report whether an emitted path falls through.
+/// Whether an emitted path falls through.
 pub(super) fn emit_body(body: &[Lowered], generator: &mut Generator) -> Result<bool> {
     let outer = generator.asm.span();
     let continues = emit_items(body, generator);
@@ -201,7 +201,6 @@ fn emit_lowered(item: &Lowered, generator: &mut Generator) -> Result<bool> {
     }
 }
 
-/// Emit one statement and report whether its path falls through.
 fn emit_statement(stmt: &LocatedStatement, generator: &mut Generator) -> Result<bool> {
     match &stmt.statement {
         Statement::Call(expression) => generator.emit_call(expression)?,
@@ -297,9 +296,7 @@ fn emit_statement(stmt: &LocatedStatement, generator: &mut Generator) -> Result<
     Ok(true)
 }
 
-/// Generate assembly that aborts unless `condition` holds.
 fn generate_requirement_asm(condition: &Expression, generator: &mut Generator) -> Result<()> {
-    // Composite operands verify leaf by leaf.
     if let ExprKind::BinaryOp { left, op, right } = &condition.kind {
         let composite = generator
             .composite_type(left)

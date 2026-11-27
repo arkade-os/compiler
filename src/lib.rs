@@ -1,9 +1,8 @@
+//! Arkade compiler library: compiles, analyzes and checks Arkade contracts into JSON artifacts.
 #![deny(clippy::exit, clippy::print_stderr, clippy::print_stdout)]
 use std::collections::BTreeMap;
 use std::path::Path;
 use std::{error, fmt};
-// Compilation entry points, data models, and opcode constants are public.
-// Pipeline stages are crate-internal.
 mod builtins;
 mod compiler;
 pub mod diagnostics;
@@ -65,23 +64,9 @@ impl fmt::Display for Error {
 
 impl error::Error for Error {}
 
-/// Compile Arkade Language source code to a JSON-serializable structure
-///
-/// This function takes Arkade Language source code as input, parses it into an AST,
-/// and then compiles it into a ContractJson structure that can be serialized to JSON.
-///
-/// The output includes:
-/// - Contract name
-/// - Parameters
-/// - Spend groups with optional Arkade Scripts and L1 tapleaves
-///
-/// # Arguments
-///
-/// * `source_code` - The Arkade Language source code as a string
-///
-/// # Returns
-///
-/// A Result containing either the ContractJson structure or an error
+/// Compile one in-memory source file, with default options, into a serializable artifact.
+/// The source is compiled as `main.ark`, so it cannot import other files; use
+/// [`compile_sources`] for that. Errors carry the first failure, located in the file.
 ///
 /// # Example
 ///

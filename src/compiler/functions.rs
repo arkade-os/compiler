@@ -1,3 +1,6 @@
+//! Emits typed (composite) values and inlines private function calls: arguments are bound or
+//! aliased, caller bindings hidden, and only the result left above the caller's stack.
+
 use std::collections::HashMap;
 use std::{mem, slice};
 
@@ -64,7 +67,7 @@ pub(super) fn contains_return(statements: &[LocatedStatement]) -> bool {
 }
 
 /// Whether `statements` assign `name` or any part of it.
-// ponytail: scans the whole body per name; cache assigned roots if helper calls or loops grow.
+// LIMITATION: scans the whole body per name; cache assigned roots if helper calls or loops grow.
 pub(super) fn assigns(statements: &[LocatedStatement], name: &str) -> bool {
     statements
         .iter()
@@ -91,9 +94,8 @@ pub(super) fn assigns(statements: &[LocatedStatement], name: &str) -> bool {
         })
 }
 
-/// The literal `argument` passes for `parameter` when a folding call substitutes it into a copy
-/// of `function`'s body instead of binding it: one that `lowering::propagates`, for a parameter
-/// the body never reassigns.
+/// The literal a folding call substitutes into `function`'s body instead of binding it: one that
+/// `lowering::propagates`, for a parameter the body never reassigns.
 pub(super) fn literal_argument<'a>(
     function: &Function,
     parameter: &Parameter,
@@ -109,7 +111,6 @@ pub(super) fn literal_argument<'a>(
     }
 }
 
-/// `function`'s body with each `literal_argument` of `args` substituted for its parameter.
 pub(super) fn substitute_arguments(
     function: &Function,
     args: &[Expression],

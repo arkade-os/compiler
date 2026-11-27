@@ -1,3 +1,7 @@
+//! Parses Arkade source into a `Contract` AST with pest, rewriting pest errors into
+//! source-language messages. Expressions, `tx`/`this` chains, casts and tapscript bodies are
+//! mapped in the submodules.
+
 use std::ops::Range;
 use std::sync::Mutex;
 use std::{array, iter, mem};
@@ -14,7 +18,6 @@ use crate::models::{
 };
 use crate::{builtins, compiler};
 
-/// Pest parser generated from grammar.pest
 #[derive(Parser)]
 #[grammar = "parser/grammar.pest"]
 pub struct ArkadeParser;
@@ -48,10 +51,9 @@ pub(crate) fn imports(pairs: &Pairs<'_, Rule>) -> Result<Vec<(String, Span)>, St
 }
 
 /// Fail at the leading pragma of `source` when compiler `version` satisfies none of its
-/// alternatives. Only `version`'s major.minor.patch counts, so a prerelease satisfies what its
-/// release does. The pragma is parsed on its own, so a file written for another compiler fails
-/// here rather than on syntax this one does not know; an absent or malformed pragma passes, and
-/// the full parse reports a malformed one.
+/// alternatives; only major.minor.patch counts, so a prerelease satisfies what its release does.
+/// The pragma is parsed alone so a file for another compiler fails here, not on syntax this one
+/// lacks. An absent or malformed pragma passes; the full parse reports a malformed one.
 pub(crate) fn check_pragma(source: &str, version: &str) -> Result<(), CompileError> {
     let Ok(mut head) = ArkadeParser::parse(Rule::pragma_head, source) else {
         return Ok(());
@@ -94,7 +96,6 @@ pub(crate) fn check_pragma(source: &str, version: &str) -> Result<(), CompileErr
     .at(pragma.as_span().into()))
 }
 
-/// The major, minor and patch numbers that start `version`.
 fn version_numbers(version: &str) -> [u64; 3] {
     // A component beyond u64 saturates; the compiler's own never does, so comparisons stay exact.
     let mut parts = version
@@ -265,8 +266,8 @@ pub(crate) fn comment_len(text: &str) -> Option<usize> {
     Some(body.find("*/").map_or(text.len(), |end| end + 4))
 }
 
-/// A single word that starts a statement and ends the code before `at`, as in `dasd` left on its
-/// own line: the word and its byte range.
+/// A word that starts a statement and ends the code before `at`, as `dasd` on its own line:
+/// `(word, start, end)`.
 fn lone_word(source: &str, at: usize) -> Option<(&str, usize, usize)> {
     let end = code_end(source, at);
     let start = source[..end]
@@ -320,8 +321,8 @@ fn rule_term(rule: &Rule) -> Option<String> {
         | Rule::empty_list => "an expression",
         Rule::number_literal => "a number",
         Rule::string_literal => "a string",
-        // ponytail: unmapped rules fall back to their grammar name with spaces, and a keyword
-        // rule to its quoted keyword; map any that show up confusingly in real errors.
+        // LIMITATION: unmapped rules read as their grammar name with spaces, or a keyword rule
+        // as its quoted keyword; map any that read confusingly in real errors.
         other => {
             let name = format!("{other:?}");
             return Some(match name.strip_suffix("_keyword") {
@@ -333,9 +334,8 @@ fn rule_term(rule: &Rule) -> Option<String> {
     Some(term.to_string())
 }
 
-/// The raw pest parse, with the error already rewritten in source-language
-/// terms by `readable_error`. Used where the byte position of a failure
-/// matters, e.g. `check()`, instead of `parse_main`'s rendered string.
+/// The raw pest parse, its error rewritten by `readable_error`, for callers that need the
+/// failure's byte position rather than a rendered message.
 pub(crate) fn try_parse(source: &str) -> Result<Pairs<'_, Rule>, PestError<Rule>> {
     // Tracking parse attempts, which only the error message needs, slows every parse, so a
     // failed parse is repeated with it unless it was already on, which an error with attempts
@@ -379,7 +379,6 @@ pub(crate) fn parse_error_diagnostic(
     Diagnostic::error(file, error.variant.message().into_owned()).with_span(Span { start, end })
 }
 
-/// Build a Contract AST from parsed Pest pairs
 pub(crate) fn build_ast(
     pairs: Pairs<Rule>,
     constants: &[Constant],
@@ -406,7 +405,6 @@ pub(crate) fn build_ast(
                     match inner_pair.as_rule() {
                         Rule::attribute => attributes.push(parse_attribute(inner_pair)?),
                         Rule::import_stmt => {
-                            // Extract the import path (string literal without quotes)
                             if let Some(path_pair) = inner_pair.into_inner().next() {
                                 let path = expr::parse_string_literal(path_pair.as_str())?;
                                 contract.imports.push(path);
@@ -436,7 +434,6 @@ pub(crate) fn build_ast(
     Ok(contract)
 }
 
-/// Parse `@name(arg, ...)`.
 fn parse_attribute(pair: Pair<Rule>) -> Result<Attribute, String> {
     let span = pair.as_span().into();
     let mut inner = pair.into_inner();
@@ -488,18 +485,15 @@ fn parse_struct_definition(pair: Pair<Rule>) -> Result<StructDefinition, String>
     Ok(StructDefinition { name, fields, span })
 }
 
-/// Parse a contract or library definition.
 fn parse_contract(contract: &mut Contract, pair: Pair<Rule>) -> Result<(), CompileError> {
     contract.is_library = pair.as_rule() == Rule::library;
     contract.declaration = pair.as_span().into();
     let mut inner_pairs = pair.into_inner().peekable();
 
-    // Contract name (required)
     let name = inner_pairs.next().ok_or("Missing contract name")?;
     contract.name = name.as_str().to_string();
     contract.span = name.as_span().into();
 
-    // Parameters (optional)
     if !contract.is_library {
         if let Some(param_list) = inner_pairs.next() {
             contract.parameters = parse_parameters(param_list)?;
@@ -529,8 +523,6 @@ fn parse_contract(contract: &mut Contract, pair: Pair<Rule>) -> Result<(), Compi
             }),
     );
 
-    // Arkade Script and tapscript functions share the `function` rule;
-    // a tapscript carries a `tapscript_block` body.
     let mut attributes = Vec::new();
     for func_pair in inner_pairs {
         match func_pair.as_rule() {
@@ -576,7 +568,6 @@ fn parse_const_decl(pair: Pair<Rule>) -> Result<Constant, String> {
     })
 }
 
-/// Parse a function definition
 fn parse_function(
     pair: Pair<Rule>,
     constants: &[Constant],
@@ -622,7 +613,7 @@ fn parse_function(
     })
 }
 
-/// Parse a function body or block: statements, each after its own attributes.
+/// A function body or block's statements, each after its own attributes.
 fn parse_statements<'a>(
     function_name: &str,
     pairs: impl Iterator<Item = Pair<'a, Rule>>,
@@ -645,7 +636,6 @@ fn parse_statements<'a>(
     Ok(statements)
 }
 
-/// Parse a statement in a function body (require, let binding, function call, variable declaration)
 fn parse_statement(
     function_name: &str,
     pair: Pair<Rule>,
@@ -898,9 +888,6 @@ fn parse_assignment_target(pair: Pair<Rule>) -> Result<AssignmentTarget, String>
     })
 }
 
-// ─── Expression Parsing ────────────────────────────────────────────────────────
-
-// Parse a block of statements
 fn parse_block(
     function_name: &str,
     pair: Pair<Rule>,
@@ -922,7 +909,6 @@ pub(crate) fn parse_data_type(type_pair: Pair<Rule>) -> TypeName {
     )
 }
 
-/// Parse parameter list from contracts or functions
 pub(crate) fn parse_parameters(params: Pair<Rule>) -> Result<Vec<Parameter>, String> {
     let mut parameters = Vec::new();
     for param_pair in params.into_inner() {
@@ -1023,7 +1009,6 @@ mod tests {
             );
             Ok(value.kind)
         };
-        // A member call resolves by its member: a group's `controlIs`, a `tx` or `this` member.
         assert!(matches!(
             value("g.controlIs(id)"),
             Ok(ExprKind::GroupControlIs { .. })
@@ -1087,7 +1072,6 @@ mod tests {
             .contains("wrong arguments to `this.tunnel`"));
         assert!(matches!(value("bytes32(x)"), Ok(ExprKind::Cast { .. })));
         assert!(matches!(value("int(0x0100)"), Ok(ExprKind::Literal(value)) if value == "256"));
-        // Fields after a member apply to its value.
         assert!(matches!(
             value("tx.inputs[0].script.program"),
             Ok(ExprKind::FieldAccess { value, .. }) if matches!(value.kind, ExprKind::InputIntrospection { .. })
@@ -1100,7 +1084,6 @@ mod tests {
         assert!(
             matches!(value("Lib.length(x)"), Ok(ExprKind::Call { name, .. }) if name == "Lib.length")
         );
-        // A chain no member spells keeps its spelling, strings included, for validation to report.
         for (chain, path) in [
             ("tx.inputs[0].valueX", "tx.inputs[0].valueX"),
             (
@@ -1117,7 +1100,6 @@ mod tests {
         for call in ["a.b.c(x)", "f(x).controlIs(id)", "(Lib).f(x)"] {
             assert!(value(call).unwrap_err().contains("cannot call"), "{call}");
         }
-        // A call statement names its function.
         for (call, name) in [
             ("g.controlIs(id)", "g.controlIs"),
             ("Lib . check(x)", "Lib.check"),
@@ -1626,7 +1608,6 @@ contract C(pubkey k, int unused) {
             "struct Grid { int[2][N] cells; } contract C(pubkey[4][2][3] keys) { function spend(int [N] [M] grid) { int[2][3] local = [[1, 2, 3], [4, 5, 6]]; require(true); } }",
         )
         .unwrap();
-        // `T[a][b]` is `a` elements of `T[b]`.
         assert_eq!(
             contract.structs[0].fields[0].param_type,
             array(array(int(), "N"), "2")
@@ -2052,7 +2033,6 @@ contract Demo(pubkey first, pubkey second) {{
         ] {
             assert!(parse(source).is_err(), "{source}");
         }
-        // Reported where it opens, also after the contract, where pest does not name `*/`.
         let error = parse("contract C() {}\n/* unterminated").unwrap_err();
         assert!(
             error.contains("--> 2:1") && error.contains("expected '*/'"),
@@ -2087,7 +2067,6 @@ contract Demo(pubkey first, pubkey second) {{
         assert_eq!(contract.parameters.len(), 2);
         assert_eq!(contract.functions[0].parameters.len(), 3);
         assert_eq!(contract.functions[0].statements.len(), 10);
-        // A lone quoted proof path is still checked at compile time.
         let error = parse(r#"contract C() { function spend() { let f = tx.proof.field("Bad Path",); require(f == f); } }"#).unwrap_err();
         assert!(error.contains("invalid proof message path"), "{error}");
         for list in [

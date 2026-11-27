@@ -1,3 +1,6 @@
+//! The AST and artifact models, declared type names, and the flattening of a typed value
+//! into its scalar leaves.
+
 use std::fmt;
 
 use serde::{Deserialize, Serialize};
@@ -218,7 +221,6 @@ pub fn flatten_parameter(
     Ok(leaves)
 }
 
-/// The leaves of a `declared_type` value stored at `access`.
 pub(crate) fn flatten_value(
     access: &Path,
     declared_type: &TypeName,
@@ -326,7 +328,6 @@ mod tests {
         );
         assert_eq!(pubkeys.ark_type().as_str(), "bytes[2]");
         assert_eq!(serde_json::to_string(&pubkeys).unwrap(), "\"pubkey[2]\"");
-        // The first size is the outermost: two rows of three.
         let grid = TypeName::parse("int[2][3]");
         assert_eq!(grid.array_parts(), Some((&TypeName::parse("int[3]"), 2)));
         assert_eq!(grid.ark_type().as_str(), "int[2][3]");

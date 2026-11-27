@@ -1,21 +1,6 @@
-//! Semantic validation for Arkade Language contracts.
-//!
-//! This module provides two validation passes:
-//!
-//! 1. **AST validation** (`validate_ast`) — runs after parsing, before compilation.
-//!    Catches semantic errors that the PEG grammar cannot express, such as duplicate
-//!    names, reserved tapscript roles, and invalid Asset ID operands.
-//!
-//! 2. **Output validation** (`validate_output`) — runs after compilation.
-//!    Asserts structural invariants on the emitted `ContractJson`, catching compiler
-//!    bugs before the output reaches callers: every spend group has at least one
-//!    leaf, each leaf has non-empty `asm`, each present `arkade` script has
-//!    non-empty `asm`, and no leaf `asm` carries a signature placeholder
-//!    (signatures are witness-only). Tapscript-source-level operand scope checks
-//!    live in `compiler::tapscript::validate_arkd_rules`.
-//!
-//! Each pass returns its errors as a `Vec<ValidationIssue>`; code that compiles but is likely
-//! wrong is reported by [`crate::lint`] instead.
+//! Semantic validation. [`validate_ast`] takes a typed [`Contract`] and reports the errors the
+//! grammar cannot express; [`validate_output`] self-checks the emitted `ContractJson`. Code that
+//! compiles but is likely wrong is a [`crate::lint`] warning instead.
 
 use std::collections::{HashMap, HashSet};
 use std::iter;
@@ -46,8 +31,6 @@ use shadowing::check_shadowing;
 pub(crate) use functions::falls_through;
 pub(crate) use output::validate_output;
 
-// ─── Issue types ──────────────────────────────────────────────────────────────
-
 /// A validation error: the contract cannot be safely emitted.
 #[derive(Debug, Clone)]
 pub struct ValidationIssue {
@@ -75,7 +58,6 @@ impl ValidationIssue {
         self
     }
 
-    /// With `code` from the error registry.
     fn coded(mut self, code: ErrorCode) -> Self {
         self.code = code.id();
         self
@@ -112,21 +94,6 @@ fn locate(issues: &mut [ValidationIssue], span: Span) {
     }
 }
 
-// ─── AST validation ───────────────────────────────────────────────────────────
-
-/// Validate the parsed [`Contract`] AST for semantic errors before compilation.
-///
-/// Checks performed:
-/// - Contract name is non-empty.
-/// - No declared name is a keyword or type name, and no function name a builtin call.
-/// - At least one Arkade Script or tapscript function is declared.
-/// - Function names are unique within the contract.
-/// - Tapscript names are unique within the contract.
-/// - Constructor parameter names are unique.
-/// - Each function's parameter names are unique within that function.
-/// - Tapscript inputs do not collide with reserved names.
-/// - Asset ID operands have the expected txid/gidx types.
-///
 /// Reads `Expression::ty`, so `types::annotate` must run first; an expression it
 /// leaves `Unknown` is an error.
 pub(crate) fn validate_ast(contract: &Contract, require_entrypoint: bool) -> Vec<ValidationIssue> {
@@ -134,12 +101,10 @@ pub(crate) fn validate_ast(contract: &Contract, require_entrypoint: bool) -> Vec
 
     check_struct_definitions(contract, &mut issues);
 
-    // ── Contract name ──────────────────────────────────────────────────────
     if require_entrypoint && contract.name.is_empty() {
         issues.push(ValidationIssue::error("contract name must not be empty"));
     }
 
-    // ── At least one Arkade Script or tapscript function ─────────────
     let public_count = contract.functions.iter().filter(|f| !f.is_private).count();
     if require_entrypoint && public_count == 0 && contract.tapscripts.is_empty() {
         // A file with no contract has no name to locate this at.
@@ -151,7 +116,6 @@ pub(crate) fn validate_ast(contract: &Contract, require_entrypoint: bool) -> Vec
         });
     }
 
-    // ── Reserved declaration names ─────────────────────────────────────────
     // Structs, parameters, inputs and locals are checked where they are walked.
     let kind = if contract.is_library {
         "library"
@@ -179,7 +143,6 @@ pub(crate) fn validate_ast(contract: &Contract, require_entrypoint: bool) -> Vec
         locate(&mut issues[first..], span);
     }
 
-    // ── Unique function names ──────────────────────────────────────────────
     {
         let mut seen: HashSet<&str> = HashSet::new();
         for func in contract.functions.iter().filter(|f| !f.is_imported()) {
@@ -195,7 +158,6 @@ pub(crate) fn validate_ast(contract: &Contract, require_entrypoint: bool) -> Vec
         }
     }
 
-    // ── Unique constructor parameter names ────────────────────────────────
     {
         let mut seen: HashSet<&str> = HashSet::new();
         for param in &contract.parameters {
@@ -211,7 +173,6 @@ pub(crate) fn validate_ast(contract: &Contract, require_entrypoint: bool) -> Vec
         }
     }
 
-    // ── Unique parameter names within each function ────────────────────────
     for func in contract.functions.iter().filter(|f| !f.is_imported()) {
         let first = issues.len();
         let mut seen: HashSet<&str> = HashSet::new();
@@ -233,7 +194,6 @@ pub(crate) fn validate_ast(contract: &Contract, require_entrypoint: bool) -> Vec
 
     functions::validate_functions(contract, &mut issues);
 
-    // ── Tapscript reserved-name + duplicate checks ────────────────────────
     {
         let mut seen: HashSet<&str> = HashSet::new();
         for ts in &contract.tapscripts {
@@ -249,8 +209,7 @@ pub(crate) fn validate_ast(contract: &Contract, require_entrypoint: bool) -> Vec
         }
     }
 
-    // Reserved names (`operator`, `operatorExitDelay`) are supplied by the
-    // operator, never by constructor parameters.
+    // The operator supplies the reserved names, so no constructor parameter may.
     for p in &contract.parameters {
         if RESERVED_NAMES.contains(&p.name.as_str()) {
             issues.push(
@@ -297,7 +256,6 @@ pub(crate) fn validate_ast(contract: &Contract, require_entrypoint: bool) -> Vec
             }
             locate(&mut issues[first..], p.span);
         }
-        // Duplicate input names within a tapscript.
         let mut seen = HashSet::new();
         for p in &ts.inputs {
             if !seen.insert(p.name.as_str()) {
@@ -664,8 +622,6 @@ pub(crate) fn tapscript_reads(tapscript: &NamedTapscript) -> HashSet<&str> {
     used
 }
 
-// ─── Tests ────────────────────────────────────────────────────────────────────
-
 #[cfg(test)]
 mod tests {
     use std::fs;
@@ -908,8 +864,7 @@ contract Demo() {
 
     #[test]
     fn require_only_in_one_branch_is_error() {
-        // An if with a require in the then-branch but no else leaves the
-        // "condition false" path with no require() → a trivially-passing spend.
+        // Without an else, the false path has no require() and the spend trivially passes.
         let mut contract = make_contract("BarePath");
         contract.functions[0].statements = vec![located(Statement::IfElse {
             condition: ExprKind::Name(models::Path::from_key("flag")).into(),
@@ -1107,8 +1062,6 @@ contract Demo() {
 
     #[test]
     fn signature_placeholder_in_leaf_asm_is_output_error() {
-        // The sig-leak self-check must fire regardless of placeholder casing:
-        // <operatorSig>, <ownersig>, and <sig> are all signature placeholders.
         for leaked in ["<operatorSig>", "<ownersig>", "<sig>"] {
             let mut output = make_output("Leak");
             output.functions[0].leaves[0].asm = vec![leaked.to_string()];

@@ -91,18 +91,16 @@ fn falls_through(body: &[Lowered]) -> bool {
 
 /// Whether a never-reassigned local or helper parameter holding `literal` is replaced by it at
 /// every read instead of being bound.
-// ponytail: a substituted literal that does not fold costs its full push at every read, so a
-// literal that pushes 3 bytes and is read six times grows the script; count reads before
-// substituting to avoid that. Literals that push 4 or more bytes stay bound for the same
-// reason and never fold further; substitute them too once wide literals are hoisted into
+// LIMITATION: an unfolded substituted literal costs its push at every read (a 3-byte push read
+// six times grows the script), and 4-byte and wider literals stay bound and never fold further.
+// Count reads before substituting, and substitute wide literals once they are hoisted into
 // shared bindings.
 pub(super) fn propagates(literal: &str) -> bool {
     matches!(literal, "true" | "false") || !Op::Push(literal.to_string()).pushes_more_than(2)
 }
 
-/// Lower `statements` in `scope`, which gains their bindings as they are declared. When
-/// folding, a never-reassigned local folded to a literal that `propagates` is substituted into
-/// the statements after it, its whole scope, instead of being bound.
+/// `scope` gains bindings as they are declared. When folding, a never-reassigned local folded to
+/// a literal that `propagates` is substituted into the statements after it instead of being bound.
 pub(super) fn lower(
     statements: &[LocatedStatement],
     scope: &mut types::Scope,
@@ -114,7 +112,7 @@ pub(super) fn lower(
     for (index, statement) in statements.iter().enumerate() {
         let span = statement.span;
         let mut statement = statement.clone();
-        // ponytail: each substitution rebuilds the statement; substitute all names in one pass
+        // LIMITATION: each substitution rebuilds the statement; substitute all names in one pass
         // if bodies with many propagated locals compile slowly.
         for (name, literal) in &literals {
             statement.statement =
@@ -216,9 +214,9 @@ fn lower_statement(
             };
             // A runtime-indexed access is bound only when the body writes nothing it reads, so the
             // copy matches a live read and folding an index to a literal never changes results.
-            // ponytail: such a body still re-evaluates the index per element, and the copy holds
-            // every leaf of the selected array even when the body reads few; binding just the
-            // index would cover both.
+            // LIMITATION: such a body still re-evaluates the index per element, and the copy holds
+            // every leaf of the selected array even when the body reads few; bind just the index
+            // if either cost matters.
             if iterable.static_path().is_none()
                 && (iterable.binding_path().is_none() || !assigns_read(&body, &iterable))
             {
@@ -264,10 +262,9 @@ fn lower_statement(
             if iterable.static_path().is_some() {
                 unrolled
             } else {
-                // Reads stay in place, but reading the iterable's length evaluates and checks
-                // its runtime indexes once at entry, even if the body reads no element. A length
-                // is never zero, so the requirement holds.
-                // ponytail: the read also scales its offset and pushes the length to verify,
+                // Requiring the length evaluates and checks the runtime indexes once at entry,
+                // even if the body reads no element; a length is never zero, so it holds.
+                // LIMITATION: the read also scales its offset and pushes the length to verify,
                 // ops a bare index check skips; emit the checks directly if such loops grow common.
                 let mut length = iterable.with_kind(ExprKind::FieldAccess {
                     value: Box::new(iterable.clone()),

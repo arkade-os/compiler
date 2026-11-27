@@ -1,3 +1,6 @@
+//! Lowers a typed expression into `Op`s that read bindings by path; stack positions are resolved
+//! later, when the generator replays them.
+
 use super::ir::Op;
 use super::{asset, introspection};
 use crate::models::{self, ExprKind, Expression, GroupIOSource};
@@ -14,10 +17,9 @@ fn push_literal_asm(lit: &str, asm: &mut Vec<Op>) {
     }
 }
 
-/// The fields of a native struct value that are read one by one, in `fields` order: a binding's
-/// leaves or a literal's values.
-// ponytail: validation checked a literal against `fields`, which are all scalars for today's
-// native struct parameters; one with struct fields needs recursive emission.
+/// A binding's leaves or a literal's values, in `fields` order; `None` for a computed value.
+// LIMITATION: every native struct field is a scalar today, so leaves are not recursed into; a
+// native struct with struct fields needs recursive emission.
 pub(crate) fn native_struct_leaves(
     value: &Expression,
     fields: &[(&str, &str)],
@@ -70,7 +72,6 @@ pub(crate) fn emit_asset_id_asm(asset_id: &Expression, asm: &mut Vec<Op>) {
     emit_native_struct_asm(asset_id, asset_id_fields(), asm);
 }
 
-/// Emit assembly for an expression (push its value onto the stack)
 pub(crate) fn emit_expression_asm(expr: &Expression, asm: &mut Vec<Op>) {
     match &expr.kind {
         ExprKind::Call { .. } => {
@@ -192,19 +193,19 @@ pub(crate) fn emit_expression_asm(expr: &Expression, asm: &mut Vec<Op>) {
                 GroupIOSource::Outputs => asm.push(Opcode::Int1.into()),
             }
             asm.push(Opcode::InspectAssetGroup.into());
-            // Extract property if specified
+            // The record is `[type, index, amount]`.
             match property {
                 Some(GroupIoProperty::Amount) => {
                     asm.push(Opcode::Nip.into());
                     asm.push(Opcode::Nip.into());
                 }
                 Some(GroupIoProperty::Type) => {
-                    asm.push(Opcode::Drop.into()); // amount
-                    asm.push(Opcode::Drop.into()); // data
+                    asm.push(Opcode::Drop.into());
+                    asm.push(Opcode::Drop.into());
                 }
                 Some(GroupIoProperty::Index) => {
-                    asm.push(Opcode::Drop.into()); // amount
-                    asm.push(Opcode::Nip.into()); // type
+                    asm.push(Opcode::Drop.into());
+                    asm.push(Opcode::Nip.into());
                 }
                 Some(GroupIoProperty::Txid) => {
                     unreachable!("input records are extracted first; output txid fails validation")
@@ -265,7 +266,6 @@ pub(crate) fn emit_expression_asm(expr: &Expression, asm: &mut Vec<Op>) {
                 _ => {}
             }
         }
-        // Packet introspection
         ExprKind::PacketInspect {
             packet_type,
             presence_only,
@@ -297,12 +297,9 @@ fn emit_packet_result_asm(presence_only: bool, asm: &mut Vec<Op>) {
     }
 }
 
-/// Emit assembly for a contract instantiation: `new ContractName(arg1, arg2, ...)`
-///
-/// Produces a `<CONTRACT:ContractName(<arg1>,<arg2>)>` placeholder for the
-/// 32-byte Taproot witness program, followed by witness version 1.
-/// Options (operator key, exit timelock) are inherited from the enclosing contract
-/// and must be applied by the runtime when computing the child contract's key.
+/// A placeholder for the child's 32-byte Taproot witness program, then witness version 1. The
+/// runtime applies the enclosing contract's options (operator key, exit timelock) when it
+/// computes the child's key.
 pub(crate) fn emit_contract_instance_asm(
     contract_name: &str,
     args: &[Expression],
@@ -327,7 +324,6 @@ pub(crate) fn emit_contract_instance_asm(
     asm.push(Opcode::Int1.into());
 }
 
-/// Emit assembly for arithmetic or a short-circuit logical operation.
 pub(crate) fn emit_binary_op_asm(
     left: &Expression,
     op: BinaryOperator,
@@ -368,7 +364,6 @@ pub(crate) fn emit_binary_op_asm(
     }
 }
 
-/// The opcodes applying a non-logical `op` to `left` and `right`.
 fn operator_opcodes(
     op: BinaryOperator,
     left: &Expression,

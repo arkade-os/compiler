@@ -1,4 +1,5 @@
-//! The abstract syntax tree of an Arkade Language contract.
+//! The abstract syntax tree of an Arkade Language contract, as the parser builds it.
+//! Constant folding and `types::annotate` rewrite it in place before compilation.
 use std::fmt;
 use std::ops::Range;
 
@@ -225,7 +226,7 @@ pub struct Function {
 }
 
 impl Function {
-    // Qualified helpers have already been checked in their defining file's scope.
+    // An imported helper is named `file.name` and was already checked in its defining file.
     pub(crate) fn is_imported(&self) -> bool {
         self.name.contains('.')
     }
@@ -246,7 +247,7 @@ pub struct LocatedStatement {
     pub attributes: Vec<Attribute>,
 }
 
-/// Statement AST - represents any executable statement in a function body
+/// A statement in a function body.
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub enum Statement {
@@ -331,8 +332,8 @@ impl Statement {
     }
 }
 
-/// The indexes `for (i) in start..end` visits, or why its bounds are invalid: each must be a
-/// non-negative integer literal, and `start` must not exceed `end`.
+/// The indexes `for (i) in start..end` visits; both bounds must be non-negative integer
+/// literals with `start <= end`.
 pub(crate) fn loop_range(start: &Expression, end: &Expression) -> Result<Range<usize>, String> {
     let bound = |bound: &Expression| match &bound.kind {
         ExprKind::Literal(value) => value.parse::<usize>().ok(),
@@ -419,8 +420,7 @@ impl HashFn {
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub enum KeyExpr {
-    /// A pubkey binding: the reserved `operator` role or any pubkey in scope
-    /// (constructor pubkey, struct field, array element, etc.).
+    /// A pubkey binding: the reserved `operator` role or any pubkey in scope.
     Ident(Path),
     /// A 32-byte x-only key from a `pubkey` constant, as `0x`-prefixed hex.
     Literal(String),
@@ -447,8 +447,8 @@ impl KeyExpr {
     }
 }
 
-/// One ordered component of a tapscript leaf body. Source order must follow the
-/// closure template: condition? · timelock? · multisig (validated in Context::Tapscript).
+/// One ordered component of a tapscript leaf body. Source order must follow arkd's
+/// closure template, `condition? · timelock? · multisig`, which the compiler enforces.
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub enum TapItem {
@@ -722,10 +722,8 @@ pub enum ExprKind {
         group: Box<Expression>,
         property: GroupProperty,
     },
-    /// Boolean equality over the complete canonical control Asset ID:
-    /// group.controlIs(id). False when control is absent or either
-    /// component differs. `group.hasControl` (presence only) is modeled as a
-    /// plain `GroupProperty { property: "hasControl" }`.
+    /// `group.controlIs(id)`: whether the group's control Asset ID equals `id`; false when
+    /// the group has no control asset. Presence alone is `GroupProperty::HasControl`.
     GroupControlIs {
         group: Box<Expression>,
         asset_id: Box<Expression>,
@@ -737,47 +735,43 @@ pub enum ExprKind {
         group: Box<Expression>,
         io_index: Box<Expression>,
         source: GroupIOSource,
-        // None is the whole record: an `AssetGroupInput` or `AssetGroupOutput`
+        // None reads the whole `AssetGroupInput` or `AssetGroupOutput` record.
         property: Option<GroupIoProperty>,
     },
-    // ─── Arithmetic ────────────────────────────────────────────────────
     /// Prefix operator: -value, !value or ~value
     Unary {
         op: UnaryOperator,
         value: Box<Expression>,
     },
-    /// Contract instantiation: new ContractName(arg1, arg2, ...)
-    ///
-    /// Resolves to the Taproot program and witness version 1 of the named contract instantiated
-    /// with the given arguments. Options (operator key, exit timelock) are
-    /// inherited from the enclosing contract. Used to pin an output to another
-    /// contract: `tx.outputs[0].script == new Foo(x)`. A contract cannot
-    /// instantiate itself; it compares against `tx.input.current.script` instead.
+    /// `new Foo(x)`: the Taproot program and witness version 1 of `Foo` built from the
+    /// arguments, with the enclosing contract's operator key and exit delay, as in
+    /// `tx.outputs[0].script == new Foo(x)`. A contract cannot instantiate itself; it
+    /// compares against `tx.input.current.script` instead.
     ContractInstance {
-        /// Name of the contract to instantiate
+        /// Name of the contract to instantiate.
         contract_name: String,
-        /// Constructor arguments (typically Variable or Literal)
+        /// Constructor arguments.
         args: Vec<Expression>,
     },
-    // ─── Byte-string Manipulation (introspector extensions) ────────────
     /// Narrowing cast from bytes: pubkey(x), signature(x), bytes20(x), bytes32(x);
     /// or a scalar conversion: int(bool), bool(int), bytes(int), bytes(bool); bytes(bytes-like) widens.
+    /// bytes20/bytes32 check the length at runtime; pubkey and signature are left to the VM,
+    /// which validates them when consumed. bytes(int) is minimal Script-number bytes, and
+    /// bytes(bool) is empty for false and 0x01 for true.
     Cast {
         target: String,
         data: Box<Expression>,
     },
-    // ─── Packet Introspection ──────────────────────────────────────────
-    /// Current-tx packet content: tx.packet(packetType)
-    /// Emits the raw packet bytes and asserts presence via OP_INSPECTPACKET's
-    /// bool flag. Compiles to `<packetType> OP_INSPECTPACKET OP_1 OP_EQUALVERIFY`, or to
+    /// `tx.packet(packetType)`: the current transaction's packet bytes, asserting the packet is
+    /// present. Compiles to `<packetType> OP_INSPECTPACKET OP_1 OP_EQUALVERIFY`, or to
     /// `<packetType> OP_INSPECTPACKET OP_NIP` for `presence_only`.
     PacketInspect {
         packet_type: Box<Expression>,
         /// `tx.packet.has(type)`: the presence flag instead of the bytes
         presence_only: bool,
     },
-    /// Packet of the Arkade transaction that created input i: tx.inputs[i].packet(packetType)
-    /// Compiles to `<packetType> <i> OP_INSPECTINPUTPACKET OP_1 OP_EQUALVERIFY`, or to
+    /// `tx.inputs[i].packet(packetType)`: the packet of the Arkade transaction that created
+    /// input `i`. Compiles to `<packetType> <i> OP_INSPECTINPUTPACKET OP_1 OP_EQUALVERIFY`, or to
     /// `<packetType> <i> OP_INSPECTINPUTPACKET OP_NIP` for `presence_only`.
     InputPacketInspect {
         index: Box<Expression>,
@@ -815,7 +809,6 @@ macro_rules! expression_children {
     ($name:ident, $expr:ty, ($($borrow:tt)*), $iter:ident, $as_box:ident) => {
         pub(crate) fn $name(expr: $expr) -> Vec<$expr> {
             match $($borrow)* expr.kind {
-                // Leaf nodes: no nested expressions.
                 ExprKind::Name(_)
                 | ExprKind::Literal(_)
                 | ExprKind::This(_)
@@ -888,7 +881,6 @@ expression_children!(child_exprs, &Expression, (&), iter, as_ref);
 expression_children!(child_exprs_mut, &mut Expression, (&mut), iter_mut, as_mut);
 
 impl Expression {
-    /// The array index a literal spells.
     pub(crate) fn literal_index(&self) -> Option<usize> {
         match &self.kind {
             ExprKind::Literal(index) => index.parse().ok(),
@@ -933,8 +925,8 @@ impl Expression {
                 format!("tx.inputs[{}].{}", index.source_text(), property.name())
             }
             ExprKind::BinaryOp { left, op, right } => {
-                // ponytail: every nested operation is parenthesized, so `a + b + c` reads
-                // `(a + b) + c`; print by precedence if the extra parentheses hurt messages.
+                // LIMITATION: every nested operation is parenthesized (`(a + b) + c`); print by
+                // precedence if the extra parentheses hurt diagnostics.
                 let operand = |e: &Self| match e.kind {
                     ExprKind::BinaryOp { .. } => format!("({})", e.source_text()),
                     _ => e.source_text(),

@@ -1,6 +1,5 @@
-//! Builtin functions: the language functions the compiler provides. Each entry
-//! is the single description of a builtin, read by the parser, the type checks,
-//! code generation and the builtin docs.
+//! Builtin functions and the calls and members the parser resolves itself. Each entry is the
+//! one description of a builtin, read by the parser, type checks, code generation and the docs.
 
 use crate::opcodes::Opcode;
 use crate::properties::{
@@ -675,7 +674,7 @@ pub(crate) fn docs() -> String {
 
 /// The names documented directly under `owner`, a member path with indexes written `[]`.
 pub(crate) fn members_of(owner: &str) -> Vec<String> {
-    // ponytail: output assets share the members documented on input assets; document them
+    // LIMITATION: output assets reuse the members documented on input assets; document them
     // separately if the two ever differ.
     let owner = owner.replace("tx.outputs[].assets", "tx.inputs[].assets");
     let documented = documented();

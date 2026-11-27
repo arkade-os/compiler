@@ -1,3 +1,6 @@
+//! Code generation: turns a validated, typed contract into one Arkade Script per public function
+//! and the artifact JSON. Each script ends with a single true item on its stack.
+
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::result;
 
@@ -303,9 +306,8 @@ impl Generator {
     }
 
     fn emit_expression_items(&mut self, expression: &Expression, expected: usize) -> Result<()> {
-        // Counts temporaries instead of a stack watermark: a consuming read can
-        // remove a binding below the watermark, so only the top `expected` items
-        // are checked for being temporaries.
+        // Counts temporaries instead of a stack watermark: a consuming read can remove a
+        // binding below the watermark.
         let before = self
             .stack
             .iter()
@@ -316,7 +318,7 @@ impl Generator {
         let mut values = Vec::new();
         functions::extract_values(&mut expression, &mut values);
         expr::emit_expression_asm(&expression, &mut raw);
-        // ponytail: short-circuit joins need identical layouts, so reads inside an open branch stay
+        // LIMITATION: short-circuit joins need identical layouts, so reads inside an open branch stay
         // copies and leave their slots to the final cleanup; moving them needs path-sensitive liveness.
         let preserved = self.preserve_bindings;
         let mut branches = Vec::new();
@@ -414,20 +416,6 @@ impl Generator {
     }
 }
 
-/// Compiles an Arkade Language contract into a JSON-serializable structure.
-///
-/// Takes source code, parses it into an AST, and transforms it into a ContractJson
-/// structure. The output includes contract name, constructor inputs (with asset ID
-/// decomposition for lookup parameters), spend groups, optional Arkade Scripts,
-/// and L1 tapleaf assemblies.
-///
-/// # Arguments
-///
-/// * `source_code` - The Arkade Language source code
-///
-/// # Returns
-///
-/// A Result containing a ContractJson or an error message
 pub fn compile(source_code: &str) -> Result<ContractJson, String> {
     imports::compile_sources(
         "main.ark",
@@ -442,21 +430,14 @@ pub(crate) struct Prepared {
     pub leaves: Vec<tapscript::CheckedLeaf>,
 }
 
-/// Runs semantic validation, including type checking, on `contract`. Returns its
-/// warnings and checked leaves on success, every error (each its own diagnostic, not
-/// joined into one message) on failure. Diagnostic messages carry no location prefix —
-/// `Diagnostic::span` is the byte range; `diagnostics::render_errors` adds a
-/// `"line N, column M: "` prefix only when rendering the joined string.
+/// Every error is its own diagnostic, with no location prefix in its message;
+/// `diagnostics::render_errors` adds `line N, column M: ` when it joins them.
 pub(crate) fn prepare(
     contract: &mut Contract,
     require_entrypoint: bool,
     file: &str,
 ) -> Result<Prepared, Vec<Diagnostic>> {
     types::annotate(contract);
-
-    // ── Semantic validation ────────────────────────────────────────────────
-    // Catch errors the PEG grammar cannot express (duplicate names, missing
-    // timelocks, etc.) before we attempt code generation.
     let ast_issues = validator::validate_ast(contract, require_entrypoint);
     if !ast_issues.is_empty() {
         return Err(ast_issues
@@ -531,7 +512,6 @@ pub(crate) fn emit(
         warnings,
     };
 
-    // Build the Arkade Script of each public function.
     let mut scripts: HashMap<String, ArkadeScript> = HashMap::new();
     for function in contract.functions.iter().filter(|f| !f.is_private) {
         scripts.insert(
@@ -555,8 +535,6 @@ pub(crate) fn emit(
 
     json.functions = tapscript::build_function_groups(contract, leaves, scripts)?;
 
-    // ── Output invariant check ─────────────────────────────────────────────
-    // Self-check the emitted JSON for structural invariants.
     let output_issues = validator::validate_output(&json);
     if !output_issues.is_empty() {
         return Err(output_issues
@@ -598,10 +576,8 @@ pub(crate) fn emit(
     Ok(json)
 }
 
-/// The placeholder namespace a parameter list emits: array types (e.g.
-/// `pubkey[3]`) flatten to `name.0`, `name.1`, `name.2`; every other param
-/// passes through unchanged. This is the `<name>` namespace in `asm`, not the
-/// artifact ABI, which keeps one entry per source parameter.
+/// The `<name>` placeholders `asm` uses, where a composite parameter flattens (`pubkey[3]` to
+/// `name.0`, `name.1`, `name.2`); the artifact ABI keeps one entry per source parameter.
 pub(crate) fn expanded_placeholder_params(
     params: &[Parameter],
     structs: &[StructDefinition],
@@ -619,7 +595,6 @@ pub(crate) fn expanded_placeholder_params(
     Ok(result)
 }
 
-/// Build an `ArkadeScript` for a public function.
 /// Compute budgets are deployment-configurable; compare the reported counts with the target
 /// emulator's limits rather than enforcing defaults here.
 fn arkade_script_for(

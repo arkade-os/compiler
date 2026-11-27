@@ -27,7 +27,6 @@ pub(crate) enum Op {
 /// An instruction and the span of the statement it was emitted for.
 pub(crate) type Spanned = (Op, Option<Span>);
 
-/// Instructions, each with the span of the source statement it was emitted for.
 #[derive(Debug, Default)]
 pub(crate) struct Assembly {
     ops: Vec<Spanned>,

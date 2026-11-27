@@ -1,5 +1,6 @@
 //! The generator's model of the stack: which binding each slot holds, and the
 //! reads, assignments, scopes and joins that move them.
+
 use std::iter;
 
 use super::ir::Op;
@@ -43,9 +44,8 @@ impl Generator {
             self.push_integer_temporary(length);
             return Ok(());
         }
-        // Only an out-of-range constant index names no element. Validation and folding reject
-        // one on a reachable path; one left here is in code that folding removes, so it is
-        // checked at runtime.
+        // Only an out-of-range constant index names no element. Validation and folding reject a
+        // reachable one; one left here is in dead code, so it gets the runtime check.
         if let Some((Segment::Index(index), segments)) =
             name.segments.split_last().filter(|_| !is_binding)
         {
@@ -121,7 +121,7 @@ impl Generator {
     }
 
     /// Runtime indexes address leaves by their prologue slots.
-    // ponytail: pins every leaf of the indexed parameter, so unread siblings keep slots;
+    // LIMITATION: pins every leaf of the indexed parameter, so unread siblings keep slots;
     // pin only the indexed array's leaves if wide runtime-indexed structs become common.
     pub(super) fn pin_constructor_slots(&mut self, path: &Path) {
         for index in 0..self.stack.len() {

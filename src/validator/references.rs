@@ -1,3 +1,6 @@
+//! Name-reference analysis of function bodies: the parameters a body reads, through the private
+//! helpers it calls, and the reads and locals that survive dead-statement elimination.
+
 use std::collections::HashSet;
 
 use crate::models::{
@@ -14,10 +17,9 @@ pub(crate) fn referenced_parameters<'a>(
     names
 }
 
-/// The names `statements` read, leaving out the reads of a statement that has no effect: a local
-/// or assignment nothing later reads, whose value the script drops, unless it calls a helper,
-/// whose requirements still run; and an `if` or loop whose arms or body have none. Also the
-/// locals nothing reads, calling a helper or not.
+/// The names `statements` read, and the locals nothing reads (calling a helper or not). Reads of
+/// a statement without effect are left out: a local or assignment nothing later reads that calls
+/// no helper (a helper's requirements still run), or an `if` or loop whose arms or body have none.
 pub(crate) fn live_reads(
     statements: &[LocatedStatement],
 ) -> (HashSet<&str>, Vec<&LocatedStatement>) {
@@ -73,10 +75,10 @@ fn collect_live<'a>(
                     continue;
                 }
             }
-            // An iteration reads what the one before it assigned, so only the last walk, over
-            // every name read after the body, tells which locals are dead.
-            // ponytail: re-walks the body until no new name turns up, which multiplies with loop
-            // nesting depth; summarize each body once if loops ever nest deeply.
+            // An iteration reads what the one before it assigned, so the body is walked until no
+            // new name turns up, and only the last walk tells which locals are dead.
+            // LIMITATION: re-walking multiplies with nesting depth; summarize each body once if
+            // loops ever nest deeply.
             Statement::ForIn { body, .. }
             | Statement::ForCount { body, .. }
             | Statement::ForRange { body, .. } => {

@@ -1,16 +1,16 @@
+//! Substitutes a literal for a scalar binding throughout a statement tree, to unroll loops and to
+//! fold literal arguments into a helper's body.
+
 use crate::models::{
     self, AssignmentTarget, ExprKind, Expression, LocatedStatement, Path, Segment, Statement,
 };
 
-// ─── Loop Unrolling ─────────────────────────────────────────────────────────────
-
-/// Substitute `literal` for the scalar binding `name` in `body`. For a loop iteration,
-/// `element` names its value variable and the iterated items, and that variable and paths
-/// rooted at it become accesses on element `literal` of the items.
+/// For a loop iteration, `element` is the value variable and the iterated items; paths rooted at
+/// that variable become accesses on element `literal` of the items.
 ///
 /// The literal keeps the substituted name's type, and a rebuilt array read keeps its own;
-/// element accesses are untyped. Copies keep only the span and statement; names, branches and
-/// messages are read from the parsed body.
+/// element accesses are untyped. Copies drop `names`, `branches` and `message`, which are read
+/// from the parsed body.
 pub(crate) fn substitute_body(
     body: &[LocatedStatement],
     name: &str,
@@ -128,8 +128,6 @@ pub(crate) fn substitute_statement(
     }
 }
 
-/// Resolve a dotted binding path: `name` to `literal`, and `element`'s value variable paths to
-/// accesses on element `literal` of its items.
 fn substitute_path(
     path: &Path,
     at: &Expression,

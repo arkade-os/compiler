@@ -1,3 +1,8 @@
+//! Program loading: reads an entry file and its relative imports, resolves names across files,
+//! and prepares each module once, producing an [`Analysis`] that reports diagnostics and emits
+//! the entry's artifact. Imports are acyclic, and each contract and struct name is declared in
+//! one file.
+
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
 use std::path::{self, Component, Path, PathBuf};
@@ -499,7 +504,7 @@ impl Loaded {
             .find(|(_, module)| module.contract.name == name)
             .ok_or_else(|| CompileError::internal(format!("contract '{name}' is not loaded")))?;
         let source = files.get(path).map_or("", String::as_str);
-        // Imported modules skip the checks only an entry gets.
+        // Loading prepared this module as an import, without the checks only an entry gets.
         let compiled = match validator::validate_ast(&module.contract, true).first() {
             Some(issue) => Err(diagnostics::located(&issue.message, issue.span, source)),
             None => self
@@ -577,9 +582,9 @@ fn load(
         let imports =
             parser::imports(&pairs).map_err(|error| locate(path, source, error.into(), None))?;
         let mut dependencies = Vec::new();
-        // ponytail: collecting symbols, an import that fails stops loading but the file's own names
-        // are still recorded; later imports go unread, since reading them needs failed files
-        // remembered so that a diamond of imports does not load one twice.
+        // LIMITATION: when collecting symbols, a failed import stops loading the rest, though the
+        // file's own names are still recorded. Remember failed files, so a diamond of imports
+        // does not load one twice, if editors need the later imports' symbols.
         let mut failed = None;
         for (import, span) in imports {
             let at_import = |error: LoadError| match error {

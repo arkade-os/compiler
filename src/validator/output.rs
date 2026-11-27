@@ -1,14 +1,12 @@
+//! Self-check of compiled [`ContractJson`]: structural invariants every valid source satisfies,
+//! so an error here is a compiler bug, not a user error.
+
 use std::collections::HashSet;
 
 use super::ValidationIssue;
 use crate::compiler;
 use crate::models::ContractJson;
 
-/// Validate the compiled [`ContractJson`] output for structural invariants.
-///
-/// This pass acts as a compiler self-check: a valid source contract should always
-/// produce output that satisfies these invariants. Any error here indicates a
-/// compiler bug rather than a user error.
 pub(crate) fn validate_output(output: &ContractJson) -> Vec<ValidationIssue> {
     let mut issues = Vec::new();
 
@@ -30,7 +28,8 @@ pub(crate) fn validate_output(output: &ContractJson) -> Vec<ValidationIssue> {
                     group.name
                 )));
             }
-            // Constructor leaves are pushed once: in the prologue, or inline at a single read.
+            // A constructor placeholder is pushed at most once: in the prologue, or inline
+            // at its single read.
             let leaves =
                 match compiler::expanded_placeholder_params(&output.parameters, &output.structs) {
                     Ok(parameters) => parameters
@@ -69,10 +68,8 @@ pub(crate) fn validate_output(output: &ContractJson) -> Vec<ValidationIssue> {
                     leaf.name, group.name
                 )));
             }
-            // Leaf ASM must not carry signature placeholders (sigs are witness).
-            // Case-insensitive: a leaked placeholder may be named `<sig>`,
-            // `<ownersig>`, or `<operatorSig>` depending on the source naming —
-            // all must trip this compiler-bug self-check.
+            // Signatures are witness data. Matched case-insensitively, as a leaked placeholder
+            // may be `<ownersig>` or `<operatorSig>`.
             if leaf
                 .asm
                 .iter()

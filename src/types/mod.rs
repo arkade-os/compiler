@@ -1,12 +1,9 @@
+//! Typing. [`annotate`] takes a parsed contract and stores each expression's [`ArkType`] on
+//! `Expression::ty`, resolving call results, `.length` and asset-group members on the way; the
+//! validator and emission read only that field. An expression it cannot type stays `Unknown`.
+
 use crate::builtins;
 use crate::models::{self, GroupIOSource, HashFn, Parameter, StructDefinition};
-/// Type system for Arkade Language.
-///
-/// Provides:
-/// - `ArkType`: the canonical type enum for all Arkade Language values,
-///   including wire-encoding metadata used by client stub generators
-/// - `annotate`: stores every expression's type on it before validation;
-///   the validator and code generation read `Expression::ty`
 use std::collections::HashMap;
 
 use crate::models::{
@@ -15,17 +12,11 @@ use crate::models::{
 use crate::operators::{BinaryOperator, OperatorClass, UnaryOperator};
 use crate::properties::{GroupIoProperty, GroupProperty};
 
-// ─── Type Enum ────────────────────────────────────────────────────────────────
-
-/// All possible types in Arkade Language.
-///
-/// Declared types map directly to the grammar's `data_type` rule.
-/// Internal types are produced by introspection expressions; they never appear
-/// in user-written type annotations.
+/// The type of an Arkade value. `Void` and `Unknown` come only from typing; every other
+/// variant can be declared in source.
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub enum ArkType {
-    // ── Declared types (match grammar data_type rule) ──────────────────────
     /// 64-byte Schnorr signature
     Signature,
     /// Arbitrary-length byte array; `pubkey` is an alias
@@ -41,18 +32,15 @@ pub enum ArkType {
     /// Position of an asset group in the transaction's asset packet
     AssetGroup,
 
-    // ── Internal / introspection types ─────────────────────────────────────
-
-    // ── Composite ──────────────────────────────────────────────────────────
     /// Homogeneous fixed-size array (e.g., `pubkey[3]`)
     Array(Box<ArkType>, usize),
-    /// Named user-defined struct.
+    /// A struct by name, user-defined or built in such as `AssetId`.
     Struct(String),
 
     /// No stack value: a call to a function without a result.
     Void,
 
-    /// Type could not be resolved (variable not in scope, etc.)
+    /// Not resolved; the validator reports the expression.
     Unknown,
 }
 
@@ -97,10 +85,8 @@ impl ArkType {
         }
     }
 
-    /// Wire-encoding descriptor used in leaf `witness` / client stub output.
-    ///
-    /// These strings are stable identifiers; downstream code generators
-    /// (TypeScript, Go, etc.) can switch on them to pick the right serializer.
+    /// Wire encoding in leaf `witness` output. A stable identifier: client generators switch on
+    /// it to pick a serializer.
     pub fn encoding(&self) -> &'static str {
         match self {
             ArkType::Signature => "schnorr-64",
@@ -143,8 +129,6 @@ impl From<&ArkType> for TypeName {
         }
     }
 }
-
-// ─── Scope ────────────────────────────────────────────────────────────────────
 
 pub type Scope = HashMap<String, ArkType>;
 
@@ -696,13 +680,7 @@ pub(crate) fn digest_accepts(hash_fn: &HashFn, t: &ArkType) -> bool {
     *t == ArkType::Bytes || *t == ArkType::parse(hash_fn.digest_type())
 }
 
-// ─── Type Inference ───────────────────────────────────────────────────────────
-
-/// Infer the `ArkType` of an expression given the current variable scope and
-/// the types already stored on its children.
-///
-/// Returns `ArkType::Unknown` for expressions whose type cannot be determined
-/// statically (e.g., unresolved variables, not-yet-implemented forms).
+/// The type of `expr` from `scope` and the types already stored on its children.
 fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
     match &expr.kind {
         ExprKind::Call { return_type, .. } => return_type
@@ -755,7 +733,6 @@ fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
         ExprKind::InputIntrospection { property, .. } => ArkType::parse(property.value_type()),
         ExprKind::OutputIntrospection { property, .. } => ArkType::parse(property.value_type()),
 
-        // Asset introspection
         ExprKind::AssetLookup { .. } => ArkType::Int,
         ExprKind::AssetHas { .. } => ArkType::Bool,
         ExprKind::AssetCount { .. } => ArkType::Int,
@@ -764,7 +741,6 @@ fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
             ArkType::parse(property.map_or("AssetEntry", |p| p.value_type()))
         }
 
-        // Asset group introspection
         ExprKind::GroupLookup { .. } | ExprKind::AssetGroupAt { .. } => ArkType::AssetGroup,
         ExprKind::GroupHas { .. } => ArkType::Bool,
         ExprKind::GroupControlIs { .. } => ArkType::Bool,
@@ -776,7 +752,6 @@ fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
 
         ExprKind::Builtin { builtin, .. } => ArkType::parse(builtin.result),
 
-        // Arithmetic
         ExprKind::Unary {
             op: UnaryOperator::Invert,
             ..
@@ -789,7 +764,6 @@ fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
 
         ExprKind::Cast { target, .. } => ArkType::parse(target),
 
-        // Packet introspection — returns raw packet bytes.
         ExprKind::PacketInspect { presence_only, .. }
         | ExprKind::InputPacketInspect { presence_only, .. } => {
             if *presence_only {
@@ -806,10 +780,9 @@ fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
             }
         }
 
-        // Binary operations — type is determined by operand types and operator.
         ExprKind::BinaryOp { left, op, right } => {
             match op.class() {
-                // bytes-like on either side → concatenation (result Bytes).
+                // Bytes-like `+` is concatenation.
                 OperatorClass::Arithmetic
                     if *op == BinaryOperator::Add
                         && (left.ty.is_bytes_like() || right.ty.is_bytes_like()) =>

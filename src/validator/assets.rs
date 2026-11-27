@@ -1,3 +1,6 @@
+//! Checks that every Asset ID operand (`lookup`, `has`, `tryLookup`, `controlIs`) is an `AssetId`
+//! and that a literal's constant `gidx` fits in a u16.
+
 use super::ValidationIssue;
 use crate::compiler::constants;
 use crate::models::{
@@ -6,10 +9,7 @@ use crate::models::{
 };
 use crate::types::ArkType;
 
-/// Reject malformed canonical Asset ID operands at compile time instead of
-/// relying on the emulator's runtime `popAssetID` check: every
-/// `lookup`/`has`/`tryLookup`/`controlIs` operand must be an `AssetId`; checking
-/// it as one also range-checks a literal's constant gidx (see `validate_gidx`).
+/// Catches at compile time what the emulator's runtime `popAssetID` check would reject.
 pub(super) fn check_asset_id_operands(contract: &Contract, issues: &mut Vec<ValidationIssue>) {
     for func in contract.functions.iter().filter(|f| !f.is_imported()) {
         walk_asset_id_stmts(&func.statements, &contract.structs, issues);
@@ -70,15 +70,8 @@ fn walk_asset_id_stmts(
     }
 }
 
-/// Walk an expression, validating the operands of every Asset ID construct and
-/// recursing through every sub-expression that can nest one.
-///
-/// Traversal and validation are deliberately split: this function validates the
-/// Asset ID operands of the constructs that carry them, then recurses into *all*
-/// direct sub-expressions via [`child_exprs`]. Because `child_exprs` is an
-/// exhaustive match with no wildcard, any future `Expression` variant forces a
-/// decision there and can never silently bypass this validation by falling
-/// through a catch-all.
+/// Recurses through [`models::child_exprs`], whose exhaustive match keeps a new variant from
+/// bypassing this check.
 fn check_asset_id_expr(
     expr: &Expression,
     structs: &[StructDefinition],

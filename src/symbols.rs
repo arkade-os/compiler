@@ -1,4 +1,5 @@
-//! Definitions and references with their source positions, for editors.
+//! Definitions and references with their source positions, for editors. Each analyzed file's
+//! typed `Contract` is collected in turn; an import resolves through its dependency's exports.
 
 use std::collections::{HashMap, HashSet};
 
@@ -10,6 +11,7 @@ use crate::models::{
 use crate::parser;
 use crate::types::ArkType;
 
+/// What a [`Definition`] declares.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum SymbolKind {
@@ -25,6 +27,7 @@ pub enum SymbolKind {
     Field,
 }
 
+/// A declared name and where it is declared.
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub struct Definition {
@@ -51,8 +54,8 @@ pub struct Reference {
 }
 
 /// The definitions of every analyzed file and the references to them.
-// ponytail: references cover bindings, calls, `new` and constants; struct fields, type names and
-// tapscript operands carry no spans yet, so they are not recorded.
+// LIMITATION: references cover bindings, calls, `new` and constants; struct fields, type names
+// and tapscript operands have no spans in the AST, so they are skipped until they get them.
 #[derive(Debug, Clone, Default)]
 pub struct Symbols {
     definitions: Vec<Definition>,
@@ -349,7 +352,7 @@ impl Collector<'_> {
 
     /// The first token at or after `start`, past the `(`, whitespace and comments that can open
     /// an expression's span.
-    // ponytail: recovers name positions from source text; syntax that puts anything else before
+    // LIMITATION: recovers name positions from source text; syntax that puts anything else before
     // a name needs the parser to record the name's span.
     fn token(&self, start: usize) -> usize {
         let mut rest = self.source.get(start..).unwrap_or_default();

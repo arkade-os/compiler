@@ -1,3 +1,6 @@
+//! Constant folding: evaluates `const` declarations and replaces every reference to one with a
+//! literal. Runs before validation, so no later stage sees a constant name.
+
 use std::collections::HashMap;
 
 use crate::diagnostics::{CompileError, Span};
@@ -7,9 +10,7 @@ use crate::models::{
 };
 use crate::operators::{BinaryOperator, OperatorClass, UnaryOperator};
 
-/// Validate constant declarations and fold every reference to them into a literal, returning
-/// the name and span of each reference folded in an expression.
-/// Runs before validation so no later stage ever observes a constant identifier.
+/// Returns the path and span of each reference folded inside an expression.
 pub(crate) fn fold(contract: &mut Contract) -> Result<Vec<(Path, Span)>, CompileError> {
     let values = collect(contract)?;
     let mut uses = Vec::new();
@@ -41,8 +42,7 @@ fn at(span: Span) -> impl Fn(String) -> CompileError {
     move |message| CompileError::from(message).at(span)
 }
 
-/// An error about `constant`, located at it unless it was imported, which locates it in its
-/// own file.
+/// An imported constant (a dotted name) is declared in another file, so its errors carry no span.
 fn at_constant(constant: &Constant) -> impl Fn(String) -> CompileError + '_ {
     move |message| match constant.name.contains('.') {
         true => CompileError::from(message),
@@ -170,7 +170,7 @@ fn kind(value: &str) -> &'static str {
     }
 }
 
-// ponytail: literals, negation and equality are unbounded like BigNum, but arithmetic and
+// LIMITATION: literals, negation and equality are unbounded like BigNum, but arithmetic and
 // ordering fold in i128, so larger operands are rejected; use a bignum if contracts need them.
 fn integer(text: &str) -> Result<i128, String> {
     if kind(text) != "int" {
@@ -180,7 +180,7 @@ fn integer(text: &str) -> Result<i128, String> {
         .map_err(|_| format!("constant arithmetic exceeds 128 bits, got '{text}'"))
 }
 
-// Validate skipped operands without evaluating their arithmetic.
+/// Type-checks the operands `evaluate` short-circuits past, without evaluating arithmetic.
 fn validate_expression(
     expression: &Expression,
     resolve: &mut impl FnMut(&Path) -> Result<String, String>,
@@ -421,7 +421,6 @@ fn fold_statements(
     Ok(())
 }
 
-/// Fold a loop count or range bound to a literal when it is a constant expression.
 fn fold_count(
     count: &mut Expression,
     values: &HashMap<String, String>,

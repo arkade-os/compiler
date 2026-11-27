@@ -51,7 +51,7 @@ struct OutputChecks {
 
 /// What holds on every path through the statements walked so far.
 ///
-/// ponytail: a helper body counts as run to its end, which an early `return` cuts short. Track
+/// LIMITATION: a helper body counts as run to its end, which an early `return` cuts short. Track
 /// returns if a lint needs them.
 #[derive(Default, Clone, Copy)]
 struct Path {

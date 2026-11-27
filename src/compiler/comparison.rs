@@ -1,3 +1,5 @@
+//! Compares array and struct values for equality one flattened leaf at a time.
+
 use super::{Generator, Result};
 use crate::models::{self, Expression, Path, TypeName};
 use crate::opcodes::Opcode;

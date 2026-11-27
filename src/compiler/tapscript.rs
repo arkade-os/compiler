@@ -1,5 +1,6 @@
-//! Tapscript (L1 leaf) compilation: closure assembly, validation, and ASM
-//! emission. Pure functions over `NamedTapscript`; ABI wiring lives in mod.rs.
+//! L1 tapscript leaves: checks each tapscript against the closure shapes arkd recognizes, emits
+//! its leaf assembly and witness, and groups leaves with their Arkade Script functions into the
+//! artifact's spend groups.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
@@ -38,10 +39,9 @@ pub struct Closure {
     pub keys: Vec<KeyExpr>,
 }
 
-/// An operand the leaf script pushes. The script is fixed when the address is
-/// made, so no tapscript input can be one; inputs reach the leaf only as witness
-/// elements it consumes: the preimage and the signatures. `Constructor` takes
-/// any name; `LeafScript` is what keeps inputs out.
+/// An operand the leaf script pushes. The script is fixed when the address is made, so no
+/// tapscript input can be one; inputs reach the leaf only as witness elements. `Constructor`
+/// takes any name; `LeafScript` is what keeps inputs out.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Pushed {
     /// Assembled as written: a number or a hex string.
@@ -70,10 +70,9 @@ impl Pushed {
     }
 }
 
-/// A closure whose pushed operands are resolved; what leaf emission reads. Its
-/// fields are private, so only this module builds one: `validate_arkd_rules`,
-/// once it has refused every tapscript input in a pushed slot, and the
-/// synthesized default leaf.
+/// A closure with resolved pushed operands. Its fields are private, so only this module builds
+/// one: `validate_arkd_rules`, once it has refused every tapscript input in a pushed slot, and
+/// the synthesized default leaf.
 #[derive(Debug, Clone)]
 pub struct LeafScript {
     /// The digest, the preimage width it pins, and the hash the preimage must match.
@@ -83,15 +82,13 @@ pub struct LeafScript {
     keys: Vec<Pushed>,
 }
 
-/// Assemble a tapscript body into exactly one closure, enforcing the
-/// `condition? · timelock? · multisig` template in source order. The compiler
-/// does not reorder; any out-of-order, duplicate, or unrepresentable
-/// combination is an error (§4.4, §5.2).
+/// Enforces the `condition? · timelock? · multisig` template in source order. The compiler does
+/// not reorder, so any out-of-order, duplicate or unrepresentable combination is an error.
 pub fn assemble_closure(ts: &NamedTapscript) -> Result<Closure, String> {
     let mut condition: Option<(HashFn, String)> = None;
     let mut preimage_width = None;
     let mut timelock: Option<(String, Option<TimeUnit>)> = None;
-    let mut is_csv = false; // older() → CSV; after() → CLTV
+    let mut is_csv = false;
     let mut multisig: Option<Vec<KeyExpr>> = None;
 
     for item in &ts.items {
@@ -195,10 +192,9 @@ pub fn validate_closure_shape(c: &Closure, ts_name: &str) -> Result<(), String> 
     Ok(())
 }
 
-/// Enforce the binding rule (§5.3): a leaf named after an Arkade Script function tweaks a key
-/// to that function, so the leaf binds its Arkade Script, and has no CSV delay, since a CSV
-/// leaf sits beside the function's default leaf, which carries that name. `contract` supplies
-/// the Arkade Script function names.
+/// A leaf named after an Arkade Script function tweaks a key to that function, so the leaf binds
+/// its Arkade Script, and has no CSV delay, since a CSV leaf sits beside the function's default
+/// leaf, which carries that name.
 pub fn resolve_binding(contract: &Contract, ts: &NamedTapscript) -> Result<(), String> {
     if contract
         .functions
@@ -251,10 +247,8 @@ pub fn resolve_binding(contract: &Contract, ts: &NamedTapscript) -> Result<(), S
     }
 }
 
-/// The one Arkade Script function this leaf tweaks a key to.
-///
-/// `tweak(base, func)` names `func`. A leaf can name only one function, so it has one `leaves`
-/// array to join.
+/// The one Arkade Script function this leaf tweaks a key to. A leaf joins one `leaves` array, so
+/// its tweaks may name only one function.
 pub(crate) fn shared_tweak_func(ts_name: &str, keys: &[KeyExpr]) -> Result<Option<String>, String> {
     let mut target: Option<String> = None;
     for key in keys {
@@ -290,8 +284,7 @@ pub(crate) fn keeps_default_leaf(contract: &Contract, func: &str) -> bool {
     })
 }
 
-/// arkd structural rules F2/F3/E1, and resolution of every operand the leaf
-/// script pushes (§5.3).
+/// arkd's structural rules, and resolution of every operand the leaf script pushes.
 pub fn validate_arkd_rules(
     contract: &Contract,
     ts: &NamedTapscript,
@@ -372,18 +365,13 @@ pub fn validate_arkd_rules(
     // Every tweak must name the same function.
     shared_tweak_func(&ts.name, &c.keys)?;
 
-    // A declared `signature` input.
     let sig_input = |name: &str| -> bool {
         ts.inputs
             .iter()
             .any(|p| p.name == name && p.param_type.name() == Some("signature"))
     };
 
-    // Signature-operand validation (§4.3, §8): every signature operand in a
-    // checkSig/checkMultisig must be a declared `signature` input, and the
-    // signature array must align 1:1 with the key set (the leaf's witness is
-    // unspendable otherwise — a missing or misaligned sig yields a witness ABI
-    // that cannot satisfy the closure).
+    // A missing or misaligned signature yields a witness that cannot satisfy the closure.
     for item in &ts.items {
         if let TapItem::Sig { keys, sigs, .. } = item {
             if sigs.len() != keys.len() {
@@ -544,7 +532,6 @@ pub fn validate_arkd_rules(
         }
     }
 
-    // F2: forfeit closures must contain the operator key.
     if c.class.is_forfeit() && !c.keys.iter().any(KeyExpr::is_operator) {
         return Err(format!(
             "forfeit tapscript `{}` must include `operator` or `tweak(operator, fn)` (the operator \
@@ -553,9 +540,8 @@ pub fn validate_arkd_rules(
         ));
     }
 
-    // F3 (CLTV seconds vs block) is value-dependent and only decidable for
-    // literal locktimes with a known block-type policy; with literals-only and
-    // no policy source wired yet, defer to arkd. (Placeholder for future config.)
+    // LIMITATION: whether a CLTV may use seconds or blocks is left to arkd; check it here once
+    // the compiler has a source for that policy.
 
     Ok(LeafScript {
         condition,
@@ -594,7 +580,6 @@ fn timelock_operand(value: &str, unit: Option<TimeUnit>, csv: bool) -> Pushed {
     }
 }
 
-/// Emit the multisig suffix (N-of-N CHECKSIG chain).
 fn emit_multisig(keys: &[Pushed], asm: &mut Vec<String>) {
     for (i, k) in keys.iter().enumerate() {
         asm.push(k.asm());
@@ -606,11 +591,10 @@ fn emit_multisig(keys: &[Pushed], asm: &mut Vec<String>) {
     }
 }
 
-/// Assemble the full leaf ASM in arkd's closure byte order: condition? · timelock? · multisig.
+/// arkd's closure byte order: condition? · timelock? · multisig.
 pub fn emit_leaf_asm(script: &LeafScript) -> Vec<String> {
     let mut asm = Vec::new();
 
-    // Condition prefix.
     if let Some((hash_fn, preimage_width, hash)) = &script.condition {
         if let Some(width) = preimage_width {
             asm.extend([
@@ -625,7 +609,6 @@ pub fn emit_leaf_asm(script: &LeafScript) -> Vec<String> {
         asm.push(OP_VERIFY.to_string());
     }
 
-    // Timelock prefix.
     if let Some((bound, csv)) = &script.timelock {
         asm.push(bound.asm());
         let op = if *csv {
@@ -641,7 +624,6 @@ pub fn emit_leaf_asm(script: &LeafScript) -> Vec<String> {
     asm
 }
 
-/// Derive the leaf witness from the tapscript inputs, one entry per input.
 /// Tapscript inputs are scalars; the validator rejects array types here.
 pub fn leaf_witness(ts: &NamedTapscript) -> Vec<WitnessElement> {
     let mut out = Vec::new();
@@ -681,8 +663,6 @@ pub(crate) struct CheckedLeaf {
     group_key: String,
 }
 
-/// Every check on one author-written leaf: closure shape, function binding, arkd
-/// rules and its spend group.
 pub(crate) fn check_tapscript(
     contract: &Contract,
     ts: &NamedTapscript,
@@ -695,17 +675,13 @@ pub(crate) fn check_tapscript(
     Ok(CheckedLeaf { script, group_key })
 }
 
-/// Build the unified `functions[]` ABI: one group per Arkade Script function plus
-/// one group per pure-standalone leaf. `leaves` are the contract's tapscripts as
-/// `prepare` checked them, in declaration order. `scripts`
-/// holds each function's Arkade Script (built by mod.rs to avoid a cycle);
-/// it is consumed as groups are assembled.
+/// One group per public Arkade Script function, then one per standalone leaf. `leaves` are the
+/// contract's tapscripts as `prepare` checked them, in declaration order.
 pub(crate) fn build_function_groups(
     contract: &Contract,
     leaves: &[CheckedLeaf],
     mut scripts: HashMap<String, ArkadeScript>,
 ) -> Result<Vec<AbiFunctionGroup>, String> {
-    // Resolve + validate every author-written tapscript; bucket by group key.
     // A tweak joins that function's group. A leaf that tweaks nothing keeps its own name.
     use std::collections::BTreeMap;
     let mut grouped: BTreeMap<String, Vec<AbiLeaf>> = BTreeMap::new();
@@ -729,7 +705,6 @@ pub(crate) fn build_function_groups(
 
     let mut groups = Vec::new();
 
-    // One group per Arkade Script function, in declaration order.
     for f in contract.functions.iter().filter(|f| !f.is_private) {
         let arkade = scripts.remove(&f.name);
         let mut leaves = grouped.remove(&f.name).unwrap_or_default();
@@ -788,7 +763,7 @@ fn resolve_constructor_field_placeholders(
     Ok(())
 }
 
-/// The §5.4 default leaf: checkSig(operatorSig, tweak(operator, fn)).
+/// `checkSig(operatorSig, tweak(operator, fn))`.
 fn synthesize_default_leaf(func: &str) -> AbiLeaf {
     let script = LeafScript {
         condition: None,
@@ -1355,7 +1330,6 @@ mod tests {
 
     #[test]
     fn misaligned_sig_and_key_count_is_rejected() {
-        // 2 keys but 1 declared signature → witness cannot satisfy the closure.
         let leaf = NamedTapscript {
             span: Default::default(),
             declaration: Default::default(),
@@ -1380,7 +1354,6 @@ mod tests {
 
     #[test]
     fn undeclared_signature_operand_is_rejected() {
-        // sig operand `ghostSig` is not declared as a `signature` input.
         let leaf = NamedTapscript {
             span: Default::default(),
             declaration: Default::default(),
@@ -1404,7 +1377,6 @@ mod tests {
 
     #[test]
     fn undeclared_timelock_operand_is_rejected() {
-        // after(typo) where `typo` is neither a literal nor a declared name.
         let leaf = NamedTapscript {
             span: Default::default(),
             declaration: Default::default(),
@@ -1428,7 +1400,6 @@ mod tests {
 
     #[test]
     fn undeclared_hash_value_is_rejected() {
-        // hash160(preimage) == typoHash where typoHash is not declared.
         let leaf = NamedTapscript {
             span: Default::default(),
             declaration: Default::default(),
@@ -1588,8 +1559,6 @@ mod tests {
         );
     }
 
-    /// `tweak(constructorPubkey, func)` binds that key to `func` on any leaf. A CSV leaf sits
-    /// beside the default leaf; a forfeit leaf, which includes the operator key, replaces it.
     #[test]
     fn constructor_tweak_binds_the_key_and_only_a_forfeit_leaf_replaces_the_default() {
         let late = r#"
@@ -1667,8 +1636,6 @@ contract Demo(pubkey insurer) {{
         }
     }
 
-    /// An author-written forfeit leaf replaces the default leaf. A CSV constructor tweak is
-    /// another leaf of the same function, and no default is added back.
     #[test]
     fn an_author_leaf_replaces_the_default_and_a_csv_tweak_joins_it() {
         let src = r#"

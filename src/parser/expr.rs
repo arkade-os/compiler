@@ -1,3 +1,6 @@
+//! Expressions: folds the grammar's precedence levels into left-associative `BinaryOp`s and
+//! resolves each operand's suffix chain into a binding path, access, call or introspection.
+
 use super::{crypto, introspection, Rule};
 use crate::builtins;
 use crate::diagnostics::Span;
@@ -22,7 +25,6 @@ pub(crate) fn is_operator_level(rule: Rule) -> bool {
     )
 }
 
-// Parse general expression (with operator precedence)
 pub(crate) fn parse_general_expression(pair: Pair<Rule>) -> Result<Expression, String> {
     match pair.as_rule() {
         rule if is_operator_level(rule) => {
@@ -203,7 +205,7 @@ pub(crate) fn parse_primary_expr(pair: Pair<Rule>) -> Result<Expression, String>
         }
         Rule::constructor => parse_constructor_to_expression(pair),
         _ => {
-            // Default to treating as a property string
+            // Any other rule reads as the path its text spells.
             Ok(Expression::new(
                 ExprKind::Name(Path::from_key(pair.as_str())),
                 span,
@@ -211,8 +213,6 @@ pub(crate) fn parse_primary_expr(pair: Pair<Rule>) -> Result<Expression, String>
         }
     }
 }
-
-// ─── Byte-string Manipulation Parsing ──────────────────────────────────
 
 pub(crate) fn parse_property_access(pair: Pair<Rule>) -> Result<Expression, String> {
     let mut inner = pair.into_inner();
@@ -347,7 +347,6 @@ pub(crate) fn apply_suffixes(
     Ok(value)
 }
 
-/// A call of the function or builtin `name`.
 pub(crate) fn parse_call(
     name: String,
     args: Vec<Pair<Rule>>,
@@ -383,25 +382,17 @@ pub(crate) fn parse_call(
     Ok(Expression::new(ExprKind::Builtin { builtin, args }, span))
 }
 
-// ─── Constructor Parsing ───────────────────────────────────────────────────────
-
-/// Parse a `constructor` rule pair into an `ExprKind::ContractInstance`.
-///
-/// Handles `new ContractName(arg1, arg2, ...)` and produces
-/// `ContractInstance { contract_name, args }` which the compiler lowers to
-/// a `<CONTRACT:ContractName(...)>` 32-byte Taproot output-key placeholder.
+/// `new Name(args)`, which the compiler lowers to a `<CONTRACT:Name(...)>` placeholder.
 pub(crate) fn parse_constructor_to_expression(pair: Pair<Rule>) -> Result<Expression, String> {
     let span: Span = pair.as_span().into();
     let mut inner = pair.into_inner();
 
-    // First child: contract name identifier
     let contract_name = inner
         .next()
         .ok_or("Parse error: Missing contract name in constructor")?
         .as_str()
         .to_string();
 
-    // Second child (optional): constructor_args rule
     let args = if let Some(args_pair) = inner.next() {
         parse_constructor_args(args_pair)?
     } else {
@@ -417,9 +408,6 @@ pub(crate) fn parse_constructor_to_expression(pair: Pair<Rule>) -> Result<Expres
     ))
 }
 
-/// Parse constructor arguments into a Vec<Expression>.
-///
-/// Constructor arguments use the same expression parser as builtin calls.
 pub(crate) fn parse_constructor_args(pair: Pair<Rule>) -> Result<Vec<Expression>, String> {
     pair.into_inner().map(parse_general_expression).collect()
 }

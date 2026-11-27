@@ -1,10 +1,11 @@
+//! Emits transaction, input and output introspection opcodes.
+
 use super::expr;
 use super::ir::Op;
 use crate::models::Expression;
 use crate::opcodes::Opcode;
 use crate::properties::{InputProperty, OutputProperty, TxProperty};
 
-/// Emit assembly for transaction introspection: tx.version, tx.locktime, etc.
 pub(crate) fn emit_tx_introspection_asm(property: TxProperty, asm: &mut Vec<Op>) {
     asm.push(Op::Opcode(match property {
         TxProperty::Version => Opcode::InspectVersion,
@@ -16,13 +17,12 @@ pub(crate) fn emit_tx_introspection_asm(property: TxProperty, asm: &mut Vec<Op>)
     }));
 }
 
-/// Emit a scriptPubKey inspection opcode and keep only the witness version.
+/// The scriptPubKey inspection opcodes push the program, then the witness version.
 pub(crate) fn emit_witness_version_asm(opcode: Opcode, asm: &mut Vec<Op>) {
     asm.push(opcode.into());
     asm.push(Opcode::Nip.into());
 }
 
-/// Emit assembly for input introspection: tx.inputs[i].property
 pub(crate) fn emit_input_introspection_asm(
     index: &Expression,
     property: InputProperty,
@@ -42,7 +42,6 @@ pub(crate) fn emit_input_introspection_asm(
     }
 }
 
-/// Emit assembly for output introspection: tx.outputs[o].property
 pub(crate) fn emit_output_introspection_asm(
     index: &Expression,
     property: OutputProperty,

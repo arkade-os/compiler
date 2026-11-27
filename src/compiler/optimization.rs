@@ -1,3 +1,6 @@
+//! Folds constant expressions in statements before lowering, and peephole-rewrites emitted
+//! Arkade Script; each rewrite shortens a window and leaves the same stack.
+
 use std::iter;
 
 use super::Spanned;
@@ -175,7 +178,8 @@ fn fold_expression(expression: &mut Expression, scope: &Scope) -> Result<(), Str
                     _ => false,
                 }) =>
         {
-            // ponytail: the evaluator uses i128; larger or failing computations stay at runtime.
+            // LIMITATION: the evaluator uses i128, so larger or failing computations stay at
+            // runtime; fold them with a bignum evaluator if contracts need them.
             super::constants::evaluate(expression, &mut |_| Err("runtime value".into())).ok()
         }
         _ => None,
@@ -302,9 +306,9 @@ const REWRITES: &[(&[Opcode], &[Opcode])] = &[
 /// The optimized instructions, and how many items the rewrites can add to the unoptimized
 /// stack peak.
 pub(super) fn optimize(mut asm: Vec<Spanned>) -> (Vec<Spanned>, usize) {
-    // The NIPs clear every item below the final truthy value. The final clean-stack truth check
-    // already enforces a trailing `Verify Int1`, so a failing last requirement reports a false
-    // stack entry instead when the NIPs are kept.
+    // Two endings are built and the shorter wins. With the NIPs kept, the VM's clean-stack truth
+    // check already does a trailing `Verify Int1`'s work, so it is dropped; a failing last
+    // requirement then reports a false stack entry instead of `Verify failed`.
     let nips = asm
         .iter()
         .rev()
@@ -368,7 +372,7 @@ fn rewrite(asm: Vec<Spanned>) -> (Vec<Spanned>, usize) {
 }
 
 /// The most items `ops` holds above where they start.
-// ponytail: adding the largest rewrite raise to the unoptimized peak is conservative; simulate
+// LIMITATION: adding the largest rewrite raise to the unoptimized peak is conservative; simulate
 // the final script for an exact peak if contracts sit at the VM limit.
 fn peak(ops: &[Opcode]) -> usize {
     let mut height = 0isize;

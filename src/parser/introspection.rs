@@ -1,3 +1,6 @@
+//! `tx` and `this` member chains, resolved into introspection nodes. A chain that spells no
+//! member parses as the plain path it spells, which validation reports.
+
 use std::array;
 
 use super::expr;
@@ -53,7 +56,7 @@ pub(crate) fn parse_tx_chain(
     let start = tx.span.start;
     let (kind, end, rest) = match suffixes {
         [] | [Index(..), ..] => return expr::apply_suffixes(tx, false, suffixes),
-        // ponytail: `tx.intent` is the deprecated spelling of `tx.proof`; remove it in 0.2.
+        // LIMITATION: accepts `tx.intent`, the deprecated spelling of `tx.proof`; remove it in 0.2.
         [Field("proof" | "intent", _), Call(member @ ("field" | "has"), args, end), rest @ ..]
             if args.len() == 1 =>
         {

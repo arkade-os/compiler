@@ -1,3 +1,6 @@
+//! Emits reads of and assignments to bindings, including runtime-indexed array accesses, and
+//! the builtins that read array arguments element by element.
+
 use std::mem;
 
 use super::ir::Op;
@@ -8,8 +11,7 @@ use crate::opcodes::Opcode;
 use crate::properties::GroupIoProperty;
 use crate::types::ArkType;
 
-/// A `checkMultisig` threshold known at compile time: the key count when omitted, or a literal
-/// that must lie between 1 and `count`.
+/// `None` for a runtime threshold; an omitted one means all `count` keys.
 pub(super) fn multisig_threshold(
     threshold: Option<&Expression>,
     count: usize,
@@ -30,7 +32,8 @@ pub(super) fn multisig_threshold(
 }
 
 impl Generator {
-    /// Resolve an access to its layout path, collecting runtime indexes.
+    /// Collects each runtime index as `(index, array length, element width)` and returns the
+    /// layout path with element 0 in its place.
     fn access_indices<'a>(
         &self,
         value: &'a Expression,
@@ -48,8 +51,8 @@ impl Generator {
         let Some(ArkType::Array(element, length)) = self.scope.get(&array.key()) else {
             return Err(format!("'{array}' is not an array").into());
         };
-        // Validation and folding reject an out-of-range constant on a reachable path; one left
-        // here is in code that folding removes, so it is checked at runtime.
+        // Validation and folding reject a reachable out-of-range constant; one left here is in
+        // dead code, so it gets the runtime check.
         if let Some(literal) = index.literal_index().filter(|literal| literal < length) {
             return Ok(array.index(literal));
         }
@@ -122,8 +125,8 @@ impl Generator {
         Ok(())
     }
 
-    /// Bind an access's computed root once, then read the access from that binding.
-    // ponytail: the read leaves are copied and the whole root dropped after, one copy and drop
+    /// Binds the computed root of an access once, then reads the access from that binding.
+    // LIMITATION: the read leaves are copied and the whole root dropped after, one copy and drop
     // more than a move; consume the final reads if script size matters.
     fn emit_computed_access(&mut self, value: &Expression, ty: &TypeName) -> Result<()> {
         fn root(access: &mut Expression) -> &mut Expression {
@@ -179,7 +182,6 @@ impl Generator {
         Ok(())
     }
 
-    /// Evaluate `value` as `ty` into the local binding `name`.
     pub(super) fn emit_let(&mut self, name: &str, value: &Expression, ty: &TypeName) -> Result<()> {
         self.emit_typed_value(value, ty)?;
         self.bind_value(name, ty)?;
@@ -187,9 +189,8 @@ impl Generator {
         Ok(())
     }
 
-    /// Evaluate `value` once into a stack binding, then let `read` emit through an expression
-    /// naming it. `width` is the size of what `read` leaves, not of `value`: those items are
-    /// kept and the binding dropped.
+    /// `width` is the size of what `read` leaves, not of `value`: those items are kept and the
+    /// binding dropped.
     // TODO(ir): emission reads composite values only by binding path, so computed ones get a
     // made-up name here. Remove once operands are IR values instead of paths.
     pub(super) fn with_bound_value(
@@ -250,8 +251,7 @@ impl Generator {
             return Err("checkMultisig key and signature counts must match".into());
         }
         let threshold = args.get(2);
-        // Validation and folding reject an out-of-range constant on a reachable path; one left
-        // here is in a branch that folding removes, so it keeps the runtime check.
+        // As with indexes, a literal rejected here is in dead code and keeps the runtime check.
         let literal_threshold = multisig_threshold(threshold, count).ok().flatten();
         // Keys need indexed reads, so arrays without a static path are bound once.
         if !matches!(&keys.kind, ExprKind::ArrayLiteral(_)) && keys.static_path().is_none() {

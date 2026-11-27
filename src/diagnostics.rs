@@ -1,7 +1,5 @@
-//! Structured diagnostics: the data behind compiler errors and warnings,
-//! kept as a list instead of being flattened into one string at the first
-//! caller. `check()` returns these directly; the string-returning API
-//! renders them the same way it always has.
+//! Compiler errors and warnings as structured diagnostics: spans, line and column conversion,
+//! the JSON form tools read, and the joined string the `compile*` functions return.
 
 use std::fmt;
 
@@ -96,8 +94,7 @@ pub enum Severity {
     Warning,
 }
 
-/// One diagnostic, tied to the file (and, where known, the byte span) that
-/// produced it.
+/// One error or warning, tied to its file and, where known, its byte span there.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct Diagnostic {
@@ -231,13 +228,9 @@ impl From<&str> for CompileError {
     }
 }
 
-/// The string `compile`/`compile_file`/`compile_sources` return on failure:
-/// error-severity messages, `"; "`-joined, each still prefixed by its kind
-/// (`"validation error: "`, `"type error: "`) and, where a span is known, by
-/// its 1-based line and column in `source` — the way it was before
-/// diagnostics existed. `source` must be the text of the file every
-/// diagnostic in `diagnostics` belongs to (`render_errors` is only ever
-/// called on one file's diagnostics).
+/// The `"; "`-joined error string the `compile*` functions return: each error's message,
+/// prefixed by its kind (`validation error: `, `type error: `, `error[<lint>]: `) and, when
+/// located, its line and column. Every diagnostic must belong to the file `source` is.
 pub(crate) fn render_errors(diagnostics: &[Diagnostic], source: &str) -> String {
     diagnostics
         .iter()
@@ -257,9 +250,7 @@ pub(crate) fn render_errors(diagnostics: &[Diagnostic], source: &str) -> String 
         .join("; ")
 }
 
-/// Prefix `message` with its 1-based line and column, derived from `span`'s
-/// byte offset into `source` — display-only, for the joined error string;
-/// `Diagnostic::span` itself carries the byte range for structured consumers.
+/// Prefixes `message` with the 1-based line and column of `span`'s start in `source`.
 pub(crate) fn located(message: &str, span: Option<Span>, source: &str) -> String {
     match span.and_then(|s| pest::Position::new(source, s.start)) {
         Some(pos) => {

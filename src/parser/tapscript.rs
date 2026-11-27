@@ -1,3 +1,6 @@
+//! Tapscript function bodies: each `require(...)` becomes one `TapItem`, with constants folded
+//! into literals. Arkade-Script-only members and witness inputs used twice are rejected here.
+
 use std::collections::HashSet;
 use std::{iter, slice};
 
@@ -12,14 +15,12 @@ use crate::models::{
 use crate::types::ArkType;
 use pest::iterators::Pair;
 
-/// True if a `function` pair carries a `tapscript_block` body.
 pub(crate) fn function_pair_is_tapscript(pair: &Pair<Rule>) -> bool {
     pair.clone()
         .into_inner()
         .any(|p| p.as_rule() == Rule::tapscript_block)
 }
 
-/// Parse a `function <name>(<params>) tapscript { … }` declaration.
 pub(crate) fn parse_named_tapscript(
     pair: Pair<Rule>,
     constants: &[Constant],
@@ -198,7 +199,7 @@ pub(crate) fn parse_tap_item(pair: Pair<Rule>, constants: &[Constant]) -> Result
         }
         Rule::hash_comparison => {
             let mut inner = pair.into_inner();
-            let func = inner.next().ok_or("Missing hash function")?; // hash_func
+            let func = inner.next().ok_or("Missing hash function")?;
             let mut f_inner = func.into_inner();
             let fn_name = f_inner.next().ok_or("Missing hash fn name")?.as_str();
             let hash_fn =
@@ -241,7 +242,6 @@ pub(crate) fn parse_tap_item(pair: Pair<Rule>, constants: &[Constant]) -> Result
         }
         Rule::check_multisig => parse_tap_multisig(pair, constants),
         Rule::function_call => {
-            // older(n) / after(n)
             let mut inner = pair.into_inner();
             let name = inner
                 .next()
@@ -370,7 +370,6 @@ fn parse_binding(pair: Pair<Rule>, constants: &[Constant]) -> Result<Path, Strin
     })
 }
 
-/// Parse `check_multisig` inner pairs into a Sig item.
 pub(crate) fn parse_tap_multisig(
     pair: Pair<Rule>,
     constants: &[Constant],
@@ -396,7 +395,7 @@ pub(crate) fn parse_tap_multisig(
     Ok(TapItem::Sig { keys, sigs })
 }
 
-/// Parse a `key_expr` (a pubkey binding, a pubkey constant or `tweak(base, func)`).
+/// A `key_expr`: a pubkey binding, a 32-byte pubkey constant or `tweak(base, func)`.
 pub(crate) fn parse_key_expr(pair: Pair<Rule>, constants: &[Constant]) -> Result<KeyExpr, String> {
     use crate::models::KeyExpr;
     match pair.as_rule() {
@@ -441,8 +440,7 @@ pub(crate) fn parse_key_expr(pair: Pair<Rule>, constants: &[Constant]) -> Result
 
 #[cfg(test)]
 mod tests {
-    //! Parser-level tests for the `tapscript` modifier: assert AST routing,
-    //! not ABI output.
+    //! Parser-level tests for the `tapscript` modifier: AST routing, not ABI output.
     use crate::models::{Contract, HashFn, KeyExpr, Path, TapItem, TapOperand};
 
     fn parse(src: &str) -> Contract {
@@ -474,7 +472,6 @@ contract Demo(pubkey owner) {
         assert_eq!(ts.name, "claim");
         assert_eq!(ts.inputs.len(), 3);
         assert_eq!(ts.inputs[0].name, "preimage");
-        // First item: HASH160 condition.
         match &ts.items[0] {
             TapItem::Hash {
                 hash_fn,
@@ -487,7 +484,6 @@ contract Demo(pubkey owner) {
             }
             other => panic!("expected Hash item, got {other:?}"),
         }
-        // Second item: multisig with two keys and two sigs.
         match &ts.items[1] {
             TapItem::Sig { keys, sigs } => {
                 assert_eq!(

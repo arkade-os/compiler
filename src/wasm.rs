@@ -1,7 +1,5 @@
-//! WASM bindings for the Arkade Compiler
-//!
-//! This module provides WebAssembly bindings for the compiler,
-//! allowing it to be used in web browsers.
+//! WebAssembly bindings for the playground and editors: compile, check and look up symbols in
+//! in-memory projects passed as JSON.
 
 use std::cell::RefCell;
 use std::collections::BTreeMap;
@@ -13,20 +11,14 @@ use wasm_bindgen::prelude::*;
 use crate::diagnostics::{self, Span};
 use crate::{compiler, imports};
 
-/// Initialize panic hook for better error messages in the browser console
+/// Sends Rust panic messages to the browser console.
 #[wasm_bindgen(start)]
 pub fn init() {
     #[cfg(feature = "wasm")]
     console_error_panic_hook::set_once();
 }
 
-/// Compile Arkade Language source code to JSON
-///
-/// # Arguments
-/// * `source` - The Arkade Language source code
-///
-/// # Returns
-/// A JSON string containing the compiled contract, or an error message
+/// [`crate::compile`]: one source file to the artifact as pretty JSON, or the first error.
 #[wasm_bindgen]
 pub fn compile(source: &str) -> Result<String, String> {
     match compiler::compile(source) {
@@ -36,7 +28,7 @@ pub fn compile(source: &str) -> Result<String, String> {
     }
 }
 
-/// Get the compiler version
+/// The compiler's package version.
 #[wasm_bindgen]
 pub fn version() -> String {
     env!("CARGO_PKG_VERSION").to_string()
@@ -48,13 +40,7 @@ pub fn builtin_docs() -> String {
     crate::builtin_docs()
 }
 
-/// Validate Arkade Language source code without generating output
-///
-/// # Arguments
-/// * `source` - The Arkade Language source code
-///
-/// # Returns
-/// `true` if the source is valid, otherwise returns an error message
+/// `true` when `source` compiles, otherwise the first error; the artifact is discarded.
 #[wasm_bindgen]
 pub fn validate(source: &str) -> Result<bool, String> {
     match crate::compile(source) {
@@ -156,9 +142,8 @@ fn compile_project(
 /// The analysis of `entry`, made relative, in the `files` JSON, kept while both stay the same.
 fn analyzed(entry: &str, files: &str) -> Result<(String, Rc<crate::Analysis>), String> {
     thread_local! {
-        /// The entry and files JSON last analyzed, and their analysis.
-        // ponytail: one project, the open one every lookup asks about, analyzed again apart from the
-        // lint; returning the symbol table from `check_sources` would share the lint's analysis.
+        // LIMITATION: caches one project, analyzed apart from `check_sources`; return the symbols
+        // from `check_sources` instead if analyzing each edit twice gets too slow for editors.
         static ANALYZED: RefCell<Option<(String, String, Rc<crate::Analysis>)>> =
             Default::default();
     }

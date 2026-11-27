@@ -1,3 +1,5 @@
+//! `arkadec`, the command-line compiler: writes an `.ark` file's JSON artifact, or checks it,
+//! explains lints and error codes, or lists the builtins.
 use std::error::Error;
 use std::io::{self, Write};
 use std::path::Path;
@@ -9,19 +11,6 @@ use arkade_compiler::models::ContractJson;
 use arkade_compiler::{analyze_file, diagnostics, CompileOptions, Severity};
 use clap::{CommandFactory, FromArgMatches, Parser as ClapParser};
 
-/// Arkade Compiler CLI
-///
-/// This is the command-line interface for the Arkade Compiler.
-/// It compiles Arkade Language source code (.ark files) into JSON output
-/// that represents Bitcoin Taproot scripts.
-///
-/// The JSON output includes:
-/// - Contract name
-/// - Constructor parameters
-/// - Spend groups with optional Arkade Scripts
-/// - L1 tapleaves and witness schemas
-
-// CLI arguments
 #[derive(ClapParser, Debug)]
 #[command(name = "arkadec")]
 #[command(version)]
@@ -79,16 +68,7 @@ struct Args {
     builtins: bool,
 }
 
-/// Main function for the Arkade Compiler CLI
-///
-/// This function:
-/// 1. Parses command-line arguments
-/// 2. Reads the source file
-/// 3. Parses the source code into an AST
-/// 4. Compiles the AST to a JSON structure
-/// 5. Writes the JSON to the output file
 fn main() -> Result<(), Box<dyn Error>> {
-    // Parse CLI arguments
     let matches = Args::command().get_matches();
     let args = Args::from_arg_matches(&matches)?;
     if let Some(explain) = &args.explain {
@@ -129,7 +109,6 @@ fn main() -> Result<(), Box<dyn Error>> {
         return Ok(());
     }
 
-    // Ensure file has .ark extension
     let file = args
         .file
         .as_deref()
@@ -187,7 +166,6 @@ fn main() -> Result<(), Box<dyn Error>> {
         print_report(&output);
     }
 
-    // Determine output path
     let output_path = match args.output {
         Some(path) => path,
         None => {
@@ -196,7 +174,6 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
     };
 
-    // Write output JSON
     let json = serde_json::to_string_pretty(&output)?;
     fs::write(&output_path, json)?;
 

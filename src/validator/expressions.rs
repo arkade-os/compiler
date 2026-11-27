@@ -1,3 +1,7 @@
+//! Per-expression checks over the types `types::annotate` stored: operand types, constant operand
+//! domains, casts, literal positions, constant index bounds, and resolution of names and paths.
+//! An expression over an invalid operand reports only the operand's fault.
+
 use super::bindings::{
     find_binding, validate_named_binding, BindingInfo, BindingScopes, BindingSource,
 };
@@ -129,8 +133,8 @@ pub(super) fn validate_binding_expression(
             "function '{name}' does not return a value"
         )));
     }
-    // An input's kind is only known at runtime, so `txid` on a local input fails the
-    // spend like `controlAssetId` without control; a type check before `||`/`&&` guards it.
+    // Only outputs are rejected: an input's kind is known only at runtime, so `txid` on a
+    // local input fails the spend, like `controlAssetId` without control.
     if matches!(
         &expression.kind,
         ExprKind::GroupIOAccess {
@@ -229,7 +233,6 @@ pub(super) fn validate_binding_expression(
                 _ => ("arithmetic", ArkType::Int),
             };
             let types = [left, right].map(|operand| operand.ty.clone());
-            // Bytes-like `+` is concatenation.
             let concat = *op == BinaryOperator::Add && types.iter().any(ArkType::is_bytes_like);
             if concat {
                 // The width and byte order of a converted number are consensus-visible, so the author picks them.
@@ -311,7 +314,6 @@ pub(super) fn validate_binding_expression(
                 }),
                 "{name}: operands() and its signature disagree on arity"
             );
-            // Every `[]` operand takes the length of the first one.
             let mut length = None;
             for (operand, declared) in operands.iter().zip(params) {
                 let actual = operand.ty.clone();
@@ -676,7 +678,6 @@ pub(super) fn validate_binding_expression(
     super::locate(&mut issues[first..], expression.span);
 }
 
-/// Validate the operands of `expression`, each as a value unless the operator takes it whole.
 fn validate_operands(
     expression: &Expression,
     scopes: &BindingScopes,

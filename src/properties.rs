@@ -1,5 +1,5 @@
-//! Introspection properties. Each one is described once here; parsing, type
-//! inference and code generation read these instead of matching names.
+//! Transaction, input, output and asset properties readable through `tx` and `this`. Each is
+//! described once here; parsing, type inference and code generation read these instead of names.
 
 macro_rules! properties {
     ($(#[$meta:meta])* $name:ident { $($variant:ident => ($text:literal, $ty:literal, $doc:literal)),* $(,)? }) => {

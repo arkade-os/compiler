@@ -1,17 +1,6 @@
-//! Signature table for builtins whose arguments are a fixed, positional list
-//! of expected types. One entry per builtin, name and expected types
-//! declared once; [`operands`] extracts the matching argument expressions
-//! from the AST in the same order, so a caller only has to zip the two and
-//! compare — the alternative to declaring "digest expects (bytes, int)"
-//! again at every checking site.
-//!
-//! Parameter types use source syntax and parse with [`crate::types::ArkType::parse`].
-//! `T[]` is an array of `T` whose length is taken from the first `[]`
-//! operand, so every `[]` operand of a call must have the same length.
-//!
-//! Builtins whose check isn't a fixed positional-type comparison (`cast`,
-//! `tunnel`, `checkSig`, ...) aren't here; they keep their own hand-written
-//! check in the validator.
+//! Positional parameter types of builtins and the VM's accepted values for constant operands.
+//! Types use source syntax; `T[]` is an array of `T` whose length every `[]` operand of a call
+//! shares. Builtins with a non-positional check (`cast`, `tunnel`) are validated by hand.
 
 use crate::builtins;
 use crate::models::{ExprKind, Expression};
@@ -61,10 +50,7 @@ pub(crate) fn find(name: &str) -> Option<Vec<&'static str>> {
         .map(|(_, params)| params.to_vec())
 }
 
-/// If `expr` is a registered builtin, its name and argument expressions in
-/// the same order as [`find`]'s signature. Purely structural: which field
-/// belongs to which builtin, no type information — the table is the only
-/// place expected types live.
+/// `expr`'s builtin name and argument expressions, in the order of [`find`]'s signature.
 pub(crate) fn operands(expr: &Expression) -> Option<(&'static str, Vec<&Expression>)> {
     Some(match &expr.kind {
         ExprKind::Builtin { builtin, args } => (builtin.name, args.iter().collect()),

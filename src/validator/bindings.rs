@@ -1,3 +1,7 @@
+//! Scope-aware checks of function bodies: names resolve, locals are initialized on every path
+//! before use, assignments keep their target's type and mutability, and conditions and loop
+//! iterables have the types the statement needs.
+
 use std::collections::HashMap;
 
 use super::expressions::{
@@ -129,8 +133,6 @@ fn validate_binding_statements(
                 declared_type,
                 value,
             } => {
-                // Composite initializers are validated through their scalar
-                // children; the declaration itself owns their result shape.
                 match &value.kind {
                     ExprKind::StructLiteral { name: literal, .. } => {
                         if literal.is_none()
@@ -437,9 +439,9 @@ fn validate_binding_statements(
                         let before = issues.len();
                         validate_value_expression(iterable, scopes, issues);
                         match iterable.ty.clone() {
-                            // ponytail: a literal takes its first element's type, which the
-                            // rest must match, so `[{ x: 1 }, p]` is rejected; join all
-                            // element types if such literals need to iterate.
+                            // LIMITATION: a literal takes its first element's type, which the
+                            // rest must match, so `[{ x: 1 }, p]` is rejected; join all element
+                            // types if such literals need to iterate.
                             ArkType::Array(element, _)
                                 if matches!(&iterable.kind, ExprKind::ArrayLiteral(_)) =>
                             {

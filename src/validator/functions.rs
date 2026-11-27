@@ -1,3 +1,7 @@
+//! Function-level checks: returns, calls (arity, argument types, entrypoint and static rules),
+//! literal shapes against their expected types, recursion, loop unrolling limits, and that every
+//! entrypoint path enforces a requirement.
+
 use std::collections::{HashMap, HashSet};
 
 use super::ValidationIssue;
@@ -313,7 +317,6 @@ pub(super) fn validate_value(
     super::locate(&mut issues[first..], value.span);
 }
 
-/// Check a struct literal's fields against the definition of struct `name`.
 fn validate_fields(
     name: &str,
     fields: &[(String, Expression)],
@@ -507,8 +510,9 @@ fn unrolled_body(
                 let mut rereads = rereads.clone();
                 // Lowering may read a path iterable, calls in its indexes included, at each use of
                 // the item instead of binding it once.
-                // ponytail: counted also where lowering binds it, because the body writes nothing
-                // the iterable reads; share lowering's choice if that rejects a real contract.
+                // LIMITATION: counted also where lowering binds it, because the body writes
+                // nothing the iterable reads; share lowering's choice if that rejects a real
+                // contract.
                 if let Statement::ForIn {
                     value_var,
                     iterable,
