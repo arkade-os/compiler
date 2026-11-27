@@ -12,6 +12,7 @@ use crate::lint::{Levels, Lints};
 use crate::models::{
     self, Contract, ContractJson, ExprKind, Expression, LocatedStatement, SourceBundle, Statement,
 };
+use crate::parser::ParseError;
 use crate::symbols::Symbols;
 use crate::{compiler, parser, types, validator};
 
@@ -568,10 +569,8 @@ fn load(
             .map_err(|error| locate(path, source, error, None))?;
         let pairs = parser::try_parse(source).map_err(|error| {
             let diagnostic = parser::parse_error_diagnostic(&error, path, source);
-            LoadError::Located(
-                Box::new(diagnostic),
-                format!("{path}: Parse error: {error}"),
-            )
+            let error = ParseError::Syntax(Box::new(error));
+            LoadError::Located(Box::new(diagnostic), format!("{path}: {error}"))
         })?;
         let imports =
             parser::imports(&pairs).map_err(|error| locate(path, source, error.into(), None))?;

@@ -3,6 +3,7 @@
 
 use std::array;
 
+use super::error::{ParseError, Result};
 use super::expr;
 use super::expr::Suffix;
 use super::Rule;
@@ -29,7 +30,7 @@ pub(crate) fn parse_this_chain(
     this: Expression,
     suffixes: &[Suffix],
     text: &str,
-) -> Result<Expression, String> {
+) -> Result<Expression> {
     let start = this.span.start;
     let member = match suffixes {
         [Index(..), ..] => return expr::apply_suffixes(this, false, suffixes),
@@ -52,7 +53,7 @@ pub(crate) fn parse_tx_chain(
     tx: Expression,
     suffixes: &[Suffix],
     text: &str,
-) -> Result<Expression, String> {
+) -> Result<Expression> {
     let start = tx.span.start;
     let (kind, end, rest) = match suffixes {
         [] | [Index(..), ..] => return expr::apply_suffixes(tx, false, suffixes),
@@ -143,15 +144,9 @@ pub(crate) fn parse_tx_chain(
                 _ => None,
             };
             let Some((property, end, rest)) = current else {
-                return Err(format!(
-                    "tx.input.current requires one of: {} (got '{}')",
-                    InputProperty::ALL
-                        .iter()
-                        .map(|property| property.name())
-                        .collect::<Vec<_>>()
-                        .join(", "),
-                    super::without_trivia(super::trim_trivia_end(text))
-                ));
+                return Err(ParseError::CurrentInputMemberRequired {
+                    got: super::without_trivia(super::trim_trivia_end(text)),
+                });
             };
             (current_input(property, Span { start, end }).kind, end, rest)
         }
@@ -200,7 +195,7 @@ fn member_value(
     end: usize,
     rest: &[Suffix],
     text: &str,
-) -> Result<Expression, String> {
+) -> Result<Expression> {
     if rest.iter().any(|suffix| matches!(suffix, Call(..))) {
         return Ok(member_path(text, start));
     }
@@ -212,7 +207,7 @@ fn asset_member<'s, 'a>(
     source: AssetLookupSource,
     index: &Pair<Rule>,
     assets: &'s [Suffix<'a>],
-) -> Result<Option<Member<'s, 'a>>, String> {
+) -> Result<Option<Member<'s, 'a>>> {
     let index = operand(index)?;
     Ok(Some(match assets {
         [Index(asset, end), rest @ ..] => {
@@ -264,7 +259,7 @@ fn asset_member<'s, 'a>(
 fn group_member<'s, 'a>(
     group: Expression,
     members: &'s [Suffix<'a>],
-) -> Result<Option<Member<'s, 'a>>, String> {
+) -> Result<Option<Member<'s, 'a>>> {
     Ok(Some(match members {
         [Call("controlIs", args, end), rest @ ..] if args.len() == 1 => {
             let asset_id = operand(&args[0])?;
@@ -282,7 +277,7 @@ fn group_member<'s, 'a>(
             let kind = ExprKind::GroupIOAccess {
                 group: Box::new(group),
                 io_index: operand(index)?,
-                source: types::group_io_source(source).ok_or("Invalid asset group io source")?,
+                source: types::group_io_source(source).ok_or(ParseError::InvalidGroupIoSource)?,
                 property,
             };
             (kind, end, rest)
@@ -311,20 +306,20 @@ fn member_path(text: &str, start: usize) -> Expression {
     )
 }
 
-fn operand(pair: &Pair<Rule>) -> Result<Box<Expression>, String> {
+fn operand(pair: &Pair<Rule>) -> Result<Box<Expression>> {
     expr::parse_general_expression(pair.clone()).map(Box::new)
 }
 
 /// A proof message path operand; a lone string literal is checked at compile time, any other
 /// bytes expression by the VM.
-fn parse_proof_path(operand: &Pair<Rule>) -> Result<Expression, String> {
+fn parse_proof_path(operand: &Pair<Rule>) -> Result<Expression> {
     let literal = expr::lone(operand);
     if literal.as_rule() != Rule::string_literal {
         return expr::parse_general_expression(operand.clone());
     }
     let text = expr::parse_string_literal(literal.as_str())?;
     if !is_proof_path(&text) {
-        return Err(format!("invalid proof message path '{text}'"));
+        return Err(ParseError::InvalidProofPath { path: text });
     }
     let span = literal.as_span().into();
     Ok(Expression::new(
@@ -354,7 +349,7 @@ fn is_proof_path(path: &str) -> bool {
 
 /// `this.tunnel(outputIndex, policy?, exceptions?)`, its policy a struct literal and its
 /// exceptions a list literal.
-fn parse_tunnel(args: &[Pair<Rule>], span: Span) -> Result<ExprKind, String> {
+fn parse_tunnel(args: &[Pair<Rule>], span: Span) -> Result<ExprKind> {
     let literal = |at: usize, rules: &[Rule]| match args.get(at).map(expr::lone) {
         Some(arg) if rules.contains(&arg.as_rule()) => Ok(Some(arg)),
         Some(_) => Err(()),
@@ -372,7 +367,7 @@ fn parse_tunnel(args: &[Pair<Rule>], span: Span) -> Result<ExprKind, String> {
     let output_index = expr::parse_general_expression(index.clone())?;
     let policy = if let Some(policy) = policy {
         let ExprKind::StructLiteral { fields, .. } = expr::parse_primary_expr(policy)?.kind else {
-            return Err("tunnel policy must be a struct literal".to_string());
+            return Err(ParseError::TunnelPolicyNotStruct);
         };
         let mut values = [None, None, None];
         for (name, value) in fields {
@@ -380,17 +375,17 @@ fn parse_tunnel(args: &[Pair<Rule>], span: Span) -> Result<ExprKind, String> {
                 "script" => 0,
                 "value" => 1,
                 "assets" => 2,
-                _ => return Err(format!("unknown tunnel policy field '{name}'")),
+                _ => return Err(ParseError::UnknownTunnelPolicyField { name }),
             };
             if values[index].replace(value).is_some() {
-                return Err(format!("duplicate tunnel policy field '{name}'"));
+                return Err(ParseError::DuplicateTunnelPolicyField { name });
             }
         }
         let [script, value, assets] = values;
         [
-            script.ok_or("missing tunnel policy field 'script'")?,
-            value.ok_or("missing tunnel policy field 'value'")?,
-            assets.ok_or("missing tunnel policy field 'assets'")?,
+            script.ok_or(ParseError::MissingTunnelPolicyField { name: "script" })?,
+            value.ok_or(ParseError::MissingTunnelPolicyField { name: "value" })?,
+            assets.ok_or(ParseError::MissingTunnelPolicyField { name: "assets" })?,
         ]
     } else {
         array::from_fn(|_| Expression::new(ExprKind::Literal("true".to_string()), span))

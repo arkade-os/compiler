@@ -4,6 +4,7 @@
 use std::collections::HashSet;
 use std::{iter, slice};
 
+use super::error::{ParseError, Result};
 use super::{expr, Rule};
 use crate::builtins;
 use crate::compiler::constants;
@@ -28,34 +29,44 @@ pub(crate) fn parse_named_tapscript(
     let declaration = pair.as_span().into();
     let mut inner = pair.into_inner().peekable();
     if let Some(visibility) = inner.next_if(|p| p.as_rule() == Rule::function_visibility) {
-        return Err(format!("tapscript functions cannot be {}", visibility.as_str()).into());
+        let visibility = visibility.as_str().to_string();
+        return Err(ParseError::TapscriptVisibility { visibility }.into());
     }
-    let name = inner.next().ok_or("Missing tapscript name")?;
+    let name = inner.next().ok_or(ParseError::Missing {
+        part: "tapscript name",
+    })?;
     let span = name.as_span().into();
     let name = name.as_str().to_string();
-    let params = inner.next().ok_or("Missing tapscript parameter list")?;
+    let params = inner.next().ok_or(ParseError::Missing {
+        part: "tapscript parameter list",
+    })?;
     let inputs = super::parse_parameters(params)?;
-    let block = inner.next().ok_or("Missing tapscript body")?;
+    let block = inner.next().ok_or(ParseError::Missing {
+        part: "tapscript body",
+    })?;
     let mut items = Vec::new();
     let mut consumed = HashSet::new();
     for stmt in block.into_inner() {
         if stmt.as_rule() == Rule::tap_require_stmt {
             let mut inner = stmt.into_inner();
-            let expr = inner.next().ok_or("Empty require() in tapscript")?;
+            let expr = inner.next().ok_or(ParseError::Empty {
+                what: "require() in tapscript",
+            })?;
             // Start and text of the older/after argument a blocks/seconds unit may fill.
             let mut units = Vec::new();
             for part in iter::once(expr.clone()).chain(expr.clone().into_inner().flatten()) {
                 let name = match part.as_rule() {
                     Rule::function_call => {
                         let mut call = part.clone().into_inner();
-                        let callee = call.next().ok_or("Missing call name")?.as_str();
+                        let callee = call
+                            .next()
+                            .ok_or(ParseError::Missing { part: "call name" })?
+                            .as_str();
                         let args: Vec<_> = call.collect();
                         if HashFn::parse(callee).is_some() {
-                            let message = format!(
-                                "a tapscript function can use `{callee}` only as \
-                                 `require({callee}(preimage) == hash)`"
-                            );
-                            return Err(CompileError::from(message).at(part.as_span().into()));
+                            let callee = callee.to_string();
+                            let error = ParseError::HashOutsideComparison { callee };
+                            return Err(CompileError::from(error).at(part.as_span().into()));
                         }
                         if let Some(params) = builtins::tapscript_params(callee) {
                             let whole = matches!(callee, "older" | "after")
@@ -70,15 +81,11 @@ pub(crate) fn parse_named_tapscript(
                             if whole || unit || params.len() != args.len() {
                                 continue;
                             }
-                            let signature = format!("{callee}({})", params.join(", "));
-                            let place = match callee {
-                                "older" | "after" => format!("`require({signature})`"),
-                                "tweak" => "a key inside checkSig or checkMultisig".to_string(),
-                                _ => format!("`older({signature})` or `after({signature})`"),
+                            let error = ParseError::TapscriptCallMisplaced {
+                                callee: callee.to_string(),
+                                signature: format!("{callee}({})", params.join(", ")),
                             };
-                            let message =
-                                format!("a tapscript function can use `{callee}` only as {place}");
-                            return Err(CompileError::from(message).at(part.as_span().into()));
+                            return Err(CompileError::from(error).at(part.as_span().into()));
                         }
                         let tapscript_call = builtins::find(callee)
                             .is_none_or(|b| matches!(b.name, "checkSig" | "checkMultisig"));
@@ -93,8 +100,8 @@ pub(crate) fn parse_named_tapscript(
                     },
                     _ => continue,
                 };
-                let message = format!("`{name}` is only available in Arkade Script functions");
-                return Err(CompileError::from(message).at(part.as_span().into()));
+                let error = ParseError::ArkadeScriptOnly { name };
+                return Err(CompileError::from(error).at(part.as_span().into()));
             }
             let at = expr.as_span().into();
             let item = parse_tap_item(expr.clone(), constants)
@@ -107,11 +114,11 @@ pub(crate) fn parse_named_tapscript(
             for (path, operand) in operands.iter().zip(witness_operands(&expr)) {
                 let input = path.key();
                 if inputs.iter().any(|p| p.name == input) && !consumed.insert(input.clone()) {
-                    let message = format!(
-                        "tapscript `{name}`: input `{input}` is used more than once, but the \
-                         witness carries each input once; declare a separate input for each use"
-                    );
-                    return Err(CompileError::from(message).at(operand.as_span().into()));
+                    let error = ParseError::WitnessInputReused {
+                        tapscript: name,
+                        input,
+                    };
+                    return Err(CompileError::from(error).at(operand.as_span().into()));
                 }
             }
             items.push(item);
@@ -177,44 +184,57 @@ fn arkade_script_member(pair: &Pair<Rule>) -> Option<String> {
     None
 }
 
-pub(crate) fn parse_tap_item(pair: Pair<Rule>, constants: &[Constant]) -> Result<TapItem, String> {
+pub(crate) fn parse_tap_item(pair: Pair<Rule>, constants: &[Constant]) -> Result<TapItem> {
     use crate::models::{HashFn, TapItem, TapOperand};
     match pair.as_rule() {
-        Rule::primary_expr if pair.clone().into_inner().nth(1).is_some() => Err(format!(
-            "a tapscript require can check only signatures, hashes and timelocks, not `{}`",
-            super::trim_trivia_end(pair.as_str())
-        )),
+        Rule::primary_expr if pair.clone().into_inner().nth(1).is_some() => {
+            Err(ParseError::TapscriptCheckUnsupported {
+                expression: super::trim_trivia_end(pair.as_str()).to_string(),
+            })
+        }
         rule if expr::is_operator_level(rule)
             || matches!(rule, Rule::unary_expr | Rule::primary_expr) =>
         {
             let mut inner = pair.into_inner();
-            let item = inner
-                .next()
-                .ok_or("Empty expression in tapscript require()")?;
+            let item = inner.next().ok_or(ParseError::Empty {
+                what: "expression in tapscript require()",
+            })?;
             if inner.next().is_some() {
-                return Err("unsupported compound expression in tapscript require()".to_string());
+                return Err(ParseError::CompoundTapscriptRequire);
             }
             parse_tap_item(item, constants)
         }
         Rule::hash_comparison => {
             let mut inner = pair.into_inner();
-            let func = inner.next().ok_or("Missing hash function")?;
-            let mut f_inner = func.into_inner();
-            let fn_name = f_inner.next().ok_or("Missing hash fn name")?.as_str();
-            let hash_fn =
-                HashFn::parse(fn_name).ok_or_else(|| format!("unknown hash function {fn_name}"))?;
-            let preimage = expr::parse_general_expression(f_inner.next().ok_or("Missing hash preimage")?)?;
-            let preimage = operand_path(&preimage, constants).ok_or_else(|| {
-                format!(
-                    "hash preimage `{}` is not a tapscript input",
-                    preimage.source_text()
-                )
+            let func = inner.next().ok_or(ParseError::Missing {
+                part: "hash function",
             })?;
-            let hash = inner.next().ok_or("Missing hash value")?;
+            let mut f_inner = func.into_inner();
+            let fn_name = f_inner
+                .next()
+                .ok_or(ParseError::Missing {
+                    part: "hash fn name",
+                })?
+                .as_str();
+            let hash_fn =
+                HashFn::parse(fn_name).ok_or_else(|| ParseError::UnknownHashFunction {
+                    name: fn_name.to_string(),
+                })?;
+            let preimage =
+                expr::parse_general_expression(f_inner.next().ok_or(ParseError::Missing {
+                    part: "hash preimage",
+                })?)?;
+            let preimage =
+                operand_path(&preimage, constants).ok_or_else(|| ParseError::PreimageNotInput {
+                    preimage: preimage.source_text(),
+                })?;
+            let hash = inner
+                .next()
+                .ok_or(ParseError::Missing { part: "hash value" })?;
             let hash = if hash.as_rule() == Rule::named_binding {
                 let path = parse_binding(hash, constants)?;
                 match constant_value(&path, constants) {
-                    Ok(value) if value.starts_with("0x") => TapOperand::Literal(value),
+                    Some(value) if value.starts_with("0x") => TapOperand::Literal(value),
                     _ => TapOperand::Name(path),
                 }
             } else {
@@ -226,14 +246,19 @@ pub(crate) fn parse_tap_item(pair: Pair<Rule>, constants: &[Constant]) -> Result
                 hash,
             })
         }
-        Rule::time_comparison => Err(
-            "`tx.locktime` is only available in Arkade Script functions; use `after(...)` in tapscript functions"
-                .to_string(),
-        ),
+        Rule::time_comparison => Err(ParseError::LocktimeInTapscript),
         Rule::check_sig => {
             let mut inner = pair.into_inner();
-            let sig = parse_binding(inner.next().ok_or("Missing signature")?, constants)?;
-            let key = parse_key_expr(inner.next().ok_or("Missing key")?, constants)?;
+            let sig = parse_binding(
+                inner
+                    .next()
+                    .ok_or(ParseError::Missing { part: "signature" })?,
+                constants,
+            )?;
+            let key = parse_key_expr(
+                inner.next().ok_or(ParseError::Missing { part: "key" })?,
+                constants,
+            )?;
             Ok(TapItem::Sig {
                 keys: vec![key],
                 sigs: vec![sig],
@@ -244,17 +269,16 @@ pub(crate) fn parse_tap_item(pair: Pair<Rule>, constants: &[Constant]) -> Result
             let mut inner = pair.into_inner();
             let name = inner
                 .next()
-                .ok_or("Missing call name")?
+                .ok_or(ParseError::Missing { part: "call name" })?
                 .as_str()
                 .to_string();
             if !matches!(name.as_str(), "older" | "after") {
-                return Err(format!("unsupported tapscript call `{name}(...)`"));
+                return Err(ParseError::UnsupportedTapscriptCall { name });
             }
-            let arg = inner
-                .next()
-                .ok_or_else(|| format!("{name}() requires one argument"))?;
+            let one_argument = || ParseError::RequiresOneArgument { name: name.clone() };
+            let arg = inner.next().ok_or_else(one_argument)?;
             if inner.next().is_some() {
-                return Err(format!("{name}() requires one argument"));
+                return Err(one_argument());
             }
             let (value, unit) = parse_time_operand(&name, arg, constants)?;
             if name == "older" {
@@ -263,10 +287,7 @@ pub(crate) fn parse_tap_item(pair: Pair<Rule>, constants: &[Constant]) -> Result
                 Ok(TapItem::After { value, unit })
             }
         }
-        other => Err(format!(
-            "a tapscript require can check only signatures, hashes and timelocks, not {}",
-            super::rule_term(&other).unwrap_or_else(|| "this expression".to_string())
-        )),
+        rule => Err(ParseError::TapscriptCheckRuleUnsupported { rule }),
     }
 }
 
@@ -276,7 +297,7 @@ fn parse_time_operand(
     call: &str,
     arg: Pair<Rule>,
     constants: &[Constant],
-) -> Result<(TapOperand, Option<TimeUnit>), String> {
+) -> Result<(TapOperand, Option<TimeUnit>)> {
     use crate::models::TimeUnit;
     let text = super::trim_trivia_end(arg.as_str());
     let Some(wrapper) = arg
@@ -288,40 +309,42 @@ fn parse_time_operand(
         return Ok((parse_time_value(arg, constants)?, None));
     };
     let mut parts = wrapper.into_inner();
-    let unit_name = parts.next().ok_or("Missing call name")?.as_str();
+    let unit_name = parts
+        .next()
+        .ok_or(ParseError::Missing { part: "call name" })?
+        .as_str();
     let unit = match unit_name {
         "blocks" => TimeUnit::Blocks,
         "seconds" => TimeUnit::Seconds,
         other => {
-            return Err(format!(
-                "{call}() takes blocks(n), seconds(n), or a value, not `{other}(...)`"
-            ))
+            return Err(ParseError::UnknownTimeWrapper {
+                call: call.to_string(),
+                wrapper: other.to_string(),
+            })
         }
     };
-    let value = parts
-        .next()
-        .ok_or_else(|| format!("{unit_name}() requires one argument"))?;
+    let one_argument = || ParseError::RequiresOneArgument {
+        name: unit_name.to_string(),
+    };
+    let value = parts.next().ok_or_else(one_argument)?;
     if parts.next().is_some() {
-        return Err(format!("{unit_name}() requires one argument"));
+        return Err(one_argument());
     }
     Ok((parse_time_value(value, constants)?, Some(unit)))
 }
 
 /// A timelock value: a literal, with constants folded in, or the binding it reads.
-fn parse_time_value(pair: Pair<Rule>, constants: &[Constant]) -> Result<TapOperand, String> {
+fn parse_time_value(pair: Pair<Rule>, constants: &[Constant]) -> Result<TapOperand> {
     use crate::models::TapOperand;
     let value = expr::parse_general_expression(pair)?;
-    let mut constant = |path: &Path| constant_value(path, constants);
+    let mut constant = |path: &Path| constant_value(path, constants).ok_or_else(String::new);
     if let Ok(literal) = constants::evaluate(&value, &mut constant) {
         return Ok(TapOperand::Literal(literal));
     }
     operand_path(&value, constants)
         .map(TapOperand::Name)
-        .ok_or_else(|| {
-            format!(
-                "timelock `{}` is not a literal or scalar constructor parameter",
-                value.source_text()
-            )
+        .ok_or_else(|| ParseError::TimelockNotOperand {
+            value: value.source_text(),
         })
 }
 
@@ -329,7 +352,7 @@ fn parse_time_value(pair: Pair<Rule>, constants: &[Constant]) -> Result<TapOpera
 /// any other expression or an index that is not constant.
 fn operand_path(operand: &Expression, constants: &[Constant]) -> Option<Path> {
     let index = |index: &Expression| {
-        let mut constant = |path: &Path| constant_value(path, constants);
+        let mut constant = |path: &Path| constant_value(path, constants).ok_or_else(String::new);
         constants::evaluate(index, &mut constant).ok()?.parse().ok()
     };
     match &operand.kind {
@@ -345,32 +368,26 @@ fn operand_path(operand: &Expression, constants: &[Constant]) -> Option<Path> {
     }
 }
 
-fn constant_value(path: &Path, constants: &[Constant]) -> Result<String, String> {
+fn constant_value(path: &Path, constants: &[Constant]) -> Option<String> {
     let key = path.key();
     match constants
         .iter()
         .find(|c| c.name == key)
         .map(|c| &c.value.kind)
     {
-        Some(ExprKind::Literal(value)) => Ok(value.clone()),
-        _ => Err(format!("unknown constant '{path}'")),
+        Some(ExprKind::Literal(value)) => Some(value.clone()),
+        _ => None,
     }
 }
 
-fn parse_binding(pair: Pair<Rule>, constants: &[Constant]) -> Result<Path, String> {
+fn parse_binding(pair: Pair<Rule>, constants: &[Constant]) -> Result<Path> {
     let binding = expr::parse_property_access(pair)?;
-    operand_path(&binding, constants).ok_or_else(|| {
-        format!(
-            "`{}` must be indexed by an integer literal or constant",
-            binding.source_text()
-        )
+    operand_path(&binding, constants).ok_or_else(|| ParseError::IndexNotConstant {
+        binding: binding.source_text(),
     })
 }
 
-pub(crate) fn parse_tap_multisig(
-    pair: Pair<Rule>,
-    constants: &[Constant],
-) -> Result<TapItem, String> {
+pub(crate) fn parse_tap_multisig(pair: Pair<Rule>, constants: &[Constant]) -> Result<TapItem> {
     use crate::models::TapItem;
     let mut keys = Vec::new();
     let mut sigs = Vec::new();
@@ -393,7 +410,7 @@ pub(crate) fn parse_tap_multisig(
 }
 
 /// A `key_expr`: a pubkey binding, a 32-byte pubkey constant or `tweak(base, func)`.
-pub(crate) fn parse_key_expr(pair: Pair<Rule>, constants: &[Constant]) -> Result<KeyExpr, String> {
+pub(crate) fn parse_key_expr(pair: Pair<Rule>, constants: &[Constant]) -> Result<KeyExpr> {
     use crate::models::KeyExpr;
     match pair.as_rule() {
         Rule::named_binding => {
@@ -405,33 +422,37 @@ pub(crate) fn parse_key_expr(pair: Pair<Rule>, constants: &[Constant]) -> Result
                 return Ok(KeyExpr::Ident(path));
             }
             // BIP-342 checks accept any signature for a key of another non-zero length.
-            let value = constant_value(&path, constants)?;
+            let Some(value) = constant_value(&path, constants) else {
+                return Err(ParseError::UnknownConstant { path });
+            };
             match (value.len() - 2) / 2 {
                 32 => Ok(KeyExpr::Literal(value)),
-                width => Err(format!(
-                    "tapscript key '{path}' is {width} bytes; tapscript keys are 32-byte x-only public keys"
-                )),
+                width => Err(ParseError::TapscriptKeyWidth { key: path, width }),
             }
         }
         Rule::key_expr => {
-            let inner = pair.into_inner().next().ok_or("Empty key expression")?;
+            let inner = pair.into_inner().next().ok_or(ParseError::Empty {
+                what: "key expression",
+            })?;
             parse_key_expr(inner, constants)
         }
         Rule::tweak_key => {
             let mut inner = pair.into_inner();
             let base = inner
                 .next()
-                .ok_or("Missing tweak base")?
+                .ok_or(ParseError::Missing { part: "tweak base" })?
                 .as_str()
                 .to_string();
             let func = inner
                 .next()
-                .ok_or("Missing tweak func name")?
+                .ok_or(ParseError::Missing {
+                    part: "tweak func name",
+                })?
                 .as_str()
                 .to_string();
             Ok(KeyExpr::Tweak { base, func })
         }
-        other => Err(format!("unexpected key expression: {other:?}")),
+        rule => Err(ParseError::UnexpectedKeyExpression { rule }),
     }
 }
 
