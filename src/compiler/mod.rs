@@ -1,22 +1,9 @@
 use crate::diagnostics::{CompileError, Diagnostic, Span};
 use crate::models::{
-    ArkadeScript, AssignmentTarget, CompilerInfo, Contract, ContractJson, ExprKind, Expression,
-    Function, FunctionInput, LocatedStatement, Parameter, Path, Segment, SourceRange, Statement,
-    TypeName,
+    ArkadeScript, CompilerInfo, Contract, ContractJson, ExprKind, Expression, Function,
+    FunctionInput, LocatedStatement, Parameter, Path, SourceRange, Statement, TypeName,
 };
-use crate::opcodes::Opcode::{
-    self, Add, Bin2Num, BoolAnd, Cat, CheckSig, CheckSigAdd, Drop, Dup, EcPairing, Else, EndIf,
-    Equal, EqualVerify, FindAssetGroupByAssetId, GreaterThanOrEqual, If, InspectAssetGroup,
-    InspectAssetGroupAssetId, InspectAssetGroupCtrl, InspectAssetGroupMetadataHash,
-    InspectAssetGroupNum, InspectAssetGroupSum, InspectInAssetAt, InspectInAssetCount,
-    InspectInAssetLookup, InspectInputArkadeScriptHash, InspectInputArkadeWitnessHash,
-    InspectInputOutpoint, InspectInputPacket, InspectInputScriptPubKey, InspectInputSequence,
-    InspectInputValue, InspectIntentMessage, InspectLockTime, InspectNumAssetGroups,
-    InspectNumInputs, InspectNumOutputs, InspectOutAssetAt, InspectOutAssetCount,
-    InspectOutAssetLookup, InspectOutputScriptPubKey, InspectOutputValue, InspectPacket,
-    InspectVersion, Int0, Int1, Mul, Nip, Not, NotEqual0, NumEqual, Pick, PushCurrentInputIndex,
-    PushExpiry, Put, Roll, Rot, Size, Sub, Swap, Tunnel, TxWeight, Txid, Verify, Within,
-};
+use crate::opcodes::Opcode;
 use crate::types::{self};
 use crate::validator;
 use chrono::Utc;
@@ -26,8 +13,6 @@ pub mod tapscript;
 
 type Result<T, E = CompileError> = std::result::Result<T, E>;
 
-// ASM codegen and rewrite passes split into submodules;
-// siblings reach each other via `use super::*`.
 mod access;
 mod asset;
 mod comparison;
@@ -43,13 +28,7 @@ mod lowering;
 mod optimization;
 mod stack;
 mod statements;
-use lowering::Lowered;
 use statements::{emit_body, emit_function};
-
-pub(crate) use asset::*;
-pub(crate) use expr::*;
-pub(crate) use introspection::*;
-pub(crate) use loops::*;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum BindingKind {
@@ -171,10 +150,14 @@ impl Generator {
                     // Only empty and 0x01 equal their own 0NOTEQUAL, so `require`, `if` and `==` agree.
                     prologue_peak = prologue_peak.max(2);
                     asm.extend(match depth {
-                        0 => vec![Dup.into()],
-                        _ => vec![Op::push_int(depth), Pick.into()],
+                        0 => vec![Opcode::Dup.into()],
+                        _ => vec![Op::push_int(depth), Opcode::Pick.into()],
                     });
-                    asm.extend([Dup.into(), NotEqual0.into(), EqualVerify.into()]);
+                    asm.extend([
+                        Opcode::Dup.into(),
+                        Opcode::NotEqual0.into(),
+                        Opcode::EqualVerify.into(),
+                    ]);
                     continue;
                 }
                 _ => continue,
@@ -182,11 +165,15 @@ impl Generator {
             // The copy, its size and the expected width.
             prologue_peak = prologue_peak.max(2 + usize::from(depth > 0));
             if depth > 0 {
-                asm.extend([Op::push_int(depth), Pick.into()]);
+                asm.extend([Op::push_int(depth), Opcode::Pick.into()]);
             }
-            asm.extend([Size.into(), Op::Push(width.into()), EqualVerify.into()]);
+            asm.extend([
+                Opcode::Size.into(),
+                Op::Push(width.into()),
+                Opcode::EqualVerify.into(),
+            ]);
             if depth > 0 {
-                asm.push(Drop.into());
+                asm.push(Opcode::Drop.into());
             }
         }
         let constructor_scope = types::build_scope_with_structs(constructor_parameters, structs);
@@ -225,9 +212,9 @@ impl Generator {
     fn lower_raw_opcode(&mut self, opcode: Opcode) -> Result<()> {
         match opcode {
             // These move bindings as well as temporaries.
-            Nip => self.nip(),
-            Swap => self.swap(),
-            Tunnel => {
+            Opcode::Nip => self.nip(),
+            Opcode::Swap => self.swap(),
+            Opcode::Tunnel => {
                 // Fixed exception counts are emitted immediately before the opcode.
                 let inputs = self
                     .asm
@@ -321,7 +308,7 @@ impl Generator {
         let mut expression = expression.clone();
         let mut values = Vec::new();
         functions::extract_values(&mut expression, &mut values);
-        emit_expression_asm(&expression, &mut raw);
+        expr::emit_expression_asm(&expression, &mut raw);
         // ponytail: short-circuit joins need identical layouts, so reads inside an open branch stay
         // copies and leave their slots to the final cleanup; moving them needs path-sensitive liveness.
         let preserved = self.preserve_bindings;
@@ -329,16 +316,16 @@ impl Generator {
         for op in raw {
             self.preserve_bindings = preserved || !branches.is_empty();
             match op {
-                Op::Opcode(If) => {
-                    self.apply(If, 1, 0)?;
+                Op::Opcode(Opcode::If) => {
+                    self.apply(Opcode::If, 1, 0)?;
                     branches.push(self.stack.clone());
                 }
-                Op::Opcode(token @ (Else | EndIf)) => {
+                Op::Opcode(token @ (Opcode::Else | Opcode::EndIf)) => {
                     self.pop_temporaries(1, token)?;
                     if branches.last() != Some(&self.stack) {
                         return Err("logical branch must produce exactly one stack item".into());
                     }
-                    if token == EndIf {
+                    if token == Opcode::EndIf {
                         branches.pop();
                         self.stack.push(StackItem::Temporary);
                     }
@@ -407,7 +394,7 @@ impl Generator {
             return Err(CompileError::internal("unbalanced generator scope"));
         }
         self.asm.set_span(None);
-        self.push_temporary(Int1);
+        self.push_temporary(Opcode::Int1);
         while self.stack.len() > 1 {
             self.nip()?;
         }
@@ -773,7 +760,7 @@ fn arkade_script_for(
     let mut executions = most_executions(&ops, &mut 0);
     // Conditional opcodes execute even inside skipped branches.
     for (op, _) in &ops {
-        if let Op::Opcode(opcode @ (If | Else | EndIf)) = op {
+        if let Op::Opcode(opcode @ (Opcode::If | Opcode::Else | Opcode::EndIf)) = op {
             *executions.entry(*opcode).or_default() += 1;
         }
     }
@@ -861,11 +848,11 @@ fn most_executions(
     let mut counts = std::collections::HashMap::new();
     while let Some((op, _)) = ops.get(*position) {
         match op {
-            Op::Opcode(Else | EndIf) => break,
-            Op::Opcode(If) => {
+            Op::Opcode(Opcode::Else | Opcode::EndIf) => break,
+            Op::Opcode(Opcode::If) => {
                 *position += 1;
                 let mut branch = most_executions(ops, position);
-                if matches!(ops.get(*position), Some((Op::Opcode(Else), _))) {
+                if matches!(ops.get(*position), Some((Op::Opcode(Opcode::Else), _))) {
                     *position += 1;
                     for (opcode, count) in most_executions(ops, position) {
                         let longest = branch.entry(opcode).or_default();

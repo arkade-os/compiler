@@ -1,7 +1,15 @@
 use super::bindings::{
     find_binding, validate_named_binding, BindingInfo, BindingScopes, BindingSource,
 };
-use super::*;
+use super::operands;
+use crate::models;
+use crate::models::ExprKind;
+use crate::models::Expression;
+use crate::models::Path;
+use crate::operators::BinaryOperator;
+use crate::operators::OperatorClass;
+use crate::types::ArkType;
+use crate::validator::ValidationIssue;
 
 pub(super) fn validate_binding_requirement(
     expression: &Expression,
@@ -181,7 +189,7 @@ pub(super) fn validate_binding_expression(
         validate_operands(expression, scopes, issues);
     }
     if issues.len() != first {
-        locate(&mut issues[first..], expression.span);
+        super::locate(&mut issues[first..], expression.span);
         return;
     }
     let registered_builtin = operands::operands(expression);
@@ -672,7 +680,7 @@ pub(super) fn validate_binding_expression(
     {
         issues.push(ValidationIssue::reported());
     }
-    locate(&mut issues[first..], expression.span);
+    super::locate(&mut issues[first..], expression.span);
 }
 
 /// Validate the operands of `expression`, each as a value unless the operator takes it whole.
@@ -681,7 +689,7 @@ fn validate_operands(
     scopes: &BindingScopes,
     issues: &mut Vec<ValidationIssue>,
 ) {
-    for child in child_exprs(expression) {
+    for child in models::child_exprs(expression) {
         if matches!(
             &expression.kind,
             ExprKind::Call { .. }

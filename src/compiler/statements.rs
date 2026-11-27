@@ -1,7 +1,23 @@
 //! Emission of lowered statements onto the generator.
 
-use super::*;
+use super::Result;
 use crate::builtins::{Builtin, Lowering::Check};
+use crate::compiler::ir::Op;
+use crate::compiler::lowering;
+use crate::compiler::lowering::Lowered;
+use crate::compiler::BindingKind;
+use crate::compiler::Generator;
+use crate::compiler::StackItem;
+use crate::diagnostics::CompileError;
+use crate::models::AssignmentTarget;
+use crate::models::ExprKind;
+use crate::models::Expression;
+use crate::models::LocatedStatement;
+use crate::models::Path;
+use crate::models::Statement;
+use crate::models::TypeName;
+use crate::opcodes::Opcode;
+use crate::types;
 
 impl Generator {
     pub(super) fn emit_branches(
@@ -72,10 +88,10 @@ impl Generator {
         let right_joined = self.asm.split_off(start);
         self.asm.append(left_joined);
         if else_body.is_some() || !right_joined.is_empty() {
-            self.asm.push(Else.into());
+            self.asm.push(Opcode::Else.into());
             self.asm.append(right_joined);
         }
-        self.asm.push(EndIf.into());
+        self.asm.push(Opcode::EndIf.into());
         self.deferred = deferred.difference(&initialized).cloned().collect();
         self.last_reads
             .retain(|(_, slot), _| *slot < baseline.len());
@@ -144,7 +160,7 @@ fn emit_lowered(item: &Lowered, generator: &mut Generator) -> Result<bool> {
             // The branch opcodes map to the condition, not the whole statement.
             generator.asm.set_span(Some(condition.span));
             generator.emit_expression(condition)?;
-            generator.apply(If, 1, 0)?;
+            generator.apply(Opcode::If, 1, 0)?;
             generator.emit_branches(then_body, else_body.as_deref(), true)
         }
         Lowered::Unrolled {
@@ -299,9 +315,9 @@ fn generate_requirement_asm(condition: &Expression, generator: &mut Generator) -
     match &condition.kind {
         ExprKind::GroupLookup { .. } => {
             generator.emit_expression(condition)?;
-            generator.apply(Drop, 1, 0)?;
-            generator.push_temporary(Int1);
-            generator.apply(Verify, 1, 0)?;
+            generator.apply(Opcode::Drop, 1, 0)?;
+            generator.push_temporary(Opcode::Int1);
+            generator.apply(Opcode::Verify, 1, 0)?;
         }
         // The check fails the spend itself, so `require` leaves out its `true`.
         ExprKind::Builtin {
@@ -321,7 +337,7 @@ fn generate_requirement_asm(condition: &Expression, generator: &mut Generator) -
         }
         _ => {
             generator.emit_expression(condition)?;
-            generator.apply(Verify, 1, 0)?;
+            generator.apply(Opcode::Verify, 1, 0)?;
         }
     }
     Ok(())

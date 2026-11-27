@@ -1,4 +1,10 @@
-use crate::models::*;
+use crate::models::AssignmentTarget;
+use crate::models::ExprKind;
+use crate::models::Expression;
+use crate::models::LocatedStatement;
+use crate::models::Path;
+use crate::models::Segment;
+use crate::models::Statement;
 
 // ─── Loop Unrolling ─────────────────────────────────────────────────────────────
 

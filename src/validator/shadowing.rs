@@ -1,4 +1,10 @@
-use super::*;
+use crate::models::AssignmentTarget;
+use crate::models::Contract;
+use crate::models::LocatedStatement;
+use crate::models::Path;
+use crate::models::Statement;
+use crate::validator::ValidationIssue;
+use std::collections::HashSet;
 
 /// Check 1: reject any binding that shadows a name still live in an enclosing scope.
 pub(super) fn check_shadowing(contract: &Contract, issues: &mut Vec<ValidationIssue>) {
@@ -66,7 +72,7 @@ pub(super) fn check_shadowing(contract: &Contract, issues: &mut Vec<ValidationIs
             &const_names,
             issues,
         );
-        locate(&mut issues[first..], func.span);
+        super::locate(&mut issues[first..], func.span);
     }
 }
 
@@ -124,7 +130,7 @@ fn check_ctor_assignment(
             | Statement::Call(_)
             | Statement::Return(_) => {}
         }
-        locate(&mut issues[first..], stmt.span);
+        super::locate(&mut issues[first..], stmt.span);
     }
 }
 
@@ -145,7 +151,11 @@ fn walk_scope(
         let first = issues.len();
         match &stmt.statement {
             Statement::Declaration { name, .. } | Statement::LetBinding { name, .. } => {
-                validate_source_identifier(name, &format!("binding in function '{fname}'"), issues);
+                super::validate_source_identifier(
+                    name,
+                    &format!("binding in function '{fname}'"),
+                    issues,
+                );
                 if in_scope(stack, name) {
                     issues.push(ValidationIssue::error(format!(
                         "binding '{name}' in function '{fname}' shadows an in-scope binding"
@@ -163,12 +173,12 @@ fn walk_scope(
                 body,
                 ..
             } => {
-                validate_source_identifier(
+                super::validate_source_identifier(
                     index_var,
                     &format!("loop variable in function '{fname}'"),
                     issues,
                 );
-                validate_source_identifier(
+                super::validate_source_identifier(
                     value_var,
                     &format!("loop variable in function '{fname}'"),
                     issues,
@@ -195,7 +205,7 @@ fn walk_scope(
             Statement::ForRange {
                 index_var, body, ..
             } => {
-                validate_source_identifier(
+                super::validate_source_identifier(
                     index_var,
                     &format!("loop variable in function '{fname}'"),
                     issues,
@@ -234,6 +244,6 @@ fn walk_scope(
             | Statement::Call(_)
             | Statement::Return(_) => {}
         }
-        locate(&mut issues[first..], stmt.span);
+        super::locate(&mut issues[first..], stmt.span);
     }
 }

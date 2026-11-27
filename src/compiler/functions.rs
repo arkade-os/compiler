@@ -1,5 +1,23 @@
-use super::*;
+use super::Result;
+use crate::compiler::loops;
+use crate::compiler::lowering;
+use crate::compiler::lowering::Lowered;
+use crate::compiler::statements;
+use crate::compiler::BindingKind;
+use crate::compiler::Generator;
+use crate::compiler::StackItem;
+use crate::models::AssignmentTarget;
+use crate::models::ExprKind;
+use crate::models::Expression;
+use crate::models::Function;
+use crate::models::LocatedStatement;
+use crate::models::Parameter;
+use crate::models::Path;
+use crate::models::Segment;
+use crate::models::Statement;
 use crate::models::{child_exprs_mut, TypeLeaf, TypeName};
+use crate::opcodes::Opcode;
+use crate::types;
 
 pub(super) fn extract_values(expression: &mut Expression, values: &mut Vec<Expression>) {
     if matches!(
@@ -107,7 +125,7 @@ pub(super) fn substitute_arguments(
     let mut body = function.statements.clone();
     for (argument, parameter) in args.iter().zip(&function.parameters) {
         if let Some(literal) = literal_argument(function, parameter, argument) {
-            body = substitute_body(&body, &parameter.name, literal, None);
+            body = loops::substitute_body(&body, &parameter.name, literal, None);
         }
     }
     body
@@ -187,7 +205,7 @@ impl Generator {
                     self.swap()?;
                 } else {
                     self.push_integer_temporary(depth);
-                    self.apply(Roll, depth + 2, depth + 1)?;
+                    self.apply(Opcode::Roll, depth + 2, depth + 1)?;
                 }
             }
             return Ok(());
@@ -369,10 +387,10 @@ impl Generator {
             .transpose()?
             .unwrap_or_default();
         if !direct_return {
-            self.push_temporary(Int0);
+            self.push_temporary(Opcode::Int0);
             self.bind_local(Path::new("$returned"))?;
             for leaf in results.iter().rev() {
-                self.push_temporary(Int0);
+                self.push_temporary(Opcode::Int0);
                 self.bind_local(leaf.access.clone())?;
             }
         }
@@ -384,7 +402,7 @@ impl Generator {
         }
         let emitted = self
             .lower(&function.statements)
-            .and_then(|body| emit_body(&body, self));
+            .and_then(|body| statements::emit_body(&body, self));
         if function.is_imported() {
             self.asm.unpin();
         }
@@ -421,15 +439,15 @@ impl Generator {
         while self.stack.len() > baseline + results {
             match results {
                 0 => {
-                    self.asm.push(Drop.into());
+                    self.asm.push(Opcode::Drop.into());
                     self.stack.pop();
                 }
                 1 => self.nip()?,
                 _ => {
                     self.push_integer_temporary(results);
-                    self.pop_temporaries(1, Roll)?;
-                    self.asm.push(Roll.into());
-                    self.asm.push(Drop.into());
+                    self.pop_temporaries(1, Opcode::Roll)?;
+                    self.asm.push(Opcode::Roll.into());
+                    self.asm.push(Opcode::Drop.into());
                     self.stack.remove(self.stack.len() - results - 1);
                 }
             }
@@ -457,7 +475,7 @@ impl Generator {
         if self.direct_return {
             Ok(())
         } else {
-            self.push_temporary(Int1);
+            self.push_temporary(Opcode::Int1);
             self.assign_static_binding(Path::new("$returned"))
         }
     }
@@ -474,8 +492,8 @@ impl Generator {
 
     pub(super) fn emit_unless_returned(&mut self, statements: &[Lowered]) -> Result<bool> {
         self.read_binding(&Path::new("$returned"))?;
-        self.apply(Not, 1, 1)?;
-        self.apply(If, 1, 0)?;
+        self.apply(Opcode::Not, 1, 1)?;
+        self.apply(Opcode::If, 1, 0)?;
         self.emit_branches(statements, None, false)
     }
 }

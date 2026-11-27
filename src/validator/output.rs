@@ -1,4 +1,6 @@
-use super::*;
+use crate::models::ContractJson;
+use crate::validator::ValidationIssue;
+use std::collections::HashSet;
 
 /// Validate the compiled [`ContractJson`] output for structural invariants.
 ///

@@ -1,4 +1,12 @@
-use super::*;
+use crate::models;
+use crate::models::AssignmentTarget;
+use crate::models::Contract;
+use crate::models::ExprKind;
+use crate::models::Expression;
+use crate::models::LocatedStatement;
+use crate::models::Statement;
+use crate::types::ArkType;
+use crate::validator::ValidationIssue;
 
 /// Reject malformed canonical Asset ID operands at compile time instead of
 /// relying on the emulator's runtime `popAssetID` check: every
@@ -60,7 +68,7 @@ fn walk_asset_id_stmts(
                 walk_asset_id_stmts(body, structs, issues);
             }
         }
-        locate(&mut issues[first..], stmt.span);
+        super::locate(&mut issues[first..], stmt.span);
     }
 }
 
@@ -91,7 +99,7 @@ fn check_asset_id_expr(
         _ => {}
     }
 
-    for child in child_exprs(expr) {
+    for child in models::child_exprs(expr) {
         check_asset_id_expr(child, structs, issues);
     }
 }
@@ -122,7 +130,7 @@ fn is_constant(expr: &Expression) -> bool {
     match &expr.kind {
         ExprKind::Literal(_) => true,
         ExprKind::Unary { .. } | ExprKind::BinaryOp { .. } => {
-            child_exprs(expr).into_iter().all(is_constant)
+            models::child_exprs(expr).into_iter().all(is_constant)
         }
         _ => false,
     }

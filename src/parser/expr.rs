@@ -1,7 +1,10 @@
 use super::Rule;
+use crate::models::ExprKind;
+use crate::models::Expression;
+use crate::models::Path;
+use crate::parser::crypto;
+use crate::parser::introspection;
 #[allow(unused_imports)]
-use super::*;
-use crate::models::*;
 use pest::iterators::Pair;
 
 /// Whether `rule` is one of the grammar's binary-operator precedence levels.
@@ -261,7 +264,7 @@ fn parse_chain(head: Pair<Rule>, suffixes: Vec<Suffix>, text: &str) -> Result<Ex
             let name = inner.next().ok_or("Missing function name")?.as_str();
             let args: Vec<_> = inner.collect();
             let value = match args.as_slice() {
-                [data] if is_cast(name) => parse_cast(name, data.clone(), span)?,
+                [data] if crypto::is_cast(name) => crypto::parse_cast(name, data.clone(), span)?,
                 _ => parse_call(name.to_string(), args, span)?,
             };
             return apply_suffixes(value, false, &suffixes);
@@ -270,8 +273,8 @@ fn parse_chain(head: Pair<Rule>, suffixes: Vec<Suffix>, text: &str) -> Result<Ex
     };
     let name = Expression::new(ExprKind::Name(Path::new(root)), span);
     match root {
-        "tx" => parse_tx_chain(name, &suffixes, text),
-        "this" => parse_this_chain(name, &suffixes, text),
+        "tx" => introspection::parse_tx_chain(name, &suffixes, text),
+        "this" => introspection::parse_this_chain(name, &suffixes, text),
         _ => apply_suffixes(name, true, &suffixes),
     }
 }

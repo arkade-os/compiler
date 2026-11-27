@@ -1,5 +1,14 @@
-use super::*;
-use crate::opcodes::Opcode::{FromAltStack, ToAltStack};
+use super::Result;
+use crate::compiler::ir::Op;
+use crate::compiler::BindingKind;
+use crate::compiler::Generator;
+use crate::compiler::StackItem;
+use crate::diagnostics::CompileError;
+use crate::models::ExprKind;
+use crate::models::Expression;
+use crate::models::Path;
+use crate::models::TypeName;
+use crate::opcodes::Opcode;
 use crate::properties::GroupIoProperty;
 use crate::types::ArkType;
 
@@ -58,10 +67,10 @@ impl Generator {
             self.check_array_index(*length)?;
             if *stride != 1 {
                 self.push_integer_temporary(*stride);
-                self.apply(Mul, 2, 1)?;
+                self.apply(Opcode::Mul, 2, 1)?;
             }
             if position > 0 {
-                self.apply(Add, 2, 1)?;
+                self.apply(Opcode::Add, 2, 1)?;
             }
         }
         Ok(())
@@ -92,7 +101,7 @@ impl Generator {
         }
         self.emit_access_offset(&indices)?;
         if let Some(length) = length {
-            self.apply(Drop, 1, 0)?;
+            self.apply(Opcode::Drop, 1, 0)?;
             self.push_integer_temporary(length);
             return Ok(());
         }
@@ -102,17 +111,17 @@ impl Generator {
             // Copy the offset until the last leaf consumes it; each index is evaluated once.
             if copied + 1 < leaves.len() {
                 self.push_integer_temporary(copied);
-                self.apply(Pick, 1, 1)?;
+                self.apply(Opcode::Pick, 1, 1)?;
             } else if copied > 0 {
                 self.push_integer_temporary(copied);
-                self.apply(Roll, 1, 0)?;
+                self.apply(Opcode::Roll, 1, 0)?;
             }
             let slot = self
                 .binding_index(&leaf.access)
                 .ok_or_else(|| format!("undefined binding '{}'", leaf.access))?;
             self.push_integer_temporary(self.stack.len() - slot - 2);
-            self.apply(Add, 2, 1)?;
-            self.apply(Pick, 1, 1)?;
+            self.apply(Opcode::Add, 2, 1)?;
+            self.apply(Opcode::Pick, 1, 1)?;
         }
         Ok(())
     }
@@ -153,7 +162,7 @@ impl Generator {
                 // Keep the offset below the next value; runtime indexes are evaluated once.
                 self.swap()?;
                 self.push_integer_temporary(1);
-                self.apply(Pick, 1, 1)?;
+                self.apply(Opcode::Pick, 1, 1)?;
             }
             let slot = self
                 .binding_index(&leaf.access)
@@ -168,8 +177,8 @@ impl Generator {
                 return Err(format!("cannot assign to constructor parameter '{name}'").into());
             }
             self.push_integer_temporary(self.stack.len() - slot - 3);
-            self.apply(Add, 2, 1)?;
-            self.apply(Put, 2, 0)?;
+            self.apply(Opcode::Add, 2, 1)?;
+            self.apply(Opcode::Put, 2, 0)?;
         }
         Ok(())
     }
@@ -266,7 +275,11 @@ impl Generator {
             key.ty = (*element).clone();
             self.emit_expression(&key)?;
             self.apply(
-                if index == 0 { CheckSig } else { CheckSigAdd },
+                if index == 0 {
+                    Opcode::CheckSig
+                } else {
+                    Opcode::CheckSigAdd
+                },
                 if index == 0 { 2 } else { 3 },
                 1,
             )?;
@@ -280,9 +293,9 @@ impl Generator {
         // At least the threshold must sign; for N-of-N that is all, which NUMEQUAL checks and
         // a following VERIFY fuses with.
         let compare = if literal_threshold == Some(count) {
-            NumEqual
+            Opcode::NumEqual
         } else {
-            GreaterThanOrEqual
+            Opcode::GreaterThanOrEqual
         };
         self.apply(compare, 2, 1)
     }
@@ -302,52 +315,57 @@ impl Generator {
         };
         self.emit_expression(group)?;
         self.emit_expression(io_index)?;
-        self.push_temporary(Int0);
+        self.push_temporary(Opcode::Int0);
         // A proof input record is four items, and normalizing sizes its txid with the items above
         // it dropped or parked on the alt stack: counting both stacks, at most five items for
         // a field and six for the whole record.
         let (items, peak) = if property.is_some() { (1, 5) } else { (3, 6) };
-        self.apply(InspectAssetGroup, 3, items)?;
+        self.apply(Opcode::InspectAssetGroup, 3, items)?;
         self.max_depth = self.max_depth.max(self.stack.len() - items + peak);
         // Only a proof input's txid is 32 bytes; the type below it is 1 or 2. Each
         // sequence takes back what it puts on the alt stack and leaves the items the
         // model holds, so the stack model needs no update.
-        let size_32 = [Size.into(), Op::Push("32".into())];
-        let drop_txid = [Equal.into(), If.into(), Drop.into(), EndIf.into()];
-        let restore = [Drop.into(), FromAltStack.into()];
+        let size_32 = [Opcode::Size.into(), Op::Push("32".into())];
+        let drop_txid = [
+            Opcode::Equal.into(),
+            Opcode::If.into(),
+            Opcode::Drop.into(),
+            Opcode::EndIf.into(),
+        ];
+        let restore = [Opcode::Drop.into(), Opcode::FromAltStack.into()];
         let ops: Vec<Op> = match property {
             None => [
-                vec![ToAltStack.into(), ToAltStack.into()],
+                vec![Opcode::ToAltStack.into(), Opcode::ToAltStack.into()],
                 size_32.to_vec(),
                 drop_txid.to_vec(),
-                vec![FromAltStack.into(), FromAltStack.into()],
+                vec![Opcode::FromAltStack.into(), Opcode::FromAltStack.into()],
             ]
             .concat(),
             Some(GroupIoProperty::Amount) => [
-                vec![ToAltStack.into(), Drop.into()],
+                vec![Opcode::ToAltStack.into(), Opcode::Drop.into()],
                 size_32.to_vec(),
                 drop_txid.to_vec(),
                 restore.to_vec(),
             ]
             .concat(),
             Some(GroupIoProperty::Index) => [
-                vec![Drop.into(), ToAltStack.into()],
+                vec![Opcode::Drop.into(), Opcode::ToAltStack.into()],
                 size_32.to_vec(),
                 drop_txid.to_vec(),
                 restore.to_vec(),
             ]
             .concat(),
             Some(GroupIoProperty::Type) => [
-                vec![Drop.into(), Drop.into()],
+                vec![Opcode::Drop.into(), Opcode::Drop.into()],
                 size_32.to_vec(),
                 drop_txid.to_vec(),
             ]
             .concat(),
             // A local input has no txid, so the size check fails the spend.
             Some(GroupIoProperty::Txid) => [
-                vec![Drop.into(), Drop.into()],
+                vec![Opcode::Drop.into(), Opcode::Drop.into()],
                 size_32.to_vec(),
-                vec![EqualVerify.into(), Nip.into()],
+                vec![Opcode::EqualVerify.into(), Opcode::Nip.into()],
             ]
             .concat(),
         };
@@ -404,6 +422,6 @@ impl Generator {
         }
         self.push_integer_temporary(pairs);
         self.emit_expression(curve_id)?;
-        self.apply(EcPairing, 6 * pairs + 2, 1)
+        self.apply(Opcode::EcPairing, 6 * pairs + 2, 1)
     }
 }

@@ -1,6 +1,9 @@
-use super::*;
-use crate::models::*;
-use crate::opcodes::Opcode::{NumEqualVerify, Roll};
+use super::Result;
+use crate::compiler::Generator;
+use crate::models::Expression;
+use crate::models::Path;
+use crate::models::TypeName;
+use crate::opcodes::Opcode;
 use crate::operators::{BinaryOperator, OperatorClass};
 use crate::types::{bind_local_type, ArkType};
 
@@ -40,8 +43,8 @@ impl Generator {
         for (leaf, remaining) in leaves.iter().zip((1..=width).rev()) {
             let numeric = crate::types::is_numeric(&leaf.leaf_type.ark_type());
             let (equal, equal_verify) = match numeric {
-                true => (NumEqual, NumEqualVerify),
-                false => (Equal, EqualVerify),
+                true => (Opcode::NumEqual, Opcode::NumEqualVerify),
+                false => (Opcode::Equal, Opcode::EqualVerify),
             };
             if verify && op == BinaryOperator::Eq {
                 if remaining > 1 {
@@ -55,13 +58,13 @@ impl Generator {
                 self.roll(remaining + 1)?;
                 self.roll(2)?;
                 self.apply(equal, 2, 1)?;
-                self.apply(BoolAnd, 2, 1)?;
+                self.apply(Opcode::BoolAnd, 2, 1)?;
             }
         }
         if op == BinaryOperator::Ne {
-            self.apply(Not, 1, 1)?;
+            self.apply(Opcode::Not, 1, 1)?;
             if verify {
-                self.apply(Verify, 1, 0)?;
+                self.apply(Opcode::Verify, 1, 0)?;
             }
         }
         Ok(())
@@ -69,8 +72,8 @@ impl Generator {
 
     fn roll(&mut self, depth: usize) -> Result<()> {
         self.push_integer_temporary(depth);
-        self.pop_temporaries(1, Roll)?;
-        self.asm.push(Roll.into());
+        self.pop_temporaries(1, Opcode::Roll)?;
+        self.asm.push(Opcode::Roll.into());
         Ok(())
     }
 }

@@ -2,7 +2,17 @@ use super::expressions::{
     validate_array_index, validate_binding_expression, validate_binding_requirement,
     validate_value_expression,
 };
-use super::*;
+use crate::models::AssignmentTarget;
+use crate::models::Contract;
+use crate::models::ExprKind;
+use crate::models::LocatedStatement;
+use crate::models::Statement;
+use crate::models::TypeName;
+use crate::types;
+use crate::types::ArkType;
+use crate::types::Scope;
+use crate::validator::ValidationIssue;
+use std::collections::HashMap;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum BindingSource {
@@ -27,7 +37,7 @@ fn insert_parameters(
     source: BindingSource,
     structs: &[crate::models::StructDefinition],
 ) {
-    let types = build_scope_with_structs(parameters, structs);
+    let types = types::build_scope_with_structs(parameters, structs);
     for (name, binding_type) in types {
         frame.insert(
             name,
@@ -513,7 +523,7 @@ fn validate_binding_statements(
                 scopes.pop();
             }
         }
-        locate(&mut issues[first..], statement.span);
+        super::locate(&mut issues[first..], statement.span);
     }
 }
 

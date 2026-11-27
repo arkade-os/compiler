@@ -18,12 +18,8 @@
 //! wrong is reported by [`crate::lint`] instead.
 
 use crate::models::child_exprs;
-use crate::models::{
-    AssignmentTarget, Contract, ContractJson, ExprKind, Expression, KeyExpr, LocatedStatement,
-    Path, Statement, TapItem, TypeName,
-};
-use crate::operators::{BinaryOperator, OperatorClass};
-use crate::types::{build_scope_with_structs, ArkType, Scope};
+use crate::models::{Contract, Expression, KeyExpr, LocatedStatement, Statement, TapItem};
+use crate::types::ArkType;
 use std::collections::{HashMap, HashSet};
 
 mod assets;
@@ -670,6 +666,8 @@ pub(crate) fn tapscript_reads(tapscript: &crate::models::NamedTapscript) -> Hash
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::models::ContractJson;
+    use crate::models::ExprKind;
     use crate::models::{AbiFunctionGroup, AbiLeaf, Contract, Function, Parameter, WitnessElement};
 
     #[test]

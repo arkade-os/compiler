@@ -1,8 +1,20 @@
 //! Function bodies ready for emission: loops unrolled and, when folding, constant expressions
 //! evaluated and statically dead code removed.
 
-use super::*;
+use super::Result;
+use crate::compiler::ir::Op;
+use crate::compiler::loops;
+use crate::compiler::optimization;
+use crate::diagnostics::CompileError;
 use crate::diagnostics::Span;
+use crate::models::ExprKind;
+use crate::models::Expression;
+use crate::models::Function;
+use crate::models::LocatedStatement;
+use crate::models::Path;
+use crate::models::Statement;
+use crate::models::TypeName;
+use crate::types;
 
 pub(super) enum Lowered {
     /// A statement with no nested statements.
@@ -108,7 +120,8 @@ pub(super) fn lower(
         // ponytail: each substitution rebuilds the statement; substitute all names in one pass
         // if bodies with many propagated locals compile slowly.
         for (name, literal) in &literals {
-            statement.statement = substitute_statement(&statement.statement, name, literal, None);
+            statement.statement =
+                loops::substitute_statement(&statement.statement, name, literal, None);
         }
         if fold {
             optimization::fold_statement(&mut statement.statement, scope)
@@ -243,7 +256,8 @@ fn lower_statement(
             }
             let iterations = (0..length).map(|k| {
                 let element = Some((value_var.as_str(), &iterable));
-                let mut substituted = substitute_body(&body, &index_var, &k.to_string(), element);
+                let mut substituted =
+                    loops::substitute_body(&body, &index_var, &k.to_string(), element);
                 // Substitution builds untyped nodes; return types and group members
                 // were resolved on the original body and survive the copy.
                 types::annotate_statements(&mut substituted, &mut scope.clone(), structs);
@@ -289,7 +303,8 @@ fn lower_statement(
             body,
         } => {
             let iterations = crate::models::loop_range(&start, &end)?.map(|k| {
-                let mut substituted = substitute_body(&body, &index_var, &k.to_string(), None);
+                let mut substituted =
+                    loops::substitute_body(&body, &index_var, &k.to_string(), None);
                 types::annotate_statements(&mut substituted, &mut scope.clone(), structs);
                 substituted
             });

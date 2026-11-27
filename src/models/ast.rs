@@ -1,6 +1,8 @@
 //! The abstract syntax tree of an Arkade Language contract.
-
-use super::*;
+use crate::models::Parameter;
+use crate::models::StructDefinition;
+use crate::models::TypeName;
+use crate::opcodes::Opcode;
 
 /// A binding and the struct fields and constant array elements read through it,
 /// as in `s.inner.x` or `ps[0].x`.
@@ -372,12 +374,11 @@ pub enum HashFn {
 impl HashFn {
     /// The opcode this hash function emits.
     pub fn opcode(&self) -> crate::opcodes::Opcode {
-        use crate::opcodes::Opcode::{Hash160, Hash256, Ripemd160, Sha256};
         match self {
-            HashFn::Sha256 => Sha256,
-            HashFn::Hash160 => Hash160,
-            HashFn::Hash256 => Hash256,
-            HashFn::Ripemd160 => Ripemd160,
+            HashFn::Sha256 => Opcode::Sha256,
+            HashFn::Hash160 => Opcode::Hash160,
+            HashFn::Hash256 => Opcode::Hash256,
+            HashFn::Ripemd160 => Opcode::Ripemd160,
         }
     }
 
@@ -806,7 +807,7 @@ pub fn expression_result_struct(expression: &Expression) -> Option<&'static str>
         ExprKind::OutputIntrospection { property, .. } => Some(property.value_type()),
         _ => None,
     }
-    .filter(|result| builtin_struct_fields(result).is_some())
+    .filter(|result| super::builtin_struct_fields(result).is_some())
 }
 
 /// Generates the shared and mutable traversals from one list of each variant's

@@ -57,3 +57,8 @@ tempfile = "3.10.1"
 [[bin]]
 name = "arkadec"
 path = "src/main.rs"
+
+[lints.clippy]
+absolute_paths = "allow"
+enum_glob_use = "deny"
+wildcard_imports = "deny"

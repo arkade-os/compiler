@@ -1,7 +1,8 @@
 use super::Rule;
+use crate::models::ExprKind;
+use crate::models::Expression;
+use crate::parser::expr;
 #[allow(unused_imports)]
-use super::*;
-use crate::models::*;
 use pest::iterators::Pair;
 
 /// Whether a call by `name` with one argument is a cast. Function names cannot be cast types.
@@ -26,8 +27,8 @@ pub(crate) fn parse_cast(
     span: crate::diagnostics::Span,
 ) -> Result<Expression, String> {
     let target = target.to_string();
-    let text = trim_trivia_end(data_pair.as_str());
-    let data = parse_general_expression(data_pair)?;
+    let text = super::trim_trivia_end(data_pair.as_str());
+    let data = expr::parse_general_expression(data_pair)?;
     if target == "int"
         && matches!(&data.kind, ExprKind::Literal(lit) if lit.eq_ignore_ascii_case(text))
     {

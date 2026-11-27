@@ -1,5 +1,14 @@
-use super::*;
+use crate::models;
+use crate::models::Contract;
+use crate::models::ExprKind;
+use crate::models::Expression;
+use crate::models::LocatedStatement;
+use crate::models::Statement;
 use crate::models::{Function, StructDefinition, TypeName};
+use crate::types::ArkType;
+use crate::validator::ValidationIssue;
+use std::collections::HashMap;
+use std::collections::HashSet;
 
 pub(super) fn validate_functions(contract: &Contract, issues: &mut Vec<ValidationIssue>) {
     let definitions = contract
@@ -16,7 +25,7 @@ pub(super) fn validate_functions(contract: &Contract, issues: &mut Vec<Validatio
                     function.name
                 )));
             }
-            validate_declared_type(result, "return type", &definitions, issues);
+            super::validate_declared_type(result, "return type", &definitions, issues);
         }
         if function.is_static {
             let referenced = super::references::referenced_parameters(&function.statements, &[]);
@@ -30,7 +39,7 @@ pub(super) fn validate_functions(contract: &Contract, issues: &mut Vec<Validatio
             }
         }
         validate_body(&function.statements, function, contract, issues);
-        locate(&mut issues[first..], function.span);
+        super::locate(&mut issues[first..], function.span);
     }
 
     let mut guarantees = HashMap::new();
@@ -146,7 +155,7 @@ fn validate_body(
             | Statement::Require(_)
             | Statement::VarAssign { .. } => {}
         }
-        locate(&mut issues[first..], located.span);
+        super::locate(&mut issues[first..], located.span);
     }
 }
 
@@ -253,8 +262,8 @@ fn validate_calls(
         let context = format!("{name} literal");
         validate_fields(name, fields, &contract.structs, &context, issues);
     }
-    locate(&mut issues[first..], expression.span);
-    for child in child_exprs(expression) {
+    super::locate(&mut issues[first..], expression.span);
+    for child in models::child_exprs(expression) {
         validate_calls(child, true, caller, contract, issues);
     }
 }
@@ -299,7 +308,7 @@ pub(super) fn validate_value(
             }
         }
     }
-    locate(&mut issues[first..], value.span);
+    super::locate(&mut issues[first..], value.span);
 }
 
 /// Check a struct literal's fields against the definition of struct `name`.
@@ -432,7 +441,7 @@ fn analyze_expression(
             analyze_function(function, contract, visiting, guarantees)?;
         }
     }
-    for child in child_exprs(expression) {
+    for child in models::child_exprs(expression) {
         analyze_expression(child, contract, visiting, guarantees)?;
     }
     Ok(())
@@ -558,7 +567,7 @@ fn unrolled_calls(
         }
         _ => {}
     }
-    for child in child_exprs(expression) {
+    for child in models::child_exprs(expression) {
         most = most.max(unrolled_calls(child, contract, rereads, unrolled, issues));
     }
     most
@@ -579,7 +588,7 @@ fn expression_enforces(expression: &Expression, guarantees: &HashMap<String, boo
         }
     }
     matches!(&expression.kind, ExprKind::Call { name, .. } if guarantees.get(name) == Some(&true))
-        || child_exprs(expression)
+        || models::child_exprs(expression)
             .into_iter()
             .any(|child| expression_enforces(child, guarantees))
 }

@@ -1,7 +1,17 @@
 //! The generator's model of the stack: which binding each slot holds, and the
 //! reads, assignments, scopes and joins that move them.
-
-use super::*;
+use super::Result;
+use crate::compiler::ir::Op;
+use crate::compiler::BindingKind;
+use crate::compiler::Generator;
+use crate::compiler::StackItem;
+use crate::diagnostics::CompileError;
+use crate::models::AssignmentTarget;
+use crate::models::Expression;
+use crate::models::Path;
+use crate::models::Segment;
+use crate::opcodes::Opcode;
+use crate::types;
 
 impl Generator {
     pub(super) fn push_temporary(&mut self, op: impl Into<Op>) {
@@ -101,7 +111,7 @@ impl Generator {
         if consume {
             self.stack.remove(index);
         }
-        self.apply(if consume { Roll } else { Pick }, 1, 1)
+        self.apply(if consume { Opcode::Roll } else { Opcode::Pick }, 1, 1)
     }
 
     pub(super) fn count_constructor_reads(&mut self, index: usize, reads: usize) {
@@ -136,11 +146,11 @@ impl Generator {
 
     /// Fails the spend unless the top value is in `min..max`, leaving it in place.
     pub(super) fn check_within(&mut self, min: usize, max: usize) -> Result<()> {
-        self.apply(Dup, 1, 2)?;
+        self.apply(Opcode::Dup, 1, 2)?;
         self.push_integer_temporary(min);
         self.push_integer_temporary(max);
-        self.apply(Within, 3, 1)?;
-        self.apply(Verify, 1, 0)
+        self.apply(Opcode::Within, 3, 1)?;
+        self.apply(Opcode::Verify, 1, 0)
     }
 
     pub(super) fn select_indexed_value(&mut self, array: &Path) -> Result<()> {
@@ -160,9 +170,9 @@ impl Generator {
         self.check_array_index(self.array_length(array))?;
         if first_depth_without_index != 0 {
             self.push_integer_temporary(first_depth_without_index);
-            self.apply(Add, 2, 1)?;
+            self.apply(Opcode::Add, 2, 1)?;
         }
-        self.apply(Pick, 1, 1)
+        self.apply(Opcode::Pick, 1, 1)
     }
 
     pub(super) fn pop_temporaries(&mut self, count: usize, opcode: Opcode) -> Result<()> {
@@ -194,7 +204,7 @@ impl Generator {
         }
         let index = self.stack.len() - 2;
         self.stack.remove(index);
-        self.asm.push(Nip.into());
+        self.asm.push(Opcode::Nip.into());
         Ok(())
     }
 
@@ -204,7 +214,7 @@ impl Generator {
         }
         let len = self.stack.len();
         self.stack.swap(len - 2, len - 1);
-        self.asm.push(Swap.into());
+        self.asm.push(Opcode::Swap.into());
         Ok(())
     }
 
@@ -299,7 +309,7 @@ impl Generator {
                 CompileError::internal(format!("invalid assignment target '{name}'"))
             })?;
         self.push_integer_temporary(depth);
-        self.apply(Put, 2, 0)
+        self.apply(Opcode::Put, 2, 0)
     }
 
     pub(super) fn assign_indexed_binding(
@@ -338,9 +348,9 @@ impl Generator {
         self.check_array_index(self.array_length(array))?;
         if first_depth_without_operands != 0 {
             self.push_integer_temporary(first_depth_without_operands);
-            self.apply(Add, 2, 1)?;
+            self.apply(Opcode::Add, 2, 1)?;
         }
-        self.apply(Put, 2, 0)
+        self.apply(Opcode::Put, 2, 0)
     }
 
     pub(super) fn enter_scope(&mut self) {
@@ -372,12 +382,12 @@ impl Generator {
     pub(super) fn drop_binding(&mut self, index: usize) -> Result<()> {
         let depth = self.stack.len() - index - 1;
         match depth {
-            0 => self.asm.push(Drop.into()),
-            1 => self.asm.push(Nip.into()),
+            0 => self.asm.push(Opcode::Drop.into()),
+            1 => self.asm.push(Opcode::Nip.into()),
             _ => {
                 self.push_integer_temporary(depth);
-                self.pop_temporaries(1, Roll)?;
-                self.asm.extend([Roll.into(), Drop.into()]);
+                self.pop_temporaries(1, Opcode::Roll)?;
+                self.asm.extend([Opcode::Roll.into(), Opcode::Drop.into()]);
             }
         }
         self.stack.remove(index);
@@ -401,7 +411,7 @@ impl Generator {
                     return Err(CompileError::internal("temporary at branch join"));
                 };
                 // Returning paths share the join frame; direct return lowering could remove this padding.
-                self.push_temporary(Int0);
+                self.push_temporary(Opcode::Int0);
                 self.bind_local(name.clone())?;
             }
         }
@@ -424,8 +434,8 @@ impl Generator {
                         self.swap()?;
                     } else {
                         self.push_integer_temporary(depth);
-                        self.pop_temporaries(1, Roll)?;
-                        self.asm.push(Roll.into());
+                        self.pop_temporaries(1, Opcode::Roll)?;
+                        self.asm.push(Opcode::Roll.into());
                         let item = self.stack.remove(index);
                         self.stack.push(item);
                     }
@@ -452,6 +462,7 @@ impl Generator {
 #[cfg(test)]
 mod symbolic_stack_tests {
     use super::*;
+    use crate::models::{ExprKind, Parameter};
 
     #[test]
     fn deep_assignment_uses_put_at_the_remaining_stack_depth() {

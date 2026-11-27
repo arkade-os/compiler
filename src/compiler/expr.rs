@@ -1,12 +1,17 @@
-use super::*;
-use crate::models::*;
+use crate::compiler::asset;
+use crate::compiler::introspection;
+use crate::compiler::ir::Op;
+use crate::models::ExprKind;
+use crate::models::Expression;
+use crate::models::GroupIOSource;
+use crate::opcodes::Opcode;
 use crate::operators::{BinaryOperator, OperatorClass};
 use crate::properties::{GroupIoProperty, ThisProperty};
 
 fn push_literal_asm(lit: &str, asm: &mut Vec<Op>) {
     match lit {
-        "true" => asm.push(Int1.into()),
-        "false" | "0x" => asm.push(Int0.into()),
+        "true" => asm.push(Opcode::Int1.into()),
+        "false" | "0x" => asm.push(Opcode::Int0.into()),
         _ => asm.push(Op::Push(lit.to_string())),
     }
 }
@@ -52,7 +57,7 @@ fn emit_native_struct_asm(value: &Expression, fields: &[(&str, &str)], asm: &mut
             emit_expression_asm(value, asm);
             // Helpers return structs first-field-on-top.
             if matches!(&value.kind, ExprKind::Extracted(_)) {
-                asm.push(Swap.into());
+                asm.push(Opcode::Swap.into());
             }
         }
     }
@@ -81,9 +86,13 @@ pub(crate) fn emit_expression_asm(expr: &Expression, asm: &mut Vec<Op>) {
             presence_only,
         } => {
             emit_expression_asm(path, asm);
-            asm.push(InspectIntentMessage.into());
+            asm.push(Opcode::InspectIntentMessage.into());
             // The opcode leaves the value below its presence flag.
-            asm.push(Op::Opcode(if *presence_only { Nip } else { Verify }));
+            asm.push(Op::Opcode(if *presence_only {
+                Opcode::Nip
+            } else {
+                Opcode::Verify
+            }));
         }
         ExprKind::Tunnel {
             output_index,
@@ -102,7 +111,7 @@ pub(crate) fn emit_expression_asm(expr: &Expression, asm: &mut Vec<Op>) {
                 emit_asset_id_asm(exception, asm);
             }
             asm.push(Op::Push(exceptions.len().to_string()));
-            asm.push(Tunnel.into());
+            asm.push(Opcode::Tunnel.into());
         }
         // Rejected before emission; array declarations emit their elements directly.
         ExprKind::ArrayLiteral(_) => {}
@@ -121,26 +130,26 @@ pub(crate) fn emit_expression_asm(expr: &Expression, asm: &mut Vec<Op>) {
             }
         }
         ExprKind::This(property) => asm.push(Op::Opcode(match property {
-            ThisProperty::ActiveInputIndex => PushCurrentInputIndex,
-            ThisProperty::Expiry => PushExpiry,
+            ThisProperty::ActiveInputIndex => Opcode::PushCurrentInputIndex,
+            ThisProperty::Expiry => Opcode::PushExpiry,
         })),
         ExprKind::AssetLookup {
             source,
             index,
             asset_id,
-        } => emit_asset_lookup_asm(source, index, asset_id, asm),
+        } => asset::emit_asset_lookup_asm(source, index, asset_id, asm),
         ExprKind::AssetHas {
             source,
             index,
             asset_id,
-        } => emit_asset_has_asm(source, index, asset_id, asm),
+        } => asset::emit_asset_has_asm(source, index, asset_id, asm),
         ExprKind::AssetTryLookup {
             source,
             index,
             asset_id,
-        } => emit_asset_lookup_operands(source, index, asset_id, asm),
+        } => asset::emit_asset_lookup_operands(source, index, asset_id, asm),
         ExprKind::AssetCount { source, index } => {
-            emit_asset_count_asm(source, index, asm);
+            asset::emit_asset_count_asm(source, index, asm);
         }
         ExprKind::AssetAt {
             source,
@@ -148,28 +157,28 @@ pub(crate) fn emit_expression_asm(expr: &Expression, asm: &mut Vec<Op>) {
             asset_index,
             property,
         } => {
-            emit_asset_at_asm(source, io_index, asset_index, *property, asm);
+            asset::emit_asset_at_asm(source, io_index, asset_index, *property, asm);
         }
         ExprKind::TxIntrospection { property } => {
-            emit_tx_introspection_asm(*property, asm);
+            introspection::emit_tx_introspection_asm(*property, asm);
         }
         ExprKind::InputIntrospection { index, property } => {
-            emit_input_introspection_asm(index, *property, asm);
+            introspection::emit_input_introspection_asm(index, *property, asm);
         }
         ExprKind::OutputIntrospection { index, property } => {
-            emit_output_introspection_asm(index, *property, asm);
+            introspection::emit_output_introspection_asm(index, *property, asm);
         }
         ExprKind::BinaryOp { left, op, right } => emit_binary_op_asm(left, *op, right, asm),
-        ExprKind::GroupLookup { asset_id } => emit_group_lookup_asm(asset_id, asm),
-        ExprKind::GroupHas { asset_id } => emit_group_has_asm(asset_id, asm),
+        ExprKind::GroupLookup { asset_id } => asset::emit_group_lookup_asm(asset_id, asm),
+        ExprKind::GroupHas { asset_id } => asset::emit_group_has_asm(asset_id, asm),
         ExprKind::GroupControlIs { group, asset_id } => {
-            emit_group_control_is_asm(group, asset_id, asm)
+            asset::emit_group_control_is_asm(group, asset_id, asm)
         }
         ExprKind::GroupProperty { group, property } => {
-            emit_group_property_asm(group, *property, asm);
+            asset::emit_group_property_asm(group, *property, asm);
         }
         ExprKind::AssetGroupsLength => {
-            asm.push(InspectNumAssetGroups.into());
+            asm.push(Opcode::InspectNumAssetGroups.into());
         }
         ExprKind::AssetGroupAt { index } => emit_expression_asm(index, asm),
         ExprKind::GroupIOAccess {
@@ -181,23 +190,23 @@ pub(crate) fn emit_expression_asm(expr: &Expression, asm: &mut Vec<Op>) {
             emit_expression_asm(group, asm);
             emit_expression_asm(io_index, asm);
             match source {
-                GroupIOSource::Inputs => asm.push(Int0.into()),
-                GroupIOSource::Outputs => asm.push(Int1.into()),
+                GroupIOSource::Inputs => asm.push(Opcode::Int0.into()),
+                GroupIOSource::Outputs => asm.push(Opcode::Int1.into()),
             }
-            asm.push(InspectAssetGroup.into());
+            asm.push(Opcode::InspectAssetGroup.into());
             // Extract property if specified
             match property {
                 Some(GroupIoProperty::Amount) => {
-                    asm.push(Nip.into());
-                    asm.push(Nip.into());
+                    asm.push(Opcode::Nip.into());
+                    asm.push(Opcode::Nip.into());
                 }
                 Some(GroupIoProperty::Type) => {
-                    asm.push(Drop.into()); // amount
-                    asm.push(Drop.into()); // data
+                    asm.push(Opcode::Drop.into()); // amount
+                    asm.push(Opcode::Drop.into()); // data
                 }
                 Some(GroupIoProperty::Index) => {
-                    asm.push(Drop.into()); // amount
-                    asm.push(Nip.into()); // type
+                    asm.push(Opcode::Drop.into()); // amount
+                    asm.push(Opcode::Nip.into()); // type
                 }
                 Some(GroupIoProperty::Txid) => {
                     unreachable!("input records are extracted first; output txid fails validation")
@@ -227,7 +236,7 @@ pub(crate) fn emit_expression_asm(expr: &Expression, asm: &mut Vec<Op>) {
             }
             asm.extend(opcodes.iter().copied().map(Op::from));
             if matches!(builtin.lowering, Lowering::Check(_)) {
-                asm.push(Int1.into());
+                asm.push(Opcode::Int1.into());
             }
         }
         ExprKind::Unary { op, value } => {
@@ -241,12 +250,24 @@ pub(crate) fn emit_expression_asm(expr: &Expression, asm: &mut Vec<Op>) {
             }
             match target.as_str() {
                 // Normalize spender-supplied integers before exposing their encoding.
-                "bytes" if data.ty == crate::types::ArkType::Int => asm.push(Bin2Num.into()),
+                "bytes" if data.ty == crate::types::ArkType::Int => {
+                    asm.push(Opcode::Bin2Num.into())
+                }
                 // Constructor bools are not checked like witness bools; normalize to 0/1.
-                "bytes" if data.ty == crate::types::ArkType::Bool => asm.push(NotEqual0.into()),
-                "int" | "bool" => asm.push(NotEqual0.into()),
-                "bytes20" => asm.extend([Size.into(), Op::Push("20".into()), EqualVerify.into()]),
-                "bytes32" => asm.extend([Size.into(), Op::Push("32".into()), EqualVerify.into()]),
+                "bytes" if data.ty == crate::types::ArkType::Bool => {
+                    asm.push(Opcode::NotEqual0.into())
+                }
+                "int" | "bool" => asm.push(Opcode::NotEqual0.into()),
+                "bytes20" => asm.extend([
+                    Opcode::Size.into(),
+                    Op::Push("20".into()),
+                    Opcode::EqualVerify.into(),
+                ]),
+                "bytes32" => asm.extend([
+                    Opcode::Size.into(),
+                    Op::Push("32".into()),
+                    Opcode::EqualVerify.into(),
+                ]),
                 _ => {}
             }
         }
@@ -256,7 +277,7 @@ pub(crate) fn emit_expression_asm(expr: &Expression, asm: &mut Vec<Op>) {
             presence_only,
         } => {
             emit_expression_asm(packet_type, asm);
-            asm.push(InspectPacket.into());
+            asm.push(Opcode::InspectPacket.into());
             emit_packet_result_asm(*presence_only, asm);
         }
         ExprKind::InputPacketInspect {
@@ -266,7 +287,7 @@ pub(crate) fn emit_expression_asm(expr: &Expression, asm: &mut Vec<Op>) {
         } => {
             emit_expression_asm(packet_type, asm);
             emit_expression_asm(index, asm);
-            asm.push(InspectInputPacket.into());
+            asm.push(Opcode::InspectInputPacket.into());
             emit_packet_result_asm(*presence_only, asm);
         }
     }
@@ -275,10 +296,10 @@ pub(crate) fn emit_expression_asm(expr: &Expression, asm: &mut Vec<Op>) {
 /// Reduce a packet inspection's `[bytes, found]` to the flag or to the asserted bytes.
 fn emit_packet_result_asm(presence_only: bool, asm: &mut Vec<Op>) {
     if presence_only {
-        asm.push(Nip.into());
+        asm.push(Opcode::Nip.into());
     } else {
-        asm.push(Int1.into());
-        asm.push(EqualVerify.into());
+        asm.push(Opcode::Int1.into());
+        asm.push(Opcode::EqualVerify.into());
     }
 }
 
@@ -309,7 +330,7 @@ pub(crate) fn emit_contract_instance_asm(
         name: contract_name.to_string(),
         args,
     });
-    asm.push(Int1.into());
+    asm.push(Opcode::Int1.into());
 }
 
 /// Emit assembly for arithmetic or a short-circuit logical operation.
@@ -321,19 +342,19 @@ pub(crate) fn emit_binary_op_asm(
 ) {
     emit_expression_asm(left, asm);
     if op.class() == OperatorClass::Logical {
-        asm.push(If.into());
+        asm.push(Opcode::If.into());
         if op == BinaryOperator::And {
             emit_expression_asm(right, asm);
         } else {
-            asm.push(Int1.into());
+            asm.push(Opcode::Int1.into());
         }
-        asm.push(Else.into());
+        asm.push(Opcode::Else.into());
         if op == BinaryOperator::Or {
             emit_expression_asm(right, asm);
         } else {
-            asm.push(Int0.into());
+            asm.push(Opcode::Int0.into());
         }
-        asm.push(EndIf.into());
+        asm.push(Opcode::EndIf.into());
         return;
     }
     emit_expression_asm(right, asm);
@@ -342,7 +363,7 @@ pub(crate) fn emit_binary_op_asm(
             .iter()
             .any(|operand| operand.ty.is_bytes_like());
     if concat {
-        asm.push(Cat.into());
+        asm.push(Opcode::Cat.into());
     } else {
         asm.extend(
             operator_opcodes(op, left, right)

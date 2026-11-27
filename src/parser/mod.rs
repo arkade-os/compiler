@@ -12,17 +12,12 @@ use pest_derive::Parser;
 #[grammar = "parser/grammar.pest"]
 pub struct ArkadeParser;
 
-// Parser split into domain submodules. Each declares its pub(crate)
-// parse_* helpers; siblings reach them via `use super::*`.
 mod crypto;
 mod expr;
 mod introspection;
 mod tapscript;
 
-pub(crate) use crypto::*;
-pub(crate) use expr::*;
-pub(crate) use introspection::*;
-pub(crate) use tapscript::*;
+pub(crate) use expr::reserved_function_signature;
 
 #[cfg(test)]
 pub fn parse(source: &str) -> Result<Contract, String> {
@@ -42,7 +37,7 @@ pub(crate) fn imports(
         .map(|p| {
             let span = p.as_span().into();
             let path = p.into_inner().next().expect("import path");
-            Ok((parse_string_literal(path.as_str())?, span))
+            Ok((expr::parse_string_literal(path.as_str())?, span))
         })
         .collect()
 }
@@ -409,7 +404,7 @@ pub(crate) fn build_ast(
                         Rule::import_stmt => {
                             // Extract the import path (string literal without quotes)
                             if let Some(path_pair) = inner_pair.into_inner().next() {
-                                let path = parse_string_literal(path_pair.as_str())?;
+                                let path = expr::parse_string_literal(path_pair.as_str())?;
                                 contract.imports.push(path);
                             }
                         }
@@ -447,7 +442,7 @@ fn parse_attribute(pair: Pair<Rule>) -> Result<Attribute, String> {
             let span = arg.as_span().into();
             Ok(match arg.as_rule() {
                 Rule::string_literal => {
-                    AttributeArg::Text(parse_string_literal(arg.as_str())?, span)
+                    AttributeArg::Text(expr::parse_string_literal(arg.as_str())?, span)
                 }
                 _ => AttributeArg::Name(arg.as_str().to_string(), span),
             })
@@ -543,13 +538,13 @@ fn parse_contract(contract: &mut Contract, pair: Pair<Rule>) -> Result<(), Compi
             _ => continue,
         }
         let attributes = std::mem::take(&mut attributes);
-        if function_pair_is_tapscript(&func_pair) {
+        if tapscript::function_pair_is_tapscript(&func_pair) {
             let span = func_pair.as_span().into();
             if contract.is_library {
                 let message = "libraries cannot declare tapscript functions";
                 return Err(CompileError::from(message).at(span));
             }
-            let ts = parse_named_tapscript(func_pair, &parsing_constants)
+            let ts = tapscript::parse_named_tapscript(func_pair, &parsing_constants)
                 .map_err(|error| error.at(span))?;
             contract
                 .tapscripts
@@ -568,7 +563,7 @@ fn parse_const_decl(pair: Pair<Rule>) -> Result<Constant, String> {
         .filter(|p| p.as_rule() != Rule::const_keyword);
     let const_type = parse_data_type(inner.next().ok_or("Missing constant type")?);
     let name = inner.next().ok_or("Missing constant name")?;
-    let value = parse_general_expression(inner.next().ok_or("Missing constant value")?)?;
+    let value = expr::parse_general_expression(inner.next().ok_or("Missing constant value")?)?;
     Ok(Constant {
         name: name.as_str().to_string(),
         const_type,
@@ -668,10 +663,10 @@ fn parse_statement(
                     .into())
                 }
             };
-            let condition = parse_general_expression(expr)?;
+            let condition = expr::parse_general_expression(expr)?;
 
             if let Some(text) = inner.next() {
-                message = Some(parse_string_literal(text.as_str())?);
+                message = Some(expr::parse_string_literal(text.as_str())?);
             }
 
             Statement::Require(condition)
@@ -686,7 +681,7 @@ fn parse_statement(
             let value_pair = inner
                 .next()
                 .ok_or_else(|| "Parse error: Missing value in let binding".to_string())?;
-            let value = parse_general_expression(value_pair)?;
+            let value = expr::parse_general_expression(value_pair)?;
 
             Statement::LetBinding {
                 name,
@@ -704,7 +699,7 @@ fn parse_statement(
             let value_pair = inner
                 .next()
                 .ok_or_else(|| "Parse error: Missing value in assignment".to_string())?;
-            let value = parse_general_expression(value_pair)?;
+            let value = expr::parse_general_expression(value_pair)?;
 
             Statement::VarAssign { target, value }
         }
@@ -713,7 +708,7 @@ fn parse_statement(
             let condition_pair = inner
                 .next()
                 .ok_or_else(|| "Parse error: Missing condition in if statement".to_string())?;
-            let condition = parse_general_expression(condition_pair)?;
+            let condition = expr::parse_general_expression(condition_pair)?;
 
             let then_block = inner
                 .next()
@@ -766,7 +761,7 @@ fn parse_statement(
                         value_var.as_str().to_string(),
                     );
                     let iterable =
-                        parse_general_expression(inner.next().ok_or_else(|| {
+                        expr::parse_general_expression(inner.next().ok_or_else(|| {
                             "Parse error: Missing iterable in for loop".to_string()
                         })?)?;
                     let body = parse_block(
@@ -785,7 +780,7 @@ fn parse_statement(
                 }
                 Rule::for_count_stmt => {
                     let count =
-                        parse_general_expression(inner.next().ok_or_else(|| {
+                        expr::parse_general_expression(inner.next().ok_or_else(|| {
                             "Parse error: Missing count in for loop".to_string()
                         })?)?;
                     let body = parse_block(
@@ -814,8 +809,8 @@ fn parse_statement(
                     };
                     Statement::ForRange {
                         index_var: index_var.as_str().to_string(),
-                        start: Box::new(parse_general_expression(start)?),
-                        end: Box::new(parse_general_expression(end)?),
+                        start: Box::new(expr::parse_general_expression(start)?),
+                        end: Box::new(expr::parse_general_expression(end)?),
                         body: parse_block(function_name, body, constants)?,
                     }
                 }
@@ -842,13 +837,13 @@ fn parse_statement(
                 start: span.start,
                 end: args.as_span().end(),
             };
-            Statement::Call(parse_call(name, args.into_inner().collect(), span)?)
+            Statement::Call(expr::parse_call(name, args.into_inner().collect(), span)?)
         }
         Rule::return_stmt => {
             let value = pair
                 .into_inner()
                 .nth(1)
-                .map(parse_general_expression)
+                .map(expr::parse_general_expression)
                 .transpose()?;
             Statement::Return(value)
         }
@@ -868,7 +863,7 @@ fn parse_statement(
                 Some(value) => Statement::LetBinding {
                     name,
                     declared_type: Some(declared_type),
-                    value: parse_general_expression(value)?,
+                    value: expr::parse_general_expression(value)?,
                 },
                 None => Statement::Declaration {
                     name,

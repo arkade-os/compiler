@@ -1,5 +1,5 @@
 use crate::models::{AssignmentTarget, ExprKind, Expression, Statement};
-use crate::opcodes::Opcode::{self, *};
+use crate::opcodes::Opcode;
 
 use crate::operators::{BinaryOperator, UnaryOperator};
 use crate::types::{ArkType, Scope};
@@ -214,60 +214,88 @@ fn fixed_bytes(value: i128, width: usize) -> Option<String> {
 
 /// Opcodes that leave a minimal 0 or 1, which `NotEqual0` returns unchanged.
 const BOOLEAN_RESULTS: [Opcode; 13] = [
-    Equal,
-    NumEqual,
-    NumNotEqual,
-    LessThan,
-    LessThanOrEqual,
-    GreaterThan,
-    GreaterThanOrEqual,
-    Not,
-    NotEqual0,
-    BoolAnd,
-    BoolOr,
-    CheckSig,
-    CheckSigFromStack,
+    Opcode::Equal,
+    Opcode::NumEqual,
+    Opcode::NumNotEqual,
+    Opcode::LessThan,
+    Opcode::LessThanOrEqual,
+    Opcode::GreaterThan,
+    Opcode::GreaterThanOrEqual,
+    Opcode::Not,
+    Opcode::NotEqual0,
+    Opcode::BoolAnd,
+    Opcode::BoolOr,
+    Opcode::CheckSig,
+    Opcode::CheckSigFromStack,
 ];
 
 /// Rewrites of the output's last tokens, tried in order. A leading token that only guards a
 /// rewrite reappears in its replacement.
 const REWRITES: &[(&[Opcode], &[Opcode])] = &[
-    (&[Int0, Pick], &[Dup]),
-    (&[Dup, Swap], &[Dup]),
-    (&[Int0, Put], &[Nip]),
-    (&[Int1, Pick], &[Over]),
-    (&[Int0, Roll], &[]),
-    (&[Swap, Swap], &[]),
-    (&[Int1, Roll], &[Swap]),
-    (&[Int2, Roll], &[Rot]),
-    (&[Swap, Drop], &[Nip]),
-    (&[Drop, Drop], &[Drop2]),
-    (&[Over, Over], &[Dup2]),
-    (&[Dup, Int2, Pick], &[Dup2, Swap]),
-    (&[Int2, Pick, Over], &[Dup3, Nip]),
-    (&[Int2, Pick, Int4, Pick], &[Over2, Swap]),
-    (&[Rot, Swap, Rot], &[Swap]),
-    (&[Rot, Int3, Roll], &[Swap2, Swap]),
-    (&[Int3, Roll, Int3, Roll], &[Swap2]),
-    (&[Int4, Roll, Int5, Roll], &[Rot2, Swap]),
-    (&[Int1, Add], &[Add1]),
-    (&[Int1, Add1], &[Int2]),
-    (&[Int1, Verify], &[]),
-    (&[Equal, Verify], &[EqualVerify]),
-    (&[NumEqual, Verify], &[NumEqualVerify]),
-    (&[Dup, EqualVerify], &[Drop]),
+    (&[Opcode::Int0, Opcode::Pick], &[Opcode::Dup]),
+    (&[Opcode::Dup, Opcode::Swap], &[Opcode::Dup]),
+    (&[Opcode::Int0, Opcode::Put], &[Opcode::Nip]),
+    (&[Opcode::Int1, Opcode::Pick], &[Opcode::Over]),
+    (&[Opcode::Int0, Opcode::Roll], &[]),
+    (&[Opcode::Swap, Opcode::Swap], &[]),
+    (&[Opcode::Int1, Opcode::Roll], &[Opcode::Swap]),
+    (&[Opcode::Int2, Opcode::Roll], &[Opcode::Rot]),
+    (&[Opcode::Swap, Opcode::Drop], &[Opcode::Nip]),
+    (&[Opcode::Drop, Opcode::Drop], &[Opcode::Drop2]),
+    (&[Opcode::Over, Opcode::Over], &[Opcode::Dup2]),
+    (
+        &[Opcode::Dup, Opcode::Int2, Opcode::Pick],
+        &[Opcode::Dup2, Opcode::Swap],
+    ),
+    (
+        &[Opcode::Int2, Opcode::Pick, Opcode::Over],
+        &[Opcode::Dup3, Opcode::Nip],
+    ),
+    (
+        &[Opcode::Int2, Opcode::Pick, Opcode::Int4, Opcode::Pick],
+        &[Opcode::Over2, Opcode::Swap],
+    ),
+    (&[Opcode::Rot, Opcode::Swap, Opcode::Rot], &[Opcode::Swap]),
+    (
+        &[Opcode::Rot, Opcode::Int3, Opcode::Roll],
+        &[Opcode::Swap2, Opcode::Swap],
+    ),
+    (
+        &[Opcode::Int3, Opcode::Roll, Opcode::Int3, Opcode::Roll],
+        &[Opcode::Swap2],
+    ),
+    (
+        &[Opcode::Int4, Opcode::Roll, Opcode::Int5, Opcode::Roll],
+        &[Opcode::Rot2, Opcode::Swap],
+    ),
+    (&[Opcode::Int1, Opcode::Add], &[Opcode::Add1]),
+    (&[Opcode::Int1, Opcode::Add1], &[Opcode::Int2]),
+    (&[Opcode::Int1, Opcode::Verify], &[]),
+    (&[Opcode::Equal, Opcode::Verify], &[Opcode::EqualVerify]),
+    (
+        &[Opcode::NumEqual, Opcode::Verify],
+        &[Opcode::NumEqualVerify],
+    ),
+    (&[Opcode::Dup, Opcode::EqualVerify], &[Opcode::Drop]),
     // Packet lookups push a 0 or 1 presence flag.
     (
-        &[InspectPacket, Int1, EqualVerify],
-        &[InspectPacket, Verify],
+        &[Opcode::InspectPacket, Opcode::Int1, Opcode::EqualVerify],
+        &[Opcode::InspectPacket, Opcode::Verify],
     ),
     (
-        &[InspectInputPacket, Int1, EqualVerify],
-        &[InspectInputPacket, Verify],
+        &[
+            Opcode::InspectInputPacket,
+            Opcode::Int1,
+            Opcode::EqualVerify,
+        ],
+        &[Opcode::InspectInputPacket, Opcode::Verify],
     ),
-    (&[CheckSig, Verify], &[CheckSigVerify]),
-    (&[Not, Not], &[NotEqual0]),
-    (&[NotEqual0, Not], &[Not]),
+    (
+        &[Opcode::CheckSig, Opcode::Verify],
+        &[Opcode::CheckSigVerify],
+    ),
+    (&[Opcode::Not, Opcode::Not], &[Opcode::NotEqual0]),
+    (&[Opcode::NotEqual0, Opcode::Not], &[Opcode::Not]),
 ];
 
 /// The optimized instructions, and how many items the rewrites can add to the unoptimized
@@ -276,18 +304,22 @@ pub(super) fn optimize(mut asm: Vec<Spanned>) -> (Vec<Spanned>, usize) {
     // The NIPs clear every item below the final truthy value. The final clean-stack truth check
     // already enforces a trailing `Verify Int1`, so a failing last requirement reports a false
     // stack entry instead when the NIPs are kept.
-    let nips = asm.iter().rev().take_while(|(op, _)| op.is(Nip)).count();
+    let nips = asm
+        .iter()
+        .rev()
+        .take_while(|(op, _)| op.is(Opcode::Nip))
+        .count();
     let body = asm.len() - nips;
     let mut kept = asm.clone();
-    if body >= 2 && kept[body - 2].0.is(Verify) && kept[body - 1].0.is(Int1) {
+    if body >= 2 && kept[body - 2].0.is(Opcode::Verify) && kept[body - 1].0.is(Opcode::Int1) {
         kept.drain(body - 2..body);
     }
     // Verifying the final value first lets the cleared items go in pairs with Drop2; a failing
     // last requirement then reports `Verify failed`.
     asm.truncate(body);
-    asm.push((Verify.into(), None));
-    asm.extend(std::iter::repeat_n((Drop.into(), None), nips));
-    asm.push((Int1.into(), None));
+    asm.push((Opcode::Verify.into(), None));
+    asm.extend(std::iter::repeat_n((Opcode::Drop.into(), None), nips));
+    asm.push((Opcode::Int1.into(), None));
 
     let (kept, dropped) = (rewrite(kept), rewrite(asm));
     // An Arkade Script that only leaves its witness for the final check would be empty.
@@ -308,7 +340,7 @@ fn rewrite(asm: Vec<Spanned>) -> (Vec<Spanned>, usize) {
         loop {
             let len = optimized.len();
             if len >= 2
-                && optimized[len - 1].0.is(NotEqual0)
+                && optimized[len - 1].0.is(Opcode::NotEqual0)
                 && BOOLEAN_RESULTS
                     .iter()
                     .any(|&opcode| optimized[len - 2].0.is(opcode))
@@ -343,9 +375,9 @@ fn peak(ops: &[Opcode]) -> usize {
     for op in ops {
         let (pops, pushes) = match op {
             // Their depth is the operand pushed before them.
-            Pick => (1, 1),
-            Roll => (1, 0),
-            Put => (2, 0),
+            Opcode::Pick => (1, 1),
+            Opcode::Roll => (1, 0),
+            Opcode::Put => (2, 0),
             op => op
                 .stack_effect()
                 .expect("rewrite opcodes have a stack effect"),
@@ -360,7 +392,13 @@ fn peak(ops: &[Opcode]) -> usize {
 mod tests {
     use super::*;
     use crate::compiler::Op;
-    use crate::opcodes::*;
+    use crate::opcodes::{
+        OP_0, OP_0NOTEQUAL, OP_1, OP_1ADD, OP_2, OP_2DROP, OP_2DUP, OP_2OVER, OP_2ROT, OP_2SWAP,
+        OP_3, OP_3DUP, OP_4, OP_5, OP_ADD, OP_CHECKSIG, OP_CHECKSIGFROMSTACK, OP_CHECKSIGVERIFY,
+        OP_DROP, OP_DUP, OP_ENDIF, OP_EQUAL, OP_EQUALVERIFY, OP_INSPECTPACKET, OP_LESSTHAN, OP_NIP,
+        OP_NOT, OP_NUMEQUAL, OP_NUMEQUALVERIFY, OP_OVER, OP_PICK, OP_PUT, OP_ROLL, OP_ROT, OP_SWAP,
+        OP_VERIFY,
+    };
 
     /// Instructions for assembly tokens: opcodes, `<binding>` reads and constants.
     fn ops(tokens: Vec<String>) -> Vec<Spanned> {
@@ -401,7 +439,13 @@ mod tests {
             .iter()
             .filter(|(from, to)| peak(to) > peak(from))
             .collect();
-        assert_eq!(raising, [&(&[Int2, Pick, Over][..], &[Dup3, Nip][..])]);
+        assert_eq!(
+            raising,
+            [&(
+                &[Opcode::Int2, Opcode::Pick, Opcode::Over][..],
+                &[Opcode::Dup3, Opcode::Nip][..]
+            )]
+        );
         let asm = ["<a>", "<b>", "<c>", OP_2, OP_PICK, OP_OVER].map(String::from);
         assert_eq!(super::rewrite(ops(asm.to_vec())).1, 1);
     }
@@ -421,7 +465,10 @@ mod tests {
         for &(from, to) in REWRITES {
             assert!(to.len() < from.len(), "{from:?}");
             // These take their depth from an operand; the shuffle test covers them.
-            if from.iter().any(|op| [Pick, Roll, Put].contains(op)) {
+            if from
+                .iter()
+                .any(|op| [Opcode::Pick, Opcode::Roll, Opcode::Put].contains(op))
+            {
                 continue;
             }
             assert_eq!(height(from), height(to), "{from:?}");
