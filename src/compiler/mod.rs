@@ -457,8 +457,8 @@ pub(crate) fn prepare(
                         replacement: suggestion.replacement.clone(),
                     })
                 });
-                Diagnostic::error(file, i.message.clone())
-                    .with_code(i.code)
+                Diagnostic::error(file, i.to_string())
+                    .with_code(i.kind.code())
                     .with_span(i.span)
                     .with_suggestions(suggestions.collect())
             })
@@ -544,9 +544,8 @@ pub(crate) fn emit(
 
     let output_issues = validator::validate_output(&json);
     if !output_issues.is_empty() {
-        let messages = output_issues.into_iter().map(|issue| issue.message);
         return Err(CompileErrorKind::OutputValidation {
-            messages: messages.collect(),
+            errors: output_issues,
         }
         .into());
     }

@@ -1,7 +1,8 @@
 //! Checks that every Asset ID operand (`lookup`, `has`, `tryLookup`, `controlIs`) is an `AssetId`
 //! and that a literal's constant `gidx` fits in a u16.
 
-use super::ValidationIssue;
+use super::error::ValueContext;
+use super::{ValidationError, ValidationIssue};
 use crate::compiler::constants;
 use crate::models::{
     self, AssignmentTarget, Contract, ExprKind, Expression, LocatedStatement, Statement,
@@ -85,7 +86,8 @@ fn check_asset_id_expr(
         | ExprKind::GroupHas { asset_id }
         | ExprKind::GroupControlIs { asset_id, .. } => {
             let asset = TypeName::Named("AssetId".to_string());
-            super::functions::validate_value(&asset, asset_id, structs, "asset id", issues);
+            let context = ValueContext::AssetId;
+            super::functions::validate_value(&asset, asset_id, structs, context, issues);
         }
         _ => {}
     }
@@ -105,14 +107,11 @@ pub(super) fn validate_gidx(fields: &[(String, Expression)], issues: &mut Vec<Va
     }
     match constants::evaluate(gidx, &mut constants::no_names) {
         Ok(v) if v.parse::<u16>().is_ok() => {}
-        Ok(v) => issues.push(
-            ValidationIssue::error(format!("asset id gidx {v} is out of range 0..65535"))
-                .at(gidx.span),
-        ),
-        Err(error) => issues.push(
-            ValidationIssue::error(format!("asset id gidx '{}': {}", gidx.source_text(), error))
-                .at(gidx.span),
-        ),
+        Ok(value) => issues.push(ValidationError::GidxOutOfRange { value }.at(gidx.span)),
+        Err(error) => {
+            let text = gidx.source_text();
+            issues.push(ValidationError::GidxNotConstant { text, error }.at(gidx.span))
+        }
     }
 }
 

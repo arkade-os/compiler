@@ -9,6 +9,7 @@ use crate::models::{Path, TypeName};
 use crate::opcodes::Opcode;
 use crate::operators::BinaryOperator;
 use crate::parser::ParseError;
+use crate::validator::ValidationError;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum CompileErrorKind {
@@ -116,9 +117,9 @@ pub(crate) enum CompileErrorKind {
     ElementSizeLimit {
         function: String,
     },
-    /// The validator's messages for the finished artifact.
+    /// The validator's self-check of the finished artifact.
     OutputValidation {
-        messages: Vec<String>,
+        errors: Vec<ValidationError>,
     },
     UnassignedTapscriptGroups,
     Serialize {
@@ -289,12 +290,12 @@ impl fmt::Display for CompileErrorKind {
                 "function '{function}' pushes a value above the VM element limit of \
                  {MAX_ELEMENT_SIZE}"
             ),
-            CompileErrorKind::OutputValidation { messages } => {
-                for (index, message) in messages.iter().enumerate() {
+            CompileErrorKind::OutputValidation { errors } => {
+                for (index, error) in errors.iter().enumerate() {
                     if index > 0 {
                         f.write_str("; ")?;
                     }
-                    write!(f, "output validation error: {message}")?;
+                    write!(f, "output validation error: {error}")?;
                 }
                 Ok(())
             }

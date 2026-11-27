@@ -709,7 +709,7 @@ impl Loaded {
         let source = files.get(path).map_or("", String::as_str);
         // Loading prepared this module as an import, without the checks only an entry gets.
         let compiled = match validator::validate_ast(&module.contract, true).first() {
-            Some(issue) => Err(diagnostics::located(&issue.message, issue.span, source)),
+            Some(issue) => Err(diagnostics::located(&issue.to_string(), issue.span, source)),
             None => self
                 .emit(path, files, filesystem, options, levels, hashes)
                 .map_err(|error| match error {

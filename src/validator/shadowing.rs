@@ -3,7 +3,8 @@
 
 use std::collections::HashSet;
 
-use super::ValidationIssue;
+use super::error::Declared;
+use super::{ValidationError, ValidationIssue};
 use crate::models::{AssignmentTarget, Contract, LocatedStatement, Path, Statement};
 
 pub(super) fn check_shadowing(contract: &Contract, issues: &mut Vec<ValidationIssue>) {
@@ -16,23 +17,20 @@ pub(super) fn check_shadowing(contract: &Contract, issues: &mut Vec<ValidationIs
 
     for tapscript in &contract.tapscripts {
         for input in &tapscript.inputs {
+            let (input_name, tapscript) = (input.name.clone(), tapscript.name.clone());
             if ctor_names.contains(input.name.as_str()) {
-                issues.push(
-                    ValidationIssue::error(format!(
-                        "input '{}' in tapscript '{}' shadows constructor parameter '{}'",
-                        input.name, tapscript.name, input.name
-                    ))
-                    .at(input.span),
-                );
+                let error = ValidationError::InputShadowsParameter {
+                    input: input_name.clone(),
+                    tapscript: tapscript.clone(),
+                };
+                issues.push(error.at(input.span));
             }
             if const_names.contains(input.name.as_str()) {
-                issues.push(
-                    ValidationIssue::error(format!(
-                        "input '{}' in tapscript '{}' shadows constant '{}'",
-                        input.name, tapscript.name, input.name
-                    ))
-                    .at(input.span),
-                );
+                let error = ValidationError::InputShadowsConstant {
+                    input: input_name,
+                    tapscript,
+                };
+                issues.push(error.at(input.span));
             }
         }
     }
@@ -45,17 +43,20 @@ pub(super) fn check_shadowing(contract: &Contract, issues: &mut Vec<ValidationIs
             .map(|s| s.to_string())
             .collect();
         for param in &func.parameters {
+            let (parameter, function) = (param.name.clone(), func.name.clone());
             if ctor_names.contains(param.name.as_str()) {
-                issues.push(ValidationIssue::error(format!(
-                    "parameter '{}' in function '{}' shadows constructor parameter '{}'",
-                    param.name, func.name, param.name
-                )));
+                let error = ValidationError::ParameterShadowsParameter {
+                    parameter: parameter.clone(),
+                    function: function.clone(),
+                };
+                issues.push(error.into());
             }
             if const_names.contains(param.name.as_str()) {
-                issues.push(ValidationIssue::error(format!(
-                    "parameter '{}' in function '{}' shadows constant '{}'",
-                    param.name, func.name, param.name
-                )));
+                let error = ValidationError::ParameterShadowsConstant {
+                    parameter,
+                    function,
+                };
+                issues.push(error.into());
             }
             seed.insert(param.name.clone());
         }
@@ -93,16 +94,16 @@ fn check_ctor_assignment(
                     AssignmentTarget::ArrayIndex { array, .. } => array.clone(),
                 };
                 let root = name.root.as_str();
+                let function = fname.to_string();
                 if ctor_names.contains(root) {
-                    issues.push(ValidationIssue::error(format!(
-                        "cannot assign to constructor parameter '{name}' in function '{fname}'; \
-                         constructor parameters are immutable"
-                    )));
+                    let error = ValidationError::ConstructorParameterAssigned {
+                        name: name.clone(),
+                        function: function.clone(),
+                    };
+                    issues.push(error.into());
                 }
                 if const_names.contains(root) {
-                    issues.push(ValidationIssue::error(format!(
-                        "cannot assign to constant '{name}' in function '{fname}'"
-                    )));
+                    issues.push(ValidationError::ConstantAssigned { name, function }.into());
                 }
             }
             Statement::IfElse {
@@ -145,15 +146,15 @@ fn walk_scope(
         let first = issues.len();
         match &stmt.statement {
             Statement::Declaration { name, .. } | Statement::LetBinding { name, .. } => {
-                super::validate_source_identifier(
-                    name,
-                    &format!("binding in function '{fname}'"),
-                    issues,
-                );
+                let function = fname.to_string();
+                let context = Declared::FunctionBinding { function };
+                super::validate_source_identifier(name, context, issues);
                 if in_scope(stack, name) {
-                    issues.push(ValidationIssue::error(format!(
-                        "binding '{name}' in function '{fname}' shadows an in-scope binding"
-                    )));
+                    let error = ValidationError::ShadowsBinding {
+                        name: name.clone(),
+                        function: fname.to_string(),
+                    };
+                    issues.push(error.into());
                 } else {
                     stack
                         .last_mut()
@@ -167,26 +168,25 @@ fn walk_scope(
                 body,
                 ..
             } => {
-                super::validate_source_identifier(
-                    index_var,
-                    &format!("loop variable in function '{fname}'"),
-                    issues,
-                );
-                super::validate_source_identifier(
-                    value_var,
-                    &format!("loop variable in function '{fname}'"),
-                    issues,
-                );
+                for name in [index_var, value_var] {
+                    let function = fname.to_string();
+                    let context = Declared::LoopVariable { function };
+                    super::validate_source_identifier(name, context, issues);
+                }
                 if index_var == value_var {
-                    issues.push(ValidationIssue::error(format!(
-                        "loop variables in function '{fname}' must differ; both are named '{index_var}'"
-                    )));
+                    let error = ValidationError::SameLoopVariables {
+                        function: fname.to_string(),
+                        name: index_var.clone(),
+                    };
+                    issues.push(error.into());
                 }
                 for v in [index_var, value_var] {
                     if in_scope(stack, v) {
-                        issues.push(ValidationIssue::error(format!(
-                            "loop variable '{v}' in function '{fname}' shadows an in-scope binding"
-                        )));
+                        let error = ValidationError::LoopVariableShadows {
+                            name: v.clone(),
+                            function: fname.to_string(),
+                        };
+                        issues.push(error.into());
                     }
                 }
                 let mut frame = HashSet::new();
@@ -199,15 +199,15 @@ fn walk_scope(
             Statement::ForRange {
                 index_var, body, ..
             } => {
-                super::validate_source_identifier(
-                    index_var,
-                    &format!("loop variable in function '{fname}'"),
-                    issues,
-                );
+                let function = fname.to_string();
+                let context = Declared::LoopVariable { function };
+                super::validate_source_identifier(index_var, context, issues);
                 if in_scope(stack, index_var) {
-                    issues.push(ValidationIssue::error(format!(
-                        "loop variable '{index_var}' in function '{fname}' shadows an in-scope binding"
-                    )));
+                    let error = ValidationError::LoopVariableShadows {
+                        name: index_var.clone(),
+                        function: fname.to_string(),
+                    };
+                    issues.push(error.into());
                 }
                 stack.push(HashSet::from([index_var.clone()]));
                 walk_scope(body, fname, stack, issues);
