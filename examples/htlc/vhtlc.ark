@@ -1,0 +1,98 @@
+pragma arkade ^0.1.0;
+
+// VHTLC: a hash time-locked lockup that works as a virtual output and as an L1 output.
+//
+// Every path that runs without a party online names one key, the operator key tweaked by the
+// covenant it enforces, so an executor can settle it from a template:
+// - nonInteractiveClaim: anyone holding the preimage pays the receiver
+// - nonInteractiveRefund: receiver can "cancel" and sends the funds back to the sender
+// - nonInteractiveRefundWithoutReceiver: after refundLocktime, anyone pays the sender
+contract VHTLC(
+  pubkey sender,
+  pubkey receiver,
+  bytes20 preimageHash,
+  int refundLocktime,
+  int unilateralClaimDelay,
+  int unilateralRefundDelay,
+  int unilateralRefundWithoutReceiverDelay,
+  bytes32 receiverScript,
+  bytes32 senderScript,
+  int maxFee
+) {
+  private function pay(bytes32 program) {
+    int o = this.activeInputIndex;
+    if (tx.proof.has("type")) {
+      require(tx.proof.field("type") == "register", "proof does not register for a batch");
+      require(!tx.proof.has("onchain_output_indexes.0"), "batch payout cannot be an onchain output");
+      require(o == 1, "HTLC is not the proof's first input");
+      o = 0;
+    }
+    let paid = tx.outputs[o].script;
+    require(paid.version == 1, "payout is not P2TR");
+    require(paid.program == program, "payout pays another program");
+    require(tx.outputs[o].value >= tx.input.current.value - maxFee, "fee above maxFee");
+    require(this.tunnel(o, {script: false, value: false, assets: true}), "assets not kept");
+    if (tx.packet.has(0)) {
+      require(
+        tx.assetGroups.length == tx.inputs[this.activeInputIndex].assets.length,
+        "asset group the HTLC does not hold"
+      );
+    }
+  }
+
+  @allow(unsigned-spend-path, "pays receiver covenant")
+  function payReceiver() {
+    pay(receiverScript);
+  }
+
+  @allow(unsigned-spend-path, "pays sender covenant")
+  function paySender() {
+    pay(senderScript);
+  }
+
+  function claim(bytes32 preimage, signature receiverSig, signature operatorSig) tapscript {
+    require(hash160(preimage) == preimageHash);
+    require(checkMultisig([receiver, operator], [receiverSig, operatorSig]));
+  }
+
+  function nonInteractiveClaim(bytes32 preimage, signature operatorSig) tapscript {
+    require(hash160(preimage) == preimageHash);
+    require(checkSig(operatorSig, tweak(operator, payReceiver)));
+  }
+
+  function refund(signature senderSig, signature receiverSig, signature operatorSig) tapscript {
+    require(checkMultisig([sender, receiver, operator], [senderSig, receiverSig, operatorSig]));
+  }
+
+  function refundWithoutReceiver(signature senderSig, signature operatorSig) tapscript {
+    require(after(refundLocktime));
+    require(checkMultisig([sender, operator], [senderSig, operatorSig]));
+  }
+
+  function unilateralClaim(bytes32 preimage, signature receiverSig) tapscript {
+    require(hash160(preimage) == preimageHash);
+    require(older(unilateralClaimDelay));
+    require(checkSig(receiverSig, receiver));
+  }
+
+  function unilateralRefund(signature senderSig, signature receiverSig) tapscript {
+    require(older(unilateralRefundDelay));
+    require(checkMultisig([sender, receiver], [senderSig, receiverSig]));
+  }
+
+  function unilateralRefundWithoutReceiver(signature senderSig) tapscript {
+    require(older(unilateralRefundWithoutReceiverDelay));
+    require(checkSig(senderSig, sender));
+  }
+
+
+
+  function nonInteractiveRefund(signature receiverSig, signature operatorSig) tapscript {
+    require(checkMultisig([receiver, tweak(operator, paySender)], [receiverSig, operatorSig]));
+  }
+
+  function nonInteractiveRefundWithoutReceiver(signature operatorSig) tapscript {
+    require(after(refundLocktime));
+    require(checkSig(operatorSig, tweak(operator, paySender)));
+  }
+}
