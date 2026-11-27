@@ -13,7 +13,6 @@ pub(crate) type Result<T, E = ParseError> = result::Result<T, E>;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum ParseError {
     Syntax(Box<PestError<Rule>>),
-    /// A grammar node the parse tree lacks.
     Missing {
         part: &'static str,
     },

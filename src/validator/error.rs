@@ -1,5 +1,4 @@
-//! Errors the validator reports: problems in the source, and self-check failures of the emitted
-//! artifact.
+//! Errors in the source, and self-check failures of the emitted artifact.
 
 use std::{error, fmt};
 
@@ -370,12 +369,6 @@ pub(crate) enum ValidationError {
         label: &'static str,
         name: String,
     },
-    BindingType {
-        label: &'static str,
-        name: String,
-        actual: TypeName,
-        expected: TypeName,
-    },
     GidxOutOfRange {
         value: String,
     },
@@ -443,7 +436,6 @@ pub(crate) enum ValidationError {
     },
 }
 
-/// What a declared name or type belongs to, as the identifier and unknown-type errors name it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Declared {
     Library,
@@ -464,7 +456,6 @@ pub(crate) enum Declared {
     LocalDeclaration { function: String },
 }
 
-/// Where a value is checked against an expected type.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum ValueContext {
     Return { function: String },
@@ -999,15 +990,6 @@ impl fmt::Display for ValidationError {
                 f,
                 "{label} '{name}' may be uninitialized; assign it a value before use (initialize \
                  arrays and structs as a whole)"
-            ),
-            ValidationError::BindingType {
-                label,
-                name,
-                actual,
-                expected,
-            } => write!(
-                f,
-                "{label} '{name}' has type '{actual}', expected '{expected}'"
             ),
             ValidationError::GidxOutOfRange { value } => {
                 write!(f, "asset id gidx {value} is out of range 0..65535")

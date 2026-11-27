@@ -37,7 +37,6 @@ pub(crate) enum ConstantError {
         name: String,
     },
     TooDeep,
-    /// A failure while evaluating constant `name`.
     InConstant {
         name: String,
         error: Box<ConstantError>,
@@ -78,7 +77,6 @@ pub(crate) enum ConstantError {
 }
 
 impl ConstantError {
-    /// What a resolver returns for a name it cannot evaluate.
     pub(crate) fn unknown(path: &Path) -> Self {
         ConstantError::UnknownConstant { name: path.key() }
     }

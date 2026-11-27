@@ -217,7 +217,6 @@ struct Module {
 /// `load()`'s failure: one error, or the diagnostics `compiler::prepare` collected for one
 /// file, with that file's source.
 pub(crate) enum LoadFailure {
-    /// An error `load` has yet to tie to the file it was loading.
     Message(CompileError),
     /// A diagnostic, and the string the `compile_*` functions return.
     Located(Box<Diagnostic>, String),

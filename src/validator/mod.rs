@@ -33,7 +33,6 @@ use shadowing::check_shadowing;
 pub(crate) use functions::falls_through;
 pub(crate) use output::validate_output;
 
-/// A validation error: the contract cannot be safely emitted.
 #[derive(Debug, Clone)]
 pub struct ValidationIssue {
     pub kind: ValidationError,

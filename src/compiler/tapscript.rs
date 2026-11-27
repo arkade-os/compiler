@@ -17,7 +17,6 @@ use crate::opcodes::{
 };
 use crate::types::{self, bytes_of_width, digest_accepts, ArkType};
 
-/// Why a tapscript is not a leaf arkd accepts. Each names the tapscript it is about.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum TapscriptError {
     ConditionAfterMultisig {

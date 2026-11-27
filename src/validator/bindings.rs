@@ -217,7 +217,7 @@ fn validate_binding_statements(
                     if !name.segments.is_empty()
                         && find_binding(scopes, root).is_some_and(|binding| !binding.initialized)
                     {
-                        validate_named_binding(root, None, "binding", scopes, issues);
+                        validate_named_binding(root, "binding", scopes, issues);
                     }
                 }
                 let target_type = match target {
@@ -406,7 +406,7 @@ fn validate_binding_statements(
                     ExprKind::Name(path) if path.key() != "tx.assetGroups" => {
                         let name = &path.key();
                         if find_binding(scopes, name).is_some_and(|binding| !binding.initialized) {
-                            validate_named_binding(name, None, "array", scopes, issues);
+                            validate_named_binding(name, "array", scopes, issues);
                         }
                         match find_binding(scopes, name) {
                             Some(BindingInfo {
@@ -522,7 +522,6 @@ fn validate_binding_statements(
 
 pub(super) fn validate_named_binding(
     name: &str,
-    expected: Option<ArkType>,
     label: &'static str,
     scopes: &BindingScopes,
     issues: &mut Vec<ValidationIssue>,
@@ -547,19 +546,6 @@ pub(super) fn validate_named_binding(
         Some(binding) if !binding.initialized => {
             let name = name.to_string();
             issues.push(ValidationError::Uninitialized { label, name }.into())
-        }
-        Some(binding)
-            if expected
-                .as_ref()
-                .is_some_and(|expected| binding.binding_type != *expected) =>
-        {
-            let error = ValidationError::BindingType {
-                label,
-                name: name.to_string(),
-                actual: (&binding.binding_type).into(),
-                expected: (&expected.expect("checked above")).into(),
-            };
-            issues.push(error.into());
         }
         Some(_) => {}
     }

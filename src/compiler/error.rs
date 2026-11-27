@@ -17,31 +17,14 @@ pub(crate) enum CompileErrorKind {
     Load(Box<LoadError>),
     Constant(ConstantError),
     Internal(InternalError),
-    /// An emission helper reached with an expression of the wrong shape.
-    Expected {
-        what: &'static str,
-    },
-    NotAnArray {
-        array: Path,
-    },
-    LengthOfNonArray {
-        array: Path,
-    },
-    UndefinedBinding {
-        name: Path,
-    },
-    UndefinedArrayBinding {
-        array: Path,
-    },
-    UndeclaredAssignment {
-        name: Path,
-    },
-    ConstructorParameterAssigned {
-        name: Path,
-    },
-    ImmutableConstructorParameter {
-        name: Path,
-    },
+    Expected { what: &'static str },
+    NotAnArray { array: Path },
+    LengthOfNonArray { array: Path },
+    UndefinedBinding { name: Path },
+    UndefinedArrayBinding { array: Path },
+    UndeclaredAssignment { name: Path },
+    ConstructorParameterAssigned { name: Path },
+    ImmutableConstructorParameter { name: Path },
     InvalidMultisigThreshold,
     MultisigThresholdRange,
     MultisigKeysNotArray,
@@ -56,78 +39,34 @@ pub(crate) enum CompileErrorKind {
     UnclosedLogicalBranch,
     InvalidCallMarker,
     InvalidComparisonMarker,
-    ExpressionItems {
-        produced: usize,
-        expected: usize,
-    },
-    UndefinedComparison {
-        op: BinaryOperator,
-        ty: TypeName,
-    },
+    ExpressionItems { produced: usize, expected: usize },
+    UndefinedComparison { op: BinaryOperator, ty: TypeName },
     MissingFunctionResult,
     FunctionResultNotTemporary,
-    ExpectedArrayValue {
-        ty: TypeName,
-    },
-    ArrayElementCount {
-        length: usize,
-    },
-    ExpectedStructValue {
-        ty: TypeName,
-    },
-    UnknownStruct {
-        ty: TypeName,
-    },
-    MissingField {
-        name: String,
-    },
-    UnknownFunction {
-        name: String,
-    },
-    WrongArgumentCount {
-        name: String,
-    },
+    ExpectedArrayValue { ty: TypeName },
+    ArrayElementCount { length: usize },
+    ExpectedStructValue { ty: TypeName },
+    UnknownStruct { ty: TypeName },
+    MissingField { name: String },
+    UnknownFunction { name: String },
+    WrongArgumentCount { name: String },
     ReturnOutsideFunction,
     ReturnMismatch,
     UnsupportedLoopIterable,
     LoopCountNotConstant,
     LoopRangeNotConstant,
-    LoopRangeReversed {
-        start: usize,
-        end: usize,
-    },
-    IndexOutOfRange {
-        index: String,
-        array: String,
-    },
-    UnknownType {
-        declared_type: TypeName,
-    },
-    RecursiveStruct {
-        declared_type: TypeName,
-    },
-    StackLimit {
-        function: String,
-        peak: usize,
-    },
-    ScriptSizeLimit {
-        function: String,
-        size: usize,
-    },
-    ElementSizeLimit {
-        function: String,
-    },
-    /// The validator's self-check of the finished artifact.
-    OutputValidation {
-        errors: Vec<ValidationError>,
-    },
+    LoopRangeReversed { start: usize, end: usize },
+    IndexOutOfRange { index: String, array: String },
+    UnknownType { declared_type: TypeName },
+    RecursiveStruct { declared_type: TypeName },
+    StackLimit { function: String, peak: usize },
+    ScriptSizeLimit { function: String, size: usize },
+    ElementSizeLimit { function: String },
+    OutputValidation { errors: Vec<ValidationError> },
     UnassignedTapscriptGroups,
-    Serialize {
-        message: String,
-    },
+    Serialize { message: String },
 }
 
-/// A broken compiler invariant: a bug, never a problem in the source.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum InternalError {
     UnknownExpressionOpcode { opcode: Opcode },

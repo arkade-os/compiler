@@ -475,12 +475,12 @@ pub(super) fn validate_binding_expression(
             issues.push(unknown_member(path).into());
         }
         ExprKind::Name(path) if path.segments.is_empty() => {
-            validate_named_binding(&path.root, None, "binding", scopes, issues);
+            validate_named_binding(&path.root, "binding", scopes, issues);
         }
         ExprKind::Name(path) | ExprKind::ArrayIndex { array: path, .. }
             if find_binding(scopes, &path.root).is_none() =>
         {
-            validate_named_binding(&path.root, None, "binding", scopes, issues);
+            validate_named_binding(&path.root, "binding", scopes, issues);
         }
         // A root of unknown type was reported where its type was lost.
         _ if expression.binding_path().is_some_and(|path| {
@@ -555,7 +555,7 @@ pub(super) fn validate_binding_expression(
             Some((array, "length")) if find_binding(scopes, &path.key()).is_none() => {
                 validate_array_length(&array.key(), scopes, issues);
             }
-            _ => validate_named_binding(&path.key(), None, "field", scopes, issues),
+            _ => validate_named_binding(&path.key(), "field", scopes, issues),
         },
         ExprKind::ContractInstance { args, .. } => {
             for argument in args {
@@ -644,7 +644,7 @@ pub(super) fn validate_array_index(
     issues: &mut Vec<ValidationIssue>,
 ) -> Option<(ArkType, BindingSource)> {
     if find_binding(scopes, array).is_some_and(|binding| !binding.initialized) {
-        validate_named_binding(array, None, "array", scopes, issues);
+        validate_named_binding(array, "array", scopes, issues);
     }
     let array_info = match find_binding(scopes, array) {
         None => {

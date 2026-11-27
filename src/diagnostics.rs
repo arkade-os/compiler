@@ -174,7 +174,6 @@ impl Diagnostic {
     }
 }
 
-/// A code generation failure: a problem in the source, or a broken compiler invariant.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct CompileError {
     pub kind: CompileErrorKind,

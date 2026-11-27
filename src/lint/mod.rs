@@ -201,7 +201,6 @@ impl Lint {
     }
 }
 
-/// An id that names no [`Lint`], category or group.
 #[derive(Clone, PartialEq, Eq)]
 pub struct UnknownLint {
     id: String,
@@ -213,7 +212,6 @@ impl fmt::Display for UnknownLint {
     }
 }
 
-/// The message's `Debug`, as `arkadec` printed it when this error was a `String`.
 impl fmt::Debug for UnknownLint {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt::Debug::fmt(&self.to_string(), f)

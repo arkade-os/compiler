@@ -43,7 +43,6 @@ errors! {
     UnknownFunction: "unknown-function", "a call to no builtin and no function of the contract";
 }
 
-/// An id no [`ErrorCode`] has.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UnknownErrorCode {
     id: String,
