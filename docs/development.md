@@ -17,6 +17,7 @@ git config core.hooksPath scripts                       # fmt + test before ever
 - [Build the playground](playground.md#run-it-locally) before the playground tests.
 - `BLESS=1 cargo test --test diagnostics` rewrites the expected diagnostics in `tests/diagnostics/`.
 - CI also checks every example with `arkadec --check --json --deny security`, so a security lint finding in `examples/` fails the build.
+- CI compiles `examples/`, `tests/e2e/contracts/` and the fuzzer's cases with the last release and with the PR (`scripts/check-output-version.sh`). If any artifact differs, the version in `Cargo.toml` and `npm/package.json` must leave `^<last release>`, so contracts raise their `pragma arkade` to accept the new output. `scripts/compare-output.sh <ref>` runs the comparison against any ref.
 
 ### End-to-end tests
 

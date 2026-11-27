@@ -45,6 +45,22 @@ jobs:
       - name: Run emulator E2E tests
         run: ./scripts/e2e.sh -v
 
+  output-version:
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: tests/e2e/go.mod
+          cache-dependency-path: tests/e2e/go.sum
+      - name: Require a version bump when compiled contracts change
+        run: ./scripts/check-output-version.sh
+
   npm-package:
     runs-on: ubuntu-latest
     defaults:
