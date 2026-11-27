@@ -1,4 +1,9 @@
 //! Integration tests that compile real .ark contracts from examples/.
+#![allow(
+    clippy::panic,
+    clippy::unwrap_used,
+    reason = "a failing test should panic"
+)]
 #[path = "common/mod.rs"]
 mod common;
 

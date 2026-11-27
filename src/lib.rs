@@ -1,3 +1,4 @@
+#![deny(clippy::exit, clippy::print_stderr, clippy::print_stdout)]
 use std::collections::BTreeMap;
 use std::path::Path;
 use std::{error, fmt};

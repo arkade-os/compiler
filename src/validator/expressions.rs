@@ -304,7 +304,7 @@ pub(super) fn validate_binding_expression(
         _ if registered_builtin.is_some() => {
             let (name, operands) = registered_builtin.expect("guarded by the arm");
             let params = operands::find(name)
-                .unwrap_or_else(|| panic!("{name} has no registered signature"));
+                .unwrap_or_else(|| unreachable!("{name} has no registered signature"));
             assert!(
                 builtins::find(name).map_or(operands.len() == params.len(), |builtin| {
                     builtin.accepts_arity(operands.len())

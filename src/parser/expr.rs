@@ -3,7 +3,6 @@ use crate::builtins;
 use crate::diagnostics::Span;
 use crate::models::{ExprKind, Expression, Path};
 use crate::operators::BinaryOperator;
-#[allow(unused_imports)]
 use pest::iterators::Pair;
 
 /// Whether `rule` is one of the grammar's binary-operator precedence levels.

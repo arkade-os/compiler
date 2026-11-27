@@ -670,7 +670,7 @@ const SPELLED: &[Spelled] = &[
 /// Every builtin function and `tx`/`this` member as pretty JSON: calls under
 /// `functions`, dotted names under `members`.
 pub(crate) fn docs() -> String {
-    serde_json::to_string_pretty(&documented()).unwrap()
+    serde_json::to_string_pretty(&documented()).expect("a JSON value serializes")
 }
 
 /// The names documented directly under `owner`, a member path with indexes written `[]`.
@@ -701,7 +701,10 @@ fn documented() -> serde_json::Value {
             .map(|(name, ty)| format!("{ty} {name}"))
             .collect();
         if matches!(builtin.lowering, Lowering::Multisig) {
-            params.last_mut().unwrap().push('?');
+            params
+                .last_mut()
+                .expect("multisig takes a threshold")
+                .push('?');
         }
         let entry = json!({ "params": params, "result": builtin.result, "doc": builtin.doc });
         functions.insert(builtin.name.into(), entry);
@@ -758,7 +761,7 @@ fn documented() -> serde_json::Value {
     for entry in functions.values_mut().chain(members.values_mut()) {
         entry
             .as_object_mut()
-            .unwrap()
+            .expect("every entry is a JSON object")
             .retain(|_, value| !value.is_null());
     }
     json!({ "functions": functions, "members": members })

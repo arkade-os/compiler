@@ -1,7 +1,6 @@
 use super::{expr, Rule};
 use crate::diagnostics::Span;
 use crate::models::{ExprKind, Expression};
-#[allow(unused_imports)]
 use pest::iterators::Pair;
 
 /// Whether a call by `name` with one argument is a cast. Function names cannot be cast types.

@@ -3,7 +3,6 @@ use std::array;
 use super::expr;
 use super::expr::Suffix;
 use super::Rule;
-#[allow(unused_imports)]
 use crate::diagnostics::Span;
 use crate::models::AssetLookupSource;
 use crate::models::ExprKind;

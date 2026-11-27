@@ -4,11 +4,10 @@
 //! include this module via `#[path = "common/mod.rs"] mod common;`, so it is a
 //! plain module — never its own test target — and each grouped test file reaches
 //! the helpers through `crate::common::*`.
-//!
-//! `dead_code` is allowed module-wide: each binary compiles its own copy of this
-//! module and uses only the subset of helpers it needs, so a helper unused by
-//! one binary (but used by the other) would otherwise warn.
-#![allow(dead_code)]
+#![allow(
+    dead_code,
+    reason = "each test binary compiles its own copy and uses only some helpers"
+)]
 
 use arkade_compiler::lint::Category;
 use arkade_compiler::lint::Lint;

@@ -447,7 +447,7 @@ fn fold_expression(
         // `KEY.length` is the length of the constant's value.
         if let Some((constant, "length")) = path.split_last() {
             if let Some(value) = values.get(&constant.key()) {
-                uses.push((constant.clone(), expression.span));
+                uses.push((constant, expression.span));
                 let value = Box::new(expression.with_kind(ExprKind::Literal(value.clone())));
                 let field = "length".to_string();
                 expression.kind = ExprKind::FieldAccess { value, field };

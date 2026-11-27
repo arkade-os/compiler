@@ -208,14 +208,14 @@ fn push_size(len: usize) -> usize {
 fn decimal_len(value: &str, limit: usize) -> usize {
     let mut bytes = vec![0u8];
     for digit in value.trim_start_matches('-').bytes() {
-        let mut carry = u16::from(digit - b'0');
+        let mut carry = digit - b'0';
         for byte in &mut bytes {
-            carry += u16::from(*byte) * 10;
-            *byte = carry as u8;
-            carry >>= 8;
+            let [low, high] = (u16::from(*byte) * 10 + u16::from(carry)).to_le_bytes();
+            *byte = low;
+            carry = high;
         }
         if carry != 0 {
-            bytes.push(carry as u8);
+            bytes.push(carry);
         }
         // Stop once the magnitude alone exceeds the limit, bounding conversion memory.
         if bytes.len() > limit {
@@ -223,7 +223,7 @@ fn decimal_len(value: &str, limit: usize) -> usize {
         }
     }
     // A set top bit needs an extra byte for the sign.
-    bytes.len() + usize::from(bytes.last().unwrap() & 0x80 != 0)
+    bytes.len() + usize::from(bytes.last().is_some_and(|top| top & 0x80 != 0))
 }
 
 fn scriptnum_len(number: i64) -> usize {
@@ -231,7 +231,8 @@ fn scriptnum_len(number: i64) -> usize {
     if magnitude == 0 {
         return 0;
     }
-    let bytes = (u64::BITS - magnitude.leading_zeros()).div_ceil(8) as usize;
+    let bytes = usize::try_from((u64::BITS - magnitude.leading_zeros()).div_ceil(8))
+        .expect("an i64 has at most 8 bytes");
     // A set top bit needs an extra byte for the sign.
     bytes + usize::from(magnitude >> (bytes * 8 - 1) & 1 == 1)
 }

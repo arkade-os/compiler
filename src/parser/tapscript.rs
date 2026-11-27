@@ -10,7 +10,6 @@ use crate::models::{
     TimeUnit,
 };
 use crate::types::ArkType;
-#[allow(unused_imports)]
 use pest::iterators::Pair;
 
 /// True if a `function` pair carries a `tapscript_block` body.
@@ -645,8 +644,7 @@ contract Demo(pubkey owner) {
 
         let err = super::super::parse(src).expect_err("unsupported tapscript call should fail");
         assert!(
-            err.to_string()
-                .contains("unsupported tapscript call `foo(...)`"),
+            err.contains("unsupported tapscript call `foo(...)`"),
             "unexpected error: {err}"
         );
     }

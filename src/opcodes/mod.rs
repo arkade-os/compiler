@@ -25,7 +25,10 @@ macro_rules! opcodes {
             /// Items the opcode pops and pushes; `None` when that depends on an operand
             /// (`OP_PICK`, `OP_ROLL`, `OP_TUNNEL`) or the opcode is not modelled.
             pub(crate) fn stack_effect(self) -> Option<(usize, usize)> {
-                #[allow(unreachable_patterns)]
+                #[allow(
+                    unreachable_patterns,
+                    reason = "the fallback is unreachable once every opcode lists its effect"
+                )]
                 match self {
                     $($(Self::$variant => Some(($pops, $pushes)),)?)*
                     _ => None,

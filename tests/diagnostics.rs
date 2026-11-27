@@ -1,5 +1,10 @@
 //! Every program in `tests/diagnostics/` against the diagnostics it gets, rendered as an author
 //! reads them. `BLESS=1 cargo test --test diagnostics` rewrites the expected `.txt` files.
+#![allow(
+    clippy::panic,
+    clippy::unwrap_used,
+    reason = "a failing test should panic"
+)]
 
 use std::collections::BTreeMap;
 use std::env;

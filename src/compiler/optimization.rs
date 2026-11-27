@@ -383,10 +383,13 @@ fn peak(ops: &[Opcode]) -> usize {
                 .stack_effect()
                 .expect("rewrite opcodes have a stack effect"),
         };
-        height += pushes as isize - pops as isize;
+        height = height
+            .checked_add_unsigned(pushes)
+            .and_then(|height| height.checked_sub_unsigned(pops))
+            .expect("a stack height fits in isize");
         peak = peak.max(height);
     }
-    peak as usize
+    peak.unsigned_abs()
 }
 
 #[cfg(test)]
@@ -462,7 +465,7 @@ mod tests {
                     let (pops, pushes) = op
                         .stack_effect()
                         .unwrap_or_else(|| panic!("{op} has no effect"));
-                    pushes as isize - pops as isize
+                    isize::try_from(pushes).unwrap() - isize::try_from(pops).unwrap()
                 })
                 .sum()
         };

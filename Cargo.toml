@@ -58,7 +58,18 @@ tempfile = "3.10.1"
 name = "arkadec"
 path = "src/main.rs"
 
+[lints.rust]
+unsafe_code = "forbid"
+
 [lints.clippy]
 absolute_paths = "deny"
+allow_attributes_without_reason = "deny"
+as_conversions = "deny"
+dbg_macro = "deny"
 enum_glob_use = "deny"
+panic = "deny"
+redundant_clone = "deny"
+todo = "deny"
+unimplemented = "deny"
+unwrap_used = "deny"
 wildcard_imports = "deny"

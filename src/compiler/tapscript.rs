@@ -508,7 +508,7 @@ pub fn validate_arkd_rules(
                         Some(_) => continue,
                     }
                 };
-                const MAX: i128 = u32::MAX as i128;
+                let max = i128::from(u32::MAX);
                 let (valid, expected) = match (csv, unit) {
                     // BIP68 ignores bits 16-21 and 23-30, and bit 31 disables the lock.
                     (true, None) => (
@@ -523,13 +523,13 @@ pub fn validate_arkd_rules(
                         (1..=0xffff * 512).contains(&n) && n % 512 == 0,
                         "a multiple of 512 in 512..=33553920 seconds",
                     ),
-                    (false, None) => ((0..=MAX).contains(&n), "a locktime in 0..=4294967295"),
+                    (false, None) => ((0..=max).contains(&n), "a locktime in 0..=4294967295"),
                     (false, Some(TimeUnit::Blocks)) => (
                         (1..500_000_000).contains(&n),
                         "a block height in 1..=499999999",
                     ),
                     (false, Some(TimeUnit::Seconds)) => (
-                        (500_000_000..=MAX).contains(&n),
+                        (500_000_000..=max).contains(&n),
                         "a Unix timestamp in 500000000..=4294967295",
                     ),
                 };
