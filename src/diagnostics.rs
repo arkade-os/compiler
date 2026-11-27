@@ -3,6 +3,10 @@
 //! caller. `check()` returns these directly; the string-returning API
 //! renders them the same way it always has.
 
+use std::fmt;
+
+use crate::errors::ErrorCode;
+use crate::lint::Lint;
 /// A byte-offset range into one file's source text.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub struct Span {
@@ -107,7 +111,7 @@ pub struct Diagnostic {
     pub file: String,
     pub span: Option<Span>,
     /// The lint this reports, whose level decides its severity.
-    pub lint: Option<crate::lint::Lint>,
+    pub lint: Option<Lint>,
     /// Edits that may fix it, for editors to offer and agents to apply.
     pub suggestions: Vec<Suggestion>,
 }
@@ -161,7 +165,7 @@ impl Diagnostic {
         self
     }
 
-    pub(crate) fn with_lint(mut self, lint: crate::lint::Lint) -> Self {
+    pub(crate) fn with_lint(mut self, lint: Lint) -> Self {
         self.code = Some(lint.id().to_string());
         self.lint = Some(lint);
         self
@@ -202,8 +206,8 @@ impl CompileError {
     }
 }
 
-impl std::fmt::Display for CompileError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Display for CompileError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if self.internal {
             f.write_str("internal compiler error: ")?;
         }
@@ -241,9 +245,7 @@ pub(crate) fn render_errors(diagnostics: &[Diagnostic], source: &str) -> String 
         .map(|d| {
             let message = located(&d.message, d.span, source);
             match d.code.as_deref() {
-                Some(code)
-                    if code == "validation" || code.parse::<crate::errors::ErrorCode>().is_ok() =>
-                {
+                Some(code) if code == "validation" || code.parse::<ErrorCode>().is_ok() => {
                     format!("validation error: {message}")
                 }
                 Some("type") => format!("type error: {message}"),

@@ -1,17 +1,24 @@
-use crate::diagnostics::{CompileError, Diagnostic, Span};
-use crate::models::{
-    ArkadeScript, CompilerInfo, Contract, ContractJson, ExprKind, Expression, Function,
-    FunctionInput, LocatedStatement, Parameter, Path, SourceRange, Statement, TypeName,
-};
-use crate::opcodes::Opcode;
-use crate::types::{self};
-use crate::validator;
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::result;
+
 use chrono::Utc;
 use sha2::{Digest, Sha256};
 
+use crate::builtins::Lowering;
+use crate::diagnostics::{self, CompileError, Diagnostic, Span, Suggestion};
+use crate::lint::{self, Lints};
+use crate::models::{
+    self, ArkadeScript, CompilerInfo, Contract, ContractJson, Cost, ExprKind, Expression, Function,
+    FunctionInput, GroupIOSource, LocatedStatement, Parameter, Path, SourceBundle, SourceRange,
+    Statement, StructDefinition, TypeName, ARTIFACT_FORMAT_VERSION,
+};
+use crate::opcodes::Opcode;
+use crate::validator::{self, references};
+use crate::{imports, types};
+
 pub mod tapscript;
 
-type Result<T, E = CompileError> = std::result::Result<T, E>;
+type Result<T, E = CompileError> = result::Result<T, E>;
 
 mod access;
 mod asset;
@@ -63,40 +70,40 @@ struct Generator {
     /// The most items the stacks hold at once, data and alt together.
     max_depth: usize,
     scopes: Vec<(usize, types::Scope)>,
-    deferred: std::collections::HashSet<String>,
+    deferred: HashSet<String>,
     /// Placeholders of constructor parameters that flatten to other leaves.
     constructor_expansions: Vec<(String, Vec<String>)>,
-    structs: Vec<crate::models::StructDefinition>,
+    structs: Vec<StructDefinition>,
     scope: types::Scope,
     constructor_scope: types::Scope,
     functions: Vec<Function>,
     // Constructor leaves pushed at their single read instead of in the prologue.
-    inlined: std::collections::HashMap<Path, String>,
+    inlined: HashMap<Path, String>,
     // Emitted reads per constructor slot; runtime-indexed slots count as two.
-    constructor_reads: std::collections::HashMap<Path, usize>,
+    constructor_reads: HashMap<Path, usize>,
     // Read-only scalar parameters can name slots in the pinned caller frame.
-    aliases: std::collections::HashMap<Path, usize>,
+    aliases: HashMap<Path, usize>,
     // None outside a helper; Some(None) inside a void helper.
     return_type: Option<Option<TypeName>>,
     direct_return: bool,
     // Record reads once, then replay final uses at their new stack depths.
     final_reads: Vec<bool>,
-    last_reads: std::collections::HashMap<(Path, usize), usize>,
+    last_reads: HashMap<(Path, usize), usize>,
     read_cursor: Option<usize>,
     preserve_bindings: bool,
     pinned_stack_len: usize,
     // Rebinding the top slot can consume its old value without changing a branch join.
     replacement: Option<(Path, BindingKind, usize)>,
     /// How often each literal that takes 4 or more bytes is pushed.
-    wide_pushes: std::collections::BTreeMap<String, usize>,
+    wide_pushes: BTreeMap<String, usize>,
 }
 
 impl Generator {
     fn new(
         function_parameters: &[Parameter],
         constructor_parameters: &[Parameter],
-        structs: &[crate::models::StructDefinition],
-        inlined_bindings: &std::collections::HashSet<Path>,
+        structs: &[StructDefinition],
+        inlined_bindings: &HashSet<Path>,
     ) -> Result<Self> {
         let mut function_bindings = Vec::new();
         for parameter in function_parameters {
@@ -126,7 +133,7 @@ impl Generator {
             }
         }
         let mut asm = ir::Assembly::default();
-        let mut inlined = std::collections::HashMap::new();
+        let mut inlined = HashMap::new();
         for (placeholder, binding_name) in constructor_bindings.into_iter().rev() {
             if inlined_bindings.contains(&binding_name) {
                 inlined.insert(binding_name, placeholder);
@@ -188,19 +195,19 @@ impl Generator {
             max_depth: stack.len() + prologue_peak,
             stack,
             scopes: Vec::new(),
-            deferred: std::collections::HashSet::new(),
+            deferred: HashSet::new(),
             constructor_expansions,
             structs: structs.to_vec(),
             scope,
             constructor_scope,
             functions: Vec::new(),
             inlined,
-            constructor_reads: std::collections::HashMap::new(),
-            aliases: std::collections::HashMap::new(),
+            constructor_reads: HashMap::new(),
+            aliases: HashMap::new(),
             return_type: None,
             direct_return: false,
             final_reads: Vec::new(),
-            last_reads: std::collections::HashMap::new(),
+            last_reads: HashMap::new(),
             read_cursor: None,
             preserve_bindings: false,
             pinned_stack_len: 0,
@@ -341,16 +348,16 @@ impl Generator {
                         self.emit_composite_comparison(left, *op, right, &ty, false)?;
                     } else if matches!(&value.kind, ExprKind::Call { .. }) {
                         self.emit_call(value)?;
-                    } else if matches!(&value.kind, ExprKind::Builtin { builtin, .. } if matches!(builtin.lowering, crate::builtins::Lowering::Pairing))
+                    } else if matches!(&value.kind, ExprKind::Builtin { builtin, .. } if matches!(builtin.lowering, Lowering::Pairing))
                     {
                         self.emit_pairing(value)?;
-                    } else if matches!(&value.kind, ExprKind::Builtin { builtin, .. } if matches!(builtin.lowering, crate::builtins::Lowering::Multisig))
+                    } else if matches!(&value.kind, ExprKind::Builtin { builtin, .. } if matches!(builtin.lowering, Lowering::Multisig))
                     {
                         self.emit_multisig(value)?;
                     } else if matches!(
                         &value.kind,
                         ExprKind::GroupIOAccess {
-                            source: crate::models::GroupIOSource::Inputs,
+                            source: GroupIOSource::Inputs,
                             ..
                         }
                     ) {
@@ -422,16 +429,16 @@ impl Generator {
 ///
 /// A Result containing a ContractJson or an error message
 pub fn compile(source_code: &str) -> Result<ContractJson, String> {
-    crate::imports::compile_sources(
+    imports::compile_sources(
         "main.ark",
-        &std::collections::BTreeMap::from([("main.ark".to_string(), source_code.to_string())]),
+        &BTreeMap::from([("main.ark".to_string(), source_code.to_string())]),
         crate::CompileOptions::default(),
     )
 }
 
 /// A validated contract's warnings and its checked tapscript leaves, in declaration order.
 pub(crate) struct Prepared {
-    pub lints: crate::lint::Lints,
+    pub lints: Lints,
     pub leaves: Vec<tapscript::CheckedLeaf>,
 }
 
@@ -444,7 +451,7 @@ pub(crate) fn prepare(
     contract: &mut Contract,
     require_entrypoint: bool,
     file: &str,
-) -> std::result::Result<Prepared, Vec<Diagnostic>> {
+) -> Result<Prepared, Vec<Diagnostic>> {
     types::annotate(contract);
 
     // ── Semantic validation ────────────────────────────────────────────────
@@ -456,7 +463,7 @@ pub(crate) fn prepare(
             .iter()
             .map(|i| {
                 let suggestions = i.suggestion.iter().filter_map(|(replacement, span)| {
-                    Some(crate::diagnostics::Suggestion {
+                    Some(Suggestion {
                         message: format!("replace with '{replacement}'"),
                         span: span.or(i.span)?,
                         replacement: replacement.clone(),
@@ -485,7 +492,7 @@ pub(crate) fn prepare(
         return Err(leaf_errors);
     }
     Ok(Prepared {
-        lints: crate::lint::check(contract),
+        lints: lint::check(contract),
         leaves,
     })
 }
@@ -493,20 +500,20 @@ pub(crate) fn prepare(
 pub(crate) fn emit(
     contract: &Contract,
     leaves: &[tapscript::CheckedLeaf],
-    source: crate::models::SourceBundle,
+    source: SourceBundle,
     warnings: Vec<String>,
     options: crate::CompileOptions,
     code_hash: &mut dyn FnMut(&str) -> Result<String>,
 ) -> Result<ContractJson> {
     let parameters = contract.parameters.clone();
     let entry_source = source.files.get(&source.entry).cloned().unwrap_or_default();
-    let mut messages = std::collections::HashMap::new();
+    let mut messages = HashMap::new();
     for function in contract.functions.iter().filter(|f| !f.is_imported()) {
         require_messages(&function.statements, &mut messages);
     }
 
     let mut json = ContractJson {
-        format_version: crate::models::ARTIFACT_FORMAT_VERSION,
+        format_version: ARTIFACT_FORMAT_VERSION,
         name: contract.name.clone(),
         structs: contract.structs.clone(),
         parameters,
@@ -525,8 +532,7 @@ pub(crate) fn emit(
     };
 
     // Build the Arkade Script of each public function.
-    let mut scripts: std::collections::HashMap<String, ArkadeScript> =
-        std::collections::HashMap::new();
+    let mut scripts: HashMap<String, ArkadeScript> = HashMap::new();
     for function in contract.functions.iter().filter(|f| !f.is_private) {
         scripts.insert(
             function.name.clone(),
@@ -560,7 +566,7 @@ pub(crate) fn emit(
             .join("; ")
             .into());
     }
-    let instantiated: std::collections::BTreeSet<String> = json
+    let instantiated: BTreeSet<String> = json
         .functions
         .iter()
         .filter_map(|group| group.arkade.as_ref())
@@ -598,7 +604,7 @@ pub(crate) fn emit(
 /// artifact ABI, which keeps one entry per source parameter.
 pub(crate) fn expanded_placeholder_params(
     params: &[Parameter],
-    structs: &[crate::models::StructDefinition],
+    structs: &[StructDefinition],
 ) -> Result<Vec<Parameter>> {
     let mut result = Vec::new();
     for param in params {
@@ -619,19 +625,18 @@ pub(crate) fn expanded_placeholder_params(
 fn arkade_script_for(
     function: &Function,
     constructor_parameters: &[Parameter],
-    structs: &[crate::models::StructDefinition],
+    structs: &[StructDefinition],
     functions: &[Function],
     optimize: bool,
-) -> Result<(Vec<FunctionInput>, Vec<Spanned>, Vec<crate::models::Cost>)> {
+) -> Result<(Vec<FunctionInput>, Vec<Spanned>, Vec<Cost>)> {
     let inputs = function_inputs(&function.parameters);
-    let references =
-        crate::validator::references::referenced_parameters(&function.statements, functions);
+    let references = references::referenced_parameters(&function.statements, functions);
     let retained_parameters = constructor_parameters
         .iter()
         .filter(|parameter| references.contains(parameter.name.as_str()))
         .cloned()
         .collect::<Vec<_>>();
-    let new = |inlined: &std::collections::HashSet<Path>| -> Result<Generator> {
+    let new = |inlined: &HashSet<Path>| -> Result<Generator> {
         let mut generator =
             Generator::new(&function.parameters, &retained_parameters, structs, inlined)?;
         generator.optimize = optimize;
@@ -640,7 +645,7 @@ fn arkade_script_for(
     };
     let mut counting = new(&Default::default())?;
     if !optimize {
-        let mut checked = std::collections::HashSet::new();
+        let mut checked = HashSet::new();
         lowering::check_folded(
             &function.statements,
             &counting.scope,
@@ -653,7 +658,7 @@ fn arkade_script_for(
     let body = counting.lower(&function.statements)?;
     emit_body(&body, &mut counting)?;
     // A leaf read once costs no more as an inline push than as a prologue slot; an unread leaf is never pushed.
-    let mut inlined = std::collections::HashSet::new();
+    let mut inlined = HashSet::new();
     for parameter in &retained_parameters {
         for_each_expanded_param(parameter, structs, |_, binding_name, _| {
             if counting
@@ -705,9 +710,9 @@ fn arkade_script_for(
         analysis
     };
     let (mut ops, mut peak) = emit(analysis, &[])?;
-    let mut widths = std::collections::HashMap::new();
+    let mut widths = HashMap::new();
     for parameter in &retained_parameters {
-        for leaf in crate::models::flatten_parameter(parameter, structs)? {
+        for leaf in models::flatten_parameter(parameter, structs)? {
             let width = match leaf.leaf_type.ark_type() {
                 types::ArkType::Signature => 64,
                 types::ArkType::Bytes32 => 32,
@@ -764,7 +769,7 @@ fn arkade_script_for(
             *executions.entry(*opcode).or_default() += 1;
         }
     }
-    let cost = |name: &str, used| crate::models::Cost {
+    let cost = |name: &str, used| Cost {
         name: name.to_string(),
         used,
     };
@@ -781,11 +786,7 @@ fn arkade_script_for(
 }
 
 /// Runs of `ops` from one statement, located in `source`.
-fn source_map(
-    ops: &[Spanned],
-    source: &str,
-    messages: &std::collections::HashMap<Span, String>,
-) -> Vec<SourceRange> {
+fn source_map(ops: &[Spanned], source: &str, messages: &HashMap<Span, String>) -> Vec<SourceRange> {
     let mut ranges: Vec<(Span, SourceRange)> = Vec::new();
     for (index, (_, span)) in ops.iter().enumerate() {
         let Some(span) = *span else {
@@ -797,8 +798,7 @@ fn source_map(
                 continue;
             }
         }
-        let position =
-            |offset| crate::diagnostics::position(source, offset).map(<[usize; 2]>::from);
+        let position = |offset| diagnostics::position(source, offset).map(<[usize; 2]>::from);
         let (Some(start), Some(end)) = (position(span.start), position(span.end)) else {
             continue;
         };
@@ -814,10 +814,7 @@ fn source_map(
     ranges.into_iter().map(|(_, range)| range).collect()
 }
 
-fn require_messages(
-    statements: &[LocatedStatement],
-    messages: &mut std::collections::HashMap<Span, String>,
-) {
+fn require_messages(statements: &[LocatedStatement], messages: &mut HashMap<Span, String>) {
     for statement in statements {
         if let Some(message) = &statement.message {
             messages.insert(statement.span, message.clone());
@@ -841,11 +838,8 @@ fn require_messages(
 
 /// An upper bound on executions of each non-conditional opcode from `position` to the
 /// enclosing `Else` or `EndIf`. Correlated branch conditions are counted independently.
-fn most_executions(
-    ops: &[Spanned],
-    position: &mut usize,
-) -> std::collections::HashMap<Opcode, usize> {
-    let mut counts = std::collections::HashMap::new();
+fn most_executions(ops: &[Spanned], position: &mut usize) -> HashMap<Opcode, usize> {
+    let mut counts = HashMap::new();
     while let Some((op, _)) = ops.get(*position) {
         match op {
             Op::Opcode(Opcode::Else | Opcode::EndIf) => break,
@@ -883,10 +877,10 @@ fn function_inputs(params: &[Parameter]) -> Vec<FunctionInput> {
 
 fn for_each_expanded_param(
     param: &Parameter,
-    structs: &[crate::models::StructDefinition],
+    structs: &[StructDefinition],
     mut f: impl FnMut(String, Path, TypeName),
 ) -> Result<()> {
-    for leaf in crate::models::flatten_parameter(param, structs)? {
+    for leaf in models::flatten_parameter(param, structs)? {
         f(leaf.emitted_name, leaf.access, leaf.leaf_type);
     }
     Ok(())

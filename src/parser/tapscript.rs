@@ -1,9 +1,15 @@
-use super::Rule;
+use std::collections::HashSet;
+use std::{iter, slice};
+
+use super::{expr, Rule};
+use crate::builtins;
+use crate::compiler::constants;
 use crate::diagnostics::CompileError;
-use crate::models::Constant;
-use crate::models::ExprKind;
-use crate::models::Expression;
-use crate::parser::expr;
+use crate::models::{
+    Constant, ExprKind, Expression, HashFn, KeyExpr, NamedTapscript, Path, TapItem, TapOperand,
+    TimeUnit,
+};
+use crate::types::ArkType;
 #[allow(unused_imports)]
 use pest::iterators::Pair;
 
@@ -18,7 +24,7 @@ pub(crate) fn function_pair_is_tapscript(pair: &Pair<Rule>) -> bool {
 pub(crate) fn parse_named_tapscript(
     pair: Pair<Rule>,
     constants: &[Constant],
-) -> Result<crate::models::NamedTapscript, CompileError> {
+) -> Result<NamedTapscript, CompileError> {
     let declaration = pair.as_span().into();
     let mut inner = pair.into_inner().peekable();
     if let Some(visibility) = inner.next_if(|p| p.as_rule() == Rule::function_visibility) {
@@ -31,27 +37,27 @@ pub(crate) fn parse_named_tapscript(
     let inputs = super::parse_parameters(params)?;
     let block = inner.next().ok_or("Missing tapscript body")?;
     let mut items = Vec::new();
-    let mut consumed = std::collections::HashSet::new();
+    let mut consumed = HashSet::new();
     for stmt in block.into_inner() {
         if stmt.as_rule() == Rule::tap_require_stmt {
             let mut inner = stmt.into_inner();
             let expr = inner.next().ok_or("Empty require() in tapscript")?;
             // Start and text of the older/after argument a blocks/seconds unit may fill.
             let mut units = Vec::new();
-            for part in std::iter::once(expr.clone()).chain(expr.clone().into_inner().flatten()) {
+            for part in iter::once(expr.clone()).chain(expr.clone().into_inner().flatten()) {
                 let name = match part.as_rule() {
                     Rule::function_call => {
                         let mut call = part.clone().into_inner();
                         let callee = call.next().ok_or("Missing call name")?.as_str();
                         let args: Vec<_> = call.collect();
-                        if crate::models::HashFn::parse(callee).is_some() {
+                        if HashFn::parse(callee).is_some() {
                             let message = format!(
                                 "a tapscript function can use `{callee}` only as \
                                  `require({callee}(preimage) == hash)`"
                             );
                             return Err(CompileError::from(message).at(part.as_span().into()));
                         }
-                        if let Some(params) = crate::builtins::tapscript_params(callee) {
+                        if let Some(params) = builtins::tapscript_params(callee) {
                             let whole = matches!(callee, "older" | "after")
                                 && part.as_str() == super::trim_trivia_end(expr.as_str());
                             if whole {
@@ -74,7 +80,7 @@ pub(crate) fn parse_named_tapscript(
                                 format!("a tapscript function can use `{callee}` only as {place}");
                             return Err(CompileError::from(message).at(part.as_span().into()));
                         }
-                        let tapscript_call = crate::builtins::find(callee)
+                        let tapscript_call = builtins::find(callee)
                             .is_none_or(|b| matches!(b.name, "checkSig" | "checkMultisig"));
                         if tapscript_call {
                             continue;
@@ -94,8 +100,8 @@ pub(crate) fn parse_named_tapscript(
             let item = parse_tap_item(expr.clone(), constants)
                 .map_err(|e| CompileError::from(e).at(at))?;
             let operands = match &item {
-                crate::models::TapItem::Hash { preimage, .. } => std::slice::from_ref(preimage),
-                crate::models::TapItem::Sig { sigs, .. } => sigs.as_slice(),
+                TapItem::Hash { preimage, .. } => slice::from_ref(preimage),
+                TapItem::Sig { sigs, .. } => sigs.as_slice(),
                 _ => &[],
             };
             for (path, operand) in operands.iter().zip(witness_operands(&expr)) {
@@ -114,7 +120,7 @@ pub(crate) fn parse_named_tapscript(
             }
         }
     }
-    Ok(crate::models::NamedTapscript {
+    Ok(NamedTapscript {
         name,
         span,
         declaration,
@@ -172,10 +178,7 @@ fn arkade_script_member(pair: &Pair<Rule>) -> Option<String> {
 }
 
 /// Interpret one `require(...)` inner expression as a tapscript item.
-pub(crate) fn parse_tap_item(
-    pair: Pair<Rule>,
-    constants: &[Constant],
-) -> Result<crate::models::TapItem, String> {
+pub(crate) fn parse_tap_item(pair: Pair<Rule>, constants: &[Constant]) -> Result<TapItem, String> {
     use crate::models::{HashFn, TapItem, TapOperand};
     match pair.as_rule() {
         Rule::primary_expr if pair.clone().into_inner().nth(1).is_some() => Err(format!(
@@ -275,7 +278,7 @@ fn parse_time_operand(
     call: &str,
     arg: Pair<Rule>,
     constants: &[Constant],
-) -> Result<(crate::models::TapOperand, Option<crate::models::TimeUnit>), String> {
+) -> Result<(TapOperand, Option<TimeUnit>), String> {
     use crate::models::TimeUnit;
     let text = super::trim_trivia_end(arg.as_str());
     let Some(wrapper) = arg
@@ -307,14 +310,11 @@ fn parse_time_operand(
 }
 
 /// A timelock value: a literal, with constants folded in, or the binding it reads.
-fn parse_time_value(
-    pair: Pair<Rule>,
-    constants: &[Constant],
-) -> Result<crate::models::TapOperand, String> {
+fn parse_time_value(pair: Pair<Rule>, constants: &[Constant]) -> Result<TapOperand, String> {
     use crate::models::TapOperand;
     let value = expr::parse_general_expression(pair)?;
-    let mut constant = |path: &crate::models::Path| constant_value(path, constants);
-    if let Ok(literal) = crate::compiler::constants::evaluate(&value, &mut constant) {
+    let mut constant = |path: &Path| constant_value(path, constants);
+    if let Ok(literal) = constants::evaluate(&value, &mut constant) {
         return Ok(TapOperand::Literal(literal));
     }
     operand_path(&value, constants)
@@ -329,13 +329,10 @@ fn parse_time_value(
 
 /// The binding `operand` reads, with each index evaluated from the constants, or `None` for
 /// any other expression or an index that is not constant.
-fn operand_path(operand: &Expression, constants: &[Constant]) -> Option<crate::models::Path> {
+fn operand_path(operand: &Expression, constants: &[Constant]) -> Option<Path> {
     let index = |index: &Expression| {
-        let mut constant = |path: &crate::models::Path| constant_value(path, constants);
-        crate::compiler::constants::evaluate(index, &mut constant)
-            .ok()?
-            .parse()
-            .ok()
+        let mut constant = |path: &Path| constant_value(path, constants);
+        constants::evaluate(index, &mut constant).ok()?.parse().ok()
     };
     match &operand.kind {
         ExprKind::Name(path) => Some(path.clone()),
@@ -351,7 +348,7 @@ fn operand_path(operand: &Expression, constants: &[Constant]) -> Option<crate::m
 }
 
 /// The literal value of the constant `path` names.
-fn constant_value(path: &crate::models::Path, constants: &[Constant]) -> Result<String, String> {
+fn constant_value(path: &Path, constants: &[Constant]) -> Result<String, String> {
     let key = path.key();
     match constants
         .iter()
@@ -364,7 +361,7 @@ fn constant_value(path: &crate::models::Path, constants: &[Constant]) -> Result<
 }
 
 /// The binding a `named_binding` operand reads.
-fn parse_binding(pair: Pair<Rule>, constants: &[Constant]) -> Result<crate::models::Path, String> {
+fn parse_binding(pair: Pair<Rule>, constants: &[Constant]) -> Result<Path, String> {
     let binding = expr::parse_property_access(pair)?;
     operand_path(&binding, constants).ok_or_else(|| {
         format!(
@@ -378,7 +375,7 @@ fn parse_binding(pair: Pair<Rule>, constants: &[Constant]) -> Result<crate::mode
 pub(crate) fn parse_tap_multisig(
     pair: Pair<Rule>,
     constants: &[Constant],
-) -> Result<crate::models::TapItem, String> {
+) -> Result<TapItem, String> {
     use crate::models::TapItem;
     let mut keys = Vec::new();
     let mut sigs = Vec::new();
@@ -401,17 +398,14 @@ pub(crate) fn parse_tap_multisig(
 }
 
 /// Parse a `key_expr` (a pubkey binding, a pubkey constant or `tweak(base, func)`).
-pub(crate) fn parse_key_expr(
-    pair: Pair<Rule>,
-    constants: &[Constant],
-) -> Result<crate::models::KeyExpr, String> {
+pub(crate) fn parse_key_expr(pair: Pair<Rule>, constants: &[Constant]) -> Result<KeyExpr, String> {
     use crate::models::KeyExpr;
     match pair.as_rule() {
         Rule::named_binding => {
             let path = parse_binding(pair, constants)?;
-            let pubkey = constants.iter().any(|c| {
-                c.name == path.key() && c.const_type.ark_type() == crate::types::ArkType::Bytes
-            });
+            let pubkey = constants
+                .iter()
+                .any(|c| c.name == path.key() && c.const_type.ark_type() == ArkType::Bytes);
             if !pubkey {
                 return Ok(KeyExpr::Ident(path));
             }

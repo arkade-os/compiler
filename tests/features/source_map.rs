@@ -1,3 +1,4 @@
+use crate::common;
 use arkade_compiler::compile_sources_with_options;
 use arkade_compiler::diagnostics::offset;
 use arkade_compiler::models::{ContractJson, SourceRange};
@@ -37,7 +38,7 @@ fn compiled(optimize: bool) -> ContractJson {
         ("main.ark".to_string(), MAIN.to_string()),
         ("fees.ark".to_string(), FEES.to_string()),
     ]);
-    compile_sources_with_options("main.ark", &files, crate::common::options(optimize)).unwrap()
+    compile_sources_with_options("main.ark", &files, common::options(optimize)).unwrap()
 }
 
 /// The source text of each range, the tokens it covers and its message.

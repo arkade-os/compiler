@@ -13,6 +13,7 @@
 //! `tunnel`, `checkSig`, ...) aren't here; they keep their own hand-written
 //! check in the validator.
 
+use crate::builtins;
 use crate::models::{ExprKind, Expression};
 
 pub(crate) const BUILTIN_SIGNATURES: &[(&str, &[&str])] = &[
@@ -51,7 +52,7 @@ pub(crate) const CONSTANT_DOMAINS: &[Domain] = &[
 ];
 
 pub(crate) fn find(name: &str) -> Option<Vec<&'static str>> {
-    if let Some(builtin) = crate::builtins::find(name) {
+    if let Some(builtin) = builtins::find(name) {
         return Some(builtin.params.iter().map(|(_, ty)| *ty).collect());
     }
     BUILTIN_SIGNATURES
@@ -96,6 +97,7 @@ pub(crate) fn operands(expr: &Expression) -> Option<(&'static str, Vec<&Expressi
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::models;
     use crate::types::ArkType;
 
     #[test]
@@ -112,7 +114,7 @@ mod tests {
             for declared in *params {
                 let element = declared.strip_suffix("[]").unwrap_or(declared);
                 let known = match ArkType::parse(element) {
-                    ArkType::Struct(name) => crate::models::builtin_struct_fields(&name).is_some(),
+                    ArkType::Struct(name) => models::builtin_struct_fields(&name).is_some(),
                     parsed => parsed != ArkType::Unknown,
                 };
                 assert!(known, "{name}: unknown type '{declared}'");

@@ -1,6 +1,7 @@
 //! The one traversal every lint uses: each statement, then the expressions it evaluates (a
 //! parent before its children), optionally into the helpers a function calls.
 
+use crate::diagnostics::Span;
 use crate::models::{child_exprs, Contract, ExprKind, Expression, LocatedStatement, Statement};
 
 /// What a lint sees during a [`Walk`].
@@ -15,7 +16,7 @@ pub(super) trait Visitor<'a> {
     fn exit_arm(&mut self) {}
     /// Around the body of an imported helper, whose spans index another file, entered from
     /// the call at `call` in the walked file.
-    fn enter_import(&mut self, _call: crate::diagnostics::Span) {}
+    fn enter_import(&mut self, _call: Span) {}
     fn exit_import(&mut self) {}
 }
 

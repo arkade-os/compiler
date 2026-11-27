@@ -1,8 +1,17 @@
 //! The abstract syntax tree of an Arkade Language contract.
-use crate::models::Parameter;
-use crate::models::StructDefinition;
-use crate::models::TypeName;
+use std::fmt;
+use std::ops::Range;
+
+use super::{Parameter, StructDefinition, TypeName};
+use crate::builtins::Builtin;
+use crate::diagnostics::Span;
 use crate::opcodes::Opcode;
+use crate::operators::{BinaryOperator, UnaryOperator};
+use crate::properties::{
+    AssetProperty, GroupIoProperty, GroupProperty, InputProperty, OutputProperty, ThisProperty,
+    TxProperty,
+};
+use crate::types::ArkType;
 
 /// A binding and the struct fields and constant array elements read through it,
 /// as in `s.inner.x` or `ps[0].x`.
@@ -79,8 +88,8 @@ impl Path {
     }
 }
 
-impl std::fmt::Display for Path {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Display for Path {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&self.key())
     }
 }
@@ -105,7 +114,7 @@ pub struct Contract {
     /// Contract or library name; empty for a source file containing only structs.
     pub name: String,
     /// Byte range of the name.
-    pub span: crate::diagnostics::Span,
+    pub span: Span,
     /// Whether this declaration is a library rather than an instantiable contract.
     pub is_library: bool,
     /// Struct types available to this contract.
@@ -121,18 +130,15 @@ pub struct Contract {
     /// Compile-time constants declared in the contract body.
     pub constants: Vec<Constant>,
     /// Byte range of the contract or library declaration, without its attributes.
-    pub declaration: crate::diagnostics::Span,
+    pub declaration: Span,
     pub attributes: Vec<Attribute>,
 }
 
 impl Contract {
     /// Each node of this file that has attributes, with the node's declaration span: the
     /// contract, its functions and tapscripts, and their statements.
-    pub(crate) fn attributed(&self) -> Vec<(crate::diagnostics::Span, &[Attribute])> {
-        fn walk<'a>(
-            statements: &'a [LocatedStatement],
-            out: &mut Vec<(crate::diagnostics::Span, &'a [Attribute])>,
-        ) {
+    pub(crate) fn attributed(&self) -> Vec<(Span, &[Attribute])> {
+        fn walk<'a>(statements: &'a [LocatedStatement], out: &mut Vec<(Span, &'a [Attribute])>) {
             for statement in statements {
                 out.push((statement.span, &statement.attributes));
                 match &statement.statement {
@@ -169,18 +175,18 @@ impl Contract {
 #[non_exhaustive]
 pub struct Attribute {
     pub name: String,
-    pub name_span: crate::diagnostics::Span,
+    pub name_span: Span,
     pub args: Vec<AttributeArg>,
-    pub span: crate::diagnostics::Span,
+    pub span: Span,
 }
 
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub enum AttributeArg {
     /// A name, such as a lint id: `outputs-shared-across-inputs`.
-    Name(String, crate::diagnostics::Span),
+    Name(String, Span),
     /// A string literal, such as a reason.
-    Text(String, crate::diagnostics::Span),
+    Text(String, Span),
 }
 
 /// A compile-time constant, folded into every use site before validation.
@@ -190,7 +196,7 @@ pub struct Constant {
     pub name: String,
     pub const_type: TypeName,
     pub value: Expression,
-    pub span: crate::diagnostics::Span,
+    pub span: Span,
 }
 
 /// Function AST
@@ -202,9 +208,9 @@ pub struct Function {
     /// Function arguments
     pub parameters: Vec<Parameter>,
     /// Byte range of the function name.
-    pub span: crate::diagnostics::Span,
+    pub span: Span,
     /// Byte range of the whole declaration, through its closing brace.
-    pub declaration: crate::diagnostics::Span,
+    pub declaration: Span,
     /// Function body statements.
     pub statements: Vec<LocatedStatement>,
     /// Whether this is a callable helper rather than a transaction entrypoint.
@@ -229,11 +235,11 @@ impl Function {
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct LocatedStatement {
-    pub span: crate::diagnostics::Span,
+    pub span: Span,
     /// Byte ranges of the names the statement binds, in binding order.
-    pub names: Vec<crate::diagnostics::Span>,
+    pub names: Vec<Span>,
     /// Byte ranges of an `if`'s then and else blocks.
-    pub branches: Vec<crate::diagnostics::Span>,
+    pub branches: Vec<Span>,
     /// A `require`'s message.
     pub message: Option<String>,
     pub statement: Statement,
@@ -327,10 +333,7 @@ impl Statement {
 
 /// The indexes `for (i) in start..end` visits, or why its bounds are invalid: each must be a
 /// non-negative integer literal, and `start` must not exceed `end`.
-pub(crate) fn loop_range(
-    start: &Expression,
-    end: &Expression,
-) -> Result<std::ops::Range<usize>, String> {
+pub(crate) fn loop_range(start: &Expression, end: &Expression) -> Result<Range<usize>, String> {
     let bound = |bound: &Expression| match &bound.kind {
         ExprKind::Literal(value) => value.parse::<usize>().ok(),
         _ => None,
@@ -346,10 +349,10 @@ pub(crate) fn loop_range(
 
 /// The indexes loop `statement` visits, if its count and range bounds are non-negative integer
 /// literals and its iterable is an array.
-pub(crate) fn loop_indexes(statement: &Statement) -> Option<std::ops::Range<usize>> {
+pub(crate) fn loop_indexes(statement: &Statement) -> Option<Range<usize>> {
     match statement {
         Statement::ForIn { iterable, .. } => match iterable.ty {
-            crate::types::ArkType::Array(_, length) => Some(0..length),
+            ArkType::Array(_, length) => Some(0..length),
             _ => None,
         },
         Statement::ForCount { count, .. } => match &count.kind {
@@ -373,7 +376,7 @@ pub enum HashFn {
 
 impl HashFn {
     /// The opcode this hash function emits.
-    pub fn opcode(&self) -> crate::opcodes::Opcode {
+    pub fn opcode(&self) -> Opcode {
         match self {
             HashFn::Sha256 => Opcode::Sha256,
             HashFn::Hash160 => Opcode::Hash160,
@@ -490,8 +493,8 @@ impl TapOperand {
     }
 }
 
-impl std::fmt::Display for TapOperand {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Display for TapOperand {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             TapOperand::Literal(text) => f.write_str(text),
             TapOperand::Name(path) => path.fmt(f),
@@ -513,9 +516,9 @@ pub enum TimeUnit {
 pub struct NamedTapscript {
     /// Declared name (decides function-binding by exact match).
     pub name: String,
-    pub span: crate::diagnostics::Span,
+    pub span: Span,
     /// Byte range of the whole declaration through its closing brace, without its attributes.
-    pub declaration: crate::diagnostics::Span,
+    pub declaration: Span,
     pub attributes: Vec<Attribute>,
     /// Declared witness inputs (signatures, preimages, …), in source order.
     pub inputs: Vec<Parameter>,
@@ -558,17 +561,17 @@ impl GroupIOSource {
 #[derive(Debug, Clone)]
 pub struct Expression {
     pub kind: ExprKind,
-    pub span: crate::diagnostics::Span,
+    pub span: Span,
     /// Set by `types::annotate`; `Unknown` until then.
-    pub(crate) ty: crate::types::ArkType,
+    pub(crate) ty: ArkType,
 }
 
 impl Expression {
-    pub fn new(kind: ExprKind, span: crate::diagnostics::Span) -> Self {
+    pub fn new(kind: ExprKind, span: Span) -> Self {
         Self {
             kind,
             span,
-            ty: crate::types::ArkType::Unknown,
+            ty: ArkType::Unknown,
         }
     }
 
@@ -578,14 +581,11 @@ impl Expression {
     }
 
     pub(crate) fn is_active_input(&self) -> bool {
-        matches!(
-            self.kind,
-            ExprKind::This(crate::properties::ThisProperty::ActiveInputIndex)
-        )
+        matches!(self.kind, ExprKind::This(ThisProperty::ActiveInputIndex))
     }
 
     /// The type analysis gave this expression; `Unknown` before analysis.
-    pub fn ty(&self) -> &crate::types::ArkType {
+    pub fn ty(&self) -> &ArkType {
         &self.ty
     }
 }
@@ -593,7 +593,7 @@ impl Expression {
 #[cfg(test)]
 impl From<ExprKind> for Expression {
     fn from(kind: ExprKind) -> Self {
-        Self::new(kind, crate::diagnostics::Span { start: 0, end: 0 })
+        Self::new(kind, Span { start: 0, end: 0 })
     }
 }
 
@@ -609,7 +609,7 @@ pub enum ExprKind {
     },
     /// A builtin function call; its arguments are in parameter order.
     Builtin {
-        builtin: &'static crate::builtins::Builtin,
+        builtin: &'static Builtin,
         args: Vec<Expression>,
     },
     /// A binding, or a field of one: `x`, `s.field`, `s.inner.x`.
@@ -652,7 +652,7 @@ pub enum ExprKind {
     /// Array element selected by an integer expression.
     ArrayIndex { array: Path, index: Box<Expression> },
     /// `this.activeInputIndex`, `this.expiry`
-    This(crate::properties::ThisProperty),
+    This(ThisProperty),
     /// Asset lookup: tx.inputs[i].assets.lookup(id) or
     /// tx.outputs[o].assets.lookup(id) with an `AssetId` id. Asserts the asset is present
     /// (consumes the opcode success flag with OP_VERIFY) and leaves its amount.
@@ -688,27 +688,25 @@ pub enum ExprKind {
         source: AssetLookupSource,
         io_index: Box<Expression>,
         asset_index: Box<Expression>,
-        property: Option<crate::properties::AssetProperty>,
+        property: Option<AssetProperty>,
     },
     /// Transaction introspection: tx.version, tx.locktime, tx.numInputs, tx.numOutputs, tx.weight
-    TxIntrospection {
-        property: crate::properties::TxProperty,
-    },
+    TxIntrospection { property: TxProperty },
     /// Input introspection: tx.inputs[i].value, script, sequence, outpoint;
     /// tx.input.current.* indexes it with this.activeInputIndex
     InputIntrospection {
         index: Box<Expression>,
-        property: crate::properties::InputProperty,
+        property: InputProperty,
     },
     /// Output introspection: tx.outputs[o].value, script
     OutputIntrospection {
         index: Box<Expression>,
-        property: crate::properties::OutputProperty,
+        property: OutputProperty,
     },
     /// Binary operation (e.g., a + b, x >= y)
     BinaryOp {
         left: Box<Expression>,
-        op: crate::operators::BinaryOperator,
+        op: BinaryOperator,
         right: Box<Expression>,
     },
     /// Asset group lookup: tx.assetGroups.lookup(id) → the `AssetGroup` with
@@ -722,7 +720,7 @@ pub enum ExprKind {
     /// Asset group property: group.sumInputs, group.delta, etc.
     GroupProperty {
         group: Box<Expression>,
-        property: crate::properties::GroupProperty,
+        property: GroupProperty,
     },
     /// Boolean equality over the complete canonical control Asset ID:
     /// group.controlIs(id). False when control is absent or either
@@ -740,12 +738,12 @@ pub enum ExprKind {
         io_index: Box<Expression>,
         source: GroupIOSource,
         // None is the whole record: an `AssetGroupInput` or `AssetGroupOutput`
-        property: Option<crate::properties::GroupIoProperty>,
+        property: Option<GroupIoProperty>,
     },
     // ─── Arithmetic ────────────────────────────────────────────────────
     /// Prefix operator: -value, !value or ~value
     Unary {
-        op: crate::operators::UnaryOperator,
+        op: UnaryOperator,
         value: Box<Expression>,
     },
     /// Contract instantiation: new ContractName(arg1, arg2, ...)

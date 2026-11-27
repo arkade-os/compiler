@@ -1,3 +1,4 @@
+use crate::common;
 use arkade_compiler::models::ContractJson;
 use arkade_compiler::{analyze_file, compile_file};
 
@@ -9,7 +10,7 @@ fn source(name: &str) -> String {
 }
 
 fn script_bytes(output: &ContractJson, function: &str) -> usize {
-    crate::common::group(output, function)
+    common::group(output, function)
         .arkade
         .as_ref()
         .unwrap_or_else(|| panic!("{function} has no Arkade Script"))
@@ -48,7 +49,7 @@ fn constant_product_pool_is_one_counterparty() {
         "the pool has no key-spend parameter"
     );
     for function in ["swap", "deposit", "withdraw"] {
-        let leaf = crate::common::leaf_asm(&pool, function, function);
+        let leaf = common::leaf_asm(&pool, function, function);
         assert!(
             leaf.contains(&format!("<OPERATOR_KEY:{function}>")),
             "{function} should spend with the operator key tweaked to it: {leaf}"
@@ -86,13 +87,13 @@ fn constant_product_orders_pin_their_payout() {
     }
 
     for output in [&swap, &deposit, &exit] {
-        let unilateral = crate::common::leaf_asm(output, "unilateral", "unilateral");
+        let unilateral = common::leaf_asm(output, "unilateral", "unilateral");
         assert!(
             unilateral.contains("<ownerPk>"),
             "{} unilateral should belong to ownerPk: {unilateral}",
             output.name
         );
-        let fill = crate::common::arkade_asm(output, "fill");
+        let fill = common::arkade_asm(output, "fill");
         assert!(
             fill.contains("<CONTRACT:ConstantProductPool("),
             "{} fill should require the pool script: {fill}",

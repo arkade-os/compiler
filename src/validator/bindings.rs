@@ -1,18 +1,16 @@
+use std::collections::HashMap;
+
 use super::expressions::{
     validate_array_index, validate_binding_expression, validate_binding_requirement,
     validate_value_expression,
 };
-use crate::models::AssignmentTarget;
-use crate::models::Contract;
-use crate::models::ExprKind;
-use crate::models::LocatedStatement;
-use crate::models::Statement;
-use crate::models::TypeName;
-use crate::types;
-use crate::types::ArkType;
-use crate::types::Scope;
-use crate::validator::ValidationIssue;
-use std::collections::HashMap;
+use super::ValidationIssue;
+use crate::errors::{self, ErrorCode};
+use crate::models::{
+    self, AssignmentTarget, Contract, ExprKind, LocatedStatement, Parameter, Statement,
+    StructDefinition, TypeName,
+};
+use crate::types::{self, ArkType, Scope};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum BindingSource {
@@ -33,9 +31,9 @@ pub(super) type BindingScopes = Vec<HashMap<String, BindingInfo>>;
 
 fn insert_parameters(
     frame: &mut HashMap<String, BindingInfo>,
-    parameters: &[crate::models::Parameter],
+    parameters: &[Parameter],
     source: BindingSource,
-    structs: &[crate::models::StructDefinition],
+    structs: &[StructDefinition],
 ) {
     let types = types::build_scope_with_structs(parameters, structs);
     for (name, binding_type) in types {
@@ -84,7 +82,7 @@ fn validate_binding_statements(
     statements: &[LocatedStatement],
     function_name: &str,
     scopes: &mut BindingScopes,
-    structs: &[crate::models::StructDefinition],
+    structs: &[StructDefinition],
     issues: &mut Vec<ValidationIssue>,
 ) {
     for statement in statements {
@@ -105,7 +103,7 @@ fn validate_binding_statements(
                 declared_type,
             } => {
                 let mut local = Scope::new();
-                crate::types::bind_local_type(
+                types::bind_local_type(
                     &mut local,
                     name,
                     Some(declared_type),
@@ -174,7 +172,7 @@ fn validate_binding_statements(
                     )));
                 }
                 if let ArkType::Struct(struct_type) = &binding_type {
-                    let result_type = crate::models::expression_result_struct(value);
+                    let result_type = models::expression_result_struct(value);
                     if !matches!(&value.kind, ExprKind::StructLiteral { .. })
                         && result_type != Some(struct_type.as_str())
                         && !matches!(
@@ -195,7 +193,7 @@ fn validate_binding_statements(
                     .last_mut()
                     .expect("binding validation always has a scope");
                 let mut local = Scope::new();
-                crate::types::bind_local_type(
+                types::bind_local_type(
                     &mut local,
                     name,
                     declared_type.as_ref(),
@@ -445,7 +443,7 @@ fn validate_binding_statements(
                             ArkType::Array(element, _)
                                 if matches!(&iterable.kind, ExprKind::ArrayLiteral(_)) =>
                             {
-                                if crate::types::resolved(&element) {
+                                if types::resolved(&element) {
                                     super::functions::validate_value(
                                         &TypeName::from(&iterable.ty),
                                         iterable,
@@ -478,7 +476,7 @@ fn validate_binding_statements(
                 let mut frame = HashMap::new();
                 for (name, binding_type) in [(index_var, ArkType::Int), (value_var, element_type)] {
                     let mut local = Scope::new();
-                    crate::types::bind_local_type(&mut local, name, None, binding_type, structs);
+                    types::bind_local_type(&mut local, name, None, binding_type, structs);
                     frame.extend(local.into_iter().map(|(name, binding_type)| {
                         (
                             name,
@@ -495,7 +493,7 @@ fn validate_binding_statements(
                 scopes.pop();
             }
             Statement::ForCount { body, .. } => {
-                if crate::models::loop_indexes(&statement.statement).is_none() {
+                if models::loop_indexes(&statement.statement).is_none() {
                     issues.push(ValidationIssue::error(
                         "loop count must be a non-negative integer compile-time constant",
                     ));
@@ -510,7 +508,7 @@ fn validate_binding_statements(
                 end,
                 body,
             } => {
-                if let Err(message) = crate::models::loop_range(start, end) {
+                if let Err(message) = models::loop_range(start, end) {
                     issues.push(ValidationIssue::error(message));
                 }
                 let index = BindingInfo {
@@ -537,10 +535,10 @@ pub(super) fn validate_named_binding(
     match find_binding(scopes, name) {
         None => {
             let issue = ValidationIssue::error(format!("{label} '{name}' is undefined"))
-                .coded(crate::errors::ErrorCode::UnknownName);
+                .coded(ErrorCode::UnknownName);
             let names = scopes.iter().flat_map(|frame| frame.keys().map(String::as_str));
             let simple = names.filter(|n| !n.contains(['.', '[']));
-            issues.push(match crate::errors::closest(name, simple).filter(|_| label == "binding") {
+            issues.push(match errors::closest(name, simple).filter(|_| label == "binding") {
                 Some(candidate) => issue.suggest(candidate, None),
                 None => issue,
             });

@@ -1,5 +1,10 @@
+use crate::common;
+use arkade_compiler::models::ExprKind;
+use arkade_compiler::models::Statement;
 use arkade_compiler::{analyze, compile_sources_with_options, CompileOptions, Severity};
 use std::collections::BTreeMap;
+use std::error::Error;
+use std::thread;
 
 fn files(source: &str) -> BTreeMap<String, String> {
     BTreeMap::from([("main.ark".to_string(), source.to_string())])
@@ -11,18 +16,16 @@ fn one_analysis_gives_diagnostics_the_typed_ast_and_the_artifact() {
     let analysis = analyze("main.ark", &files(source));
     assert!(analysis.diagnostics().is_empty());
     let contract = analysis.contract().expect("analyzed");
-    let arkade_compiler::models::Statement::Require(condition) =
-        &contract.functions[0].statements[1].statement
-    else {
+    let Statement::Require(condition) = &contract.functions[0].statements[1].statement else {
         panic!("expected a requirement");
     };
-    let arkade_compiler::models::ExprKind::BinaryOp { left, .. } = &condition.kind else {
+    let ExprKind::BinaryOp { left, .. } = &condition.kind else {
         panic!("expected a comparison");
     };
     assert_eq!(condition.ty(), &arkade_compiler::ArkType::Bool);
     assert_eq!(left.ty(), &arkade_compiler::ArkType::Int);
     for optimize in [true, false] {
-        let options = crate::common::options(optimize);
+        let options = common::options(optimize);
         let mut staged = analysis.compile(options).unwrap();
         let mut direct = compile_sources_with_options("main.ark", &files(source), options).unwrap();
         staged.updated_at = None;
@@ -103,12 +106,12 @@ fn a_syntax_error_in_an_import_is_located_in_that_file() {
 
 #[test]
 fn a_compile_error_crosses_threads_and_converts_with_question_mark() {
-    type Shared = Box<dyn std::error::Error + Send + Sync>;
+    type Shared = Box<dyn Error + Send + Sync>;
     fn compile(source: &str) -> Result<arkade_compiler::ContractJson, Shared> {
         let artifact = arkade_compiler::compile(source)?;
         Ok(artifact)
     }
-    let error = std::thread::spawn(|| compile("contract Broken("))
+    let error = thread::spawn(|| compile("contract Broken("))
         .join()
         .unwrap()
         .unwrap_err();
@@ -116,7 +119,7 @@ fn a_compile_error_crosses_threads_and_converts_with_question_mark() {
         error.to_string().starts_with("main.ark: Parse error:"),
         "{error}"
     );
-    let local: Box<dyn std::error::Error> = arkade_compiler::compile("contract Broken(")
+    let local: Box<dyn Error> = arkade_compiler::compile("contract Broken(")
         .unwrap_err()
         .into();
     assert_eq!(local.to_string(), error.to_string());

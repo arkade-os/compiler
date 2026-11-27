@@ -1,3 +1,4 @@
+use crate::common;
 use arkade_compiler::compile;
 
 use crate::common::{arkade_asm_tokens, arkade_inputs, compile_unoptimized, group};
@@ -261,7 +262,7 @@ fn bytes_literals_compound_hash_comparisons() {
         ))
             .unwrap_or_else(|error| panic!("{rhs}: {error}"));
         assert!(
-            crate::common::feature_warnings(&out).is_empty(),
+            common::feature_warnings(&out).is_empty(),
             "{:?}",
             out.warnings
         );

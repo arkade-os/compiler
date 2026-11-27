@@ -8,7 +8,9 @@
 //! These assert the LEAF asm only; the Arkade Script function bodies just need to compile
 //! (the grammar accepts numeric subscripts, not `this.activeInputIndex`, so the
 //! Arkade Scripts use `tx.outputs[0]` / `tx.inputs[0]` — irrelevant to leaf parity).
+use crate::common;
 use arkade_compiler::compile;
+use std::collections::BTreeMap;
 
 const HTLC: &str = r#"
 contract HTLC(pubkey receiver, pubkey sender, bytes20 preimageHash, int refundTime, int exit) {
@@ -37,7 +39,7 @@ contract HTLC(pubkey receiver, pubkey sender, bytes20 preimageHash, int refundTi
 fn claim_matches_condition_multisig_closure() {
     let out = compile(HTLC).unwrap();
     assert_eq!(
-        crate::common::leaf_asm(&out, "claim", "claim"),
+        common::leaf_asm(&out, "claim", "claim"),
         "OP_HASH160 <preimageHash> OP_EQUAL OP_VERIFY \
          <OPERATOR_KEY:claim> OP_CHECKSIG"
     );
@@ -47,7 +49,7 @@ fn claim_matches_condition_multisig_closure() {
 fn refund_matches_cltv_multisig_closure() {
     let out = compile(HTLC).unwrap();
     assert_eq!(
-        crate::common::leaf_asm(&out, "refund", "refund"),
+        common::leaf_asm(&out, "refund", "refund"),
         "<refundTime> OP_CHECKLOCKTIMEVERIFY OP_DROP \
          <OPERATOR_KEY:refund> OP_CHECKSIG"
     );
@@ -57,7 +59,7 @@ fn refund_matches_cltv_multisig_closure() {
 fn unilateral_matches_csv_multisig_closure() {
     let out = compile(HTLC).unwrap();
     assert_eq!(
-        crate::common::leaf_asm(&out, "unilateral", "unilateral"),
+        common::leaf_asm(&out, "unilateral", "unilateral"),
         "<exit> OP_CHECKSEQUENCEVERIFY OP_DROP <sender> OP_CHECKSIG"
     );
 }
@@ -75,7 +77,7 @@ contract Exit(pubkey owner) {
 fn operator_exit_delay_lowers_to_reserved_placeholder() {
     let out = compile(OPERATOR_EXIT).unwrap();
     assert_eq!(
-        crate::common::leaf_asm(&out, "exit", "exit"),
+        common::leaf_asm(&out, "exit", "exit"),
         "<OPERATOR_EXIT_DELAY> OP_CHECKSEQUENCEVERIFY OP_DROP <owner> OP_CHECKSIG"
     );
     let inputs: Vec<_> = out.parameters.iter().map(|p| p.name.as_str()).collect();
@@ -96,7 +98,7 @@ fn timelock_units_encode_literals_and_constants() {
             "contract C(pubkey owner) {{ const int DELAY = 1024; function exit(signature operatorSig, signature sig) tapscript {{ require({timelock}); require(checkMultisig([operator, owner], [operatorSig, sig])); }} }}"
         );
         let out = compile(&source).unwrap();
-        (crate::common::leaf_asm(&out, "exit", "exit"), out.warnings)
+        (common::leaf_asm(&out, "exit", "exit"), out.warnings)
     };
     for (timelock, operand) in [
         ("older(seconds(DELAY))", "4194306 OP_CHECKSEQUENCEVERIFY"),
@@ -149,11 +151,11 @@ fn sized_hashlock_preimages_emit_runtime_width_checks() {
                 for optimize in [false, true] {
                     let output = arkade_compiler::compile_sources_with_options(
                         "main.ark",
-                        &std::collections::BTreeMap::from([("main.ark".into(), source.clone())]),
-                        crate::common::options(optimize),
+                        &BTreeMap::from([("main.ark".into(), source.clone())]),
+                        common::options(optimize),
                     )
                     .unwrap();
-                    let leaf = &crate::common::group(&output, "claim").leaves[0];
+                    let leaf = &common::group(&output, "claim").leaves[0];
                     assert_eq!(
                         leaf.asm[..4],
                         ["OP_SIZE", &width.to_string(), "OP_EQUALVERIFY", opcode],
@@ -173,12 +175,12 @@ fn unsized_hashlock_preimage_preserves_existing_leaf() {
     for optimize in [false, true] {
         let output = arkade_compiler::compile_sources_with_options(
             "main.ark",
-            &std::collections::BTreeMap::from([("main.ark".into(), HTLC.into())]),
-            crate::common::options(optimize),
+            &BTreeMap::from([("main.ark".into(), HTLC.into())]),
+            common::options(optimize),
         )
         .unwrap();
         assert_eq!(
-            crate::common::leaf_asm(&output, "claim", "claim"),
+            common::leaf_asm(&output, "claim", "claim"),
             "OP_HASH160 <preimageHash> OP_EQUAL OP_VERIFY <OPERATOR_KEY:claim> OP_CHECKSIG"
         );
     }

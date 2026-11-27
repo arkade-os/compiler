@@ -1,3 +1,4 @@
+use crate::common;
 use arkade_compiler::compile;
 
 #[test]
@@ -198,7 +199,7 @@ contract Demo(int[3] xs) {
 "#;
 
     let output = compile(source).expect("source and internal array bindings must remain distinct");
-    let script = crate::common::group(&output, "f")
+    let script = common::group(&output, "f")
         .arkade
         .as_ref()
         .expect("Arkade Script");

@@ -1,14 +1,16 @@
 //! Reports a function that reads one multi-result inspection more than once, so the
 //! author can bind the whole result once instead of repeating the opcode.
 
+use std::collections::HashSet;
+
 use super::walk::{Visitor, Walk};
 use super::{Finding, Lint};
+use crate::diagnostics::Span;
 use crate::models::{
     AssetLookupSource, AssignmentTarget, Contract, ExprKind, Expression, LocatedStatement,
     Statement,
 };
 use crate::properties::{InputProperty, OutputProperty, ThisProperty};
-use std::collections::HashSet;
 
 /// The `if` arms a read sits in, as (if id, then-arm) pairs.
 type Path = Vec<(usize, bool)>;
@@ -17,7 +19,7 @@ struct Read {
     whole: String,
     fields: &'static str,
     path: Path,
-    span: crate::diagnostics::Span,
+    span: Span,
 }
 
 pub(super) fn check(contract: &Contract, findings: &mut Vec<Finding>) {

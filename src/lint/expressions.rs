@@ -3,8 +3,9 @@
 use super::walk::{Visitor, Walk};
 use super::{Finding, Lint};
 use crate::diagnostics::Span;
-use crate::models::{Contract, ExprKind, Expression, Function, KeyExpr, TapItem, TypeName};
+use crate::models::{Contract, ExprKind, Expression, Function, HashFn, KeyExpr, TapItem, TypeName};
 use crate::operators::BinaryOperator;
+use crate::types::ArkType;
 
 pub(super) fn check(contract: &Contract, findings: &mut Vec<Finding>) {
     for function in contract.functions.iter().filter(|f| !f.is_imported()) {
@@ -70,8 +71,7 @@ impl<'a> Visitor<'a> for Expressions<'_, '_> {
                 }
             }
             ExprKind::Builtin { builtin, args }
-                if builtin.name.starts_with("sha256")
-                    || crate::models::HashFn::parse(builtin.name).is_some() =>
+                if builtin.name.starts_with("sha256") || HashFn::parse(builtin.name).is_some() =>
             {
                 for data in args {
                     let mut parts = Vec::new();
@@ -158,7 +158,7 @@ fn concatenated<'a>(expression: &'a Expression, parts: &mut Vec<&'a Expression>)
             left,
             op: BinaryOperator::Add,
             right,
-        } if expression.ty != crate::types::ArkType::Int => {
+        } if expression.ty != ArkType::Int => {
             concatenated(left, parts);
             concatenated(right, parts);
         }

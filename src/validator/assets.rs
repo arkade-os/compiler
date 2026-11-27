@@ -1,12 +1,10 @@
-use crate::models;
-use crate::models::AssignmentTarget;
-use crate::models::Contract;
-use crate::models::ExprKind;
-use crate::models::Expression;
-use crate::models::LocatedStatement;
-use crate::models::Statement;
+use super::ValidationIssue;
+use crate::compiler::constants;
+use crate::models::{
+    self, AssignmentTarget, Contract, ExprKind, Expression, LocatedStatement, Statement,
+    StructDefinition, TypeName,
+};
 use crate::types::ArkType;
-use crate::validator::ValidationIssue;
 
 /// Reject malformed canonical Asset ID operands at compile time instead of
 /// relying on the emulator's runtime `popAssetID` check: every
@@ -20,7 +18,7 @@ pub(super) fn check_asset_id_operands(contract: &Contract, issues: &mut Vec<Vali
 
 fn walk_asset_id_stmts(
     stmts: &[LocatedStatement],
-    structs: &[crate::models::StructDefinition],
+    structs: &[StructDefinition],
     issues: &mut Vec<ValidationIssue>,
 ) {
     for stmt in stmts {
@@ -83,7 +81,7 @@ fn walk_asset_id_stmts(
 /// through a catch-all.
 fn check_asset_id_expr(
     expr: &Expression,
-    structs: &[crate::models::StructDefinition],
+    structs: &[StructDefinition],
     issues: &mut Vec<ValidationIssue>,
 ) {
     match &expr.kind {
@@ -93,7 +91,7 @@ fn check_asset_id_expr(
         | ExprKind::GroupLookup { asset_id }
         | ExprKind::GroupHas { asset_id }
         | ExprKind::GroupControlIs { asset_id, .. } => {
-            let asset = crate::models::TypeName::Named("AssetId".to_string());
+            let asset = TypeName::Named("AssetId".to_string());
             super::functions::validate_value(&asset, asset_id, structs, "asset id", issues);
         }
         _ => {}
@@ -112,7 +110,7 @@ pub(super) fn validate_gidx(fields: &[(String, Expression)], issues: &mut Vec<Va
     if gidx.ty != ArkType::Int || !is_constant(gidx) {
         return;
     }
-    match crate::compiler::constants::evaluate(gidx, &mut |path| Err(path.key())) {
+    match constants::evaluate(gidx, &mut |path| Err(path.key())) {
         Ok(v) if v.parse::<u16>().is_ok() => {}
         Ok(v) => issues.push(
             ValidationIssue::error(format!("asset id gidx {v} is out of range 0..65535"))

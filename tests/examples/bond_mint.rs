@@ -1,8 +1,11 @@
+use crate::common;
 use arkade_compiler::compile_file;
 use arkade_compiler::opcodes::{
     OP_CHECKSEQUENCEVERIFY, OP_CHECKSIG, OP_CHECKTIME, OP_INSPECTASSETGROUPSUM,
     OP_INSPECTINASSETLOOKUP, OP_INSPECTOUTPUTSCRIPTPUBKEY, OP_INSPECTOUTPUTVALUE, OP_NOT,
 };
+use std::path::Path;
+use std::process::Command;
 
 use crate::common::{arkade_asm, arkade_inputs, user_signatures};
 
@@ -91,7 +94,7 @@ fn test_liquidate_is_permissionless_prematurity() {
         ws.iter().any(|w| w == "auctioneerScriptPubKey"),
         "auctioneerScriptPubKey must be an Arkade Script input parameter (got: {ws:?})"
     );
-    let destination = crate::common::group(&output, "liquidate")
+    let destination = common::group(&output, "liquidate")
         .arkade
         .as_ref()
         .expect("liquidate Arkade Script")
@@ -140,7 +143,7 @@ fn test_auction_is_permissionless_and_phased() {
         ws.iter().any(|w| w == "auctioneerScriptPubKey"),
         "auctioneerScriptPubKey must be an Arkade Script input parameter (got: {ws:?})"
     );
-    let destination = crate::common::group(&output, "auction")
+    let destination = common::group(&output, "auction")
         .arkade
         .as_ref()
         .expect("auction Arkade Script")
@@ -207,7 +210,7 @@ fn test_unilateral_exit_is_csv_timelocked() {
     // introspection, and require only the borrower's signature.
     use arkade_compiler::opcodes::OP_DROP;
     let output = compile_file(PATH).expect("compilation failed");
-    let asm = crate::common::leaf_asm(&output, "unilateral", "unilateral");
+    let asm = common::leaf_asm(&output, "unilateral", "unilateral");
     assert!(
         asm.contains(OP_CHECKSEQUENCEVERIFY),
         "unilateral exit must be CSV-timelocked"
@@ -227,7 +230,7 @@ fn test_unilateral_exit_is_csv_timelocked() {
         "exit leaf must carry no asset-group-sum introspection"
     );
     // The leaf witness is borrowerSig only — no operatorSig on a tapscript.
-    let ws = crate::common::witness_names(&output, "unilateral", "unilateral");
+    let ws = common::witness_names(&output, "unilateral", "unilateral");
     assert_eq!(
         ws,
         vec!["borrowerSig"],
@@ -241,10 +244,10 @@ fn test_bond_mint_cli() {
     use tempfile::tempdir;
 
     let dir = tempdir().unwrap();
-    let input = std::path::Path::new(PATH);
+    let input = Path::new(PATH);
     let out = dir.path().join("bond_mint.json");
 
-    let result = std::process::Command::new(env!("CARGO_BIN_EXE_arkadec"))
+    let result = Command::new(env!("CARGO_BIN_EXE_arkadec"))
         .arg(input.to_str().unwrap())
         .arg("-o")
         .arg(out.to_str().unwrap())

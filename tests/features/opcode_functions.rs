@@ -1,3 +1,4 @@
+use crate::common;
 use crate::common::compile_unoptimized as compile;
 use arkade_compiler::opcodes::{
     OP_0, OP_1, OP_ADD, OP_CAT, OP_CHECKSIGFROMSTACK, OP_DIGEST, OP_ECADD, OP_ECMUL,
@@ -147,7 +148,7 @@ fn test_sha256_initialize() {
     );
 
     let output = result.unwrap();
-    let asm_str = crate::common::arkade_asm(&output, "initHash");
+    let asm_str = common::arkade_asm(&output, "initHash");
     assert!(
         asm_str.contains(OP_SHA256INITIALIZE),
         "Expected {OP_SHA256INITIALIZE} in ASM: {asm_str}"
@@ -182,7 +183,7 @@ fn test_sha256_update() {
     );
 
     let output = result.unwrap();
-    let asm_str = crate::common::arkade_asm(&output, "updateHash");
+    let asm_str = common::arkade_asm(&output, "updateHash");
     assert!(
         asm_str.contains(OP_SHA256UPDATE),
         "Expected {OP_SHA256UPDATE} in ASM: {asm_str}"
@@ -209,7 +210,7 @@ fn test_sha256_finalize() {
     );
 
     let output = result.unwrap();
-    let asm_str = crate::common::arkade_asm(&output, "finalizeHash");
+    let asm_str = common::arkade_asm(&output, "finalizeHash");
     assert!(
         asm_str.contains(OP_SHA256FINALIZE),
         "Expected {OP_SHA256FINALIZE} in ASM: {asm_str}"
@@ -228,7 +229,7 @@ fn test_digest() {
     "#;
 
     let output = compile(code).expect("compile digest");
-    let asm = crate::common::arkade_asm_tokens(&output, "hash");
+    let asm = common::arkade_asm_tokens(&output, "hash");
     assert!(
         contains_tokens(&asm, &[OP_0, OP_ROLL, "<hashType>", OP_DIGEST]),
         "Expected ordered {OP_DIGEST} operand reads in ASM: {asm:?}"
@@ -249,7 +250,7 @@ fn test_digest_concatenates_bytes_operands() {
     "#;
 
     let output = compile(code).expect("compile digest over a concatenation");
-    let asm = crate::common::arkade_asm_tokens(&output, "hash");
+    let asm = common::arkade_asm_tokens(&output, "hash");
     assert!(
         contains_tokens(
             &asm,
@@ -278,7 +279,7 @@ fn test_unary_minus_negates() {
     "#;
 
     let output = compile(code).expect("compile unary minus");
-    let asm = crate::common::arkade_asm_tokens(&output, "negateValue");
+    let asm = common::arkade_asm_tokens(&output, "negateValue");
     assert!(
         contains_tokens(&asm, &[OP_0, OP_ROLL, OP_NEGATE]),
         "Expected unary `-` to read its operand and emit {OP_NEGATE}; asm: {asm:?}"
@@ -301,7 +302,7 @@ fn test_unary_minus_substitutes_loop_index() {
     "#;
 
     let output = compile(code).expect("compile negated loop index");
-    let asm = crate::common::arkade_asm(&output, "f");
+    let asm = common::arkade_asm(&output, "f");
     for k in 0..3 {
         assert!(
             asm.contains(&format!("{k} {OP_NEGATE}")),
@@ -324,7 +325,7 @@ fn test_binary_minus_still_subtracts() {
     "#;
 
     let output = compile(code).expect("compile subtraction");
-    let asm = crate::common::arkade_asm_tokens(&output, "diff");
+    let asm = common::arkade_asm_tokens(&output, "diff");
     assert!(
         contains_tokens(&asm, &["<a>", "<b>", OP_SUB]),
         "Expected a binary subtraction; asm: {asm:?}"
@@ -347,7 +348,7 @@ fn test_mod_exp() {
     "#;
 
     let output = compile(code).expect("compile modExp");
-    let asm = crate::common::arkade_asm_tokens(&output, "calculate");
+    let asm = common::arkade_asm_tokens(&output, "calculate");
     assert!(
         contains_tokens(
             &asm,
@@ -372,7 +373,7 @@ fn test_ec_add_returns_typed_point() {
     "#;
 
     let output = compile(code).expect("ecAdd returns ECPoint");
-    let asm = crate::common::arkade_asm_tokens(&output, "add");
+    let asm = common::arkade_asm_tokens(&output, "add");
     assert!(
         contains_tokens(&asm, &[OP_ECADD, OP_SWAP, OP_0, OP_ROLL]),
         "EC point output must be normalized to struct field order: {asm:?}"
@@ -487,7 +488,7 @@ fn test_ec_operands_accept_point_values() {
     "#,
     )
     .expect("ECPoint bindings, fields, helper results, and native results are points");
-    let asm = crate::common::arkade_asm_tokens(&output, "spend");
+    let asm = common::arkade_asm_tokens(&output, "spend");
     assert!(
         contains_tokens(&asm, &[OP_ECADD, OP_SWAP, OP_SWAP]),
         "helper point must return to native field order: {asm:?}"
@@ -514,7 +515,7 @@ fn test_ec_operands_accept_point_literals() {
         compile(&source).unwrap(),
         arkade_compiler::compile(&source).unwrap(),
     ] {
-        let asm = crate::common::arkade_asm_tokens(&output, "spend");
+        let asm = common::arkade_asm_tokens(&output, "spend");
         // Each field is evaluated once, first field deepest, whatever the source order.
         let at = |opcode: &str| {
             assert_eq!(asm.iter().filter(|token| *token == opcode).count(), 1);
@@ -591,7 +592,7 @@ fn test_ec_mul_infers_point_type() {
     "#;
 
     let output = compile(code).expect("ecMul infers ECPoint");
-    let asm = crate::common::arkade_asm_tokens(&output, "multiply");
+    let asm = common::arkade_asm_tokens(&output, "multiply");
     assert!(
         contains_tokens(&asm, &[OP_ECMUL, OP_SWAP]),
         "EC point output must be normalized to struct field order: {asm:?}"
@@ -633,7 +634,7 @@ fn test_ec_pairing_takes_aligned_point_arrays() {
     "#,
     )
     .expect("ecPairing accepts bindings and struct-array fields");
-    let asm = crate::common::arkade_asm_tokens(&output, "pair");
+    let asm = common::arkade_asm_tokens(&output, "pair");
     assert_eq!(
         asm.iter().filter(|token| *token == OP_ECPAIRING).count(),
         2,
@@ -688,7 +689,7 @@ fn test_ec_pairing_evaluates_computed_point_arrays_once() {
         )
         .expect("ecPairing accepts helper results on either side");
         for (function, markers) in [("pair", &["1234", "5678"][..]), ("second", &["5678"])] {
-            let asm = crate::common::arkade_asm_tokens(&output, function);
+            let asm = common::arkade_asm_tokens(&output, function);
             let evaluated: Vec<_> = asm
                 .iter()
                 .filter(|token| markers.contains(&token.as_str()))
@@ -798,7 +799,7 @@ fn verify_builtins_are_true_as_values_and_only_check_in_require() {
              else {{ let ok = {call}; require(ok || flag); }} }} }}"
         ))
         .unwrap_or_else(|error| panic!("{call}: {error}"));
-        let asm = crate::common::arkade_asm_tokens(&output, "spend");
+        let asm = common::arkade_asm_tokens(&output, "spend");
         assert!(
             contains_tokens(&asm, &[check, &["OP_ELSE"]].concat()),
             "{call} inside require pushes nothing: {asm:?}"
@@ -824,7 +825,7 @@ fn test_sighash() {
     "#;
 
     let output = compile(code).expect("compile sighash");
-    let asm = crate::common::arkade_asm_tokens(&output, "hashCurrentInput");
+    let asm = common::arkade_asm_tokens(&output, "hashCurrentInput");
     assert!(
         contains_tokens(&asm, &["<hashType>", OP_SIGHASH]),
         "Expected ordered {OP_SIGHASH} operand read in ASM: {asm:?}"
@@ -844,7 +845,7 @@ fn test_check_sig_from_stack_verify() {
 
     let output =
         compile(code).expect("checkSigFromStackVerify is a valid self-verifying requirement");
-    let asm = crate::common::arkade_asm(&output, "verifyMessageSig");
+    let asm = common::arkade_asm(&output, "verifyMessageSig");
     assert!(
         asm.contains(OP_CHECKSIGFROMSTACK),
         "expected {OP_CHECKSIGFROMSTACK} in Arkade Script ASM: {asm}"
@@ -875,7 +876,7 @@ fn test_streaming_hash_full_workflow() {
     );
 
     let output = result.unwrap();
-    let asm_str = crate::common::arkade_asm(&output, "computeHash");
+    let asm_str = common::arkade_asm(&output, "computeHash");
     assert!(
         asm_str.contains(OP_SHA256INITIALIZE),
         "Expected {OP_SHA256INITIALIZE} in ASM: {asm_str}"
@@ -911,24 +912,24 @@ fn unary_negation_precedence_and_spend_shape() {
         );
         let output = compile(&source).unwrap_or_else(|error| panic!("{expression}: {error}"));
         assert!(
-            crate::common::feature_warnings(&output).is_empty(),
+            common::feature_warnings(&output).is_empty(),
             "{expression}: {:?}",
             output.warnings
         );
-        let asm = crate::common::arkade_asm_tokens(&output, "spend");
+        let asm = common::arkade_asm_tokens(&output, "spend");
         assert!(
             contains_tokens(&asm, &expected.split_whitespace().collect::<Vec<_>>()),
             "{expression}: {asm:?}"
         );
         assert_eq!(output.functions.len(), 1);
-        assert_eq!(crate::common::group(&output, "spend").leaves.len(), 1);
-        assert!(crate::common::arkade_inputs(&output, "spend").is_empty());
+        assert_eq!(common::group(&output, "spend").leaves.len(), 1);
+        assert!(common::arkade_inputs(&output, "spend").is_empty());
         assert_eq!(
-            crate::common::witness_names(&output, "spend", "spend"),
+            common::witness_names(&output, "spend", "spend"),
             ["operatorSig"]
         );
         assert_eq!(
-            crate::common::leaf_asm(&output, "spend", "spend"),
+            common::leaf_asm(&output, "spend", "spend"),
             "<OPERATOR_KEY:spend> OP_CHECKSIG"
         );
     }
@@ -951,11 +952,11 @@ fn unary_negation_in_loops_and_conditions() {
     )
     .expect("negated loop operands compile");
     assert!(
-        crate::common::feature_warnings(&output).is_empty(),
+        common::feature_warnings(&output).is_empty(),
         "{:?}",
         output.warnings
     );
-    let asm = crate::common::arkade_asm(&output, "spend");
+    let asm = common::arkade_asm(&output, "spend");
     for index in 0..2 {
         assert!(
             asm.contains(&format!("{index} 1 OP_ADD OP_NEGATE 4 OP_NUM2BIN")),
@@ -963,7 +964,7 @@ fn unary_negation_in_loops_and_conditions() {
         );
     }
     assert_eq!(
-        crate::common::opcode_count_in_arkade(&output, "spend", "OP_NOT"),
+        common::opcode_count_in_arkade(&output, "spend", "OP_NOT"),
         6
     );
     assert!(!asm.contains("<flag>") && !asm.contains("<i>"), "{asm}");
@@ -1111,7 +1112,7 @@ fn unary_negation_in_builtin_atom_arguments() {
         let source =
             format!("contract Unary() {{ function spend({params}) {{ {statement} {read} }} }}");
         let output = compile(&source).unwrap_or_else(|error| panic!("{statement}: {error}"));
-        let asm = crate::common::arkade_asm_tokens(&output, "spend");
+        let asm = common::arkade_asm_tokens(&output, "spend");
         assert!(
             contains_tokens(&asm, &expected.split_whitespace().collect::<Vec<_>>()),
             "{statement}: {asm:?}"
@@ -1138,7 +1139,7 @@ fn logical_negation_preserves_nested_expressions() {
         panic!("{:?}", output.warnings);
     };
     assert!(warning.contains("checkSig fails the spend on an invalid non-empty signature"));
-    let asm = crate::common::arkade_asm_tokens(&output, "spend");
+    let asm = common::arkade_asm_tokens(&output, "spend");
     assert!(asm.iter().any(|token| token == "OP_CAT"), "{asm:?}");
     assert!(
         contains_tokens(&asm, &["OP_EQUAL", "OP_NOT", "OP_VERIFY"]),
@@ -1156,7 +1157,7 @@ fn unrolled_loop_bodies_concatenate_bytes_and_drop_same_type_casts() {
         "contract C(bytes32 h) { function spend(bytes[2] xs) { for (i, x) in xs { require(sha256(x + h) == h); require(int(i) < 2); } } }",
     )
     .expect("loop compiles");
-    let asm = crate::common::arkade_asm_tokens(&output, "spend");
+    let asm = common::arkade_asm_tokens(&output, "spend");
     let count = |opcode: &str| asm.iter().filter(|token| *token == opcode).count();
     assert_eq!(count("OP_CAT"), 2, "{asm:?}");
     assert_eq!(count("OP_ADD"), 0, "{asm:?}");
@@ -1169,7 +1170,7 @@ fn helper_results_concatenate_and_drop_same_type_casts() {
         "contract C(bytes32 h) { function spend() { require(sha256(f() + g()) == h); require(bytes32(k()) == h); } private function f() bytes { return h; } private function g() bytes { return h; } private function k() bytes32 { return h; } }",
     )
     .expect("helpers compile");
-    let asm = crate::common::arkade_asm_tokens(&output, "spend");
+    let asm = common::arkade_asm_tokens(&output, "spend");
     let count = |opcode: &str| asm.iter().filter(|token| *token == opcode).count();
     assert_eq!(count("OP_CAT"), 1, "{asm:?}");
     assert_eq!(count("OP_ADD"), 0, "{asm:?}");
@@ -1204,7 +1205,7 @@ fn builtin_arguments_are_general_expressions() {
             "contract Calls(bytes a, bytes b, int n) {{ function spend() {{ {statement} }} }}"
         );
         let output = compile(&source).unwrap_or_else(|error| panic!("{statement}: {error}"));
-        let asm = crate::common::arkade_asm_tokens(&output, "spend");
+        let asm = common::arkade_asm_tokens(&output, "spend");
         let mut rest = asm.iter();
         assert!(
             expected.iter().all(|op| rest.any(|token| token == op)),
@@ -1240,7 +1241,7 @@ fn bitwise_and_shift_operators_emit_their_opcodes_by_precedence() {
     ] {
         let source = format!("contract Ops({params}) {{ function spend() {{ {statement} }} }}");
         let output = compile(&source).unwrap_or_else(|error| panic!("{statement}: {error}"));
-        let asm = crate::common::arkade_asm_tokens(&output, "spend");
+        let asm = common::arkade_asm_tokens(&output, "spend");
         let mut rest = asm.iter();
         assert!(
             expected.iter().all(|op| rest.any(|token| token == op)),
@@ -1515,23 +1516,20 @@ fn merkle_root_pushes_operands_in_vm_order() {
         } }"#,
     )
     .expect("merkleRoot compiles");
-    let asm = crate::common::arkade_asm_tokens(&output, "spend");
+    let asm = common::arkade_asm_tokens(&output, "spend");
     assert_eq!(
         asm,
         "0x6c656166 0x6272616e6368 OP_3 OP_ROLL OP_3 OP_ROLL OP_MERKLEBRANCHROOT <root> OP_EQUAL OP_VERIFY OP_1"
             .split_whitespace().collect::<Vec<_>>()
     );
 
+    assert_eq!(common::arkade_inputs(&output, "spend"), ["leaf", "proof"]);
     assert_eq!(
-        crate::common::arkade_inputs(&output, "spend"),
-        ["leaf", "proof"]
-    );
-    assert_eq!(
-        crate::common::leaf_asm_tokens(&output, "spend", "spend"),
+        common::leaf_asm_tokens(&output, "spend", "spend"),
         ["<OPERATOR_KEY:spend>", "OP_CHECKSIG"]
     );
     assert_eq!(
-        crate::common::witness_names(&output, "spend", "spend"),
+        common::witness_names(&output, "spend", "spend"),
         ["operatorSig"]
     );
 
@@ -1573,7 +1571,7 @@ fn bytes2uint_appends_a_pushed_zero_byte() {
         "contract U() { function spend(bytes data, int n) { require(bytes2uint(data) == n); } }",
     )
     .unwrap();
-    let asm = crate::common::arkade_asm_tokens(&output, "spend");
+    let asm = common::arkade_asm_tokens(&output, "spend");
     assert!(
         contains_tokens(&asm, &["0x00", "OP_CAT", "OP_BIN2NUM"]),
         "{asm:?}"

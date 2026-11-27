@@ -1,8 +1,7 @@
 use std::collections::HashSet;
 
-use crate::models::child_exprs;
 use crate::models::{
-    AssignmentTarget, ExprKind, Expression, Function, LocatedStatement, Statement,
+    child_exprs, AssignmentTarget, ExprKind, Expression, Function, LocatedStatement, Statement,
 };
 
 // Parameters are retained whole; pruning individual composite fields needs a sparse stack layout.

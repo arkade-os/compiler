@@ -2,6 +2,8 @@
 //! checks, constant folding and code generation read these properties
 //! instead of matching operator text.
 
+use std::fmt;
+
 use crate::opcodes::Opcode;
 
 /// What an operator takes and gives, which decides how it is checked.
@@ -126,8 +128,8 @@ impl BinaryOperator {
     }
 }
 
-impl std::fmt::Display for BinaryOperator {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Display for BinaryOperator {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.symbol())
     }
 }

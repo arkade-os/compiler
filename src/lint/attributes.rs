@@ -1,6 +1,8 @@
 //! Lint attributes: `@allow`, `@warn`, `@deny` and `@expect` set the level of the lints they name
 //! on the node they precede and everything inside it, as rustc's lint attributes do.
 
+use std::cmp::Reverse;
+
 use super::{Finding, Level, Lint};
 use crate::diagnostics::Span;
 use crate::models::{Attribute, AttributeArg, Contract};
@@ -134,7 +136,7 @@ fn level(entries: &mut [Entry], finding: &Finding) -> Option<Level> {
                 && entry.scope.start <= finding.span.start
                 && finding.span.end <= entry.scope.end
         })
-        .min_by_key(|(index, entry)| (size(entry), std::cmp::Reverse(*index)))
+        .min_by_key(|(index, entry)| (size(entry), Reverse(*index)))
         .map(|(index, _)| index)?;
     let entry = &mut entries[innermost];
     Some(match entry.kind {

@@ -1,12 +1,10 @@
-use crate::compiler::asset;
-use crate::compiler::introspection;
-use crate::compiler::ir::Op;
-use crate::models::ExprKind;
-use crate::models::Expression;
-use crate::models::GroupIOSource;
+use super::ir::Op;
+use super::{asset, introspection};
+use crate::models::{self, ExprKind, Expression, GroupIOSource};
 use crate::opcodes::Opcode;
 use crate::operators::{BinaryOperator, OperatorClass};
 use crate::properties::{GroupIoProperty, ThisProperty};
+use crate::types::{self, ArkType};
 
 fn push_literal_asm(lit: &str, asm: &mut Vec<Op>) {
     match lit {
@@ -64,7 +62,7 @@ fn emit_native_struct_asm(value: &Expression, fields: &[(&str, &str)], asm: &mut
 }
 
 pub(crate) fn asset_id_fields() -> &'static [(&'static str, &'static str)] {
-    crate::models::builtin_struct_fields("AssetId").expect("AssetId is a native struct")
+    models::builtin_struct_fields("AssetId").expect("AssetId is a native struct")
 }
 
 /// Push an `AssetId` value: its txid, then its gidx on top.
@@ -226,7 +224,7 @@ pub(crate) fn emit_expression_asm(expr: &Expression, asm: &mut Vec<Op>) {
                 unreachable!("pairings are extracted before raw emission")
             };
             for (arg, (_, ty)) in args.iter().zip(builtin.params) {
-                match crate::models::builtin_struct_fields(ty) {
+                match models::builtin_struct_fields(ty) {
                     Some(fields) => emit_native_struct_asm(arg, fields, asm),
                     None => emit_expression_asm(arg, asm),
                 }
@@ -245,18 +243,14 @@ pub(crate) fn emit_expression_asm(expr: &Expression, asm: &mut Vec<Op>) {
         }
         ExprKind::Cast { target, data } => {
             emit_expression_asm(data, asm);
-            if data.ty == crate::types::ArkType::parse(target) {
+            if data.ty == ArkType::parse(target) {
                 return;
             }
             match target.as_str() {
                 // Normalize spender-supplied integers before exposing their encoding.
-                "bytes" if data.ty == crate::types::ArkType::Int => {
-                    asm.push(Opcode::Bin2Num.into())
-                }
+                "bytes" if data.ty == ArkType::Int => asm.push(Opcode::Bin2Num.into()),
                 // Constructor bools are not checked like witness bools; normalize to 0/1.
-                "bytes" if data.ty == crate::types::ArkType::Bool => {
-                    asm.push(Opcode::NotEqual0.into())
-                }
+                "bytes" if data.ty == ArkType::Bool => asm.push(Opcode::NotEqual0.into()),
                 "int" | "bool" => asm.push(Opcode::NotEqual0.into()),
                 "bytes20" => asm.extend([
                     Opcode::Size.into(),
@@ -379,9 +373,9 @@ fn operator_opcodes(
     op: BinaryOperator,
     left: &Expression,
     right: &Expression,
-) -> &'static [crate::opcodes::Opcode] {
+) -> &'static [Opcode] {
     let numeric = [left, right]
         .iter()
-        .all(|operand| crate::types::is_numeric(&operand.ty));
+        .all(|operand| types::is_numeric(&operand.ty));
     op.opcodes_for(numeric)
 }

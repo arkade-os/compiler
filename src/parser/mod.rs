@@ -1,11 +1,18 @@
-use crate::diagnostics::CompileError;
-use crate::models::{
-    ArraySize, AssignmentTarget, Attribute, AttributeArg, Constant, Contract, ExprKind, Expression,
-    Function, LocatedStatement, Parameter, Statement, StructDefinition, TypeName,
-};
+use std::ops::Range;
+use std::sync::Mutex;
+use std::{array, iter, mem};
+
+use pest::error::Error as PestError;
 use pest::iterators::{Pair, Pairs};
 use pest::Parser;
 use pest_derive::Parser;
+
+use crate::diagnostics::{CompileError, Diagnostic, Span};
+use crate::models::{
+    ArraySize, AssignmentTarget, Attribute, AttributeArg, Constant, Contract, ExprKind, Expression,
+    Function, LocatedStatement, NamedTapscript, Parameter, Statement, StructDefinition, TypeName,
+};
+use crate::{builtins, compiler};
 
 /// Pest parser generated from grammar.pest
 #[derive(Parser)]
@@ -25,9 +32,7 @@ pub fn parse(source: &str) -> Result<Contract, String> {
 }
 
 /// Each import's path and the span of its statement.
-pub(crate) fn imports(
-    pairs: &Pairs<'_, Rule>,
-) -> Result<Vec<(String, crate::diagnostics::Span)>, String> {
+pub(crate) fn imports(pairs: &Pairs<'_, Rule>) -> Result<Vec<(String, Span)>, String> {
     pairs
         .clone()
         .next()
@@ -95,7 +100,7 @@ fn version_numbers(version: &str) -> [u64; 3] {
     let mut parts = version
         .split(['.', '-', '+'])
         .map(|part| part.parse().unwrap_or(u64::MAX));
-    std::array::from_fn(|_| parts.next().expect("three version components"))
+    array::from_fn(|_| parts.next().expect("three version components"))
 }
 
 /// Whether `version` satisfies `operator` `wanted`, with npm's caret and tilde ranges.
@@ -121,7 +126,7 @@ pub(crate) fn parse_main(source: &str) -> Result<Pairs<'_, Rule>, String> {
 
 /// Rewrite a pest error in source-language terms: report the farthest position
 /// reached, quote the closing tokens expected there, and name rules in plain words.
-fn readable_error(error: pest::error::Error<Rule>, source: &str) -> pest::error::Error<Rule> {
+fn readable_error(error: PestError<Rule>, source: &str) -> PestError<Rule> {
     use pest::error::{Error, ErrorVariant, InputLocation};
     let Some(attempts) = error.parse_attempts() else {
         return error;
@@ -214,9 +219,9 @@ pub(crate) fn without_trivia(text: &str) -> String {
 
 /// The byte ranges of `source` that are code: each character outside comments, string literal
 /// contents and escapes included, other than whitespace outside string literals.
-fn code(source: &str) -> impl Iterator<Item = std::ops::Range<usize>> + '_ {
+fn code(source: &str) -> impl Iterator<Item = Range<usize>> + '_ {
     let (mut i, mut quoted) = (0, false);
-    std::iter::from_fn(move || loop {
+    iter::from_fn(move || loop {
         let c = source[i..].chars().next()?;
         if let Some(comment) = comment_len(&source[i..]).filter(|_| !quoted) {
             i += comment;
@@ -331,11 +336,11 @@ fn rule_term(rule: &Rule) -> Option<String> {
 /// The raw pest parse, with the error already rewritten in source-language
 /// terms by `readable_error`. Used where the byte position of a failure
 /// matters, e.g. `check()`, instead of `parse_main`'s rendered string.
-pub(crate) fn try_parse(source: &str) -> Result<Pairs<'_, Rule>, pest::error::Error<Rule>> {
+pub(crate) fn try_parse(source: &str) -> Result<Pairs<'_, Rule>, PestError<Rule>> {
     // Tracking parse attempts, which only the error message needs, slows every parse, so a
     // failed parse is repeated with it unless it was already on, which an error with attempts
     // shows. The flag is global: only the lock holder turns it on, and back off.
-    static DETAILED: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    static DETAILED: Mutex<()> = Mutex::new(());
     ArkadeParser::parse(Rule::main, source)
         .or_else(|error| {
             if error.parse_attempts().is_some() {
@@ -353,10 +358,10 @@ pub(crate) fn try_parse(source: &str) -> Result<Pairs<'_, Rule>, pest::error::Er
 }
 
 pub(crate) fn parse_error_diagnostic(
-    error: &pest::error::Error<Rule>,
+    error: &PestError<Rule>,
     file: &str,
     source: &str,
-) -> crate::diagnostics::Diagnostic {
+) -> Diagnostic {
     use pest::error::InputLocation;
     let (start, end) = match error.location {
         // A point location still needs a non-empty span to underline: cover the
@@ -371,8 +376,7 @@ pub(crate) fn parse_error_diagnostic(
         },
         InputLocation::Span((start, end)) => (start, end),
     };
-    crate::diagnostics::Diagnostic::error(file, error.variant.message().into_owned())
-        .with_span(crate::diagnostics::Span { start, end })
+    Diagnostic::error(file, error.variant.message().into_owned()).with_span(Span { start, end })
 }
 
 /// Build a Contract AST from parsed Pest pairs
@@ -409,7 +413,7 @@ pub(crate) fn build_ast(
                             }
                         }
                         Rule::contract | Rule::library => {
-                            contract.attributes = std::mem::take(&mut attributes);
+                            contract.attributes = mem::take(&mut attributes);
                             parse_contract(&mut contract, inner_pair)?;
                         }
                         Rule::struct_definition => {
@@ -511,7 +515,7 @@ fn parse_contract(contract: &mut Contract, pair: Pair<Rule>) -> Result<(), Compi
         })
         .collect::<Result<Vec<_>, _>>()?;
     contract.constants.extend(constants);
-    crate::compiler::resolve_constants(contract)?;
+    compiler::resolve_constants(contract)?;
     let mut parsing_constants = contract.constants.clone();
     parsing_constants.extend(
         contract
@@ -537,7 +541,7 @@ fn parse_contract(contract: &mut Contract, pair: Pair<Rule>) -> Result<(), Compi
             Rule::function => {}
             _ => continue,
         }
-        let attributes = std::mem::take(&mut attributes);
+        let attributes = mem::take(&mut attributes);
         if tapscript::function_pair_is_tapscript(&func_pair) {
             let span = func_pair.as_span().into();
             if contract.is_library {
@@ -548,7 +552,7 @@ fn parse_contract(contract: &mut Contract, pair: Pair<Rule>) -> Result<(), Compi
                 .map_err(|error| error.at(span))?;
             contract
                 .tapscripts
-                .push(crate::models::NamedTapscript { attributes, ..ts });
+                .push(NamedTapscript { attributes, ..ts });
         } else {
             let func = parse_function(func_pair, &parsing_constants, contract.is_library)?;
             contract.functions.push(Function { attributes, ..func });
@@ -592,7 +596,7 @@ fn parse_function(
     let is_private = is_library || !visibility.is_empty();
     let is_exported = is_static && visibility != "private";
     let name = inner.next().ok_or("Missing function name")?;
-    let span = crate::diagnostics::Span {
+    let span = Span {
         start: name.as_span().start(),
         end: name.as_span().end(),
     };
@@ -634,7 +638,7 @@ fn parse_statements<'a>(
         }
         let statement = parse_statement(function_name, pair, constants).map_err(|e| e.at(span))?;
         statements.extend(statement.map(|statement| LocatedStatement {
-            attributes: std::mem::take(&mut attributes),
+            attributes: mem::take(&mut attributes),
             ..statement
         }));
     }
@@ -647,9 +651,9 @@ fn parse_statement(
     pair: Pair<Rule>,
     constants: &[Constant],
 ) -> Result<Option<LocatedStatement>, CompileError> {
-    let mut span: crate::diagnostics::Span = pair.as_span().into();
+    let mut span: Span = pair.as_span().into();
     let mut names = Vec::new();
-    let mut branches: Vec<crate::diagnostics::Span> = Vec::new();
+    let mut branches: Vec<Span> = Vec::new();
     let mut message = None;
     let statement = match pair.as_rule() {
         Rule::require_stmt => {
@@ -721,7 +725,7 @@ fn parse_statement(
                     branches.push(else_block.as_span().into());
                     Some(match else_block.as_rule() {
                         Rule::if_stmt => {
-                            parse_statements(function_name, std::iter::once(else_block), constants)?
+                            parse_statements(function_name, iter::once(else_block), constants)?
                         }
                         _ => parse_block(function_name, else_block, constants)?,
                     })
@@ -752,10 +756,7 @@ fn parse_statement(
                     let value_var = inner.next().ok_or_else(|| {
                         "Parse error: Missing value variable in for loop".to_string()
                     })?;
-                    names.extend(
-                        [index_var.as_span(), value_var.as_span()]
-                            .map(crate::diagnostics::Span::from),
-                    );
+                    names.extend([index_var.as_span(), value_var.as_span()].map(Span::from));
                     let (index_var, value_var) = (
                         index_var.as_str().to_string(),
                         value_var.as_str().to_string(),
@@ -828,12 +829,12 @@ fn parse_statement(
                 name.push(part.as_str());
             };
             let name = name.join(".");
-            if name == "this.tunnel" || crate::builtins::find(&name).is_some() {
+            if name == "this.tunnel" || builtins::find(&name).is_some() {
                 return Err(CompileError::from(format!(
                     "`{name}(...)` cannot be a statement; use it inside require()"
                 )));
             }
-            let span = crate::diagnostics::Span {
+            let span = Span {
                 start: span.start,
                 end: args.as_span().end(),
             };
@@ -946,9 +947,13 @@ pub(crate) fn parse_parameters(params: Pair<Rule>) -> Result<Vec<Parameter>, Str
 
 #[cfg(test)]
 mod tests {
+    use std::sync::mpsc;
+    use std::thread;
+    use std::time::Duration;
+
     use super::parse;
     use crate::models::{
-        AssignmentTarget, Attribute, AttributeArg, ExprKind, Expression, Statement,
+        self, AssignmentTarget, Attribute, AttributeArg, ExprKind, Expression, Function, Statement,
     };
     use crate::operators::UnaryOperator;
     use crate::properties::TxProperty;
@@ -1129,8 +1134,8 @@ mod tests {
     #[test]
     fn nested_operands_parse_in_linear_time() {
         // Each operand has one parse, so a failure deep inside one is never retried by another.
-        let (sender, receiver) = std::sync::mpsc::channel();
-        std::thread::spawn(move || {
+        let (sender, receiver) = mpsc::channel();
+        thread::spawn(move || {
             let nested = [
                 "Lib.f(",
                 "size(tx.packet(",
@@ -1148,7 +1153,7 @@ mod tests {
             }
             sender.send(()).unwrap();
         });
-        let parsed = receiver.recv_timeout(std::time::Duration::from_secs(10));
+        let parsed = receiver.recv_timeout(Duration::from_secs(10));
         assert!(
             parsed.is_ok(),
             "deeply nested operands did not parse in time"
@@ -1279,7 +1284,7 @@ mod tests {
         let contract = parse(source).unwrap();
         assert_eq!(contract.name, "contractor");
         assert_eq!(contract.structs[0].name, "structure");
-        let names = |functions: &[crate::models::Function]| -> Vec<String> {
+        let names = |functions: &[Function]| -> Vec<String> {
             functions.iter().map(|f| f.name.clone()).collect()
         };
         assert_eq!(names(&contract.functions), ["format", "tapscriptX"]);
@@ -1385,7 +1390,7 @@ mod tests {
         let text = |e: &Expression| &source[e.span.start..e.span.end];
         fn walk<'a>(e: &'a Expression, out: &mut Vec<&'a Expression>) {
             out.push(e);
-            for child in crate::models::child_exprs(e) {
+            for child in models::child_exprs(e) {
                 assert!(
                     e.span.start <= child.span.start && child.span.end <= e.span.end,
                     "{child:?} escapes {e:?}"

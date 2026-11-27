@@ -1,3 +1,4 @@
+use crate::common;
 use crate::common::compile_unoptimized as compile;
 use arkade_compiler::opcodes::{
     OP_INSPECTINASSETAT, OP_INSPECTINASSETCOUNT, OP_INSPECTOUTASSETAT, OP_INSPECTOUTASSETCOUNT,
@@ -27,7 +28,7 @@ fn test_asset_count_parsing() {
     assert_eq!(output.name, "AssetCounter");
 
     // Check that the Arkade Script ASM contains the asset count opcode
-    let asm_str = crate::common::arkade_asm(&output, "checkAssetCount");
+    let asm_str = common::arkade_asm(&output, "checkAssetCount");
     assert!(
         asm_str.contains(OP_INSPECTOUTASSETCOUNT),
         "Expected {OP_INSPECTOUTASSETCOUNT} in ASM: {asm_str}"
@@ -55,7 +56,7 @@ fn test_asset_at_amount_parsing() {
     let output = result.unwrap();
 
     // Check that the Arkade Script ASM contains the asset at opcode
-    let asm_str = crate::common::arkade_asm(&output, "checkAssetAmount");
+    let asm_str = common::arkade_asm(&output, "checkAssetAmount");
     assert!(
         asm_str.contains(OP_INSPECTOUTASSETAT),
         "Expected {OP_INSPECTOUTASSETAT} in ASM: {asm_str}"
@@ -82,7 +83,7 @@ fn test_asset_at_assetid_returns_struct() {
     "#;
 
     let output = compile(code).expect("assetId returns an AssetId struct");
-    let asm = crate::common::arkade_asm_tokens(&output, "checkAssetId");
+    let asm = common::arkade_asm_tokens(&output, "checkAssetId");
     assert!(asm.iter().any(|token| token == OP_INSPECTOUTASSETAT));
     assert!(asm.iter().any(|token| token == OP_SWAP));
 }
@@ -108,7 +109,7 @@ fn test_input_asset_count() {
     let output = result.unwrap();
 
     // Check that the Arkade Script ASM contains the input asset count opcode
-    let asm_str = crate::common::arkade_asm(&output, "checkInputAssets");
+    let asm_str = common::arkade_asm(&output, "checkInputAssets");
     assert!(
         asm_str.contains(OP_INSPECTINASSETCOUNT),
         "Expected {OP_INSPECTINASSETCOUNT} in ASM: {asm_str}"
@@ -136,7 +137,7 @@ fn test_input_asset_at() {
     let output = result.unwrap();
 
     // Check that the Arkade Script ASM contains the input asset at opcode
-    let asm_str = crate::common::arkade_asm(&output, "checkInputAssetAmount");
+    let asm_str = common::arkade_asm(&output, "checkInputAssetAmount");
     assert!(
         asm_str.contains(OP_INSPECTINASSETAT),
         "Expected {OP_INSPECTINASSETAT} in ASM: {asm_str}"
@@ -163,7 +164,7 @@ fn test_asset_count_with_variable_index() {
 
     let output = result.unwrap();
 
-    let asm_str = crate::common::arkade_asm(&output, "checkAssets");
+    let asm_str = common::arkade_asm(&output, "checkAssets");
     assert!(
         asm_str.contains("OP_ROLL OP_INSPECTOUTASSETCOUNT"),
         "Expected symbolic outputIdx read in ASM: {asm_str}"

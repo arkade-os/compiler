@@ -1,3 +1,4 @@
+use crate::common;
 use crate::common::compile_unoptimized as compile;
 use arkade_compiler::opcodes::{
     OP_0, OP_1, OP_BOOLAND, OP_CHECKSIG, OP_CHECKSIGFROMSTACK, OP_EQUAL, OP_EQUALVERIFY,
@@ -8,7 +9,7 @@ use arkade_compiler::opcodes::{
 
 fn compile_asm(source: &str) -> Vec<String> {
     let output = compile(source).unwrap_or_else(|error| panic!("compile failed: {error}"));
-    crate::common::arkade_asm_tokens(&output, "compare")
+    common::arkade_asm_tokens(&output, "compare")
 }
 
 fn contains_tokens(asm: &[String], expected: &[&str]) -> bool {
@@ -51,7 +52,7 @@ fn composite_comparisons_are_boolean_expressions() {
             let output = arkade_compiler::compile_sources_with_options(
                 "main.ark",
                 &[("main.ark".into(), source.clone())].into(),
-                crate::common::options(optimize),
+                common::options(optimize),
             )
             .unwrap_or_else(|error| panic!("{ty}, optimize={optimize}: {error}"));
             assert_eq!(output.functions.len(), 1);
@@ -153,7 +154,7 @@ fn declared_scalar_types_compare_directly() {
         );
         let output = compile(&source)
             .unwrap_or_else(|error| panic!("{scalar_type} compile failed: {error}"));
-        let asm = crate::common::arkade_asm_tokens(&output, "compare");
+        let asm = common::arkade_asm_tokens(&output, "compare");
         let (equal, not_equal): (&[&str], &[&str]) = match scalar_type {
             "int" | "bool" => (&[OP_NUMEQUAL], &[OP_NUMNOTEQUAL]),
             _ => (&[OP_EQUAL], &[OP_EQUAL, OP_NOT]),
@@ -372,10 +373,10 @@ contract Compare(pubkey owner, ScriptPubKey expectedScript, bytes32 expectedTxid
         ]
         .into_iter()
         .collect(),
-        crate::common::options(false),
+        common::options(false),
     )
     .unwrap();
-    let asm = crate::common::arkade_asm_tokens(&output, "compare");
+    let asm = common::arkade_asm_tokens(&output, "compare");
 
     assert!(
         asm.windows(3).any(|window| {
@@ -701,26 +702,26 @@ contract C(pubkey owner, bytes32 hash) {
 "#,
     )
     .expect("logical calls and bindings");
-    let warnings = crate::common::feature_warnings(&output);
+    let warnings = common::feature_warnings(&output);
     assert_eq!(warnings.len(), 3, "{warnings:?}");
     assert!(warnings
         .iter()
         .all(|warning| warning.contains("invalid non-empty signature")));
     assert_eq!(output.functions.len(), 1);
     assert_eq!(
-        crate::common::arkade_inputs(&output, "compare"),
+        common::arkade_inputs(&output, "compare"),
         ["sig", "preimage", "enabled", "amount"]
     );
-    assert_eq!(crate::common::group(&output, "compare").leaves.len(), 1);
+    assert_eq!(common::group(&output, "compare").leaves.len(), 1);
     assert_eq!(
-        crate::common::witness_names(&output, "compare", "compare"),
+        common::witness_names(&output, "compare", "compare"),
         ["operatorSig"]
     );
     assert_eq!(
-        crate::common::leaf_asm(&output, "compare", "compare"),
+        common::leaf_asm(&output, "compare", "compare"),
         "<OPERATOR_KEY:compare> OP_CHECKSIG"
     );
-    let asm = crate::common::arkade_asm_tokens(&output, "compare");
+    let asm = common::arkade_asm_tokens(&output, "compare");
     assert!(asm.iter().any(|token| token == "OP_IF"));
     assert!(asm.iter().any(|token| token == "OP_INSPECTLOCKTIME"));
     assert!(asm.iter().any(|token| token == OP_CHECKSIGFROMSTACK));

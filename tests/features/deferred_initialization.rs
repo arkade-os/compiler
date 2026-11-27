@@ -1,3 +1,4 @@
+use crate::common;
 use arkade_compiler::{compile, compile_sources_with_options};
 
 fn source(body: &str) -> String {
@@ -17,7 +18,7 @@ fn artifact(body: &str, optimize: bool) -> arkade_compiler::ContractJson {
     compile_sources_with_options(
         "main.ark",
         &[("main.ark".into(), source(body))].into_iter().collect(),
-        crate::common::options(optimize),
+        common::options(optimize),
     )
     .unwrap()
 }
@@ -44,19 +45,19 @@ fn deferred_declarations_allocate_on_assignment_and_reduce_assembly() {
             ),
         ] {
             let output = artifact(deferred, optimize);
-            let asm = crate::common::arkade_asm_tokens(&output, "spend");
+            let asm = common::arkade_asm_tokens(&output, "spend");
             let filled = artifact(filled, optimize);
-            let filled_asm = crate::common::arkade_asm_tokens(&filled, "spend");
+            let filled_asm = common::arkade_asm_tokens(&filled, "spend");
             assert!(asm.len() < filled_asm.len(), "{deferred}: {asm:?} vs {filled_asm:?}");
             assert!(!asm.iter().any(|token| token == "OP_PUT"), "{asm:?}");
-            assert_eq!(crate::common::arkade_inputs(&output, "spend"), crate::common::arkade_inputs(&filled, "spend"));
-            assert_eq!(crate::common::witness_names(&output, "spend", "spend"), ["operatorSig"]);
-            assert_eq!(crate::common::group(&output, "spend").leaves.len(), 1);
+            assert_eq!(common::arkade_inputs(&output, "spend"), common::arkade_inputs(&filled, "spend"));
+            assert_eq!(common::witness_names(&output, "spend", "spend"), ["operatorSig"]);
+            assert_eq!(common::group(&output, "spend").leaves.len(), 1);
         }
         let output = artifact("int x; x = input; require(x == input);", optimize);
-        let asm = crate::common::arkade_asm_tokens(&output, "spend");
+        let asm = common::arkade_asm_tokens(&output, "spend");
         let initialized = artifact("int x = input; require(x == input);", optimize);
-        assert_eq!(asm, crate::common::arkade_asm_tokens(&initialized, "spend"));
+        assert_eq!(asm, common::arkade_asm_tokens(&initialized, "spend"));
     }
 }
 
@@ -134,7 +135,7 @@ fn deferred_initialization_supports_helpers_returns_and_constant_array_sizes() {
         compile_sources_with_options(
             "main.ark",
             &[("main.ark".into(), source.into())].into_iter().collect(),
-            crate::common::options(optimize),
+            common::options(optimize),
         )
         .unwrap();
     }
@@ -165,7 +166,7 @@ fn deferred_initialization_after_conditional_return_in_loops() {
         compile_sources_with_options(
             "main.ark",
             &[("main.ark".into(), source.into())].into_iter().collect(),
-            crate::common::options(optimize),
+            common::options(optimize),
         )
         .unwrap();
     }
@@ -178,6 +179,6 @@ fn imported_helpers_can_initialize_deferred_composites() {
         ("values.ark".into(), "library Values { const int SIZE = 2; function make(int input) int[SIZE] { int[SIZE] result; result = [input, input + 1]; return result; } }".into()),
     ].into_iter().collect();
     for optimize in [false, true] {
-        compile_sources_with_options("main.ark", &files, crate::common::options(optimize)).unwrap();
+        compile_sources_with_options("main.ark", &files, common::options(optimize)).unwrap();
     }
 }

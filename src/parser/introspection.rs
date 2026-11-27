@@ -1,3 +1,7 @@
+use std::array;
+
+use super::expr;
+use super::expr::Suffix;
 use super::Rule;
 #[allow(unused_imports)]
 use crate::diagnostics::Span;
@@ -5,12 +9,11 @@ use crate::models::AssetLookupSource;
 use crate::models::ExprKind;
 use crate::models::Expression;
 use crate::models::Path;
-use crate::parser::expr;
-use crate::parser::expr::Suffix;
 use crate::properties::{
     AssetProperty, GroupIoProperty, GroupProperty, InputProperty, OutputProperty, ThisProperty,
     TxProperty,
 };
+use crate::types;
 use pest::iterators::Pair;
 use Suffix::{Call, Field, Index};
 
@@ -277,8 +280,7 @@ fn group_member<'s, 'a>(
             let kind = ExprKind::GroupIOAccess {
                 group: Box::new(group),
                 io_index: operand(index)?,
-                source: crate::types::group_io_source(source)
-                    .ok_or("Invalid asset group io source")?,
+                source: types::group_io_source(source).ok_or("Invalid asset group io source")?,
                 property,
             };
             (kind, end, rest)
@@ -389,7 +391,7 @@ fn parse_tunnel(args: &[Pair<Rule>], span: Span) -> Result<ExprKind, String> {
             assets.ok_or("missing tunnel policy field 'assets'")?,
         ]
     } else {
-        std::array::from_fn(|_| Expression::new(ExprKind::Literal("true".to_string()), span))
+        array::from_fn(|_| Expression::new(ExprKind::Literal("true".to_string()), span))
     };
     let exceptions = exceptions
         .map(|list| {
@@ -407,7 +409,7 @@ fn parse_tunnel(args: &[Pair<Rule>], span: Span) -> Result<ExprKind, String> {
 }
 
 /// `tx.inputs[this.activeInputIndex].<property>`, which `tx.input.current.*` spells.
-fn current_input(property: InputProperty, span: crate::diagnostics::Span) -> Expression {
+fn current_input(property: InputProperty, span: Span) -> Expression {
     let index = Expression::new(ExprKind::This(ThisProperty::ActiveInputIndex), span);
     Expression::new(
         ExprKind::InputIntrospection {

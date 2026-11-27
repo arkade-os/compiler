@@ -1,10 +1,11 @@
+use std::collections::HashMap;
+
 use crate::diagnostics::{CompileError, Span};
 use crate::models::{
-    ArraySize, AssignmentTarget, Constant, Contract, ExprKind, Expression, LocatedStatement, Path,
-    Statement, TypeName,
+    self, ArraySize, AssignmentTarget, Constant, Contract, ExprKind, Expression, LocatedStatement,
+    Path, Statement, TypeName, RESERVED_NAMES, RESERVED_PLACEHOLDERS,
 };
 use crate::operators::{BinaryOperator, OperatorClass, UnaryOperator};
-use std::collections::HashMap;
 
 /// Validate constant declarations and fold every reference to them into a literal, returning
 /// the name and span of each reference folded in an expression.
@@ -57,8 +58,8 @@ fn collect(contract: &Contract) -> Result<HashMap<String, String>, CompileError>
         } = constant;
         let error = at_constant(constant);
         if matches!(name.as_str(), "true" | "false")
-            || crate::models::RESERVED_NAMES.contains(&name.as_str())
-            || crate::models::RESERVED_PLACEHOLDERS.contains(&name.as_str())
+            || RESERVED_NAMES.contains(&name.as_str())
+            || RESERVED_PLACEHOLDERS.contains(&name.as_str())
         {
             return Err(error(format!("constant name '{name}' is reserved")));
         }
@@ -466,7 +467,7 @@ fn fold_expression(
             }
         }
     }
-    for child in crate::models::child_exprs_mut(expression) {
+    for child in models::child_exprs_mut(expression) {
         fold_expression(child, values, uses);
     }
 }

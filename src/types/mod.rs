@@ -1,3 +1,5 @@
+use crate::builtins;
+use crate::models::{self, GroupIOSource, HashFn, Parameter, StructDefinition};
 /// Type system for Arkade Language.
 ///
 /// Provides:
@@ -77,7 +79,7 @@ impl ArkType {
 
     /// Parse from a grammar `data_type` string (e.g., `"pubkey"`, `"bytes32[4]"`).
     pub fn parse(s: &str) -> ArkType {
-        crate::models::TypeName::parse(s).ark_type()
+        TypeName::parse(s).ark_type()
     }
 
     /// The type a builtin or struct name denotes.
@@ -146,10 +148,7 @@ impl From<&ArkType> for TypeName {
 
 pub type Scope = HashMap<String, ArkType>;
 
-pub fn build_scope_with_structs(
-    params: &[crate::models::Parameter],
-    structs: &[crate::models::StructDefinition],
-) -> Scope {
+pub fn build_scope_with_structs(params: &[Parameter], structs: &[StructDefinition]) -> Scope {
     let mut scope = Scope::new();
     for p in params {
         insert_type_bindings(&mut scope, &p.name, &p.param_type, structs, &mut Vec::new());
@@ -161,7 +160,7 @@ fn insert_type_bindings(
     scope: &mut Scope,
     name: &str,
     declared_type: &TypeName,
-    structs: &[crate::models::StructDefinition],
+    structs: &[StructDefinition],
     stack: &mut Vec<String>,
 ) {
     if let Some((base, length)) = declared_type.array_parts() {
@@ -175,7 +174,7 @@ fn insert_type_bindings(
         return;
     }
     let type_name = declared_type.name().unwrap_or_default();
-    if let Some(fields) = crate::models::builtin_struct_fields(type_name) {
+    if let Some(fields) = models::builtin_struct_fields(type_name) {
         scope.insert(name.to_string(), ArkType::Struct(type_name.to_string()));
         for (field_name, field_type) in fields {
             insert_type_bindings(
@@ -217,7 +216,7 @@ pub(crate) fn bind_local_type(
     name: &str,
     declared_type: Option<&TypeName>,
     inferred: ArkType,
-    structs: &[crate::models::StructDefinition],
+    structs: &[StructDefinition],
 ) {
     let expanded = match declared_type {
         Some(declared_type) => Some(declared_type.clone()),
@@ -268,7 +267,7 @@ pub(crate) fn annotate(contract: &mut Contract) {
 pub(crate) fn annotate_statements(
     statements: &mut [LocatedStatement],
     scope: &mut Scope,
-    structs: &[crate::models::StructDefinition],
+    structs: &[StructDefinition],
 ) {
     Typing {
         structs,
@@ -282,7 +281,7 @@ pub(crate) fn annotate_statements(
 pub(crate) fn annotate_expression(
     expression: &mut Expression,
     scope: &Scope,
-    structs: &[crate::models::StructDefinition],
+    structs: &[StructDefinition],
 ) {
     Typing {
         structs,
@@ -296,7 +295,7 @@ pub(crate) fn annotate_expression(
 type Signatures = HashMap<String, (Vec<TypeName>, Option<TypeName>)>;
 
 struct Typing<'a> {
-    structs: &'a [crate::models::StructDefinition],
+    structs: &'a [StructDefinition],
     /// Present on the first pass, which also resolves names.
     signatures: Option<&'a Signatures>,
     /// The result type of the function being typed.
@@ -414,7 +413,7 @@ impl Typing<'_> {
     }
 
     fn expression(&self, expression: &mut Expression, scope: &Scope) {
-        for child in crate::models::child_exprs_mut(expression) {
+        for child in models::child_exprs_mut(expression) {
             self.expression(child, scope);
         }
         if let ExprKind::BinaryOp { left, op, right } = &mut expression.kind {
@@ -652,7 +651,7 @@ fn resolve_length(expression: &mut Expression, scope: &Scope) {
     };
     let resolved = match value.kind {
         _ if value.ty.is_bytes_like() => Some(ExprKind::Builtin {
-            builtin: crate::builtins::find("size").expect("size is a builtin"),
+            builtin: builtins::find("size").expect("size is a builtin"),
             args: vec![value],
         }),
         // `g.inputs.length`
@@ -684,16 +683,16 @@ fn group_binding(path: Path, at: &Expression, scope: &Scope) -> Option<Expressio
     (binding.ty == ArkType::AssetGroup).then_some(binding)
 }
 
-pub(crate) fn group_io_source(name: &str) -> Option<crate::models::GroupIOSource> {
+pub(crate) fn group_io_source(name: &str) -> Option<GroupIOSource> {
     match name {
-        "inputs" => Some(crate::models::GroupIOSource::Inputs),
-        "outputs" => Some(crate::models::GroupIOSource::Outputs),
+        "inputs" => Some(GroupIOSource::Inputs),
+        "outputs" => Some(GroupIOSource::Outputs),
         _ => None,
     }
 }
 
 /// Whether a value of type `t` can be compared with `hash_fn`'s digest.
-pub(crate) fn digest_accepts(hash_fn: &crate::models::HashFn, t: &ArkType) -> bool {
+pub(crate) fn digest_accepts(hash_fn: &HashFn, t: &ArkType) -> bool {
     *t == ArkType::Bytes || *t == ArkType::parse(hash_fn.digest_type())
 }
 
@@ -871,10 +870,11 @@ pub(crate) fn is_numeric(t: &ArkType) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::parser;
 
     #[test]
     fn only_asset_groups_have_group_members() {
-        let mut contract = crate::parser::parse(
+        let mut contract = parser::parse(
             "struct S { int delta; }
             contract V(AssetGroup g, int x, S s, bytes b) {
                 function spend() { let p = g.delta; let q = x.delta; let r = s.delta; let t = (b + b).delta; }

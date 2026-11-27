@@ -1,3 +1,4 @@
+use crate::common;
 fn compile(source: &str) -> Result<arkade_compiler::ContractJson, arkade_compiler::Error> {
     let files = [
         ("main.ark", source),
@@ -10,7 +11,7 @@ fn compile(source: &str) -> Result<arkade_compiler::ContractJson, arkade_compile
     .into_iter()
     .map(|(path, code)| (path.to_string(), code.to_string()))
     .collect();
-    arkade_compiler::compile_sources_with_options("main.ark", &files, crate::common::options(false))
+    arkade_compiler::compile_sources_with_options("main.ark", &files, common::options(false))
 }
 
 use crate::common::{arkade_asm, arkade_asm_tokens, leaf_asm, leaf_asm_tokens};

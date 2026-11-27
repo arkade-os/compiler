@@ -1,15 +1,11 @@
 //! The generator's model of the stack: which binding each slot holds, and the
 //! reads, assignments, scopes and joins that move them.
-use super::Result;
-use crate::compiler::ir::Op;
-use crate::compiler::BindingKind;
-use crate::compiler::Generator;
-use crate::compiler::StackItem;
+use std::iter;
+
+use super::ir::Op;
+use super::{BindingKind, Generator, Result, StackItem};
 use crate::diagnostics::CompileError;
-use crate::models::AssignmentTarget;
-use crate::models::Expression;
-use crate::models::Path;
-use crate::models::Segment;
+use crate::models::{AssignmentTarget, Expression, Path, Segment};
 use crate::opcodes::Opcode;
 use crate::types;
 
@@ -193,7 +189,7 @@ impl Generator {
         self.pop_temporaries(inputs, opcode)?;
         self.asm.push(opcode.into());
         self.stack
-            .extend(std::iter::repeat_n(StackItem::Temporary, outputs));
+            .extend(iter::repeat_n(StackItem::Temporary, outputs));
         self.max_depth = self.max_depth.max(self.stack.len());
         Ok(())
     }
@@ -463,6 +459,7 @@ impl Generator {
 mod symbolic_stack_tests {
     use super::*;
     use crate::models::{ExprKind, Parameter};
+    use crate::operators::BinaryOperator;
 
     #[test]
     fn deep_assignment_uses_put_at_the_remaining_stack_depth() {
@@ -553,7 +550,7 @@ mod symbolic_stack_tests {
         generator
             .assign(&AssignmentTarget::ArrayIndex {
                 array: Path::new("values"),
-                index: Box::new(ExprKind::Name(crate::models::Path::from_key("i")).into()),
+                index: Box::new(ExprKind::Name(Path::from_key("i")).into()),
             })
             .expect("indexed assignment");
         assert_eq!(
@@ -600,8 +597,8 @@ mod symbolic_stack_tests {
                 array: Path::new("values"),
                 index: Box::new(
                     ExprKind::BinaryOp {
-                        left: Box::new(ExprKind::Name(crate::models::Path::from_key("i")).into()),
-                        op: crate::operators::BinaryOperator::Add,
+                        left: Box::new(ExprKind::Name(Path::from_key("i")).into()),
+                        op: BinaryOperator::Add,
                         right: Box::new(ExprKind::Literal("1".to_string()).into()),
                     }
                     .into(),

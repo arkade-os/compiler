@@ -1,21 +1,17 @@
 //! Emission of lowered statements onto the generator.
 
-use super::Result;
-use crate::builtins::{Builtin, Lowering::Check};
-use crate::compiler::ir::Op;
-use crate::compiler::lowering;
-use crate::compiler::lowering::Lowered;
-use crate::compiler::BindingKind;
-use crate::compiler::Generator;
-use crate::compiler::StackItem;
+use std::collections::HashSet;
+use std::slice;
+
+use super::ir::Op;
+use super::lowering::{self, Lowered};
+use super::{BindingKind, Generator, Result, StackItem};
+use crate::builtins::Builtin;
+use crate::builtins::Lowering::Check;
 use crate::diagnostics::CompileError;
-use crate::models::AssignmentTarget;
-use crate::models::ExprKind;
-use crate::models::Expression;
-use crate::models::LocatedStatement;
-use crate::models::Path;
-use crate::models::Statement;
-use crate::models::TypeName;
+use crate::models::{
+    self, AssignmentTarget, ExprKind, Expression, LocatedStatement, Path, Statement, TypeName,
+};
 use crate::opcodes::Opcode;
 use crate::types;
 
@@ -51,7 +47,7 @@ impl Generator {
         let right = self.stack.clone();
         let right_deferred = self.deferred.clone();
         let right_asm = self.asm.split_off(start);
-        let initialized: std::collections::HashSet<_> = deferred
+        let initialized: HashSet<_> = deferred
             .iter()
             .filter(|name| {
                 (left_continues || right_continues)
@@ -60,7 +56,7 @@ impl Generator {
             })
             .cloned()
             .collect();
-        let mut initialized_leaves = std::collections::HashSet::new();
+        let mut initialized_leaves = HashSet::new();
         for name in &initialized {
             let ty = self
                 .scope
@@ -141,7 +137,7 @@ fn emit_items(body: &[Lowered], generator: &mut Generator) -> Result<bool> {
         if !continues {
             return Ok(false);
         }
-        if lowering::contains_return(std::slice::from_ref(item)) && index + 1 < body.len() {
+        if lowering::contains_return(slice::from_ref(item)) && index + 1 < body.len() {
             return generator.emit_unless_returned(&body[index + 1..]);
         }
     }
@@ -238,7 +234,7 @@ fn emit_statement(stmt: &LocatedStatement, generator: &mut Generator) -> Result<
                 .clone()
                 .or_else(|| match &value.kind {
                     ExprKind::Call { return_type, .. } => return_type.clone(),
-                    _ => crate::models::expression_result_struct(value).map(TypeName::from),
+                    _ => models::expression_result_struct(value).map(TypeName::from),
                 })
                 .or_else(|| generator.composite_type(value));
             if let Some(ty) = &result_type {

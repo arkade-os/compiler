@@ -1,6 +1,8 @@
-use crate::models::ContractJson;
-use crate::validator::ValidationIssue;
 use std::collections::HashSet;
+
+use super::ValidationIssue;
+use crate::compiler;
+use crate::models::ContractJson;
 
 /// Validate the compiled [`ContractJson`] output for structural invariants.
 ///
@@ -29,22 +31,20 @@ pub(crate) fn validate_output(output: &ContractJson) -> Vec<ValidationIssue> {
                 )));
             }
             // Constructor leaves are pushed once: in the prologue, or inline at a single read.
-            let leaves = match crate::compiler::expanded_placeholder_params(
-                &output.parameters,
-                &output.structs,
-            ) {
-                Ok(parameters) => parameters
-                    .into_iter()
-                    .map(|parameter| format!("<{}>", parameter.name))
-                    .collect::<HashSet<_>>(),
-                Err(error) => {
-                    issues.push(ValidationIssue::error(format!(
-                        "group '{}' has an invalid type layout: {error}",
-                        group.name
-                    )));
-                    continue;
-                }
-            };
+            let leaves =
+                match compiler::expanded_placeholder_params(&output.parameters, &output.structs) {
+                    Ok(parameters) => parameters
+                        .into_iter()
+                        .map(|parameter| format!("<{}>", parameter.name))
+                        .collect::<HashSet<_>>(),
+                    Err(error) => {
+                        issues.push(ValidationIssue::error(format!(
+                            "group '{}' has an invalid type layout: {error}",
+                            group.name
+                        )));
+                        continue;
+                    }
+                };
             let mut pushed = HashSet::new();
             if arkade
                 .asm

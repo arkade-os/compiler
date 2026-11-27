@@ -1,16 +1,17 @@
 //! Tapscript (L1 leaf) compilation: closure assembly, validation, and ASM
 //! emission. Pure functions over `NamedTapscript`; ABI wiring lives in mod.rs.
 
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+
 use crate::models::{
-    AbiFunctionGroup, AbiLeaf, ArkadeScript, Contract, HashFn, KeyExpr, NamedTapscript, Parameter,
-    TapItem, TapOperand, TimeUnit, WitnessElement,
+    self, AbiFunctionGroup, AbiLeaf, ArkadeScript, Contract, HashFn, KeyExpr, NamedTapscript,
+    Parameter, TapItem, TapOperand, TimeUnit, WitnessElement, OPERATOR, OPERATOR_EXIT_DELAY,
 };
-use crate::models::{OPERATOR, OPERATOR_EXIT_DELAY};
 use crate::opcodes::{
     OP_CHECKLOCKTIMEVERIFY, OP_CHECKSEQUENCEVERIFY, OP_CHECKSIG, OP_CHECKSIGVERIFY, OP_DROP,
     OP_EQUAL, OP_EQUALVERIFY, OP_SIZE, OP_VERIFY,
 };
-use crate::types::{bytes_of_width, digest_accepts, ArkType};
+use crate::types::{self, bytes_of_width, digest_accepts, ArkType};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ClosureClass {
@@ -297,7 +298,7 @@ pub fn validate_arkd_rules(
     c: &Closure,
 ) -> Result<LeafScript, String> {
     let constructor_scope =
-        crate::types::build_scope_with_structs(&contract.parameters, &contract.structs);
+        types::build_scope_with_structs(&contract.parameters, &contract.structs);
     let is_input = |name: &str| ts.inputs.iter().any(|p| p.name == name);
     // The type of a scalar constructor binding the script pushes as `role`.
     let fixed = |name: &str, role: &str| -> Result<Option<ArkType>, String> {
@@ -315,10 +316,7 @@ pub fn validate_arkd_rules(
             .cloned())
     };
 
-    let mut constructor_tweak_funcs: std::collections::BTreeMap<
-        String,
-        std::collections::BTreeSet<String>,
-    > = std::collections::BTreeMap::new();
+    let mut constructor_tweak_funcs: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     let mut keys = Vec::with_capacity(c.keys.len());
     for k in &c.keys {
         keys.push(match k {
@@ -654,8 +652,8 @@ pub fn leaf_witness(ts: &NamedTapscript) -> Vec<WitnessElement> {
     out
 }
 
-fn injected_signature_names(ts: &NamedTapscript) -> std::collections::HashSet<String> {
-    let mut names = std::collections::HashSet::new();
+fn injected_signature_names(ts: &NamedTapscript) -> HashSet<String> {
+    let mut names = HashSet::new();
     for item in &ts.items {
         if let TapItem::Sig { keys, sigs, .. } = item {
             for (key, sig) in keys.iter().zip(sigs) {
@@ -705,7 +703,7 @@ pub(crate) fn check_tapscript(
 pub(crate) fn build_function_groups(
     contract: &Contract,
     leaves: &[CheckedLeaf],
-    mut scripts: std::collections::HashMap<String, ArkadeScript>,
+    mut scripts: HashMap<String, ArkadeScript>,
 ) -> Result<Vec<AbiFunctionGroup>, String> {
     // Resolve + validate every author-written tapscript; bucket by group key.
     // A tweak joins that function's group. A leaf that tweaks nothing keeps its own name.
@@ -770,7 +768,7 @@ fn resolve_constructor_field_placeholders(
     let replacements = contract
         .parameters
         .iter()
-        .map(|parameter| crate::models::flatten_parameter(parameter, &contract.structs))
+        .map(|parameter| models::flatten_parameter(parameter, &contract.structs))
         .collect::<Result<Vec<_>, _>>()?
         .into_iter()
         .flatten()
@@ -781,7 +779,7 @@ fn resolve_constructor_field_placeholders(
                 format!("<{}>", leaf.emitted_name),
             )
         })
-        .collect::<std::collections::HashMap<_, _>>();
+        .collect::<HashMap<_, _>>();
     for token in asm {
         if let Some(replacement) = replacements.get(token) {
             *token = replacement.clone();
@@ -812,6 +810,7 @@ fn synthesize_default_leaf(func: &str) -> AbiLeaf {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::diagnostics::Span;
     use crate::models::{Contract, Function, Parameter, Path};
 
     fn ts(items: Vec<TapItem>) -> NamedTapscript {
@@ -974,7 +973,7 @@ mod tests {
                 .map(|n| Function {
                     declaration: Default::default(),
                     name: (*n).into(),
-                    span: crate::diagnostics::Span { start: 0, end: 0 },
+                    span: Span { start: 0, end: 0 },
                     parameters: vec![],
                     statements: vec![],
                     is_private: false,

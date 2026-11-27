@@ -1,10 +1,6 @@
-use crate::models::AssignmentTarget;
-use crate::models::ExprKind;
-use crate::models::Expression;
-use crate::models::LocatedStatement;
-use crate::models::Path;
-use crate::models::Segment;
-use crate::models::Statement;
+use crate::models::{
+    self, AssignmentTarget, ExprKind, Expression, LocatedStatement, Path, Segment, Statement,
+};
 
 // ─── Loop Unrolling ─────────────────────────────────────────────────────────────
 
@@ -200,7 +196,7 @@ pub(crate) fn substitute_expression(
         }
         _ => {
             let mut expression = expr.clone();
-            for child in crate::models::child_exprs_mut(&mut expression) {
+            for child in models::child_exprs_mut(&mut expression) {
                 *child = substitute_expression(child, name, literal, element);
             }
             expression
@@ -217,21 +213,15 @@ mod tests {
     fn loop_substitution_preserves_spans() {
         let span = Span { start: 10, end: 20 };
         let index = Expression::new(
-            ExprKind::Name(crate::models::Path::from_key("i")),
+            ExprKind::Name(Path::from_key("i")),
             Span { start: 12, end: 13 },
         );
-        let items = ExprKind::Name(crate::models::Path::from_key("xs")).into();
+        let items = ExprKind::Name(Path::from_key("xs")).into();
         for (kind, expected) in [
+            (ExprKind::Name(Path::from_key("i")), ["0", "1"]),
+            (ExprKind::Name(Path::from_key("x")), ["xs[0]", "xs[1]"]),
             (
-                ExprKind::Name(crate::models::Path::from_key("i")),
-                ["0", "1"],
-            ),
-            (
-                ExprKind::Name(crate::models::Path::from_key("x")),
-                ["xs[0]", "xs[1]"],
-            ),
-            (
-                ExprKind::Name(crate::models::Path::from_key("x.amount")),
+                ExprKind::Name(Path::from_key("x.amount")),
                 ["xs[0].amount", "xs[1].amount"],
             ),
             (

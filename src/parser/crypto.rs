@@ -1,7 +1,6 @@
-use super::Rule;
-use crate::models::ExprKind;
-use crate::models::Expression;
-use crate::parser::expr;
+use super::{expr, Rule};
+use crate::diagnostics::Span;
+use crate::models::{ExprKind, Expression};
 #[allow(unused_imports)]
 use pest::iterators::Pair;
 
@@ -24,7 +23,7 @@ pub(crate) fn is_cast(name: &str) -> bool {
 pub(crate) fn parse_cast(
     target: &str,
     data_pair: Pair<Rule>,
-    span: crate::diagnostics::Span,
+    span: Span,
 ) -> Result<Expression, String> {
     let target = target.to_string();
     let text = super::trim_trivia_end(data_pair.as_str());

@@ -1,14 +1,16 @@
-use crate::models;
-use crate::models::Contract;
-use crate::models::ExprKind;
-use crate::models::Expression;
-use crate::models::LocatedStatement;
-use crate::models::Statement;
-use crate::models::{Function, StructDefinition, TypeName};
-use crate::types::ArkType;
-use crate::validator::ValidationIssue;
-use std::collections::HashMap;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
+
+use super::ValidationIssue;
+use crate::builtins::BUILTINS;
+use crate::compiler::MAX_LOOP_ITERATIONS;
+use crate::diagnostics::Span;
+use crate::errors::{self, ErrorCode};
+use crate::models::{
+    self, Contract, ExprKind, Expression, Function, LocatedStatement, Parameter, Statement,
+    StructDefinition, TypeName,
+};
+use crate::operators::OperatorClass;
+use crate::types::{self, ArkType};
 
 pub(super) fn validate_functions(contract: &Contract, issues: &mut Vec<ValidationIssue>) {
     let definitions = contract
@@ -171,7 +173,7 @@ fn validate_comparison_literals(
             &value.kind,
             ExprKind::ArrayLiteral(_) | ExprKind::StructLiteral { .. }
         ) && matches!(other.ty, ArkType::Array(..) | ArkType::Struct(_))
-            && crate::types::resolved(&other.ty)
+            && types::resolved(&other.ty)
         {
             validate_value(
                 &TypeName::from(&other.ty),
@@ -205,14 +207,14 @@ fn validate_calls(
             ),
             None => {
                 let issue = ValidationIssue::error(format!("unknown function '{name}'"))
-                    .coded(crate::errors::ErrorCode::UnknownFunction);
+                    .coded(ErrorCode::UnknownFunction);
                 let own = contract.functions.iter().map(|f| f.name.as_str());
-                let builtins = crate::builtins::BUILTINS.iter().map(|b| b.name);
-                let span = crate::diagnostics::Span {
+                let builtins = BUILTINS.iter().map(|b| b.name);
+                let span = Span {
                     start: expression.span.start,
                     end: expression.span.start + name.len(),
                 };
-                issues.push(match crate::errors::closest(name, own.chain(builtins)) {
+                issues.push(match errors::closest(name, own.chain(builtins)) {
                     Some(candidate) => issue.suggest(candidate, Some(span)),
                     None => issue,
                 });
@@ -319,12 +321,12 @@ fn validate_fields(
     context: &str,
     issues: &mut Vec<ValidationIssue>,
 ) {
-    let native = crate::models::builtin_struct_fields(name).map(|fields| StructDefinition {
+    let native = models::builtin_struct_fields(name).map(|fields| StructDefinition {
         span: Default::default(),
         name: name.to_string(),
         fields: fields
             .iter()
-            .map(|(name, ty)| crate::models::Parameter {
+            .map(|(name, ty)| Parameter {
                 span: Default::default(),
                 name: name.to_string(),
                 param_type: TypeName::parse(ty),
@@ -480,7 +482,7 @@ fn unrolled_body(
     unrolled: &mut HashMap<String, usize>,
     issues: &mut Vec<ValidationIssue>,
 ) -> usize {
-    let limit = crate::compiler::MAX_LOOP_ITERATIONS;
+    let limit = MAX_LOOP_ITERATIONS;
     let mut most = 1;
     for located in statements {
         let statement = &located.statement;
@@ -520,7 +522,7 @@ fn unrolled_body(
                 }
                 let body = unrolled_body(body, contract, &rereads, unrolled, issues);
                 // An invalid count or range is reported with the loop's bindings.
-                let count = crate::models::loop_indexes(statement).map_or(1, |range| range.len());
+                let count = models::loop_indexes(statement).map_or(1, |range| range.len());
                 let total = count.saturating_mul(body);
                 if count == 0 {
                     issues.push(
@@ -583,7 +585,7 @@ struct Flow {
 fn expression_enforces(expression: &Expression, guarantees: &HashMap<String, bool>) -> bool {
     // Conservatively count only the always-evaluated left operand, even for literal conditions.
     if let ExprKind::BinaryOp { left, op, .. } = &expression.kind {
-        if op.class() == crate::operators::OperatorClass::Logical {
+        if op.class() == OperatorClass::Logical {
             return expression_enforces(left, guarantees);
         }
     }

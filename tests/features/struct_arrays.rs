@@ -1,3 +1,4 @@
+use crate::common;
 use crate::common::{
     arkade_asm, arkade_asm_tokens, arkade_inputs, compile_unoptimized as compile, group, leaf_asm,
     witness_names,
@@ -62,7 +63,7 @@ contract C() {
 
 #[test]
 fn loops_comparisons_native_structs_and_constructor_arrays_compile() {
-    let output = crate::common::project(
+    let output = common::project(
         "main.ark",
         &[("main.ark", r#"
 import "child.ark";

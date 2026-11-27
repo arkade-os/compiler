@@ -7,6 +7,7 @@ use arkade_compiler::opcodes::{
     OP_INSPECTOUTPUTSCRIPTPUBKEY, OP_INSPECTPACKET, OP_NUMEQUALVERIFY, OP_PUSHCURRENTINPUTINDEX,
     OP_ROT, OP_SHA256, OP_SUBSTR, OP_SWAP,
 };
+use std::fs;
 
 /// Return the Arkade Script ASM for a spend group (the function body).
 /// Cooperative signing now lives in a synthesized L1 tapleaf, so the Arkade Script
@@ -75,7 +76,7 @@ fn compile(source: &str) -> Result<arkade_compiler::ContractJson, arkade_compile
 
 fn load_example(name: &str) -> String {
     let path = format!("examples/layerzero/{name}.ark");
-    std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {path}: {e}"))
+    fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {path}: {e}"))
 }
 
 #[test]

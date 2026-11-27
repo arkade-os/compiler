@@ -1,13 +1,9 @@
-use super::Result;
-use crate::compiler::ir::Op;
-use crate::compiler::BindingKind;
-use crate::compiler::Generator;
-use crate::compiler::StackItem;
+use std::mem;
+
+use super::ir::Op;
+use super::{BindingKind, Generator, Result, StackItem};
 use crate::diagnostics::CompileError;
-use crate::models::ExprKind;
-use crate::models::Expression;
-use crate::models::Path;
-use crate::models::TypeName;
+use crate::models::{self, ExprKind, Expression, Path, TypeName};
 use crate::opcodes::Opcode;
 use crate::properties::GroupIoProperty;
 use crate::types::ArkType;
@@ -17,7 +13,7 @@ use crate::types::ArkType;
 pub(super) fn multisig_threshold(
     threshold: Option<&Expression>,
     count: usize,
-) -> std::result::Result<Option<usize>, String> {
+) -> Result<Option<usize>, String> {
     let threshold = match threshold.map(|threshold| &threshold.kind) {
         None => count,
         Some(ExprKind::Literal(value)) => value
@@ -204,7 +200,7 @@ impl Generator {
     ) -> Result<()> {
         let baseline = self.stack.len();
         let scope = self.scope.clone();
-        let pinned = std::mem::replace(&mut self.pinned_stack_len, baseline);
+        let pinned = mem::replace(&mut self.pinned_stack_len, baseline);
         let ty = TypeName::from(&value.ty);
         // A later call at this depth reuses the name only after this binding is dropped.
         let name = format!("$bound:{baseline}");
@@ -409,7 +405,7 @@ impl Generator {
                         index,
                     },
                 });
-                for (field, field_type) in crate::models::builtin_struct_fields(ty)
+                for (field, field_type) in models::builtin_struct_fields(ty)
                     .ok_or_else(|| CompileError::internal("missing native point layout"))?
                 {
                     let leaf = points.with_kind(ExprKind::FieldAccess {

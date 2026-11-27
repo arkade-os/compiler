@@ -1,21 +1,13 @@
-use super::Result;
-use crate::compiler::loops;
-use crate::compiler::lowering;
-use crate::compiler::lowering::Lowered;
-use crate::compiler::statements;
-use crate::compiler::BindingKind;
-use crate::compiler::Generator;
-use crate::compiler::StackItem;
-use crate::models::AssignmentTarget;
-use crate::models::ExprKind;
-use crate::models::Expression;
-use crate::models::Function;
-use crate::models::LocatedStatement;
-use crate::models::Parameter;
-use crate::models::Path;
-use crate::models::Segment;
-use crate::models::Statement;
-use crate::models::{child_exprs_mut, TypeLeaf, TypeName};
+use std::collections::HashMap;
+use std::{mem, slice};
+
+use super::lowering::{self, Lowered};
+use super::{loops, statements, BindingKind, Generator, Result, StackItem};
+use crate::builtins::Lowering;
+use crate::models::{
+    self, child_exprs_mut, AssignmentTarget, ExprKind, Expression, Function, GroupIOSource,
+    LocatedStatement, Parameter, Path, Segment, Statement, TypeLeaf, TypeName,
+};
 use crate::opcodes::Opcode;
 use crate::types;
 
@@ -23,11 +15,11 @@ pub(super) fn extract_values(expression: &mut Expression, values: &mut Vec<Expre
     if matches!(
         &expression.kind,
         ExprKind::Call { .. } | ExprKind::FieldAccess { .. } | ExprKind::IndexAccess { .. }
-    ) || matches!(&expression.kind, ExprKind::Builtin { builtin, .. } if matches!(builtin.lowering, crate::builtins::Lowering::Pairing | crate::builtins::Lowering::Multisig))
+    ) || matches!(&expression.kind, ExprKind::Builtin { builtin, .. } if matches!(builtin.lowering, Lowering::Pairing | Lowering::Multisig))
         || matches!(
             &expression.kind,
             ExprKind::GroupIOAccess {
-                source: crate::models::GroupIOSource::Inputs,
+                source: GroupIOSource::Inputs,
                 ..
             }
         )
@@ -43,7 +35,7 @@ pub(super) fn extract_values(expression: &mut Expression, values: &mut Vec<Expre
         let mut replacement = expression.with_kind(ExprKind::Extracted(values.len()));
         // The placeholder stands for the extracted value, so it keeps its type.
         replacement.ty = expression.ty.clone();
-        values.push(std::mem::replace(expression, replacement));
+        values.push(mem::replace(expression, replacement));
     } else {
         for child in child_exprs_mut(expression) {
             extract_values(child, values);
@@ -133,7 +125,7 @@ pub(super) fn substitute_arguments(
 
 impl Generator {
     pub(super) fn value_leaves(&self, path: &Path, ty: &TypeName) -> Result<Vec<TypeLeaf>> {
-        Ok(crate::models::flatten_value(path, ty, &self.structs)?)
+        Ok(models::flatten_value(path, ty, &self.structs)?)
     }
 
     /// Stack slots a value of `ty` occupies.
@@ -196,7 +188,7 @@ impl Generator {
             }
             return Ok(());
         }
-        if crate::models::expression_result_struct(expression) == ty.name() {
+        if models::expression_result_struct(expression) == ty.name() {
             let width = self.width(ty)?;
             self.emit_expression_items(expression, width)?;
             // Native results are first deepest; reverse them so the first leaf is on top.
@@ -213,8 +205,7 @@ impl Generator {
         let ExprKind::StructLiteral { fields: values, .. } = &expression.kind else {
             return Err(format!("expected struct value of type '{ty}'").into());
         };
-        let fields = if let Some(fields) = ty.name().and_then(crate::models::builtin_struct_fields)
-        {
+        let fields = if let Some(fields) = ty.name().and_then(models::builtin_struct_fields) {
             fields
                 .iter()
                 .map(|(name, ty)| Parameter {
@@ -256,13 +247,13 @@ impl Generator {
         }
         let caller = self.stack.clone();
         let caller_scope = self.scope.clone();
-        let caller_deferred = std::mem::take(&mut self.deferred);
+        let caller_deferred = mem::take(&mut self.deferred);
         let baseline = caller.len();
-        let pinned = std::mem::replace(&mut self.pinned_stack_len, baseline);
+        let pinned = mem::replace(&mut self.pinned_stack_len, baseline);
         // A caller's top-slot rebinding must not match helper bindings with the same name.
         let replacement = self.replacement.take();
         let mut arguments = Vec::new();
-        let mut aliases = std::collections::HashMap::new();
+        let mut aliases = HashMap::new();
         for (index, (argument, parameter)) in args.iter().zip(&function.parameters).enumerate() {
             // The body is lowered with the literal in place of the parameter.
             if self.optimize && literal_argument(&function, parameter, argument).is_some() {
@@ -326,9 +317,7 @@ impl Generator {
         }
         // Calls hide caller bindings except hoisted constants; instance helpers also retain
         // constructor state.
-        let caller_inlined = function
-            .is_static
-            .then(|| std::mem::take(&mut self.inlined));
+        let caller_inlined = function.is_static.then(|| mem::take(&mut self.inlined));
         for (index, item) in self.stack[..baseline].iter_mut().enumerate() {
             if !matches!(
                 (&*item, function.is_static),
@@ -363,13 +352,13 @@ impl Generator {
                 };
             }
         }
-        let caller_scopes = std::mem::take(&mut self.scopes);
+        let caller_scopes = mem::take(&mut self.scopes);
         self.scope = if function.is_static {
             types::Scope::new()
         } else {
             self.constructor_scope.clone()
         };
-        let previous_aliases = std::mem::replace(&mut self.aliases, aliases);
+        let previous_aliases = mem::replace(&mut self.aliases, aliases);
         for parameter in &function.parameters {
             self.bind_type(&parameter.name, &parameter.param_type);
         }
@@ -377,9 +366,9 @@ impl Generator {
         // Nested returns need shared slots until their control flow can be lowered directly.
         let direct_return = !function.statements.iter().any(|statement| {
             !matches!(statement.statement, Statement::Return(_))
-                && contains_return(std::slice::from_ref(statement))
+                && contains_return(slice::from_ref(statement))
         });
-        let previous_direct_return = std::mem::replace(&mut self.direct_return, direct_return);
+        let previous_direct_return = mem::replace(&mut self.direct_return, direct_return);
         let results = function
             .return_type
             .as_ref()

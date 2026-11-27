@@ -2,12 +2,13 @@
 //! `has`/`controlIs`/`hasControl` predicates, the `(result, success_flag)`
 //! opcode ABI handling, and fatal operand validation.
 
+use crate::common;
 use crate::common::compile_unoptimized as compile;
 
 /// Return the Arkade Script ASM for `func` in the compiled output of `src`.
 fn arkade_asm(src: &str, func: &str) -> String {
     let out = compile(src).unwrap_or_else(|e| panic!("compile failed: {e:?}"));
-    crate::common::arkade_asm(&out, func)
+    common::arkade_asm(&out, func)
 }
 
 // ─── Result + success flag ABI ──────────────────────────────────────────────
@@ -492,8 +493,8 @@ fn asset_id_operands_accept_any_asset_id_expression_at_every_site() {
         let fields = compile_site(site, "{ txid: param.txid, gidx: param.gidx }").unwrap();
         let whole = compile_site(site, "param").unwrap();
         assert_eq!(
-            crate::common::arkade_asm(&fields, "f"),
-            crate::common::arkade_asm(&whole, "f"),
+            common::arkade_asm(&fields, "f"),
+            common::arkade_asm(&whole, "f"),
             "{site}"
         );
         for id in [
@@ -516,7 +517,7 @@ fn asset_id_operands_accept_any_asset_id_expression_at_every_site() {
             let id = format!("AssetId {{ txid: {txid}, gidx: 2 }}");
             let output =
                 compile_site(site, &id).unwrap_or_else(|error| panic!("{site} with {id}: {error}"));
-            let asm = crate::common::arkade_asm(&output, "f");
+            let asm = common::arkade_asm(&output, "f");
             assert_eq!(asm.matches(emitted).count(), 1, "{site} with {id}: {asm}");
         }
         for (id, expected) in [

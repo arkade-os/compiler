@@ -1,3 +1,4 @@
+use crate::common;
 use arkade_compiler::compile;
 use arkade_compiler::opcodes::{OP_ADD, OP_CAT, OP_NUM2BIN, OP_SHA256};
 
@@ -22,7 +23,7 @@ contract Mix(
 #[test]
 fn test_plus_on_bytes32_emits_op_cat() {
     let out = compile(CONCAT_CODE).expect("compile");
-    let asm = crate::common::arkade_asm(&out, "check");
+    let asm = common::arkade_asm(&out, "check");
 
     assert!(
         asm.contains(OP_CAT),
@@ -54,7 +55,7 @@ contract IntMath(int a, int b) {
 }
 "#;
     let out = compile(code).expect("compile");
-    let asm = crate::common::arkade_asm(&out, "check");
+    let asm = common::arkade_asm(&out, "check");
     assert!(
         asm.contains(OP_ADD),
         "int + int should use OP_ADD; asm:\n{asm}"
@@ -79,8 +80,8 @@ contract LoopHash(bytes32 tag) {
   }
 }
 "#;
-    let out = crate::common::compile_unoptimized(code).expect("compile");
-    let asm = crate::common::arkade_asm(&out, "check");
+    let out = common::compile_unoptimized(code).expect("compile");
+    let asm = common::arkade_asm(&out, "check");
     for (k, depth) in [2, 3, 4].into_iter().enumerate() {
         assert!(
             asm.contains(&format!("OP_{depth} OP_PICK 8 OP_NUM2BIN")),

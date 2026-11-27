@@ -12,11 +12,14 @@
 //!
 //! Type errors are fatal; `ContractJson.warnings` carries only non-type issues.
 
+use crate::common;
 use arkade_compiler::compile;
+use arkade_compiler::models::ContractJson;
+use std::collections::BTreeMap;
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-fn compile_ok(source: &str) -> arkade_compiler::models::ContractJson {
+fn compile_ok(source: &str) -> ContractJson {
     compile(source).unwrap_or_else(|e| panic!("unexpected compile error: {e}"))
 }
 
@@ -364,7 +367,7 @@ contract Casts(pubkey owner, int gidx) {
     private function bytes32Of(bytes value) bytes32 { return sha256(value); }
 }"#,
     );
-    let asm = crate::common::arkade_asm(&output, "spend");
+    let asm = common::arkade_asm(&output, "spend");
     assert!(asm.contains("OP_SUBSTR OP_SIZE 32 OP_EQUALVERIFY"), "{asm}");
     assert!(asm.contains("OP_SUBSTR OP_SIZE 20 OP_EQUALVERIFY"), "{asm}");
     assert_eq!(
@@ -403,7 +406,7 @@ contract HexCasts(pubkey owner) {
     }
 }"#,
     );
-    let asm = crate::common::arkade_asm(&output, "spend");
+    let asm = common::arkade_asm(&output, "spend");
     for expected in [
         "9223372036854775807 OP_LESSTHANOREQUAL",
         "4722366482869645213695 OP_LESSTHAN",
@@ -439,7 +442,7 @@ contract HexCasts(pubkey owner) {
         error.contains("function 'int' uses a reserved keyword or type name"),
         "{error}"
     );
-    let asm = crate::common::arkade_asm(
+    let asm = common::arkade_asm(
         &compile_ok(
             "contract G() { const int BIG = int(0x8000000000000000); function spend(int n) { require(n < BIG); } }",
         ),
@@ -469,7 +472,7 @@ contract BytesCasts(pubkey owner) {
     private function encodeBool(bool value) bytes { return bytes(value); }
 }"#,
     );
-    let asm = crate::common::arkade_asm(&output, "spend");
+    let asm = common::arkade_asm(&output, "spend");
     assert_eq!(asm.matches("OP_BIN2NUM").count(), 4, "{asm}");
     // `bytes(n > 0)` needs no normalization: the comparison already leaves 0 or 1.
     assert_eq!(asm.matches("OP_0NOTEQUAL").count(), 5, "{asm}");
@@ -477,10 +480,10 @@ contract BytesCasts(pubkey owner) {
     // Only the h20 and h32 witness inputs are width-checked; widening casts add none.
     assert_eq!(asm.matches("OP_SIZE").count(), 2, "{asm}");
     assert_eq!(
-        crate::common::arkade_inputs(&output, "spend"),
+        common::arkade_inputs(&output, "spend"),
         ["sig", "n", "data", "h20", "h32", "flag"]
     );
-    let group = crate::common::group(&output, "spend");
+    let group = common::group(&output, "spend");
     assert!(!group.leaves.is_empty());
     assert!(group.leaves.iter().all(|leaf| !leaf
         .asm
@@ -517,7 +520,7 @@ contract SameType(pubkey owner) {
     }
 }"#,
     );
-    let asm = crate::common::arkade_asm(&output, "spend");
+    let asm = common::arkade_asm(&output, "spend");
     assert_eq!(
         asm.matches("OP_0NOTEQUAL").count(),
         2,
@@ -533,17 +536,14 @@ contract SameType(pubkey owner) {
 #[test]
 fn sized_witness_inputs_check_width_at_entry() {
     let source = "contract C(bytes32 d) { function spend(bytes20 a, int n, bytes32[2] xs, bytes raw) { require(hash160(a) == hash160(raw)); require(sha256(xs[0]) == d); require(sha256(xs[1]) == d); require(n > 0); } }";
-    let asm = crate::common::arkade_asm(
-        &crate::common::compile_unoptimized(source).unwrap(),
-        "spend",
-    );
+    let asm = common::arkade_asm(&common::compile_unoptimized(source).unwrap(), "spend");
     // Inputs sit below the constructor prologue, first input on top.
     assert!(
         asm.starts_with("<d> OP_1 OP_PICK OP_SIZE 20 OP_EQUALVERIFY OP_DROP OP_3 OP_PICK OP_SIZE 32 OP_EQUALVERIFY OP_DROP OP_4 OP_PICK OP_SIZE 32 OP_EQUALVERIFY OP_DROP "),
         "{asm}"
     );
     assert_eq!(asm.matches("OP_SIZE").count(), 3, "{asm}");
-    let optimized = crate::common::arkade_asm(&compile_ok(source), "spend");
+    let optimized = common::arkade_asm(&compile_ok(source), "spend");
     assert_eq!(optimized.matches("OP_SIZE").count(), 3, "{optimized}");
 }
 
@@ -551,17 +551,14 @@ fn sized_witness_inputs_check_width_at_entry() {
 fn bool_witness_inputs_must_be_canonical_at_entry() {
     let source = "struct Flag { bool value; } contract C() { function spend(bool flag, Flag f, bool[2] fs) { require(flag); require(f.value != true); require(fs[0] != fs[1]); } }";
     let check = "OP_DUP OP_0NOTEQUAL OP_EQUALVERIFY";
-    let asm = crate::common::arkade_asm(
-        &crate::common::compile_unoptimized(source).unwrap(),
-        "spend",
-    );
+    let asm = common::arkade_asm(&common::compile_unoptimized(source).unwrap(), "spend");
     assert!(
         asm.starts_with(&format!(
             "OP_DUP {check} OP_1 OP_PICK {check} OP_2 OP_PICK {check} OP_3 OP_PICK {check} "
         )),
         "{asm}"
     );
-    let optimized = crate::common::arkade_asm(&compile_ok(source), "spend");
+    let optimized = common::arkade_asm(&compile_ok(source), "spend");
     assert_eq!(optimized.matches(check).count(), 4, "{optimized}");
 }
 
@@ -575,15 +572,12 @@ fn pubkeys_and_signatures_widen_to_bytes_in_bindings_and_arguments() {
 #[test]
 fn signature_byte_casts_add_no_opcodes() {
     let asm = |value| {
-        let output = crate::common::compile_unoptimized(&format!(
+        let output = common::compile_unoptimized(&format!(
             "contract Widen() {{ function spend(signature sig, bytes data) {{ require({value} == data); }} }}"
         ))
         .unwrap();
-        assert_eq!(
-            crate::common::arkade_inputs(&output, "spend"),
-            ["sig", "data"]
-        );
-        crate::common::arkade_asm_tokens(&output, "spend")
+        assert_eq!(common::arkade_inputs(&output, "spend"), ["sig", "data"]);
+        common::arkade_asm_tokens(&output, "spend")
     };
     let expected = asm("sig");
     for cast in ["bytes(sig)", "pubkey(sig)"] {
@@ -711,7 +705,7 @@ fn casts_accept_byte_expressions() {
     let output = compile_ok(
         "contract T(pubkey k) { function f(signature s, bytes a, bytes b, bytes32 m) { bytes32 x = bytes32(a + b); require(x == m); require(checkSig(s, k)); } }",
     );
-    let asm = crate::common::arkade_asm(&output, "f");
+    let asm = common::arkade_asm(&output, "f");
     assert!(asm.contains("OP_CAT OP_SIZE 32 OP_EQUALVERIFY"), "{asm}");
 }
 
@@ -752,7 +746,7 @@ fn a_parameter_read_only_by_dead_locals_is_never_used() {
     compile_ok(&source(
         "int x = limit; for (2) { require(x < 100); x = x + amount; }",
     ));
-    let files = std::collections::BTreeMap::from([
+    let files = BTreeMap::from([
         ("main.ark".to_string(), "import \"fees.ark\";\ncontract C(pubkey k) { function f(signature s, int amount) { require(Fees.fee(amount) == 1); require(checkSig(s, k)); } }".to_string()),
         ("fees.ark".to_string(), "library Fees { function fee(int n) int { let unused = n; return 1; } }".to_string()),
     ]);

@@ -1,10 +1,7 @@
-use crate::models::AssignmentTarget;
-use crate::models::Contract;
-use crate::models::LocatedStatement;
-use crate::models::Path;
-use crate::models::Statement;
-use crate::validator::ValidationIssue;
 use std::collections::HashSet;
+
+use super::ValidationIssue;
+use crate::models::{AssignmentTarget, Contract, LocatedStatement, Path, Statement};
 
 /// Check 1: reject any binding that shadows a name still live in an enclosing scope.
 pub(super) fn check_shadowing(contract: &Contract, issues: &mut Vec<ValidationIssue>) {

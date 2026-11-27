@@ -5,7 +5,9 @@
 //! output.  They exercise the semantic validator, parser error handling, and the
 //! contract → compiler pipeline boundary.
 //!
+use crate::common;
 use arkade_compiler::compile;
+use std::collections::BTreeMap;
 
 // ─── Parse-level errors ───────────────────────────────────────────────────────
 
@@ -216,7 +218,7 @@ contract Former(pubkey server, pubkey emulator) {
     let out = compile(source).expect("server and emulator are not reserved");
     let names: Vec<_> = out.parameters.iter().map(|p| p.name.as_str()).collect();
     assert_eq!(names, ["server", "emulator"]);
-    let exit = &crate::common::group(&out, "exit").leaves[0];
+    let exit = &common::group(&out, "exit").leaves[0];
     assert_eq!(
         exit.asm,
         [
@@ -540,10 +542,7 @@ fn skipped_builtin_literal_operands_are_validated_in_both_modes() {
         let source = format!(
             "contract C(pubkey key, G2Point g2) {{ function spend(signature sig) {{ require(true || {call}); }} }}"
         );
-        for result in [
-            compile(&source),
-            crate::common::compile_unoptimized(&source),
-        ] {
+        for result in [compile(&source), common::compile_unoptimized(&source)] {
             let error = result.expect_err(call).to_string();
             assert!(error.contains(expected), "{call}: {error}");
         }
@@ -620,7 +619,7 @@ fn expression_diagnostics_point_at_the_expression() {
                 }}
             }}"
         );
-        let files = std::collections::BTreeMap::from([("main.ark".to_string(), source.clone())]);
+        let files = BTreeMap::from([("main.ark".to_string(), source.clone())]);
         let diagnostics = arkade_compiler::check("main.ark", &files);
         let error = diagnostics
             .iter()
@@ -639,7 +638,7 @@ fn expression_diagnostics_point_at_the_expression() {
 #[test]
 fn check_reports_tapscript_leaf_errors() {
     let source = "contract C(pubkey owner) { function exit(signature s) tapscript { require(checkSig(s, owner)); require(after(10)); } }";
-    let files = std::collections::BTreeMap::from([("main.ark".to_string(), source.to_string())]);
+    let files = BTreeMap::from([("main.ark".to_string(), source.to_string())]);
     let errors: Vec<_> = arkade_compiler::check("main.ark", &files)
         .into_iter()
         .filter(|d| d.severity == arkade_compiler::Severity::Error)
@@ -654,7 +653,7 @@ fn check_reports_tapscript_leaf_errors() {
 #[test]
 fn check_reports_emission_errors_at_their_statement() {
     let source = "contract C() {\n    function spend(int[2] xs) {\n        for (i, x) in xs {\n            require(xs[i + 1] == x);\n        }\n    }\n}";
-    let files = std::collections::BTreeMap::from([("main.ark".to_string(), source.to_string())]);
+    let files = BTreeMap::from([("main.ark".to_string(), source.to_string())]);
     let errors: Vec<_> = arkade_compiler::check("main.ark", &files)
         .into_iter()
         .filter(|d| d.severity == arkade_compiler::Severity::Error)
@@ -693,7 +692,7 @@ fn check_reports_unknown_tx_and_this_members_at_their_path() {
         ("foo.bar", "binding 'foo' is undefined"),
     ] {
         let code = source(path);
-        let files = std::collections::BTreeMap::from([("main.ark".to_string(), code.clone())]);
+        let files = BTreeMap::from([("main.ark".to_string(), code.clone())]);
         let errors: Vec<_> = arkade_compiler::check("main.ark", &files)
             .into_iter()
             .filter(|d| d.severity == arkade_compiler::Severity::Error)

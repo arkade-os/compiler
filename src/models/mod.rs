@@ -1,4 +1,9 @@
+use std::fmt;
+
 use serde::{Deserialize, Serialize};
+
+use crate::diagnostics::Span;
+use crate::types::ArkType;
 
 mod artifact;
 mod ast;
@@ -84,19 +89,19 @@ impl TypeName {
         self.name().is_some_and(is_builtin_struct)
     }
 
-    pub fn ark_type(&self) -> crate::types::ArkType {
+    pub fn ark_type(&self) -> ArkType {
         match self {
-            TypeName::Named(name) => crate::types::ArkType::named(name),
+            TypeName::Named(name) => ArkType::named(name),
             TypeName::Array(element, ArraySize::Fixed(length)) => {
-                crate::types::ArkType::Array(Box::new(element.ark_type()), *length)
+                ArkType::Array(Box::new(element.ark_type()), *length)
             }
-            TypeName::Array(_, ArraySize::Const(_)) => crate::types::ArkType::Unknown,
+            TypeName::Array(_, ArraySize::Const(_)) => ArkType::Unknown,
         }
     }
 }
 
-impl std::fmt::Display for TypeName {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Display for TypeName {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let (element, size) = match self {
             TypeName::Named(name) => return f.write_str(name),
             TypeName::Array(element, ArraySize::Fixed(length)) => (element, length.to_string()),
@@ -175,7 +180,7 @@ pub struct Parameter {
     pub param_type: TypeName,
     /// Byte range of the name; empty for parameters the compiler builds.
     #[serde(skip)]
-    pub span: crate::diagnostics::Span,
+    pub span: Span,
 }
 
 /// A named, statically laid-out source type.
@@ -184,7 +189,7 @@ pub struct StructDefinition {
     pub name: String,
     pub fields: Vec<Parameter>,
     #[serde(skip)]
-    pub span: crate::diagnostics::Span,
+    pub span: Span,
 }
 
 /// One scalar leaf in a recursively flattened parameter layout.

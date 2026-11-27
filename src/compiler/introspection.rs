@@ -1,5 +1,5 @@
-use crate::compiler::expr;
-use crate::compiler::ir::Op;
+use super::expr;
+use super::ir::Op;
 use crate::models::Expression;
 use crate::opcodes::Opcode;
 use crate::properties::{InputProperty, OutputProperty, TxProperty};

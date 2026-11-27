@@ -1,4 +1,5 @@
 use arkade_compiler::compile_file;
+use arkade_compiler::models::ContractJson;
 use arkade_compiler::opcodes::{
     OP_CAT, OP_CHECKSEQUENCEVERIFY, OP_CHECKSIG, OP_CHECKSIGFROMSTACK, OP_CHECKTIME, OP_DIV,
     OP_EQUAL, OP_INSPECTINPUTSCRIPTPUBKEY, OP_INSPECTNUMINPUTS, OP_MUL, OP_NOT, OP_NUM2BIN,
@@ -8,7 +9,7 @@ use std::path::Path;
 
 use crate::common::{arkade_asm_tokens, arkade_inputs, group, leaf_asm, opcode_count_in_arkade};
 
-fn compile(path: &str) -> arkade_compiler::models::ContractJson {
+fn compile(path: &str) -> ContractJson {
     let full = Path::new(env!("CARGO_MANIFEST_DIR")).join(path);
     compile_file(&full).unwrap_or_else(|err| panic!("{path} should compile: {err}"))
 }

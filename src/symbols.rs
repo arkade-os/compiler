@@ -4,8 +4,10 @@ use std::collections::{HashMap, HashSet};
 
 use crate::diagnostics::Span;
 use crate::models::{
-    AssignmentTarget, Contract, ExprKind, Expression, LocatedStatement, Path, Statement, TypeName,
+    self, AssignmentTarget, Contract, ExprKind, Expression, LocatedStatement, Path, Statement,
+    TypeName,
 };
+use crate::parser;
 use crate::types::ArkType;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -353,7 +355,7 @@ impl Collector<'_> {
         let mut rest = self.source.get(start..).unwrap_or_default();
         loop {
             rest = rest.trim_start_matches(['(', ' ', '\t', '\r', '\n']);
-            match crate::parser::comment_len(rest) {
+            match parser::comment_len(rest) {
                 Some(comment) => rest = &rest[comment..],
                 None => return self.source.len() - rest.len(),
             }
@@ -480,7 +482,7 @@ impl Collector<'_> {
             }
             _ => {}
         }
-        for child in crate::models::child_exprs(expression) {
+        for child in models::child_exprs(expression) {
             self.expression(child);
         }
     }

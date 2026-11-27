@@ -5,6 +5,7 @@ use arkade_compiler::opcodes::{
 };
 use serde_json::Value;
 use std::fs;
+use std::process::Command;
 use tempfile::tempdir;
 
 use crate::common::{arkade_asm_tokens, arkade_inputs, leaf_asm};
@@ -356,7 +357,7 @@ fn test_threshold_multisig_cli() {
     assert!(result.is_ok());
 
     // Run the CLI command
-    let status = std::process::Command::new(env!("CARGO_BIN_EXE_arkadec"))
+    let status = Command::new(env!("CARGO_BIN_EXE_arkadec"))
         .arg(input_path.to_str().unwrap())
         .arg("-o")
         .arg(output_path.to_str().unwrap())

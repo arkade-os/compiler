@@ -1,6 +1,7 @@
 //! Error codes: an id and an explanation for the errors an author most often meets, set as the
 //! diagnostic `code` and printed by `arkadec --explain`, as lints are.
 
+use std::str::FromStr;
 macro_rules! errors {
     ($($variant:ident: $id:literal, $summary:literal;)*) => {
         #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -40,7 +41,7 @@ errors! {
     UnknownFunction: "unknown-function", "a call to no builtin and no function of the contract";
 }
 
-impl std::str::FromStr for ErrorCode {
+impl FromStr for ErrorCode {
     type Err = String;
 
     fn from_str(id: &str) -> Result<Self, String> {

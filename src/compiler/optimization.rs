@@ -1,10 +1,11 @@
-use crate::models::{AssignmentTarget, ExprKind, Expression, Statement};
-use crate::opcodes::Opcode;
-
-use crate::operators::{BinaryOperator, UnaryOperator};
-use crate::types::{ArkType, Scope};
+use std::iter;
 
 use super::Spanned;
+use crate::builtins::Lowering;
+use crate::models::{self, AssignmentTarget, ExprKind, Expression, Statement};
+use crate::opcodes::Opcode;
+use crate::operators::{BinaryOperator, UnaryOperator};
+use crate::types::{ArkType, Scope};
 
 const MAX_SCRIPT_ELEMENT_SIZE: usize = 520;
 
@@ -92,13 +93,13 @@ fn fold_expression(expression: &mut Expression, scope: &Scope) -> Result<(), Str
             return Ok(());
         }
     }
-    for child in crate::models::child_exprs_mut(expression) {
+    for child in models::child_exprs_mut(expression) {
         fold_expression(child, scope)?;
     }
     // A threshold that is constant only once loops unroll fails here; unoptimized builds fold
     // only to check.
     if let ExprKind::Builtin { builtin, args } = &expression.kind {
-        if let (crate::builtins::Lowering::Multisig, Some(ArkType::Array(_, count))) =
+        if let (Lowering::Multisig, Some(ArkType::Array(_, count))) =
             (&builtin.lowering, args.first().map(|keys| &keys.ty))
         {
             super::access::multisig_threshold(args.get(2), *count)?;
@@ -162,7 +163,7 @@ fn fold_expression(expression: &mut Expression, scope: &Scope) -> Result<(), Str
                 .map(|value| value.to_string())
         }
         ExprKind::Unary { .. } | ExprKind::BinaryOp { .. }
-            if crate::models::child_exprs(expression)
+            if models::child_exprs(expression)
                 .iter()
                 .all(|child| match &child.kind {
                     ExprKind::Literal(value) => {
@@ -318,7 +319,7 @@ pub(super) fn optimize(mut asm: Vec<Spanned>) -> (Vec<Spanned>, usize) {
     // last requirement then reports `Verify failed`.
     asm.truncate(body);
     asm.push((Opcode::Verify.into(), None));
-    asm.extend(std::iter::repeat_n((Opcode::Drop.into(), None), nips));
+    asm.extend(iter::repeat_n((Opcode::Drop.into(), None), nips));
     asm.push((Opcode::Int1.into(), None));
 
     let (kept, dropped) = (rewrite(kept), rewrite(asm));
@@ -390,8 +391,11 @@ fn peak(ops: &[Opcode]) -> usize {
 
 #[cfg(test)]
 mod tests {
+    use std::iter;
+
     use super::*;
     use crate::compiler::Op;
+    use crate::models::Path;
     use crate::opcodes::{
         OP_0, OP_0NOTEQUAL, OP_1, OP_1ADD, OP_2, OP_2DROP, OP_2DUP, OP_2OVER, OP_2ROT, OP_2SWAP,
         OP_3, OP_3DUP, OP_4, OP_5, OP_ADD, OP_CHECKSIG, OP_CHECKSIGFROMSTACK, OP_CHECKSIGVERIFY,
@@ -408,7 +412,7 @@ mod tests {
                 |token| match Opcode::ALL.iter().find(|opcode| opcode.name() == token) {
                     Some(&opcode) => opcode.into(),
                     None if token.starts_with('<') => {
-                        Op::Read(crate::models::Path::from_key(&token[1..token.len() - 1]))
+                        Op::Read(Path::from_key(&token[1..token.len() - 1]))
                     }
                     None => Op::Push(token),
                 },
@@ -667,7 +671,7 @@ mod tests {
 
     #[test]
     fn wide_clean_stack_tails_drop_in_pairs() {
-        let nips = |count| std::iter::repeat_n(OP_NIP, count);
+        let nips = |count| iter::repeat_n(OP_NIP, count);
         let tail = |prefix: &[&'static str], count| {
             prefix
                 .iter()

@@ -2,16 +2,18 @@
 //! helpers it calls.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::{fmt, mem};
 
 use super::walk::{Visitor, Walk};
 use super::{Finding, Lint};
+use crate::compiler::constants;
 use crate::compiler::tapscript::{keeps_default_leaf, shared_tweak_func};
 use crate::diagnostics::Span;
 use crate::models::{
-    AssetLookupSource, Contract, ExprKind, Expression, Function, KeyExpr, LocatedStatement,
+    self, AssetLookupSource, Contract, ExprKind, Expression, Function, KeyExpr, LocatedStatement,
     Statement, TapItem,
 };
-use crate::properties::{OutputProperty, TxProperty};
+use crate::properties::{InputProperty, OutputProperty, TxProperty};
 
 /// An output the function constrains at a fixed place; outputs at a computed index are not
 /// tracked.
@@ -30,8 +32,8 @@ impl OutputIndex {
     }
 }
 
-impl std::fmt::Display for OutputIndex {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Display for OutputIndex {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             OutputIndex::Literal(index) => write!(f, "{index}"),
             OutputIndex::ActiveInput => f.write_str("this.activeInputIndex"),
@@ -287,14 +289,14 @@ impl<'a> Visitor<'a> for Facts {
     }
 
     fn enter_arm(&mut self, _id: usize, then: bool, _body: &'a [LocatedStatement]) {
-        let before = std::mem::take(&mut self.path);
+        let before = mem::take(&mut self.path);
         if then {
             self.arms.push((before, None));
         }
     }
 
     fn exit_arm(&mut self) {
-        let arm = std::mem::take(&mut self.path);
+        let arm = mem::take(&mut self.path);
         let (before, then) = self.arms.last_mut().expect("an arm is being walked");
         match then.take() {
             None => *then = Some(arm),
@@ -369,8 +371,7 @@ impl<'a> Visitor<'a> for Facts {
                 facts.bounds_inputs |= [left, right].iter().any(|side| side.is_active_input())
             }
             ExprKind::InputIntrospection { property, .. } => {
-                facts.bounds_inputs |=
-                    matches!(property, crate::properties::InputProperty::Outpoint);
+                facts.bounds_inputs |= matches!(property, InputProperty::Outpoint);
             }
             ExprKind::TxIntrospection {
                 property: TxProperty::Locktime,
@@ -460,6 +461,6 @@ fn find_witness_choices(
 
 /// A requirement the constant folder evaluates to false, as in a disabled function.
 fn never_passes(condition: &Expression) -> bool {
-    let mut no_names = |_: &crate::models::Path| Err(String::new());
-    crate::compiler::constants::evaluate(condition, &mut no_names).as_deref() == Ok("false")
+    let mut no_names = |_: &models::Path| Err(String::new());
+    constants::evaluate(condition, &mut no_names).as_deref() == Ok("false")
 }

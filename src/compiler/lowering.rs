@@ -1,19 +1,16 @@
 //! Function bodies ready for emission: loops unrolled and, when folding, constant expressions
 //! evaluated and statically dead code removed.
 
-use super::Result;
-use crate::compiler::ir::Op;
-use crate::compiler::loops;
-use crate::compiler::optimization;
-use crate::diagnostics::CompileError;
-use crate::diagnostics::Span;
-use crate::models::ExprKind;
-use crate::models::Expression;
-use crate::models::Function;
-use crate::models::LocatedStatement;
-use crate::models::Path;
-use crate::models::Statement;
-use crate::models::TypeName;
+use std::collections::HashSet;
+use std::{iter, slice};
+
+use super::ir::Op;
+use super::{loops, optimization, Result};
+use crate::diagnostics::{CompileError, Span};
+use crate::models::{
+    self, ExprKind, Expression, Function, LocatedStatement, Path, Statement, StructDefinition,
+    TypeName,
+};
 use crate::types;
 
 pub(super) enum Lowered {
@@ -109,7 +106,7 @@ pub(super) fn propagates(literal: &str) -> bool {
 pub(super) fn lower(
     statements: &[LocatedStatement],
     scope: &mut types::Scope,
-    structs: &[crate::models::StructDefinition],
+    structs: &[StructDefinition],
     fold: bool,
 ) -> Result<Vec<Lowered>> {
     let mut lowered = Vec::with_capacity(statements.len());
@@ -146,7 +143,7 @@ pub(super) fn lower(
         if let Some(item) =
             lower_statement(statement, scope, structs, fold).map_err(|error| error.at(span))?
         {
-            let ends = !falls_through(std::slice::from_ref(&item));
+            let ends = !falls_through(slice::from_ref(&item));
             lowered.push(item);
             // Emission stops at an item no path falls through, so the rest is dead.
             if ends {
@@ -160,7 +157,7 @@ pub(super) fn lower(
 fn lower_statement(
     statement: LocatedStatement,
     scope: &mut types::Scope,
-    structs: &[crate::models::StructDefinition],
+    structs: &[StructDefinition],
     fold: bool,
 ) -> Result<Option<Lowered>> {
     let span = statement.span;
@@ -294,7 +291,7 @@ fn lower_statement(
                 _ => None,
             }
             .ok_or("loop count must be a non-negative integer compile-time constant")?;
-            unroll(span, std::iter::repeat_n(body, count), scope, structs, fold)?
+            unroll(span, iter::repeat_n(body, count), scope, structs, fold)?
         }
         Statement::ForRange {
             index_var,
@@ -302,7 +299,7 @@ fn lower_statement(
             end,
             body,
         } => {
-            let iterations = crate::models::loop_range(&start, &end)?.map(|k| {
+            let iterations = models::loop_range(&start, &end)?.map(|k| {
                 let mut substituted =
                     loops::substitute_body(&body, &index_var, &k.to_string(), None);
                 types::annotate_statements(&mut substituted, &mut scope.clone(), structs);
@@ -332,7 +329,7 @@ fn lower_statement(
                 .clone()
                 .or_else(|| match &value.kind {
                     ExprKind::Call { return_type, .. } => return_type.clone(),
-                    _ => crate::models::expression_result_struct(value).map(TypeName::from),
+                    _ => models::expression_result_struct(value).map(TypeName::from),
                 })
                 .or_else(|| match &value.ty {
                     composite @ (types::ArkType::Array(..) | types::ArkType::Struct(_)) => {
@@ -359,7 +356,7 @@ fn lower_statement(
 fn assigns_read(body: &[LocatedStatement], expression: &Expression) -> bool {
     matches!(&expression.kind, ExprKind::Name(path) | ExprKind::ArrayIndex { array: path, .. }
         if super::functions::assigns(body, &path.root))
-        || crate::models::child_exprs(expression)
+        || models::child_exprs(expression)
             .into_iter()
             .any(|child| assigns_read(body, child))
 }
@@ -369,7 +366,7 @@ fn unroll(
     span: Span,
     iterations: impl Iterator<Item = Vec<LocatedStatement>>,
     scope: &types::Scope,
-    structs: &[crate::models::StructDefinition],
+    structs: &[StructDefinition],
     fold: bool,
 ) -> Result<Lowered> {
     let mut lowered = Vec::new();
@@ -394,7 +391,7 @@ fn calls<'a>(body: &'a [Lowered], found: &mut Vec<(&'a Expression, Span)>) {
         if let ExprKind::Call { .. } = &expression.kind {
             found.push((expression, span));
         }
-        for child in crate::models::child_exprs(expression) {
+        for child in models::child_exprs(expression) {
             walk(child, span, found);
         }
     }
@@ -434,9 +431,9 @@ pub(super) fn check_folded(
     statements: &[LocatedStatement],
     scope: &types::Scope,
     constructor_scope: &types::Scope,
-    structs: &[crate::models::StructDefinition],
+    structs: &[StructDefinition],
     functions: &[Function],
-    checked: &mut std::collections::HashSet<(String, Vec<Option<String>>)>,
+    checked: &mut HashSet<(String, Vec<Option<String>>)>,
 ) -> Result<()> {
     let body = lower(statements, &mut scope.clone(), structs, true)?;
     let mut found = Vec::new();

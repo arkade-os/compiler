@@ -1,3 +1,4 @@
+use crate::common;
 use arkade_compiler::compile;
 
 #[test]
@@ -29,7 +30,7 @@ contract Demo(pubkey owner, pubkey liquidator) {
 }
 "#;
     let out = compile(src).expect("a tweaked operator key satisfies F2");
-    let claim = crate::common::group(&out, "claim");
+    let claim = common::group(&out, "claim");
     assert_eq!(
         claim.leaves.len(),
         1,
@@ -88,7 +89,7 @@ contract Demo(pubkey owner, bytes32 h) {{
         );
         let out = compile(&source("claimExit", preimage, condition))
             .expect("a renamed CSV leaf joins the group");
-        let claim = crate::common::group(&out, "claim");
+        let claim = common::group(&out, "claim");
         let names: Vec<_> = claim.leaves.iter().map(|leaf| leaf.name.as_str()).collect();
         assert_eq!(names, ["claim", "claimExit"], "{condition}");
         assert_eq!(claim.leaves[0].asm, ["<OPERATOR_KEY:claim>", "OP_CHECKSIG"]);

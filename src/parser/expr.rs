@@ -1,9 +1,8 @@
-use super::Rule;
-use crate::models::ExprKind;
-use crate::models::Expression;
-use crate::models::Path;
-use crate::parser::crypto;
-use crate::parser::introspection;
+use super::{crypto, introspection, Rule};
+use crate::builtins;
+use crate::diagnostics::Span;
+use crate::models::{ExprKind, Expression, Path};
+use crate::operators::BinaryOperator;
 #[allow(unused_imports)]
 use pest::iterators::Pair;
 
@@ -32,9 +31,9 @@ pub(crate) fn parse_general_expression(pair: Pair<Rule>) -> Result<Expression, S
             let mut result = parse_general_expression(inner.next().ok_or("Empty expression")?)?;
             while let Some(op) = inner.next() {
                 let right = parse_general_expression(inner.next().ok_or("Missing right operand")?)?;
-                let op = crate::operators::BinaryOperator::from_symbol(op.as_str())
+                let op = BinaryOperator::from_symbol(op.as_str())
                     .ok_or_else(|| format!("unknown operator '{}'", op.as_str()))?;
-                let span = crate::diagnostics::Span {
+                let span = Span {
                     start: result.span.start,
                     end: right.span.end,
                 };
@@ -55,7 +54,7 @@ pub(crate) fn parse_general_expression(pair: Pair<Rule>) -> Result<Expression, S
 
 fn reject_reserved_call(name: &str, args: usize) -> Result<(), String> {
     if let Some(signature) = reserved_function_signature(name) {
-        if crate::builtins::tapscript_params(name).is_some_and(|params| params.len() == args) {
+        if builtins::tapscript_params(name).is_some_and(|params| params.len() == args) {
             let hint = match name {
                 "older" | "after" => "; Arkade Script functions use `checkTime(timestamp)`",
                 "tweak" => ", as a key inside checkSig or checkMultisig",
@@ -72,10 +71,10 @@ fn reject_reserved_call(name: &str, args: usize) -> Result<(), String> {
 }
 
 pub(crate) fn reserved_function_signature(name: &str) -> Option<String> {
-    if let Some(builtin) = crate::builtins::find(name) {
+    if let Some(builtin) = builtins::find(name) {
         return Some(builtin.signature());
     }
-    if let Some(params) = crate::builtins::tapscript_params(name) {
+    if let Some(params) = builtins::tapscript_params(name) {
         return Some(format!("{name}({})", params.join(", ")));
     }
     (name == "this.tunnel").then(|| "this.tunnel(outputIndex, policy?, exceptions?)".to_string())
@@ -100,7 +99,7 @@ pub(crate) fn parse_named_operand(pair: Pair<Rule>) -> Result<String, String> {
 }
 
 pub(crate) fn parse_primary_expr(pair: Pair<Rule>) -> Result<Expression, String> {
-    let span: crate::diagnostics::Span = pair.as_span().into();
+    let span: Span = pair.as_span().into();
     match pair.as_rule() {
         Rule::primary_expr => {
             let text = pair.as_str();
@@ -126,7 +125,7 @@ pub(crate) fn parse_primary_expr(pair: Pair<Rule>) -> Result<Expression, String>
                     Rule::invert_op => UnaryOperator::Invert,
                     _ => return Err("Unexpected unary operator".to_string()),
                 };
-                let span = crate::diagnostics::Span {
+                let span = Span {
                     start: operator.as_span().start(),
                     end: value.span.end,
                 };
@@ -256,7 +255,7 @@ fn suffixes<'a>(pairs: impl Iterator<Item = Pair<'a, Rule>>) -> Result<Vec<Suffi
 /// Resolve an operand and its suffixes: a member of `tx` or `this`, a group's
 /// `.controlIs(id)`, a library call, or fields and indexes of any value.
 fn parse_chain(head: Pair<Rule>, suffixes: Vec<Suffix>, text: &str) -> Result<Expression, String> {
-    let span: crate::diagnostics::Span = head.as_span().into();
+    let span: Span = head.as_span().into();
     let root = match head.as_rule() {
         Rule::identifier => head.as_str(),
         Rule::function_call => {
@@ -321,7 +320,7 @@ pub(crate) fn apply_suffixes(
             (Suffix::Call(name, args, end), ExprKind::Name(path))
                 if plain && path.segments.is_empty() =>
             {
-                let span = crate::diagnostics::Span { start, end: *end };
+                let span = Span { start, end: *end };
                 let name = format!("{}.{name}", path.root);
                 (parse_call(name, args.clone(), span)?.kind, end)
             }
@@ -344,7 +343,7 @@ pub(crate) fn apply_suffixes(
         };
         // A call's value is no binding.
         plain &= !matches!(suffix, Suffix::Call(..));
-        value = Expression::new(kind, crate::diagnostics::Span { start, end: *end });
+        value = Expression::new(kind, Span { start, end: *end });
     }
     Ok(value)
 }
@@ -353,9 +352,9 @@ pub(crate) fn apply_suffixes(
 pub(crate) fn parse_call(
     name: String,
     args: Vec<Pair<Rule>>,
-    span: crate::diagnostics::Span,
+    span: Span,
 ) -> Result<Expression, String> {
-    let builtin = crate::builtins::find(&name);
+    let builtin = builtins::find(&name);
     if builtin.is_none() {
         reject_reserved_call(&name, args.len())?;
     }
@@ -393,7 +392,7 @@ pub(crate) fn parse_call(
 /// `ContractInstance { contract_name, args }` which the compiler lowers to
 /// a `<CONTRACT:ContractName(...)>` 32-byte Taproot output-key placeholder.
 pub(crate) fn parse_constructor_to_expression(pair: Pair<Rule>) -> Result<Expression, String> {
-    let span: crate::diagnostics::Span = pair.as_span().into();
+    let span: Span = pair.as_span().into();
     let mut inner = pair.into_inner();
 
     // First child: contract name identifier

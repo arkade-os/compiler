@@ -1,3 +1,6 @@
+use std::collections::BTreeMap;
+use std::path::Path;
+use std::{error, fmt};
 // Compilation entry points, data models, and opcode constants are public.
 // Pipeline stages are crate-internal.
 mod builtins;
@@ -47,19 +50,19 @@ impl Default for CompileOptions {
 pub struct Error(String);
 
 /// The message's `Debug`, as a `main` returning `Box<dyn std::error::Error>` prints it.
-impl std::fmt::Debug for Error {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        std::fmt::Debug::fmt(&self.0, f)
+impl fmt::Debug for Error {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Debug::fmt(&self.0, f)
     }
 }
 
-impl std::fmt::Display for Error {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Display for Error {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&self.0)
     }
 }
 
-impl std::error::Error for Error {}
+impl error::Error for Error {}
 
 /// Compile Arkade Language source code to a JSON-serializable structure
 ///
@@ -108,13 +111,13 @@ pub fn compile(source_code: &str) -> Result<ContractJson, Error> {
 }
 
 /// Compile an entry file and its relative imports from the filesystem.
-pub fn compile_file(path: impl AsRef<std::path::Path>) -> Result<ContractJson, Error> {
+pub fn compile_file(path: impl AsRef<Path>) -> Result<ContractJson, Error> {
     compile_file_with_options(path, CompileOptions::default())
 }
 
 /// Compile an entry file and its relative imports with per-call options.
 pub fn compile_file_with_options(
-    path: impl AsRef<std::path::Path>,
+    path: impl AsRef<Path>,
     options: CompileOptions,
 ) -> Result<ContractJson, Error> {
     imports::compile_file(path.as_ref(), options).map_err(Error)
@@ -123,7 +126,7 @@ pub fn compile_file_with_options(
 /// Compile an entry file from an in-memory map of relative paths to source text.
 pub fn compile_sources(
     entry: &str,
-    files: &std::collections::BTreeMap<String, String>,
+    files: &BTreeMap<String, String>,
 ) -> Result<ContractJson, Error> {
     imports::compile_sources(entry, files, CompileOptions::default()).map_err(Error)
 }
@@ -131,7 +134,7 @@ pub fn compile_sources(
 /// Compile in-memory sources with per-call options.
 pub fn compile_sources_with_options(
     entry: &str,
-    files: &std::collections::BTreeMap<String, String>,
+    files: &BTreeMap<String, String>,
     options: CompileOptions,
 ) -> Result<ContractJson, Error> {
     imports::compile_sources(entry, files, options).map_err(Error)
@@ -153,13 +156,13 @@ pub fn compile_sources_with_options(
 /// let artifact = analysis.compile(Default::default()).unwrap();
 /// assert_eq!(artifact.name, "C");
 /// ```
-pub fn analyze(entry: &str, files: &std::collections::BTreeMap<String, String>) -> Analysis {
+pub fn analyze(entry: &str, files: &BTreeMap<String, String>) -> Analysis {
     imports::analyze(entry, files, true)
 }
 
 /// [`analyze`] for an entry file and its relative imports on the filesystem; diagnostics name
 /// files by absolute path.
-pub fn analyze_file(path: impl AsRef<std::path::Path>) -> Analysis {
+pub fn analyze_file(path: impl AsRef<Path>) -> Analysis {
     imports::analyze_file(path.as_ref(), true)
 }
 
@@ -169,7 +172,7 @@ pub fn analyze_file(path: impl AsRef<std::path::Path>) -> Analysis {
 /// Code generation, which runs only when those pass, reports its first error.
 /// Diagnostics from imports name the imported file. `entry` may be a library
 /// file.
-pub fn check(entry: &str, files: &std::collections::BTreeMap<String, String>) -> Vec<Diagnostic> {
+pub fn check(entry: &str, files: &BTreeMap<String, String>) -> Vec<Diagnostic> {
     imports::check_sources(entry, files)
 }
 

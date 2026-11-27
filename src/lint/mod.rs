@@ -4,6 +4,7 @@
 //! warn then takes the level the caller gives `warnings`, as rustc's `-D warnings` does.
 
 use std::collections::BTreeMap;
+use std::str::FromStr;
 
 use crate::diagnostics::{Diagnostic, Span};
 use crate::models::{Contract, TapItem, TapOperand};
@@ -197,7 +198,7 @@ impl Lint {
     }
 }
 
-impl std::str::FromStr for Lint {
+impl FromStr for Lint {
     type Err = String;
 
     fn from_str(id: &str) -> Result<Self, String> {

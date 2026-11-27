@@ -1,7 +1,6 @@
-use crate::compiler::expr;
-use crate::compiler::ir::Op;
-use crate::models::AssetLookupSource;
-use crate::models::Expression;
+use super::expr;
+use super::ir::Op;
+use crate::models::{AssetLookupSource, Expression};
 use crate::opcodes::Opcode;
 use crate::properties::{AssetProperty, GroupProperty};
 

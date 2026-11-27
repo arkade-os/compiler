@@ -1,3 +1,4 @@
+use crate::common;
 use crate::common::*;
 use arkade_compiler::compile;
 
@@ -819,13 +820,13 @@ fn shifts_fold_in_constants_like_the_vm() {
         function spend(int n) { require(n == X); require(n != Y); }
     }";
     let output = arkade_compiler::compile(source).expect("constant shifts fold");
-    let asm = crate::common::arkade_asm(&output, "spend");
+    let asm = common::arkade_asm(&output, "spend");
     assert!(asm.contains("256") && asm.contains("-5"), "{asm}");
     let fold = |expr: &str| {
         arkade_compiler::compile(&format!(
             "contract C() {{ const int Z = {expr}; function spend(int n) {{ require(n == Z); }} }}"
         ))
-        .map(|output| crate::common::arkade_asm(&output, "spend"))
+        .map(|output| common::arkade_asm(&output, "spend"))
         .map_err(|error| error.to_string())
     };
     assert_eq!(fold("0 << 63"), fold("0"));
@@ -856,7 +857,7 @@ fn remainder_folds_with_the_sign_of_the_dividend() {
             "contract C() {{ const int Z = {expr}; function spend(int n) {{ require(n == Z); }} }}"
         ))
         .expect(expr);
-        crate::common::arkade_asm(&output, "spend")
+        common::arkade_asm(&output, "spend")
     };
     assert_eq!(fold("7 % 3"), fold("1"));
     assert_eq!(fold("-7 % 2"), fold("-1"));

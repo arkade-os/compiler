@@ -1,9 +1,13 @@
-use clap::{CommandFactory, FromArgMatches, Parser as ClapParser};
-use std::fs;
+use std::error::Error;
+use std::io::{self, Write};
 use std::path::Path;
+use std::{env, fs, process};
 
+use arkade_compiler::errors::ErrorCode;
 use arkade_compiler::lint::{Level, Levels, Lint};
-use arkade_compiler::{analyze_file, CompileOptions, Severity};
+use arkade_compiler::models::ContractJson;
+use arkade_compiler::{analyze_file, diagnostics, CompileOptions, Severity};
+use clap::{CommandFactory, FromArgMatches, Parser as ClapParser};
 
 /// Arkade Compiler CLI
 ///
@@ -83,7 +87,7 @@ struct Args {
 /// 3. Parses the source code into an AST
 /// 4. Compiles the AST to a JSON structure
 /// 5. Writes the JSON to the output file
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> Result<(), Box<dyn Error>> {
     // Parse CLI arguments
     let matches = Args::command().get_matches();
     let args = Args::from_arg_matches(&matches)?;
@@ -92,7 +96,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             format!("{:?}, {:?} by default", lint.category(), lint.level()).to_lowercase()
         };
         let Some(id) = explain else {
-            let codes = arkade_compiler::errors::ErrorCode::ALL
+            let codes = ErrorCode::ALL
                 .iter()
                 .map(|code| (code.id(), "error".to_string(), code.summary()));
             let rows: Vec<_> = Lint::ALL
@@ -111,7 +115,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             return Ok(());
         };
-        if let Ok(code) = id.parse::<arkade_compiler::errors::ErrorCode>() {
+        if let Ok(code) = id.parse::<ErrorCode>() {
             println!("{id}: error\n\n{}", code.explanation());
             return Ok(());
         }
@@ -167,15 +171,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let analysis = analyze_file(file_path);
     let diagnostics = analysis.diagnostics_with(&levels);
-    print_diagnostics(&analysis, &diagnostics, &mut std::io::stderr())?;
+    print_diagnostics(&analysis, &diagnostics, &mut io::stderr())?;
     if diagnostics.iter().any(|d| d.severity == Severity::Error) {
-        std::process::exit(1);
+        process::exit(1);
     }
     let output = match analysis.compile_with(options, &levels) {
         Ok(output) => output,
         Err(errors) => {
-            print_diagnostics(&analysis, &errors, &mut std::io::stderr())?;
-            std::process::exit(1);
+            print_diagnostics(&analysis, &errors, &mut io::stderr())?;
+            process::exit(1);
         }
     };
 
@@ -216,30 +220,30 @@ fn check(
     json: bool,
     options: CompileOptions,
     levels: &Levels,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<(), Box<dyn Error>> {
     let analysis = analyze_file(path);
     let diagnostics = analysis.check_with(options, levels);
     if json {
         let diagnostics: Vec<_> = diagnostics
             .iter()
             .map(|d| {
-                let mut json = arkade_compiler::diagnostics::to_json(d, analysis.source(&d.file));
+                let mut json = diagnostics::to_json(d, analysis.source(&d.file));
                 json["file"] = shown(&d.file).into();
                 json
             })
             .collect();
         println!("{}", serde_json::to_string_pretty(&diagnostics)?);
     } else {
-        print_diagnostics(&analysis, &diagnostics, &mut std::io::stdout())?;
+        print_diagnostics(&analysis, &diagnostics, &mut io::stdout())?;
     }
     if diagnostics.iter().any(|d| d.severity == Severity::Error) {
-        std::process::exit(1);
+        process::exit(1);
     }
     Ok(())
 }
 
 /// One block per Arkade Script with its resource usage.
-fn print_report(output: &arkade_compiler::models::ContractJson) {
+fn print_report(output: &ContractJson) {
     let width = output
         .functions
         .iter()
@@ -261,7 +265,7 @@ fn print_report(output: &arkade_compiler::models::ContractJson) {
 
 /// `file` relative to the working directory, as diagnostics show it in text and JSON.
 fn shown(file: &str) -> String {
-    let cwd = std::env::current_dir().unwrap_or_default();
+    let cwd = env::current_dir().unwrap_or_default();
     let file = Path::new(file);
     file.strip_prefix(&cwd)
         .unwrap_or(file)
@@ -273,13 +277,13 @@ fn shown(file: &str) -> String {
 fn print_diagnostics(
     analysis: &arkade_compiler::Analysis,
     diagnostics: &[arkade_compiler::Diagnostic],
-    out: &mut impl std::io::Write,
-) -> std::io::Result<()> {
+    out: &mut impl Write,
+) -> io::Result<()> {
     for d in diagnostics {
         let mut location = shown(&d.file);
         let start = d.span.zip(analysis.source(&d.file));
-        if let Some((line, column)) = start
-            .and_then(|(span, source)| arkade_compiler::diagnostics::position(source, span.start))
+        if let Some((line, column)) =
+            start.and_then(|(span, source)| diagnostics::position(source, span.start))
         {
             location.push_str(&format!(":{line}:{column}"));
         }

@@ -1,5 +1,7 @@
 use arkade_compiler::compile;
 use arkade_compiler::models::Cost;
+use std::fs;
+use std::process::Command;
 
 const SOURCE: &str = "contract C(pubkey[3] keys) {
     function spend(signature[3] sigs, int n) {
@@ -68,8 +70,8 @@ fn nested_branches_report_each_opcodes_maximum() {
 fn report_prints_usage_without_limits() {
     let dir = tempfile::tempdir().unwrap();
     let source = dir.path().join("c.ark");
-    std::fs::write(&source, SOURCE).unwrap();
-    let output = std::process::Command::new(env!("CARGO_BIN_EXE_arkadec"))
+    fs::write(&source, SOURCE).unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_arkadec"))
         .arg(&source)
         .arg("-o")
         .arg(dir.path().join("c.json"))
@@ -99,7 +101,7 @@ fn report_prints_usage_without_limits() {
 #[test]
 fn report_aligns_counts_past_long_opcode_names() {
     let dir = tempfile::tempdir().unwrap();
-    let output = std::process::Command::new(env!("CARGO_BIN_EXE_arkadec"))
+    let output = Command::new(env!("CARGO_BIN_EXE_arkadec"))
         .arg(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/examples/htlc/htlc.ark"

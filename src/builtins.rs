@@ -767,11 +767,12 @@ fn documented() -> serde_json::Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::models;
     use crate::types::ArkType;
 
     fn known(ty: &str) -> bool {
         match ArkType::parse(ty) {
-            ArkType::Struct(name) => crate::models::builtin_struct_fields(&name).is_some(),
+            ArkType::Struct(name) => models::builtin_struct_fields(&name).is_some(),
             parsed => parsed != ArkType::Unknown,
         }
     }

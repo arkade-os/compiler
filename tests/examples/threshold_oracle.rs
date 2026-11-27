@@ -1,3 +1,4 @@
+use crate::common;
 use arkade_compiler::compile;
 use arkade_compiler::opcodes::{
     OP_CHECKSIGFROMSTACK, OP_GREATERTHANOREQUAL, OP_INSPECTINASSETLOOKUP,
@@ -39,7 +40,7 @@ fn test_threshold_oracle_has_asset_lookup() {
 #[test]
 fn test_threshold_oracle_has_control_flow() {
     let output = compile(THRESHOLD_ORACLE_CODE).unwrap();
-    let tokens = crate::common::arkade_asm_tokens(&output, "attest");
+    let tokens = common::arkade_asm_tokens(&output, "attest");
 
     // Should have assembly (for loop unrolled etc.)
     assert!(!tokens.is_empty(), "Assembly should not be empty");
@@ -65,7 +66,7 @@ fn test_threshold_oracle_constructor_array_is_one_grouped_input() {
     );
 
     // Each element is read once, so its placeholder is pushed at its read.
-    let asm = crate::common::arkade_asm(&output, "attest");
+    let asm = common::arkade_asm(&output, "attest");
     for placeholder in ["<oracles.0>", "<oracles.1>", "<oracles.2>"] {
         assert!(asm.contains(placeholder), "missing {placeholder} in: {asm}");
     }
@@ -96,7 +97,7 @@ fn test_threshold_oracle_arkade_script_array_input_is_one_grouped_input() {
 fn test_threshold_oracle_checksig_from_stack_unrolled() {
     let output = compile(THRESHOLD_ORACLE_CODE).unwrap();
 
-    let tokens = crate::common::arkade_asm_tokens(&output, "attest");
+    let tokens = common::arkade_asm_tokens(&output, "attest");
 
     // The for loop should unroll to 3 OP_CHECKSIGFROMSTACK calls
     let checksig_count = tokens.iter().filter(|s| *s == OP_CHECKSIGFROMSTACK).count();

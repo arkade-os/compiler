@@ -10,6 +10,8 @@
 //! one binary (but used by the other) would otherwise warn.
 #![allow(dead_code)]
 
+use arkade_compiler::lint::Category;
+use arkade_compiler::lint::Lint;
 use arkade_compiler::models::{AbiFunctionGroup, AbiLeaf, ContractJson};
 
 /// Settings with `optimize` set, built as a crate outside the compiler must build them.
@@ -137,8 +139,8 @@ pub fn user_signatures(out: &ContractJson, group_name: &str) -> Vec<String> {
 
 /// Whether `lint` judges a function's authorization or outputs; the toy contracts of tests for
 /// other features have neither, so those tests leave such lints out.
-pub fn is_security_lint(lint: arkade_compiler::lint::Lint) -> bool {
-    lint.category() == arkade_compiler::lint::Category::Security
+pub fn is_security_lint(lint: Lint) -> bool {
+    lint.category() == Category::Security
 }
 
 /// `out`'s warnings except security lints.

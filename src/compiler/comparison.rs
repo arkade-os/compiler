@@ -1,11 +1,8 @@
-use super::Result;
-use crate::compiler::Generator;
-use crate::models::Expression;
-use crate::models::Path;
-use crate::models::TypeName;
+use super::{Generator, Result};
+use crate::models::{self, Expression, Path, TypeName};
 use crate::opcodes::Opcode;
 use crate::operators::{BinaryOperator, OperatorClass};
-use crate::types::{bind_local_type, ArkType};
+use crate::types::{self, bind_local_type, ArkType};
 
 impl Generator {
     pub(super) fn composite_type(&self, expression: &Expression) -> Option<TypeName> {
@@ -36,12 +33,12 @@ impl Generator {
         if op.class() != OperatorClass::Equality {
             return Err(format!("'{op}' is not defined for '{ty}' values").into());
         }
-        let leaves = crate::models::flatten_value(&Path::new(""), ty, &self.structs)?;
+        let leaves = models::flatten_value(&Path::new(""), ty, &self.structs)?;
         let width = leaves.len();
         self.emit_typed_value(left, ty)?;
         self.emit_typed_value(right, ty)?;
         for (leaf, remaining) in leaves.iter().zip((1..=width).rev()) {
-            let numeric = crate::types::is_numeric(&leaf.leaf_type.ark_type());
+            let numeric = types::is_numeric(&leaf.leaf_type.ark_type());
             let (equal, equal_verify) = match numeric {
                 true => (Opcode::NumEqual, Opcode::NumEqualVerify),
                 false => (Opcode::Equal, Opcode::EqualVerify),

@@ -1,3 +1,4 @@
+use crate::common;
 use arkade_compiler::compile;
 use arkade_compiler::opcodes::{
     OP_0, OP_1, OP_2DROP, OP_DROP, OP_FINDASSETGROUPBYASSETID, OP_INSPECTASSETGROUP,
@@ -26,7 +27,7 @@ fn test_group_asset_id_returns_struct() {
     "#;
 
     let output = compile(code).expect("group assetId returns an AssetId struct");
-    let asm = crate::common::arkade_asm_tokens(&output, "checkAssetId");
+    let asm = common::arkade_asm_tokens(&output, "checkAssetId");
     assert!(asm.iter().any(|token| token == OP_INSPECTASSETGROUPASSETID));
     assert!(asm.iter().any(|token| token == OP_SWAP));
 }
@@ -325,7 +326,7 @@ fn test_group_io_access_output_amount() {
     "#;
 
     let output = compile(code).expect("group IO access compiles");
-    let asm = crate::common::arkade_asm_tokens(&output, "spend");
+    let asm = common::arkade_asm_tokens(&output, "spend");
     let window = asm
         .windows(4)
         .find(|w| w[0] == OP_1 && w[1] == OP_INSPECTASSETGROUP && w[2] == OP_NIP && w[3] == OP_NIP);
@@ -347,7 +348,7 @@ fn test_group_io_access_output_type() {
     "#;
 
     let output = compile(code).expect("group IO access compiles");
-    let asm = crate::common::arkade_asm_tokens(&output, "spend");
+    let asm = common::arkade_asm_tokens(&output, "spend");
     assert!(
         asm.windows(3)
             .any(|w| w[0] == OP_1 && w[1] == OP_INSPECTASSETGROUP && w[2] == OP_2DROP),
@@ -366,7 +367,7 @@ fn test_group_accesses_ignore_whitespace_and_comments() {
             }} }}"
         );
         let output = compile(&code).unwrap_or_else(|error| panic!("{body}: {error}"));
-        crate::common::arkade_asm_tokens(&output, "spend")
+        common::arkade_asm_tokens(&output, "spend")
     };
 
     for (plain, spaced) in [
@@ -421,7 +422,7 @@ fn group_input_fields_normalize_both_record_widths() {
     "#,
     )
     .expect("input record fields are single values");
-    let asm = crate::common::arkade_asm(&output, "spend");
+    let asm = common::arkade_asm(&output, "spend");
     assert_eq!(asm.matches("OP_0 OP_INSPECTASSETGROUP").count(), 3, "{asm}");
     assert_eq!(
         asm.matches("OP_SIZE 32 OP_EQUAL OP_IF OP_DROP OP_ENDIF")
@@ -436,7 +437,7 @@ fn only_input_records_have_a_txid() {
     let body = |record: &str| {
         format!("contract C(bytes32 t) {{ function spend() {{ require(tx.assetGroups[0].{record}[0].txid == t); }} }}")
     };
-    let asm = crate::common::arkade_asm(&compile(&body("inputs")).expect("input txid"), "spend");
+    let asm = common::arkade_asm(&compile(&body("inputs")).expect("input txid"), "spend");
     assert!(asm.contains("OP_SIZE 32 OP_EQUALVERIFY OP_NIP"), "{asm}");
     let error = compile(&body("outputs"))
         .expect_err("outputs have no txid")
@@ -478,7 +479,7 @@ fn group_records_are_values_from_one_inspection() {
     "#,
     )
     .expect("group records are struct values");
-    let count = |function, op| crate::common::opcode_count_in_arkade(&output, function, op);
+    let count = |function, op| common::opcode_count_in_arkade(&output, function, op);
     let normalize = "OP_0 OP_INSPECTASSETGROUP OP_TOALTSTACK OP_TOALTSTACK OP_SIZE 32 OP_EQUAL OP_IF OP_DROP OP_ENDIF OP_FROMALTSTACK OP_FROMALTSTACK";
     assert_eq!(count("spend", OP_INSPECTASSETGROUP), 2);
     let spend = arkade_asm(&output, "spend");
@@ -529,7 +530,7 @@ fn test_group_access_as_constructor_argument_is_parsed() {
     "#;
     let child = "contract U(int amount, pubkey owner) { function spend(signature sig) { require(checkSig(sig, owner)); } }";
 
-    let error = crate::common::project("main.ark", &[("main.ark", code), ("u.ark", child)])
+    let error = common::project("main.ark", &[("main.ark", code), ("u.ark", child)])
         .expect_err("computed constructor arguments are rejected")
         .to_string();
     assert!(
@@ -594,10 +595,7 @@ fn asset_groups_bind_pass_index_and_nest_like_other_values() {
         }
     "#;
     let output = compile(code).unwrap_or_else(|error| panic!("{error}"));
-    let script = crate::common::group(&output, "spend")
-        .arkade
-        .as_ref()
-        .unwrap();
+    let script = common::group(&output, "spend").arkade.as_ref().unwrap();
     let types: Vec<_> = script
         .inputs
         .iter()
