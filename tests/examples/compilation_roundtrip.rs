@@ -13,8 +13,11 @@
 //! These tests catch regressions where the compiler silently emits structurally
 //! broken output without failing.
 
+use crate::common;
+use arkade_compiler::models::ContractJson;
 use arkade_compiler::{analyze_file, compile_file};
 use std::fs;
+use std::path::Path;
 use std::path::PathBuf;
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -23,13 +26,13 @@ fn examples_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("examples")
 }
 
-fn compile_example(filename: &str) -> arkade_compiler::models::ContractJson {
+fn compile_example(filename: &str) -> ContractJson {
     let path = examples_dir().join(filename);
     compile_file(path).unwrap_or_else(|e| panic!("failed to compile {filename}: {e}"))
 }
 
 /// Assert every structural invariant on a compiled `ContractJson`.
-fn assert_output_invariants(output: &arkade_compiler::models::ContractJson, filename: &str) {
+fn assert_output_invariants(output: &ContractJson, filename: &str) {
     assert!(
         !output.name.is_empty(),
         "{filename}: contractName must not be empty"
@@ -154,7 +157,7 @@ fn fingerprint_identifies_artifact_content() {
     let unoptimized = arkade_compiler::compile_sources_with_options(
         "main.ark",
         &[("main.ark".to_string(), source.to_string())].into(),
-        crate::common::options(false),
+        common::options(false),
     )
     .unwrap();
     assert_ne!(first.fingerprint, unoptimized.fingerprint);
@@ -196,10 +199,7 @@ fn roundtrip_nft_mint() {
         ("mint", "recipientScriptPubKey"),
         ("transfer", "newOwnerScriptPubKey"),
     ] {
-        let arkade = crate::common::group(&output, function)
-            .arkade
-            .as_ref()
-            .unwrap();
+        let arkade = common::group(&output, function).arkade.as_ref().unwrap();
         assert!(arkade
             .inputs
             .iter()
@@ -275,7 +275,7 @@ fn collect_ark_files(dir: &PathBuf) -> Vec<PathBuf> {
 /// A library is imported by contracts. It is not a compile entry.
 /// The parser's flag covers a library with a leading attribute, and it ignores
 /// the word `library` inside a comment.
-fn is_library(path: &std::path::Path) -> bool {
+fn is_library(path: &Path) -> bool {
     analyze_file(path)
         .contract()
         .is_some_and(|contract| contract.is_library)

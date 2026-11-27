@@ -1,4 +1,8 @@
+use crate::common;
 use std::collections::BTreeMap;
+use std::fs;
+use std::time::Duration;
+use std::time::Instant;
 
 use crate::common::{arkade_asm_tokens, leaf_asm_tokens, project};
 use arkade_compiler::{compile, compile_file, compile_sources, ContractJson};
@@ -36,7 +40,7 @@ fn pragmas_preserve_scripts_and_sources_across_compilation_entry_points() {
     assert_eq!(bundle.files["types.ark"], types);
     let dir = tempfile::tempdir().unwrap();
     for (path, source) in &bundle.files {
-        std::fs::write(dir.path().join(path), source).unwrap();
+        fs::write(dir.path().join(path), source).unwrap();
     }
     let mut rebuilt = compile_file(dir.path().join("main.ark")).unwrap();
     rebuilt.updated_at = output.updated_at.clone();
@@ -167,7 +171,7 @@ library Fees {
     assert_eq!(output.functions.len(), 2);
     assert_eq!(output.structs.len(), 1);
     assert_eq!(
-        crate::common::feature_warnings(&output),
+        common::feature_warnings(&output),
         ["warning[unused-parameter]: line 2, column 35: constructor parameter 'amount' is never used (vault.ark)"]
     );
     let asm = arkade_asm_tokens(&output, "spend");
@@ -180,7 +184,7 @@ library Fees {
     assert_eq!(bundle.files["fees.ark"], library);
     let dir = tempfile::tempdir().unwrap();
     for (path, source) in &bundle.files {
-        std::fs::write(dir.path().join(path), source).unwrap();
+        fs::write(dir.path().join(path), source).unwrap();
     }
     for mut rebuilt in [
         compile_sources(&bundle.entry, &bundle.files).unwrap(),
@@ -226,7 +230,7 @@ contract Main() {
     )
     .unwrap();
     assert!(
-        crate::common::feature_warnings(&output).is_empty(),
+        common::feature_warnings(&output).is_empty(),
         "{:?}",
         output.warnings
     );
@@ -343,7 +347,7 @@ contract Vault(Policy policy, int amount, pubkey owner) {
     assert_eq!(output.functions.len(), 2);
     assert_eq!(output.structs.len(), 1);
     assert!(
-        crate::common::feature_warnings(&output).is_empty(),
+        common::feature_warnings(&output).is_empty(),
         "{:?}",
         output.warnings
     );
@@ -646,10 +650,10 @@ fn shared_instantiations_compile_once() {
         .iter()
         .map(|(p, s)| (p.as_str(), s.as_str()))
         .collect();
-    let started = std::time::Instant::now();
+    let started = Instant::now();
     assert_eq!(project("r.ark", &files).unwrap().contracts.len(), 2);
     assert!(
-        started.elapsed() < std::time::Duration::from_secs(5),
+        started.elapsed() < Duration::from_secs(5),
         "{:?}",
         started.elapsed()
     );
@@ -658,14 +662,14 @@ fn shared_instantiations_compile_once() {
 #[test]
 fn native_and_virtual_compilation_match_and_bundle_is_portable() {
     let dir = tempfile::tempdir().unwrap();
-    std::fs::create_dir(dir.path().join("contracts")).unwrap();
+    fs::create_dir(dir.path().join("contracts")).unwrap();
     let source = r#"import "../helper.ark"; contract Main(int unused) { function spend() { require(Helper.VALUE == 1); } }"#;
     let helper =
         "contract Helper(int unused) { const int VALUE = 1; function spend() { require(true); } }";
-    std::fs::write(dir.path().join("contracts/main.ark"), source).unwrap();
-    std::fs::write(dir.path().join("helper.ark"), helper).unwrap();
+    fs::write(dir.path().join("contracts/main.ark"), source).unwrap();
+    fs::write(dir.path().join("helper.ark"), helper).unwrap();
     let output = compile_file(dir.path().join("contracts/main.ark")).unwrap();
-    assert_eq!(crate::common::feature_warnings(&output).len(), 2);
+    assert_eq!(common::feature_warnings(&output).len(), 2);
     for path in ["contracts/main.ark", "helper.ark"] {
         assert!(
             output.warnings.iter().any(|warning| {

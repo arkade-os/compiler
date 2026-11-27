@@ -1,16 +1,18 @@
-//! Tapscript (L1 leaf) compilation: closure assembly, validation, and ASM
-//! emission. Pure functions over `NamedTapscript`; ABI wiring lives in mod.rs.
+//! L1 tapscript leaves: checks each tapscript against the closure shapes arkd recognizes, emits
+//! its leaf assembly and witness, and groups leaves with their Arkade Script functions into the
+//! artifact's spend groups.
+
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use crate::models::{
-    AbiFunctionGroup, AbiLeaf, ArkadeScript, Contract, HashFn, KeyExpr, NamedTapscript, Parameter,
-    TapItem, TapOperand, TimeUnit, WitnessElement,
+    self, AbiFunctionGroup, AbiLeaf, ArkadeScript, Contract, HashFn, KeyExpr, NamedTapscript,
+    Parameter, TapItem, TapOperand, TimeUnit, WitnessElement, OPERATOR, OPERATOR_EXIT_DELAY,
 };
-use crate::models::{OPERATOR, OPERATOR_EXIT_DELAY};
 use crate::opcodes::{
     OP_CHECKLOCKTIMEVERIFY, OP_CHECKSEQUENCEVERIFY, OP_CHECKSIG, OP_CHECKSIGVERIFY, OP_DROP,
     OP_EQUAL, OP_EQUALVERIFY, OP_SIZE, OP_VERIFY,
 };
-use crate::types::{bytes_of_width, digest_accepts, ArkType};
+use crate::types::{self, bytes_of_width, digest_accepts, ArkType};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ClosureClass {
@@ -37,10 +39,9 @@ pub struct Closure {
     pub keys: Vec<KeyExpr>,
 }
 
-/// An operand the leaf script pushes. The script is fixed when the address is
-/// made, so no tapscript input can be one; inputs reach the leaf only as witness
-/// elements it consumes: the preimage and the signatures. `Constructor` takes
-/// any name; `LeafScript` is what keeps inputs out.
+/// An operand the leaf script pushes. The script is fixed when the address is made, so no
+/// tapscript input can be one; inputs reach the leaf only as witness elements. `Constructor`
+/// takes any name; `LeafScript` is what keeps inputs out.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Pushed {
     /// Assembled as written: a number or a hex string.
@@ -69,28 +70,32 @@ impl Pushed {
     }
 }
 
-/// A closure whose pushed operands are resolved; what leaf emission reads. Its
-/// fields are private, so only this module builds one: `validate_arkd_rules`,
-/// once it has refused every tapscript input in a pushed slot, and the
-/// synthesized default leaf.
+/// A closure with resolved pushed operands. Its fields are private, so only this module builds
+/// one: `validate_arkd_rules`, once it has refused every tapscript input in a pushed slot, and
+/// the synthesized default leaf.
 #[derive(Debug, Clone)]
 pub struct LeafScript {
     /// The digest, the preimage width it pins, and the hash the preimage must match.
     condition: Option<(HashFn, Option<usize>, Pushed)>,
-    /// The bound, and whether it is a CSV rather than a CLTV.
-    timelock: Option<(Pushed, bool)>,
+    timelock: Option<(Pushed, TimelockKind)>,
     keys: Vec<Pushed>,
 }
 
-/// Assemble a tapscript body into exactly one closure, enforcing the
-/// `condition? · timelock? · multisig` template in source order. The compiler
-/// does not reorder; any out-of-order, duplicate, or unrepresentable
-/// combination is an error (§4.4, §5.2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TimelockKind {
+    /// `older`: relative, checked by `OP_CHECKSEQUENCEVERIFY`.
+    Csv,
+    /// `after`: absolute, checked by `OP_CHECKLOCKTIMEVERIFY`.
+    Cltv,
+}
+
+/// Enforces the `condition? · timelock? · multisig` template in source order. The compiler does
+/// not reorder, so any out-of-order, duplicate or unrepresentable combination is an error.
 pub fn assemble_closure(ts: &NamedTapscript) -> Result<Closure, String> {
     let mut condition: Option<(HashFn, String)> = None;
     let mut preimage_width = None;
     let mut timelock: Option<(String, Option<TimeUnit>)> = None;
-    let mut is_csv = false; // older() → CSV; after() → CLTV
+    let mut is_csv = false;
     let mut multisig: Option<Vec<KeyExpr>> = None;
 
     for item in &ts.items {
@@ -194,10 +199,9 @@ pub fn validate_closure_shape(c: &Closure, ts_name: &str) -> Result<(), String> 
     Ok(())
 }
 
-/// Enforce the binding rule (§5.3): a leaf named after an Arkade Script function tweaks a key
-/// to that function, so the leaf binds its Arkade Script, and has no CSV delay, since a CSV
-/// leaf sits beside the function's default leaf, which carries that name. `contract` supplies
-/// the Arkade Script function names.
+/// A leaf named after an Arkade Script function tweaks a key to that function, so the leaf binds
+/// its Arkade Script, and has no CSV delay, since a CSV leaf sits beside the function's default
+/// leaf, which carries that name.
 pub fn resolve_binding(contract: &Contract, ts: &NamedTapscript) -> Result<(), String> {
     if contract
         .functions
@@ -250,10 +254,8 @@ pub fn resolve_binding(contract: &Contract, ts: &NamedTapscript) -> Result<(), S
     }
 }
 
-/// The one Arkade Script function this leaf tweaks a key to.
-///
-/// `tweak(base, func)` names `func`. A leaf can name only one function, so it has one `leaves`
-/// array to join.
+/// The one Arkade Script function this leaf tweaks a key to. A leaf joins one `leaves` array, so
+/// its tweaks may name only one function.
 pub(crate) fn shared_tweak_func(ts_name: &str, keys: &[KeyExpr]) -> Result<Option<String>, String> {
     let mut target: Option<String> = None;
     for key in keys {
@@ -289,15 +291,14 @@ pub(crate) fn keeps_default_leaf(contract: &Contract, func: &str) -> bool {
     })
 }
 
-/// arkd structural rules F2/F3/E1, and resolution of every operand the leaf
-/// script pushes (§5.3).
+/// arkd's structural rules, and resolution of every operand the leaf script pushes.
 pub fn validate_arkd_rules(
     contract: &Contract,
     ts: &NamedTapscript,
     c: &Closure,
 ) -> Result<LeafScript, String> {
     let constructor_scope =
-        crate::types::build_scope_with_structs(&contract.parameters, &contract.structs);
+        types::build_scope_with_structs(&contract.parameters, &contract.structs);
     let is_input = |name: &str| ts.inputs.iter().any(|p| p.name == name);
     // The type of a scalar constructor binding the script pushes as `role`.
     let fixed = |name: &str, role: &str| -> Result<Option<ArkType>, String> {
@@ -315,10 +316,7 @@ pub fn validate_arkd_rules(
             .cloned())
     };
 
-    let mut constructor_tweak_funcs: std::collections::BTreeMap<
-        String,
-        std::collections::BTreeSet<String>,
-    > = std::collections::BTreeMap::new();
+    let mut constructor_tweak_funcs: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     let mut keys = Vec::with_capacity(c.keys.len());
     for k in &c.keys {
         keys.push(match k {
@@ -371,21 +369,15 @@ pub fn validate_arkd_rules(
             ));
         }
     }
-    // Every tweak must name the same function.
     shared_tweak_func(&ts.name, &c.keys)?;
 
-    // A declared `signature` input.
     let sig_input = |name: &str| -> bool {
         ts.inputs
             .iter()
             .any(|p| p.name == name && p.param_type.name() == Some("signature"))
     };
 
-    // Signature-operand validation (§4.3, §8): every signature operand in a
-    // checkSig/checkMultisig must be a declared `signature` input, and the
-    // signature array must align 1:1 with the key set (the leaf's witness is
-    // unspendable otherwise — a missing or misaligned sig yields a witness ABI
-    // that cannot satisfy the closure).
+    // A missing or misaligned signature yields a witness that cannot satisfy the closure.
     for item in &ts.items {
         if let TapItem::Sig { keys, sigs, .. } = item {
             if sigs.len() != keys.len() {
@@ -462,16 +454,21 @@ pub fn validate_arkd_rules(
                 condition = Some((hash_fn.clone(), c.preimage_width, hash_operand));
             }
             TapItem::Older { value, unit } | TapItem::After { value, unit } => {
-                let csv = matches!(item, TapItem::Older { .. });
-                let call = if csv { "older" } else { "after" };
+                let (kind, call) = match item {
+                    TapItem::Older { .. } => (TimelockKind::Csv, "older"),
+                    TapItem::After { .. } => (TimelockKind::Cltv, "after"),
+                    TapItem::Hash { .. } | TapItem::Sig { .. } => {
+                        unreachable!("the outer arm matches only timelocks")
+                    }
+                };
                 let value = value.to_string();
                 let operand = match unit {
                     Some(TimeUnit::Blocks) => format!("blocks({value})"),
                     Some(TimeUnit::Seconds) => format!("seconds({value})"),
                     None => value.clone(),
                 };
-                timelock = Some((timelock_operand(&value, *unit, csv), csv));
-                if csv && value == OPERATOR_EXIT_DELAY {
+                timelock = Some((timelock_operand(&value, *unit, kind), kind));
+                if kind == TimelockKind::Csv && value == OPERATOR_EXIT_DELAY {
                     if unit.is_some() {
                         return Err(format!(
                             "tapscript `{}`: operatorExitDelay has its own unit; write older(operatorExitDelay)",
@@ -510,28 +507,30 @@ pub fn validate_arkd_rules(
                         Some(_) => continue,
                     }
                 };
-                const MAX: i128 = u32::MAX as i128;
-                let (valid, expected) = match (csv, unit) {
+                let max = i128::from(u32::MAX);
+                let (valid, expected) = match (kind, unit) {
                     // BIP68 ignores bits 16-21 and 23-30, and bit 31 disables the lock.
-                    (true, None) => (
+                    (TimelockKind::Csv, None) => (
                         n & !(0xffff | 1 << 22) == 0,
                         "a BIP68 sequence that sets only the 16 value bits and the type flag \
                          (bit 22); write blocks(n) or seconds(n)",
                     ),
-                    (true, Some(TimeUnit::Blocks)) => {
+                    (TimelockKind::Csv, Some(TimeUnit::Blocks)) => {
                         ((1..=0xffff).contains(&n), "1..=65535 blocks")
                     }
-                    (true, Some(TimeUnit::Seconds)) => (
+                    (TimelockKind::Csv, Some(TimeUnit::Seconds)) => (
                         (1..=0xffff * 512).contains(&n) && n % 512 == 0,
                         "a multiple of 512 in 512..=33553920 seconds",
                     ),
-                    (false, None) => ((0..=MAX).contains(&n), "a locktime in 0..=4294967295"),
-                    (false, Some(TimeUnit::Blocks)) => (
+                    (TimelockKind::Cltv, None) => {
+                        ((0..=max).contains(&n), "a locktime in 0..=4294967295")
+                    }
+                    (TimelockKind::Cltv, Some(TimeUnit::Blocks)) => (
                         (1..500_000_000).contains(&n),
                         "a block height in 1..=499999999",
                     ),
-                    (false, Some(TimeUnit::Seconds)) => (
-                        (500_000_000..=MAX).contains(&n),
+                    (TimelockKind::Cltv, Some(TimeUnit::Seconds)) => (
+                        (500_000_000..=max).contains(&n),
                         "a Unix timestamp in 500000000..=4294967295",
                     ),
                 };
@@ -546,7 +545,6 @@ pub fn validate_arkd_rules(
         }
     }
 
-    // F2: forfeit closures must contain the operator key.
     if c.class.is_forfeit() && !c.keys.iter().any(KeyExpr::is_operator) {
         return Err(format!(
             "forfeit tapscript `{}` must include `operator` or `tweak(operator, fn)` (the operator \
@@ -555,9 +553,8 @@ pub fn validate_arkd_rules(
         ));
     }
 
-    // F3 (CLTV seconds vs block) is value-dependent and only decidable for
-    // literal locktimes with a known block-type policy; with literals-only and
-    // no policy source wired yet, defer to arkd. (Placeholder for future config.)
+    // LIMITATION: whether a CLTV may use seconds or blocks is left to arkd; check it here once
+    // the compiler has a source for that policy.
 
     Ok(LeafScript {
         condition,
@@ -583,12 +580,12 @@ fn timelock_number(value: &str) -> Option<i128> {
 /// A timelock operand: `operatorExitDelay` as the operator's unilateral exit delay,
 /// `seconds(n)` in a CSV as its BIP68 time-based sequence, any other number
 /// as-is, else the constructor parameter pushing the raw value.
-fn timelock_operand(value: &str, unit: Option<TimeUnit>, csv: bool) -> Pushed {
+fn timelock_operand(value: &str, unit: Option<TimeUnit>, kind: TimelockKind) -> Pushed {
     if value == OPERATOR_EXIT_DELAY {
         return Pushed::Operator("OPERATOR_EXIT_DELAY");
     }
     match timelock_number(value) {
-        Some(n) if csv && unit == Some(TimeUnit::Seconds) => {
+        Some(n) if kind == TimelockKind::Csv && unit == Some(TimeUnit::Seconds) => {
             Pushed::Literal(((n / 512) | (1 << 22)).to_string())
         }
         Some(n) => Pushed::Literal(n.to_string()),
@@ -596,7 +593,6 @@ fn timelock_operand(value: &str, unit: Option<TimeUnit>, csv: bool) -> Pushed {
     }
 }
 
-/// Emit the multisig suffix (N-of-N CHECKSIG chain).
 fn emit_multisig(keys: &[Pushed], asm: &mut Vec<String>) {
     for (i, k) in keys.iter().enumerate() {
         asm.push(k.asm());
@@ -608,11 +604,10 @@ fn emit_multisig(keys: &[Pushed], asm: &mut Vec<String>) {
     }
 }
 
-/// Assemble the full leaf ASM in arkd's closure byte order: condition? · timelock? · multisig.
+/// arkd's closure byte order: condition? · timelock? · multisig.
 pub fn emit_leaf_asm(script: &LeafScript) -> Vec<String> {
     let mut asm = Vec::new();
 
-    // Condition prefix.
     if let Some((hash_fn, preimage_width, hash)) = &script.condition {
         if let Some(width) = preimage_width {
             asm.extend([
@@ -627,13 +622,11 @@ pub fn emit_leaf_asm(script: &LeafScript) -> Vec<String> {
         asm.push(OP_VERIFY.to_string());
     }
 
-    // Timelock prefix.
-    if let Some((bound, csv)) = &script.timelock {
+    if let Some((bound, kind)) = &script.timelock {
         asm.push(bound.asm());
-        let op = if *csv {
-            OP_CHECKSEQUENCEVERIFY
-        } else {
-            OP_CHECKLOCKTIMEVERIFY
+        let op = match kind {
+            TimelockKind::Csv => OP_CHECKSEQUENCEVERIFY,
+            TimelockKind::Cltv => OP_CHECKLOCKTIMEVERIFY,
         };
         asm.push(op.to_string());
         asm.push(OP_DROP.to_string());
@@ -643,7 +636,6 @@ pub fn emit_leaf_asm(script: &LeafScript) -> Vec<String> {
     asm
 }
 
-/// Derive the leaf witness from the tapscript inputs, one entry per input.
 /// Tapscript inputs are scalars; the validator rejects array types here.
 pub fn leaf_witness(ts: &NamedTapscript) -> Vec<WitnessElement> {
     let mut out = Vec::new();
@@ -654,8 +646,8 @@ pub fn leaf_witness(ts: &NamedTapscript) -> Vec<WitnessElement> {
     out
 }
 
-fn injected_signature_names(ts: &NamedTapscript) -> std::collections::HashSet<String> {
-    let mut names = std::collections::HashSet::new();
+fn injected_signature_names(ts: &NamedTapscript) -> HashSet<String> {
+    let mut names = HashSet::new();
     for item in &ts.items {
         if let TapItem::Sig { keys, sigs, .. } = item {
             for (key, sig) in keys.iter().zip(sigs) {
@@ -683,8 +675,6 @@ pub(crate) struct CheckedLeaf {
     group_key: String,
 }
 
-/// Every check on one author-written leaf: closure shape, function binding, arkd
-/// rules and its spend group.
 pub(crate) fn check_tapscript(
     contract: &Contract,
     ts: &NamedTapscript,
@@ -697,17 +687,13 @@ pub(crate) fn check_tapscript(
     Ok(CheckedLeaf { script, group_key })
 }
 
-/// Build the unified `functions[]` ABI: one group per Arkade Script function plus
-/// one group per pure-standalone leaf. `leaves` are the contract's tapscripts as
-/// `prepare` checked them, in declaration order. `scripts`
-/// holds each function's Arkade Script (built by mod.rs to avoid a cycle);
-/// it is consumed as groups are assembled.
+/// One group per public Arkade Script function, then one per standalone leaf. `leaves` are the
+/// contract's tapscripts as `prepare` checked them, in declaration order.
 pub(crate) fn build_function_groups(
     contract: &Contract,
     leaves: &[CheckedLeaf],
-    mut scripts: std::collections::HashMap<String, ArkadeScript>,
+    mut scripts: HashMap<String, ArkadeScript>,
 ) -> Result<Vec<AbiFunctionGroup>, String> {
-    // Resolve + validate every author-written tapscript; bucket by group key.
     // A tweak joins that function's group. A leaf that tweaks nothing keeps its own name.
     use std::collections::BTreeMap;
     let mut grouped: BTreeMap<String, Vec<AbiLeaf>> = BTreeMap::new();
@@ -731,7 +717,6 @@ pub(crate) fn build_function_groups(
 
     let mut groups = Vec::new();
 
-    // One group per Arkade Script function, in declaration order.
     for f in contract.functions.iter().filter(|f| !f.is_private) {
         let arkade = scripts.remove(&f.name);
         let mut leaves = grouped.remove(&f.name).unwrap_or_default();
@@ -770,7 +755,7 @@ fn resolve_constructor_field_placeholders(
     let replacements = contract
         .parameters
         .iter()
-        .map(|parameter| crate::models::flatten_parameter(parameter, &contract.structs))
+        .map(|parameter| models::flatten_parameter(parameter, &contract.structs))
         .collect::<Result<Vec<_>, _>>()?
         .into_iter()
         .flatten()
@@ -781,7 +766,7 @@ fn resolve_constructor_field_placeholders(
                 format!("<{}>", leaf.emitted_name),
             )
         })
-        .collect::<std::collections::HashMap<_, _>>();
+        .collect::<HashMap<_, _>>();
     for token in asm {
         if let Some(replacement) = replacements.get(token) {
             *token = replacement.clone();
@@ -790,7 +775,7 @@ fn resolve_constructor_field_placeholders(
     Ok(())
 }
 
-/// The §5.4 default leaf: checkSig(operatorSig, tweak(operator, fn)).
+/// `checkSig(operatorSig, tweak(operator, fn))`.
 fn synthesize_default_leaf(func: &str) -> AbiLeaf {
     let script = LeafScript {
         condition: None,
@@ -812,6 +797,7 @@ fn synthesize_default_leaf(func: &str) -> AbiLeaf {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::diagnostics::Span;
     use crate::models::{Contract, Function, Parameter, Path};
 
     fn ts(items: Vec<TapItem>) -> NamedTapscript {
@@ -974,7 +960,7 @@ mod tests {
                 .map(|n| Function {
                     declaration: Default::default(),
                     name: (*n).into(),
-                    span: crate::diagnostics::Span { start: 0, end: 0 },
+                    span: Span { start: 0, end: 0 },
                     parameters: vec![],
                     statements: vec![],
                     is_private: false,
@@ -1342,21 +1328,23 @@ mod tests {
     #[test]
     fn only_csv_seconds_are_encoded() {
         use TimeUnit::{Blocks, Seconds};
-        let asm = |value, unit, csv| timelock_operand(value, unit, csv).asm();
-        assert_eq!(asm("1024", Some(Seconds), true), "4194306");
-        assert_eq!(asm("144", Some(Blocks), true), "144");
-        assert_eq!(asm("144", None, true), "144");
-        assert_eq!(asm("exitDelay", None, true), "<exitDelay>");
+        let asm = |value, unit, kind| timelock_operand(value, unit, kind).asm();
+        assert_eq!(asm("1024", Some(Seconds), TimelockKind::Csv), "4194306");
+        assert_eq!(asm("144", Some(Blocks), TimelockKind::Csv), "144");
+        assert_eq!(asm("144", None, TimelockKind::Csv), "144");
+        assert_eq!(asm("exitDelay", None, TimelockKind::Csv), "<exitDelay>");
         assert_eq!(
-            asm("operatorExitDelay", None, true),
+            asm("operatorExitDelay", None, TimelockKind::Csv),
             "<OPERATOR_EXIT_DELAY>"
         );
-        assert_eq!(asm("1700000000", Some(Seconds), false), "1700000000");
+        assert_eq!(
+            asm("1700000000", Some(Seconds), TimelockKind::Cltv),
+            "1700000000"
+        );
     }
 
     #[test]
     fn misaligned_sig_and_key_count_is_rejected() {
-        // 2 keys but 1 declared signature → witness cannot satisfy the closure.
         let leaf = NamedTapscript {
             span: Default::default(),
             declaration: Default::default(),
@@ -1381,7 +1369,6 @@ mod tests {
 
     #[test]
     fn undeclared_signature_operand_is_rejected() {
-        // sig operand `ghostSig` is not declared as a `signature` input.
         let leaf = NamedTapscript {
             span: Default::default(),
             declaration: Default::default(),
@@ -1405,7 +1392,6 @@ mod tests {
 
     #[test]
     fn undeclared_timelock_operand_is_rejected() {
-        // after(typo) where `typo` is neither a literal nor a declared name.
         let leaf = NamedTapscript {
             span: Default::default(),
             declaration: Default::default(),
@@ -1429,7 +1415,6 @@ mod tests {
 
     #[test]
     fn undeclared_hash_value_is_rejected() {
-        // hash160(preimage) == typoHash where typoHash is not declared.
         let leaf = NamedTapscript {
             span: Default::default(),
             declaration: Default::default(),
@@ -1515,8 +1500,10 @@ mod tests {
                 OP_CHECKSIG.to_string(),
             ]
         );
-        // Signatures are witness, not script.
-        assert!(!asm.iter().any(|t| t.contains("Sig")));
+        assert!(
+            !asm.iter().any(|t| t.contains("Sig")),
+            "signatures are witness, not script"
+        );
         let w = leaf_witness(&leaf);
         let names: Vec<_> = w.iter().map(|e| e.name.clone()).collect();
         assert_eq!(names, vec!["preimage", "operatorSig"]);
@@ -1589,8 +1576,6 @@ mod tests {
         );
     }
 
-    /// `tweak(constructorPubkey, func)` binds that key to `func` on any leaf. A CSV leaf sits
-    /// beside the default leaf; a forfeit leaf, which includes the operator key, replaces it.
     #[test]
     fn constructor_tweak_binds_the_key_and_only_a_forfeit_leaf_replaces_the_default() {
         let late = r#"
@@ -1668,8 +1653,6 @@ contract Demo(pubkey insurer) {{
         }
     }
 
-    /// An author-written forfeit leaf replaces the default leaf. A CSV constructor tweak is
-    /// another leaf of the same function, and no default is added back.
     #[test]
     fn an_author_leaf_replaces_the_default_and_a_csv_tweak_joins_it() {
         let src = r#"

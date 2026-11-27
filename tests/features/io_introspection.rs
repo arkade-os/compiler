@@ -1,3 +1,4 @@
+use crate::common;
 use crate::common::compile_unoptimized as compile;
 use arkade_compiler::opcodes::{
     OP_EQUALVERIFY, OP_INSPECTINPUTARKADESCRIPTHASH, OP_INSPECTINPUTARKADEWITNESSHASH,
@@ -26,7 +27,7 @@ fn test_input_value() {
     );
 
     let output = result.unwrap();
-    let asm_str = crate::common::arkade_asm(&output, "checkInputValue");
+    let asm_str = common::arkade_asm(&output, "checkInputValue");
     assert!(
         asm_str.contains(OP_INSPECTINPUTVALUE),
         "Expected {OP_INSPECTINPUTVALUE} in ASM: {asm_str}"
@@ -52,7 +53,7 @@ fn test_input_script_pubkey() {
     );
 
     let output = result.unwrap();
-    let asm_str = crate::common::arkade_asm(&output, "checkInputScript");
+    let asm_str = common::arkade_asm(&output, "checkInputScript");
     assert!(
         asm_str.contains(OP_INSPECTINPUTSCRIPTPUBKEY),
         "Expected {OP_INSPECTINPUTSCRIPTPUBKEY} in ASM: {asm_str}"
@@ -78,7 +79,7 @@ fn test_input_sequence() {
     );
 
     let output = result.unwrap();
-    let asm_str = crate::common::arkade_asm(&output, "checkSequence");
+    let asm_str = common::arkade_asm(&output, "checkSequence");
     assert!(
         asm_str.contains(OP_INSPECTINPUTSEQUENCE),
         "Expected {OP_INSPECTINPUTSEQUENCE} in ASM: {asm_str}"
@@ -101,7 +102,7 @@ fn test_input_outpoint_returns_struct() {
     "#;
 
     let output = compile(code).expect("outpoint returns an Outpoint struct");
-    let asm = crate::common::arkade_asm_tokens(&output, "checkOutpoint");
+    let asm = common::arkade_asm_tokens(&output, "checkOutpoint");
     assert!(asm.iter().any(|token| token == OP_INSPECTINPUTOUTPOINT));
     assert!(asm.iter().any(|token| token == OP_SWAP));
 }
@@ -120,7 +121,7 @@ fn test_input_outpoint_is_compared_field_by_field() {
     )
     .expect("outpoint equality compares txid and vout");
 
-    let asm = crate::common::arkade_asm_tokens(&output, "checkOutpoint");
+    let asm = common::arkade_asm_tokens(&output, "checkOutpoint");
     assert_eq!(
         asm.iter()
             .filter(|token| *token == OP_INSPECTINPUTOUTPOINT)
@@ -156,7 +157,7 @@ fn test_output_value() {
     );
 
     let output = result.unwrap();
-    let asm_str = crate::common::arkade_asm(&output, "checkOutputValue");
+    let asm_str = common::arkade_asm(&output, "checkOutputValue");
     assert!(
         asm_str.contains(OP_INSPECTOUTPUTVALUE),
         "Expected {OP_INSPECTOUTPUTVALUE} in ASM: {asm_str}"
@@ -182,7 +183,7 @@ fn test_output_script_pubkey() {
     );
 
     let output = result.unwrap();
-    let asm_str = crate::common::arkade_asm(&output, "checkOutputScript");
+    let asm_str = common::arkade_asm(&output, "checkOutputScript");
     assert!(
         asm_str.contains(OP_INSPECTOUTPUTSCRIPTPUBKEY),
         "Expected {OP_INSPECTOUTPUTSCRIPTPUBKEY} in ASM: {asm_str}"
@@ -209,7 +210,7 @@ fn test_variable_index_input() {
     );
 
     let output = result.unwrap();
-    let asm_str = crate::common::arkade_asm(&output, "checkInput");
+    let asm_str = common::arkade_asm(&output, "checkInput");
     assert!(
         asm_str.contains("OP_ROLL OP_INSPECTINPUTVALUE"),
         "{asm_str}"
@@ -243,7 +244,7 @@ fn test_variable_index_output() {
     );
 
     let output = result.unwrap();
-    let asm_str = crate::common::arkade_asm(&output, "checkOutput");
+    let asm_str = common::arkade_asm(&output, "checkOutput");
     assert!(
         asm_str.contains("OP_ROLL OP_INSPECTOUTPUTVALUE"),
         "{asm_str}"
@@ -278,7 +279,7 @@ fn test_input_output_value_comparison() {
     );
 
     let output = result.unwrap();
-    let asm_str = crate::common::arkade_asm(&output, "checkValues");
+    let asm_str = common::arkade_asm(&output, "checkValues");
     assert!(
         asm_str.contains(OP_INSPECTOUTPUTVALUE),
         "Expected {OP_INSPECTOUTPUTVALUE} in ASM: {asm_str}"
@@ -303,7 +304,7 @@ fn test_current_input_arkade_hashes() {
     "#;
 
     let output = compile(code).expect("current-input arkade hashes compile");
-    let asm_str = crate::common::arkade_asm(&output, "spend");
+    let asm_str = common::arkade_asm(&output, "spend");
     assert!(
         asm_str.contains(OP_INSPECTINPUTARKADESCRIPTHASH),
         "Expected {OP_INSPECTINPUTARKADESCRIPTHASH} in ASM: {asm_str}"
@@ -377,7 +378,7 @@ fn witness_version_keeps_the_second_script_pubkey_result() {
     ] {
         let code = format!("contract V() {{ function spend() {{ require({expression} == 1); }} }}");
         let output = compile(&code).unwrap_or_else(|error| panic!("{expression}: {error}"));
-        let asm = crate::common::arkade_asm_tokens(&output, "spend").join(" ");
+        let asm = common::arkade_asm_tokens(&output, "spend").join(" ");
         assert!(asm.contains(&expected), "{expression}: {asm}");
     }
 }

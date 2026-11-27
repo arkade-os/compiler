@@ -1,7 +1,14 @@
 //! Every program in `tests/diagnostics/` against the diagnostics it gets, rendered as an author
 //! reads them. `BLESS=1 cargo test --test diagnostics` rewrites the expected `.txt` files.
+#![allow(
+    clippy::panic,
+    clippy::unwrap_used,
+    reason = "a failing test should panic"
+)]
 
 use std::collections::BTreeMap;
+use std::env;
+use std::fs;
 use std::path::Path;
 
 use arkade_compiler::diagnostics::{position, Severity};
@@ -10,8 +17,8 @@ use arkade_compiler::Diagnostic;
 #[test]
 fn diagnostics_match_their_baselines() {
     let directory = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/diagnostics");
-    let bless = std::env::var_os("BLESS").is_some();
-    let mut programs: Vec<_> = std::fs::read_dir(&directory)
+    let bless = env::var_os("BLESS").is_some();
+    let mut programs: Vec<_> = fs::read_dir(&directory)
         .unwrap()
         .map(|entry| entry.unwrap().path())
         .filter(|path| path.extension().is_some_and(|e| e == "ark"))
@@ -20,15 +27,15 @@ fn diagnostics_match_their_baselines() {
     assert!(!programs.is_empty());
     let mut changed = Vec::new();
     for program in programs {
-        let source = std::fs::read_to_string(&program).unwrap();
+        let source = fs::read_to_string(&program).unwrap();
         let name = program.file_name().unwrap().to_string_lossy().to_string();
         let files = BTreeMap::from([(name.clone(), source.clone())]);
         let diagnostics = arkade_compiler::analyze(&name, &files).check(Default::default());
         let rendered: String = diagnostics.iter().map(|d| render(d, &source)).collect();
         let baseline = program.with_extension("txt");
         if bless {
-            std::fs::write(&baseline, &rendered).unwrap();
-        } else if std::fs::read_to_string(&baseline).ok().as_deref() != Some(rendered.as_str()) {
+            fs::write(&baseline, &rendered).unwrap();
+        } else if fs::read_to_string(&baseline).ok().as_deref() != Some(rendered.as_str()) {
             changed.push(format!("{name}:\n{rendered}"));
         }
     }

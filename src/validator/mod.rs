@@ -1,30 +1,19 @@
-//! Semantic validation for Arkade Language contracts.
-//!
-//! This module provides two validation passes:
-//!
-//! 1. **AST validation** (`validate_ast`) — runs after parsing, before compilation.
-//!    Catches semantic errors that the PEG grammar cannot express, such as duplicate
-//!    names, reserved tapscript roles, and invalid Asset ID operands.
-//!
-//! 2. **Output validation** (`validate_output`) — runs after compilation.
-//!    Asserts structural invariants on the emitted `ContractJson`, catching compiler
-//!    bugs before the output reaches callers: every spend group has at least one
-//!    leaf, each leaf has non-empty `asm`, each present `arkade` script has
-//!    non-empty `asm`, and no leaf `asm` carries a signature placeholder
-//!    (signatures are witness-only). Tapscript-source-level operand scope checks
-//!    live in `compiler::tapscript::validate_arkd_rules`.
-//!
-//! Each pass returns its errors as a `Vec<ValidationIssue>`; code that compiles but is likely
-//! wrong is reported by [`crate::lint`] instead.
+//! Semantic validation. [`validate_ast`] takes a typed [`Contract`] and reports the errors the
+//! grammar cannot express; [`validate_output`] self-checks the emitted `ContractJson`. Code that
+//! compiles but is likely wrong is a [`crate::lint`] warning instead.
 
-use crate::models::child_exprs;
-use crate::models::{
-    AssignmentTarget, Contract, ContractJson, ExprKind, Expression, KeyExpr, LocatedStatement,
-    Path, Statement, TapItem, TypeName,
-};
-use crate::operators::{BinaryOperator, OperatorClass};
-use crate::types::{build_scope_with_structs, ArkType, Scope};
 use std::collections::{HashMap, HashSet};
+use std::iter;
+
+use crate::diagnostics::Span;
+use crate::errors::ErrorCode;
+use crate::lint::attributes;
+use crate::models::{
+    self, child_exprs, Contract, Expression, KeyExpr, LocatedStatement, NamedTapscript, Statement,
+    StructDefinition, TapItem, TypeName, RESERVED_NAMES, RESERVED_PLACEHOLDERS,
+};
+use crate::parser;
+use crate::types::ArkType;
 
 mod assets;
 mod bindings;
@@ -39,22 +28,25 @@ use assets::check_asset_id_operands;
 use bindings::check_binding_semantics;
 use shadowing::check_shadowing;
 
-pub(crate) use bindings::binding_types_compatible;
 pub(crate) use functions::falls_through;
 pub(crate) use output::validate_output;
-
-// ─── Issue types ──────────────────────────────────────────────────────────────
 
 /// A validation error: the contract cannot be safely emitted.
 #[derive(Debug, Clone)]
 pub struct ValidationIssue {
     pub message: String,
     /// Byte range of the expression, statement or function that caused it.
-    pub span: Option<crate::diagnostics::Span>,
+    pub span: Option<Span>,
     /// Diagnostic code: `validation`, or `type` for operand type mismatches.
     pub code: &'static str,
-    /// A replacement that may fix it, and the span it replaces when not the issue's own.
-    pub suggestion: Option<(String, Option<crate::diagnostics::Span>)>,
+    pub suggestion: Option<IssueSuggestion>,
+}
+
+#[derive(Debug, Clone)]
+pub struct IssueSuggestion {
+    pub replacement: String,
+    /// The span it replaces, when not the issue's own.
+    pub span: Option<Span>,
 }
 
 impl ValidationIssue {
@@ -67,22 +59,24 @@ impl ValidationIssue {
         }
     }
 
-    fn at(mut self, span: crate::diagnostics::Span) -> Self {
+    fn at(mut self, span: Span) -> Self {
         self.span = Some(span);
         self
     }
 
-    /// With `code` from the error registry.
-    fn coded(mut self, code: crate::errors::ErrorCode) -> Self {
+    fn coded(mut self, code: ErrorCode) -> Self {
         self.code = code.id();
         self
     }
 
     /// Suggesting `replacement` for `span`, or for the issue's own span once it is located.
-    fn suggest(mut self, replacement: &str, span: Option<crate::diagnostics::Span>) -> Self {
+    fn suggest(mut self, replacement: &str, span: Option<Span>) -> Self {
         self.message
             .push_str(&format!("; did you mean '{replacement}'?"));
-        self.suggestion = Some((replacement.to_string(), span));
+        self.suggestion = Some(IssueSuggestion {
+            replacement: replacement.to_string(),
+            span,
+        });
         self
     }
 
@@ -103,27 +97,12 @@ impl ValidationIssue {
 }
 
 /// Positions issues that a nested statement has not already positioned.
-fn locate(issues: &mut [ValidationIssue], span: crate::diagnostics::Span) {
+fn locate(issues: &mut [ValidationIssue], span: Span) {
     for issue in issues {
         issue.span.get_or_insert(span);
     }
 }
 
-// ─── AST validation ───────────────────────────────────────────────────────────
-
-/// Validate the parsed [`Contract`] AST for semantic errors before compilation.
-///
-/// Checks performed:
-/// - Contract name is non-empty.
-/// - No declared name is a keyword or type name, and no function name a builtin call.
-/// - At least one Arkade Script or tapscript function is declared.
-/// - Function names are unique within the contract.
-/// - Tapscript names are unique within the contract.
-/// - Constructor parameter names are unique.
-/// - Each function's parameter names are unique within that function.
-/// - Tapscript inputs do not collide with reserved names.
-/// - Asset ID operands have the expected txid/gidx types.
-///
 /// Reads `Expression::ty`, so `types::annotate` must run first; an expression it
 /// leaves `Unknown` is an error.
 pub(crate) fn validate_ast(contract: &Contract, require_entrypoint: bool) -> Vec<ValidationIssue> {
@@ -131,12 +110,10 @@ pub(crate) fn validate_ast(contract: &Contract, require_entrypoint: bool) -> Vec
 
     check_struct_definitions(contract, &mut issues);
 
-    // ── Contract name ──────────────────────────────────────────────────────
     if require_entrypoint && contract.name.is_empty() {
         issues.push(ValidationIssue::error("contract name must not be empty"));
     }
 
-    // ── At least one Arkade Script or tapscript function ─────────────
     let public_count = contract.functions.iter().filter(|f| !f.is_private).count();
     if require_entrypoint && public_count == 0 && contract.tapscripts.is_empty() {
         // A file with no contract has no name to locate this at.
@@ -148,7 +125,6 @@ pub(crate) fn validate_ast(contract: &Contract, require_entrypoint: bool) -> Vec
         });
     }
 
-    // ── Reserved declaration names ─────────────────────────────────────────
     // Structs, parameters, inputs and locals are checked where they are walked.
     let kind = if contract.is_library {
         "library"
@@ -158,16 +134,15 @@ pub(crate) fn validate_ast(contract: &Contract, require_entrypoint: bool) -> Vec
     let constants = contract.constants.iter().filter(|c| !c.name.contains('.'));
     let functions = contract.functions.iter().filter(|f| !f.is_imported());
     let tapscripts = contract.tapscripts.iter();
-    let declarations = std::iter::once((kind, &contract.name, contract.span))
+    let declarations = iter::once((kind, &contract.name, contract.span))
         .chain(constants.map(|c| ("constant", &c.name, c.span)))
         .chain(functions.map(|f| ("function", &f.name, f.span)))
         .chain(tapscripts.map(|t| ("tapscript", &t.name, t.span)));
     for (context, name, span) in declarations {
         let first = issues.len();
         validate_source_identifier(name, context, &mut issues);
-        // A builtin's name is reserved for its calls.
         if matches!(context, "function" | "tapscript")
-            && crate::parser::reserved_function_signature(name).is_some()
+            && parser::reserved_function_signature(name).is_some()
         {
             issues.push(ValidationIssue::error(format!(
                 "function name '{name}' is reserved"
@@ -176,7 +151,6 @@ pub(crate) fn validate_ast(contract: &Contract, require_entrypoint: bool) -> Vec
         locate(&mut issues[first..], span);
     }
 
-    // ── Unique function names ──────────────────────────────────────────────
     {
         let mut seen: HashSet<&str> = HashSet::new();
         for func in contract.functions.iter().filter(|f| !f.is_imported()) {
@@ -192,7 +166,6 @@ pub(crate) fn validate_ast(contract: &Contract, require_entrypoint: bool) -> Vec
         }
     }
 
-    // ── Unique constructor parameter names ────────────────────────────────
     {
         let mut seen: HashSet<&str> = HashSet::new();
         for param in &contract.parameters {
@@ -208,7 +181,6 @@ pub(crate) fn validate_ast(contract: &Contract, require_entrypoint: bool) -> Vec
         }
     }
 
-    // ── Unique parameter names within each function ────────────────────────
     for func in contract.functions.iter().filter(|f| !f.is_imported()) {
         let first = issues.len();
         let mut seen: HashSet<&str> = HashSet::new();
@@ -230,7 +202,6 @@ pub(crate) fn validate_ast(contract: &Contract, require_entrypoint: bool) -> Vec
 
     functions::validate_functions(contract, &mut issues);
 
-    // ── Tapscript reserved-name + duplicate checks ────────────────────────
     {
         let mut seen: HashSet<&str> = HashSet::new();
         for ts in &contract.tapscripts {
@@ -246,10 +217,9 @@ pub(crate) fn validate_ast(contract: &Contract, require_entrypoint: bool) -> Vec
         }
     }
 
-    // Reserved names (`operator`, `operatorExitDelay`) are supplied by the
-    // operator, never by constructor parameters.
+    // The operator supplies the reserved names, so no constructor parameter may.
     for p in &contract.parameters {
-        if crate::models::RESERVED_NAMES.contains(&p.name.as_str()) {
+        if RESERVED_NAMES.contains(&p.name.as_str()) {
             issues.push(
                 ValidationIssue::error(format!(
                     "constructor parameter '{}' collides with a reserved name",
@@ -268,7 +238,7 @@ pub(crate) fn validate_ast(contract: &Contract, require_entrypoint: bool) -> Vec
                 &format!("input in tapscript '{}'", ts.name),
                 &mut issues,
             );
-            if crate::models::RESERVED_NAMES.contains(&p.name.as_str()) {
+            if RESERVED_NAMES.contains(&p.name.as_str()) {
                 issues.push(ValidationIssue::error(format!(
                     "tapscript '{}' input '{}' collides with a reserved name",
                     ts.name, p.name
@@ -294,8 +264,7 @@ pub(crate) fn validate_ast(contract: &Contract, require_entrypoint: bool) -> Vec
             }
             locate(&mut issues[first..], p.span);
         }
-        // Duplicate input names within a tapscript.
-        let mut seen = std::collections::HashSet::new();
+        let mut seen = HashSet::new();
         for p in &ts.inputs {
             if !seen.insert(p.name.as_str()) {
                 issues.push(
@@ -315,7 +284,7 @@ pub(crate) fn validate_ast(contract: &Contract, require_entrypoint: bool) -> Vec
     check_asset_id_operands(contract, &mut issues);
     for (_, attributes) in contract.attributed() {
         for attribute in attributes {
-            if let Some((message, span)) = crate::lint::attributes::error(attribute) {
+            if let Some((message, span)) = attributes::error(attribute) {
                 issues.push(ValidationIssue::error(message).at(span));
             }
         }
@@ -373,8 +342,7 @@ fn check_typed(statements: &[LocatedStatement], issues: &mut Vec<ValidationIssue
 fn check_struct_definitions(contract: &Contract, issues: &mut Vec<ValidationIssue>) {
     let mut names = HashSet::new();
     for definition in &contract.structs {
-        if crate::models::is_builtin_type(&definition.name)
-            || crate::models::is_builtin_struct(&definition.name)
+        if models::is_builtin_type(&definition.name) || models::is_builtin_struct(&definition.name)
         {
             issues.push(
                 ValidationIssue::error(format!(
@@ -454,7 +422,7 @@ fn check_struct_definitions(contract: &Contract, issues: &mut Vec<ValidationIssu
 fn validate_local_types(
     statements: &[LocatedStatement],
     function_name: &str,
-    definitions: &HashMap<&str, &crate::models::StructDefinition>,
+    definitions: &HashMap<&str, &StructDefinition>,
     issues: &mut Vec<ValidationIssue>,
 ) {
     for statement in statements {
@@ -496,8 +464,8 @@ fn validate_local_types(
 }
 
 fn validate_struct_fields<'a>(
-    definition: &'a crate::models::StructDefinition,
-    definitions: &HashMap<&'a str, &'a crate::models::StructDefinition>,
+    definition: &'a StructDefinition,
+    definitions: &HashMap<&'a str, &'a StructDefinition>,
     stack: &mut Vec<&'a str>,
     validated: &mut HashSet<&'a str>,
     issues: &mut Vec<ValidationIssue>,
@@ -520,7 +488,7 @@ fn validate_struct_fields<'a>(
     for field in &definition.fields {
         let base = field.param_type.base_name();
         // A built-in name keeps its built-in layout even where a struct reuses it.
-        if crate::models::is_builtin_type(base) || crate::models::is_builtin_struct(base) {
+        if models::is_builtin_type(base) || models::is_builtin_struct(base) {
             continue;
         }
         validate_declared_type(
@@ -537,14 +505,14 @@ fn validate_struct_fields<'a>(
 }
 
 fn validate_declared_type(
-    declared_type: &crate::models::TypeName,
+    declared_type: &TypeName,
     context: &str,
-    definitions: &HashMap<&str, &crate::models::StructDefinition>,
+    definitions: &HashMap<&str, &StructDefinition>,
     issues: &mut Vec<ValidationIssue>,
 ) {
     let base = declared_type.base_name();
-    if !crate::models::is_builtin_type(base)
-        && !crate::models::is_builtin_struct(base)
+    if !models::is_builtin_type(base)
+        && !models::is_builtin_struct(base)
         && !definitions.contains_key(base)
     {
         issues.push(ValidationIssue::error(format!(
@@ -554,7 +522,7 @@ fn validate_declared_type(
 }
 
 fn validate_source_identifier(name: &str, context: &str, issues: &mut Vec<ValidationIssue>) {
-    if crate::models::RESERVED_PLACEHOLDERS.contains(&name) {
+    if RESERVED_PLACEHOLDERS.contains(&name) {
         issues.push(ValidationIssue::error(format!(
             "{context} '{name}' uses a compiler-reserved placeholder name"
         )));
@@ -639,16 +607,12 @@ fn check_unused(contract: &Contract, issues: &mut Vec<ValidationIssue>) {
 
 /// The bindings a tapscript's items read: `guardians` for `guardians[0]`, `policy` for
 /// `policy.owner`.
-pub(crate) fn tapscript_reads(tapscript: &crate::models::NamedTapscript) -> HashSet<&str> {
+pub(crate) fn tapscript_reads(tapscript: &NamedTapscript) -> HashSet<&str> {
     let mut used = HashSet::new();
     for item in &tapscript.items {
         match item {
             TapItem::Hash { preimage, hash, .. } => {
-                used.extend(
-                    std::iter::once(preimage)
-                        .chain(hash.path())
-                        .map(|p| &*p.root),
-                );
+                used.extend(iter::once(preimage).chain(hash.path()).map(|p| &*p.root));
             }
             TapItem::Older { value, .. } | TapItem::After { value, .. } => {
                 used.extend(value.path().map(|p| &*p.root));
@@ -666,12 +630,18 @@ pub(crate) fn tapscript_reads(tapscript: &crate::models::NamedTapscript) -> Hash
     used
 }
 
-// ─── Tests ────────────────────────────────────────────────────────────────────
-
 #[cfg(test)]
 mod tests {
+    use std::fs;
+    use std::path::{Path, PathBuf};
+
     use super::*;
+    use crate::diagnostics::Span;
+    use crate::models::ContractJson;
+    use crate::models::ExprKind;
+    use crate::models::{self, ARTIFACT_FORMAT_VERSION};
     use crate::models::{AbiFunctionGroup, AbiLeaf, Contract, Function, Parameter, WitnessElement};
+    use crate::{builtins, parser, types};
 
     #[test]
     fn output_validation_checks_constructor_placeholders() {
@@ -697,12 +667,12 @@ mod tests {
     }
 
     fn parse_and_validate(source: &str) -> Vec<ValidationIssue> {
-        validate(&crate::parser::parse(source).expect("contract should parse"))
+        validate(&parser::parse(source).expect("contract should parse"))
     }
 
     fn validate(contract: &Contract) -> Vec<ValidationIssue> {
         let mut contract = contract.clone();
-        crate::types::annotate(&mut contract);
+        types::annotate(&mut contract);
         validate_ast(&contract, true)
     }
 
@@ -834,7 +804,7 @@ contract Demo() {
             message: None,
             names: Vec::new(),
             branches: Vec::new(),
-            span: crate::diagnostics::Span { start: 0, end: 0 },
+            span: Span { start: 0, end: 0 },
             statement,
             attributes: Vec::new(),
         }
@@ -856,7 +826,7 @@ contract Demo() {
             functions: vec![Function {
                 declaration: Default::default(),
                 name: "spend".to_string(),
-                span: crate::diagnostics::Span { start: 0, end: 0 },
+                span: Span { start: 0, end: 0 },
                 parameters: vec![
                     Parameter {
                         span: Default::default(),
@@ -871,10 +841,10 @@ contract Demo() {
                 ],
                 statements: vec![located(Statement::Require(
                     ExprKind::Builtin {
-                        builtin: crate::builtins::find("checkSig").unwrap(),
+                        builtin: builtins::find("checkSig").unwrap(),
                         args: vec![
-                            ExprKind::Name(crate::models::Path::from_key("ownerSig")).into(),
-                            ExprKind::Name(crate::models::Path::from_key("owner")).into(),
+                            ExprKind::Name(models::Path::from_key("ownerSig")).into(),
+                            ExprKind::Name(models::Path::from_key("owner")).into(),
                         ],
                     }
                     .into(),
@@ -894,7 +864,7 @@ contract Demo() {
     #[test]
     fn valid_contract_has_no_issues() {
         let mut contract = make_contract("Simple");
-        // `flag` is only read by the branch tests.
+        // This body never reads the `flag` parameter, so drop it to avoid an unused-input error.
         contract.functions[0].parameters.pop();
         let issues = validate(&contract);
         assert!(issues.is_empty());
@@ -902,17 +872,16 @@ contract Demo() {
 
     #[test]
     fn require_only_in_one_branch_is_error() {
-        // An if with a require in the then-branch but no else leaves the
-        // "condition false" path with no require() → a trivially-passing spend.
+        // Without an else, the false path has no require() and the spend trivially passes.
         let mut contract = make_contract("BarePath");
         contract.functions[0].statements = vec![located(Statement::IfElse {
-            condition: ExprKind::Name(crate::models::Path::from_key("flag")).into(),
+            condition: ExprKind::Name(models::Path::from_key("flag")).into(),
             then_body: vec![located(Statement::Require(
                 ExprKind::Builtin {
-                    builtin: crate::builtins::find("checkSig").unwrap(),
+                    builtin: builtins::find("checkSig").unwrap(),
                     args: vec![
-                        ExprKind::Name(crate::models::Path::from_key("ownerSig")).into(),
-                        ExprKind::Name(crate::models::Path::from_key("owner")).into(),
+                        ExprKind::Name(models::Path::from_key("ownerSig")).into(),
+                        ExprKind::Name(models::Path::from_key("owner")).into(),
                     ],
                 }
                 .into(),
@@ -932,17 +901,17 @@ contract Demo() {
         let req = || {
             located(Statement::Require(
                 ExprKind::Builtin {
-                    builtin: crate::builtins::find("checkSig").unwrap(),
+                    builtin: builtins::find("checkSig").unwrap(),
                     args: vec![
-                        ExprKind::Name(crate::models::Path::from_key("ownerSig")).into(),
-                        ExprKind::Name(crate::models::Path::from_key("owner")).into(),
+                        ExprKind::Name(models::Path::from_key("ownerSig")).into(),
+                        ExprKind::Name(models::Path::from_key("owner")).into(),
                     ],
                 }
                 .into(),
             ))
         };
         contract.functions[0].statements = vec![located(Statement::IfElse {
-            condition: ExprKind::Name(crate::models::Path::from_key("flag")).into(),
+            condition: ExprKind::Name(models::Path::from_key("flag")).into(),
             then_body: vec![req()],
             else_body: Some(vec![req()]),
         })];
@@ -1001,7 +970,7 @@ contract Demo() {
             injected: false,
         }];
         ContractJson {
-            format_version: crate::models::ARTIFACT_FORMAT_VERSION,
+            format_version: ARTIFACT_FORMAT_VERSION,
             name: name.to_string(),
             structs: vec![],
             parameters: vec![],
@@ -1026,8 +995,8 @@ contract Demo() {
 
     #[test]
     fn examples_are_fully_typed_and_values_without_a_type_are_rejected() {
-        fn ark_files(directory: &std::path::Path, paths: &mut Vec<std::path::PathBuf>) {
-            for entry in std::fs::read_dir(directory).unwrap() {
+        fn ark_files(directory: &Path, paths: &mut Vec<PathBuf>) {
+            for entry in fs::read_dir(directory).unwrap() {
                 let path = entry.unwrap().path();
                 if path.is_dir() {
                     ark_files(&path, paths);
@@ -1038,7 +1007,7 @@ contract Demo() {
         }
         let mut paths = Vec::new();
         ark_files(
-            &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("examples"),
+            &Path::new(env!("CARGO_MANIFEST_DIR")).join("examples"),
             &mut paths,
         );
         assert!(!paths.is_empty());
@@ -1101,8 +1070,6 @@ contract Demo() {
 
     #[test]
     fn signature_placeholder_in_leaf_asm_is_output_error() {
-        // The sig-leak self-check must fire regardless of placeholder casing:
-        // <operatorSig>, <ownersig>, and <sig> are all signature placeholders.
         for leaked in ["<operatorSig>", "<ownersig>", "<sig>"] {
             let mut output = make_output("Leak");
             output.functions[0].leaves[0].asm = vec![leaked.to_string()];

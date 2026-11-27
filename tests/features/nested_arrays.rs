@@ -2,6 +2,7 @@ use crate::common::{
     arkade_asm, arkade_asm_tokens, compile_unoptimized as compile, group, leaf_asm,
     opcode_count_in_arkade, witness_names,
 };
+use arkade_compiler::models::Parameter;
 use arkade_compiler::opcodes::{OP_GREATERTHAN, OP_MUL, OP_PUT};
 
 fn contains_tokens(asm: &[String], expected: &[&str]) -> bool {
@@ -33,7 +34,7 @@ contract Nested(pubkey[2][2] keys, Board board) {
     )
     .expect("nested arrays compile");
 
-    let types = |parameters: &[arkade_compiler::models::Parameter]| {
+    let types = |parameters: &[Parameter]| {
         parameters
             .iter()
             .map(|p| (p.name.clone(), p.param_type.to_string()))

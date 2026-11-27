@@ -1,12 +1,14 @@
-use crate::models::{AssignmentTarget, ExprKind, Expression, Statement};
-use crate::opcodes::Opcode::{self, *};
+//! Folds constant expressions in statements before lowering, and peephole-rewrites emitted
+//! Arkade Script; each rewrite shortens a window and leaves the same stack.
 
+use std::iter;
+
+use super::Spanned;
+use crate::builtins::Lowering;
+use crate::models::{self, AssignmentTarget, ExprKind, Expression, Statement};
+use crate::opcodes::Opcode;
 use crate::operators::{BinaryOperator, UnaryOperator};
 use crate::types::{ArkType, Scope};
-
-use super::{Op, Spanned};
-
-const MAX_SCRIPT_ELEMENT_SIZE: usize = 520;
 
 pub(super) fn fold_statement(statement: &mut Statement, scope: &Scope) -> Result<(), String> {
     match statement {
@@ -92,13 +94,13 @@ fn fold_expression(expression: &mut Expression, scope: &Scope) -> Result<(), Str
             return Ok(());
         }
     }
-    for child in crate::models::child_exprs_mut(expression) {
+    for child in models::child_exprs_mut(expression) {
         fold_expression(child, scope)?;
     }
     // A threshold that is constant only once loops unroll fails here; unoptimized builds fold
     // only to check.
     if let ExprKind::Builtin { builtin, args } = &expression.kind {
-        if let (crate::builtins::Lowering::Multisig, Some(ArkType::Array(_, count))) =
+        if let (Lowering::Multisig, Some(ArkType::Array(_, count))) =
             (&builtin.lowering, args.first().map(|keys| &keys.ty))
         {
             super::access::multisig_threshold(args.get(2), *count)?;
@@ -162,19 +164,20 @@ fn fold_expression(expression: &mut Expression, scope: &Scope) -> Result<(), Str
                 .map(|value| value.to_string())
         }
         ExprKind::Unary { .. } | ExprKind::BinaryOp { .. }
-            if crate::models::child_exprs(expression)
+            if models::child_exprs(expression)
                 .iter()
                 .all(|child| match &child.kind {
                     ExprKind::Literal(value) => {
                         matches!(value.as_str(), "true" | "false")
                             || value.parse::<i128>().is_ok()
                             || (value.starts_with("0x")
-                                && value.len() <= 2 + 2 * MAX_SCRIPT_ELEMENT_SIZE)
+                                && value.len() <= 2 + 2 * super::MAX_ELEMENT_SIZE)
                     }
                     _ => false,
                 }) =>
         {
-            // ponytail: the evaluator uses i128; larger or failing computations stay at runtime.
+            // LIMITATION: the evaluator uses i128, so larger or failing computations stay at
+            // runtime; fold them with a bignum evaluator if contracts need them.
             super::constants::evaluate(expression, &mut |_| Err("runtime value".into())).ok()
         }
         _ => None,
@@ -186,7 +189,7 @@ fn fold_expression(expression: &mut Expression, scope: &Scope) -> Result<(), Str
 }
 
 fn fixed_bytes(value: i128, width: usize) -> Option<String> {
-    if width > MAX_SCRIPT_ELEMENT_SIZE {
+    if width > super::MAX_ELEMENT_SIZE {
         return None;
     }
     let mut bytes = value.unsigned_abs().to_le_bytes().to_vec();
@@ -214,93 +217,112 @@ fn fixed_bytes(value: i128, width: usize) -> Option<String> {
 
 /// Opcodes that leave a minimal 0 or 1, which `NotEqual0` returns unchanged.
 const BOOLEAN_RESULTS: [Opcode; 13] = [
-    Equal,
-    NumEqual,
-    NumNotEqual,
-    LessThan,
-    LessThanOrEqual,
-    GreaterThan,
-    GreaterThanOrEqual,
-    Not,
-    NotEqual0,
-    BoolAnd,
-    BoolOr,
-    CheckSig,
-    CheckSigFromStack,
+    Opcode::Equal,
+    Opcode::NumEqual,
+    Opcode::NumNotEqual,
+    Opcode::LessThan,
+    Opcode::LessThanOrEqual,
+    Opcode::GreaterThan,
+    Opcode::GreaterThanOrEqual,
+    Opcode::Not,
+    Opcode::NotEqual0,
+    Opcode::BoolAnd,
+    Opcode::BoolOr,
+    Opcode::CheckSig,
+    Opcode::CheckSigFromStack,
 ];
 
 /// Rewrites of the output's last tokens, tried in order. A leading token that only guards a
 /// rewrite reappears in its replacement.
 const REWRITES: &[(&[Opcode], &[Opcode])] = &[
-    (&[Int0, Pick], &[Dup]),
-    (&[Dup, Swap], &[Dup]),
-    (&[Int0, Put], &[Nip]),
-    (&[Int1, Pick], &[Over]),
-    (&[Int0, Roll], &[]),
-    (&[Swap, Swap], &[]),
-    (&[Int1, Roll], &[Swap]),
-    (&[Int2, Roll], &[Rot]),
-    (&[Swap, Drop], &[Nip]),
-    (&[Drop, Drop], &[Drop2]),
-    (&[Over, Over], &[Dup2]),
-    (&[Dup, Int2, Pick], &[Dup2, Swap]),
-    (&[Int2, Pick, Over], &[Dup3, Nip]),
-    (&[Int2, Pick, Int4, Pick], &[Over2, Swap]),
-    (&[Rot, Swap, Rot], &[Swap]),
-    (&[Rot, Int3, Roll], &[Swap2, Swap]),
-    (&[Int3, Roll, Int3, Roll], &[Swap2]),
-    (&[Int4, Roll, Int5, Roll], &[Rot2, Swap]),
-    (&[Int1, Add], &[Add1]),
-    (&[Int1, Add1], &[Int2]),
-    (&[Int1, Verify], &[]),
-    (&[Equal, Verify], &[EqualVerify]),
-    (&[NumEqual, Verify], &[NumEqualVerify]),
-    (&[Dup, EqualVerify], &[Drop]),
+    (&[Opcode::Int0, Opcode::Pick], &[Opcode::Dup]),
+    (&[Opcode::Dup, Opcode::Swap], &[Opcode::Dup]),
+    (&[Opcode::Int0, Opcode::Put], &[Opcode::Nip]),
+    (&[Opcode::Int1, Opcode::Pick], &[Opcode::Over]),
+    (&[Opcode::Int0, Opcode::Roll], &[]),
+    (&[Opcode::Swap, Opcode::Swap], &[]),
+    (&[Opcode::Int1, Opcode::Roll], &[Opcode::Swap]),
+    (&[Opcode::Int2, Opcode::Roll], &[Opcode::Rot]),
+    (&[Opcode::Swap, Opcode::Drop], &[Opcode::Nip]),
+    (&[Opcode::Drop, Opcode::Drop], &[Opcode::Drop2]),
+    (&[Opcode::Over, Opcode::Over], &[Opcode::Dup2]),
+    (
+        &[Opcode::Dup, Opcode::Int2, Opcode::Pick],
+        &[Opcode::Dup2, Opcode::Swap],
+    ),
+    (
+        &[Opcode::Int2, Opcode::Pick, Opcode::Over],
+        &[Opcode::Dup3, Opcode::Nip],
+    ),
+    (
+        &[Opcode::Int2, Opcode::Pick, Opcode::Int4, Opcode::Pick],
+        &[Opcode::Over2, Opcode::Swap],
+    ),
+    (&[Opcode::Rot, Opcode::Swap, Opcode::Rot], &[Opcode::Swap]),
+    (
+        &[Opcode::Rot, Opcode::Int3, Opcode::Roll],
+        &[Opcode::Swap2, Opcode::Swap],
+    ),
+    (
+        &[Opcode::Int3, Opcode::Roll, Opcode::Int3, Opcode::Roll],
+        &[Opcode::Swap2],
+    ),
+    (
+        &[Opcode::Int4, Opcode::Roll, Opcode::Int5, Opcode::Roll],
+        &[Opcode::Rot2, Opcode::Swap],
+    ),
+    (&[Opcode::Int1, Opcode::Add], &[Opcode::Add1]),
+    (&[Opcode::Int1, Opcode::Add1], &[Opcode::Int2]),
+    (&[Opcode::Int1, Opcode::Verify], &[]),
+    (&[Opcode::Equal, Opcode::Verify], &[Opcode::EqualVerify]),
+    (
+        &[Opcode::NumEqual, Opcode::Verify],
+        &[Opcode::NumEqualVerify],
+    ),
+    (&[Opcode::Dup, Opcode::EqualVerify], &[Opcode::Drop]),
     // Packet lookups push a 0 or 1 presence flag.
     (
-        &[InspectPacket, Int1, EqualVerify],
-        &[InspectPacket, Verify],
+        &[Opcode::InspectPacket, Opcode::Int1, Opcode::EqualVerify],
+        &[Opcode::InspectPacket, Opcode::Verify],
     ),
     (
-        &[InspectInputPacket, Int1, EqualVerify],
-        &[InspectInputPacket, Verify],
+        &[
+            Opcode::InspectInputPacket,
+            Opcode::Int1,
+            Opcode::EqualVerify,
+        ],
+        &[Opcode::InspectInputPacket, Opcode::Verify],
     ),
-    (&[CheckSig, Verify], &[CheckSigVerify]),
-    (&[Not, Not], &[NotEqual0]),
-    (&[NotEqual0, Not], &[Not]),
+    (
+        &[Opcode::CheckSig, Opcode::Verify],
+        &[Opcode::CheckSigVerify],
+    ),
+    (&[Opcode::Not, Opcode::Not], &[Opcode::NotEqual0]),
+    (&[Opcode::NotEqual0, Opcode::Not], &[Opcode::Not]),
 ];
-
-/// Whether `op` is `opcode`; a literal `1` assembles to `OP_1`, so it counts as one.
-fn matches(op: &Op, opcode: Opcode) -> bool {
-    match op {
-        Op::Opcode(op) => *op == opcode,
-        Op::Push(value) => value == "1" && opcode == Int1,
-        _ => false,
-    }
-}
 
 /// The optimized instructions, and how many items the rewrites can add to the unoptimized
 /// stack peak.
 pub(super) fn optimize(mut asm: Vec<Spanned>) -> (Vec<Spanned>, usize) {
-    // The NIPs clear every item below the final truthy value. The final clean-stack truth check
-    // already enforces a trailing `Verify Int1`, so a failing last requirement reports a false
-    // stack entry instead when the NIPs are kept.
+    // Two endings are built and the shorter wins. With the NIPs kept, the VM's clean-stack truth
+    // check already does a trailing `Verify Int1`'s work, so it is dropped; a failing last
+    // requirement then reports a false stack entry instead of `Verify failed`.
     let nips = asm
         .iter()
         .rev()
-        .take_while(|(op, _)| matches(op, Nip))
+        .take_while(|(op, _)| op.is(Opcode::Nip))
         .count();
     let body = asm.len() - nips;
     let mut kept = asm.clone();
-    if body >= 2 && matches(&kept[body - 2].0, Verify) && matches(&kept[body - 1].0, Int1) {
+    if body >= 2 && kept[body - 2].0.is(Opcode::Verify) && kept[body - 1].0.is(Opcode::Int1) {
         kept.drain(body - 2..body);
     }
     // Verifying the final value first lets the cleared items go in pairs with Drop2; a failing
     // last requirement then reports `Verify failed`.
     asm.truncate(body);
-    asm.push((Verify.into(), None));
-    asm.extend(std::iter::repeat_n((Drop.into(), None), nips));
-    asm.push((Int1.into(), None));
+    asm.push((Opcode::Verify.into(), None));
+    asm.extend(iter::repeat_n((Opcode::Drop.into(), None), nips));
+    asm.push((Opcode::Int1.into(), None));
 
     let (kept, dropped) = (rewrite(kept), rewrite(asm));
     // An Arkade Script that only leaves its witness for the final check would be empty.
@@ -321,10 +343,10 @@ fn rewrite(asm: Vec<Spanned>) -> (Vec<Spanned>, usize) {
         loop {
             let len = optimized.len();
             if len >= 2
-                && matches(&optimized[len - 1].0, NotEqual0)
+                && optimized[len - 1].0.is(Opcode::NotEqual0)
                 && BOOLEAN_RESULTS
                     .iter()
-                    .any(|&opcode| matches(&optimized[len - 2].0, opcode))
+                    .any(|&opcode| optimized[len - 2].0.is(opcode))
             {
                 optimized.pop();
                 continue;
@@ -334,7 +356,7 @@ fn rewrite(asm: Vec<Spanned>) -> (Vec<Spanned>, usize) {
                     && optimized[len - from.len()..]
                         .iter()
                         .zip(*from)
-                        .all(|((op, _), &opcode)| matches(op, opcode))
+                        .all(|((op, _), &opcode)| op.is(opcode))
             }) else {
                 break;
             };
@@ -348,7 +370,7 @@ fn rewrite(asm: Vec<Spanned>) -> (Vec<Spanned>, usize) {
 }
 
 /// The most items `ops` holds above where they start.
-// ponytail: adding the largest rewrite raise to the unoptimized peak is conservative; simulate
+// LIMITATION: adding the largest rewrite raise to the unoptimized peak is conservative; simulate
 // the final script for an exact peak if contracts sit at the VM limit.
 fn peak(ops: &[Opcode]) -> usize {
     let mut height = 0isize;
@@ -356,23 +378,36 @@ fn peak(ops: &[Opcode]) -> usize {
     for op in ops {
         let (pops, pushes) = match op {
             // Their depth is the operand pushed before them.
-            Pick => (1, 1),
-            Roll => (1, 0),
-            Put => (2, 0),
+            Opcode::Pick => (1, 1),
+            Opcode::Roll => (1, 0),
+            Opcode::Put => (2, 0),
             op => op
                 .stack_effect()
                 .expect("rewrite opcodes have a stack effect"),
         };
-        height += pushes as isize - pops as isize;
+        height = height
+            .checked_add_unsigned(pushes)
+            .and_then(|height| height.checked_sub_unsigned(pops))
+            .expect("a stack height fits in isize");
         peak = peak.max(height);
     }
-    peak as usize
+    peak.unsigned_abs()
 }
 
 #[cfg(test)]
 mod tests {
+    use std::iter;
+
     use super::*;
-    use crate::opcodes::*;
+    use crate::compiler::Op;
+    use crate::models::Path;
+    use crate::opcodes::{
+        OP_0, OP_0NOTEQUAL, OP_1, OP_1ADD, OP_2, OP_2DROP, OP_2DUP, OP_2OVER, OP_2ROT, OP_2SWAP,
+        OP_3, OP_3DUP, OP_4, OP_5, OP_ADD, OP_CHECKSIG, OP_CHECKSIGFROMSTACK, OP_CHECKSIGVERIFY,
+        OP_DROP, OP_DUP, OP_ENDIF, OP_EQUAL, OP_EQUALVERIFY, OP_INSPECTPACKET, OP_LESSTHAN, OP_NIP,
+        OP_NOT, OP_NUMEQUAL, OP_NUMEQUALVERIFY, OP_OVER, OP_PICK, OP_PUT, OP_ROLL, OP_ROT, OP_SWAP,
+        OP_VERIFY,
+    };
 
     /// Instructions for assembly tokens: opcodes, `<binding>` reads and constants.
     fn ops(tokens: Vec<String>) -> Vec<Spanned> {
@@ -382,7 +417,7 @@ mod tests {
                 |token| match Opcode::ALL.iter().find(|opcode| opcode.name() == token) {
                     Some(&opcode) => opcode.into(),
                     None if token.starts_with('<') => {
-                        Op::Read(crate::models::Path::from_key(&token[1..token.len() - 1]))
+                        Op::Read(Path::from_key(&token[1..token.len() - 1]))
                     }
                     None => Op::Push(token),
                 },
@@ -413,7 +448,13 @@ mod tests {
             .iter()
             .filter(|(from, to)| peak(to) > peak(from))
             .collect();
-        assert_eq!(raising, [&(&[Int2, Pick, Over][..], &[Dup3, Nip][..])]);
+        assert_eq!(
+            raising,
+            [&(
+                &[Opcode::Int2, Opcode::Pick, Opcode::Over][..],
+                &[Opcode::Dup3, Opcode::Nip][..]
+            )]
+        );
         let asm = ["<a>", "<b>", "<c>", OP_2, OP_PICK, OP_OVER].map(String::from);
         assert_eq!(super::rewrite(ops(asm.to_vec())).1, 1);
     }
@@ -426,14 +467,17 @@ mod tests {
                     let (pops, pushes) = op
                         .stack_effect()
                         .unwrap_or_else(|| panic!("{op} has no effect"));
-                    pushes as isize - pops as isize
+                    isize::try_from(pushes).unwrap() - isize::try_from(pops).unwrap()
                 })
                 .sum()
         };
         for &(from, to) in REWRITES {
             assert!(to.len() < from.len(), "{from:?}");
             // These take their depth from an operand; the shuffle test covers them.
-            if from.iter().any(|op| [Pick, Roll, Put].contains(op)) {
+            if from
+                .iter()
+                .any(|op| [Opcode::Pick, Opcode::Roll, Opcode::Put].contains(op))
+            {
                 continue;
             }
             assert_eq!(height(from), height(to), "{from:?}");
@@ -632,7 +676,7 @@ mod tests {
 
     #[test]
     fn wide_clean_stack_tails_drop_in_pairs() {
-        let nips = |count| std::iter::repeat_n(OP_NIP, count);
+        let nips = |count| iter::repeat_n(OP_NIP, count);
         let tail = |prefix: &[&'static str], count| {
             prefix
                 .iter()

@@ -1,33 +1,28 @@
-use crate::diagnostics::{CompileError, Diagnostic, Span};
-use crate::models::{
-    ArkadeScript, AssignmentTarget, CompilerInfo, Contract, ContractJson, ExprKind, Expression,
-    Function, FunctionInput, LocatedStatement, Parameter, Path, Segment, SourceRange, Statement,
-    TypeName,
-};
-use crate::opcodes::Opcode::{
-    self, Add, Bin2Num, BoolAnd, Cat, CheckSig, CheckSigAdd, Drop, Dup, EcPairing, Else, EndIf,
-    Equal, EqualVerify, FindAssetGroupByAssetId, GreaterThanOrEqual, If, InspectAssetGroup,
-    InspectAssetGroupAssetId, InspectAssetGroupCtrl, InspectAssetGroupMetadataHash,
-    InspectAssetGroupNum, InspectAssetGroupSum, InspectInAssetAt, InspectInAssetCount,
-    InspectInAssetLookup, InspectInputArkadeScriptHash, InspectInputArkadeWitnessHash,
-    InspectInputOutpoint, InspectInputPacket, InspectInputScriptPubKey, InspectInputSequence,
-    InspectInputValue, InspectIntentMessage, InspectLockTime, InspectNumAssetGroups,
-    InspectNumInputs, InspectNumOutputs, InspectOutAssetAt, InspectOutAssetCount,
-    InspectOutAssetLookup, InspectOutputScriptPubKey, InspectOutputValue, InspectPacket,
-    InspectVersion, Int0, Int1, Mul, Nip, Not, NotEqual0, NumEqual, Pick, PushCurrentInputIndex,
-    PushExpiry, Put, Roll, Rot, Size, Sub, Swap, Tunnel, TxWeight, Txid, Verify, Within,
-};
-use crate::types::{self};
-use crate::validator;
+//! Code generation: turns a validated, typed contract into one Arkade Script per public function
+//! and the artifact JSON. Each script ends with a single true item on its stack.
+
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::result;
+
 use chrono::Utc;
 use sha2::{Digest, Sha256};
 
+use crate::builtins::Lowering;
+use crate::diagnostics::{self, CompileError, Diagnostic, Span, Suggestion};
+use crate::lint::{self, Lints};
+use crate::models::{
+    self, ArkadeScript, CompilerInfo, Contract, ContractJson, Cost, ExprKind, Expression, Function,
+    FunctionInput, GroupIOSource, LocatedStatement, Parameter, Path, SourceBundle, SourceRange,
+    Statement, StructDefinition, TypeName, ARTIFACT_FORMAT_VERSION,
+};
+use crate::opcodes::Opcode;
+use crate::validator::{self, references};
+use crate::{imports, types};
+
 pub mod tapscript;
 
-type Result<T, E = CompileError> = std::result::Result<T, E>;
+type Result<T, E = CompileError> = result::Result<T, E>;
 
-// ASM codegen and rewrite passes split into submodules;
-// siblings reach each other via `use super::*`.
 mod access;
 mod asset;
 mod comparison;
@@ -43,13 +38,7 @@ mod lowering;
 mod optimization;
 mod stack;
 mod statements;
-use lowering::Lowered;
 use statements::{emit_body, emit_function};
-
-pub(crate) use asset::*;
-pub(crate) use expr::*;
-pub(crate) use introspection::*;
-pub(crate) use loops::*;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum BindingKind {
@@ -57,7 +46,7 @@ enum BindingKind {
     FunctionInput,
     Local,
     /// A wide literal bound once and read wherever the function would push it, static helpers
-    /// included; it is named by the literal, which no source name can be.
+    /// included. It is bound under the literal's own text, which no source name can collide with.
     Constant,
 }
 
@@ -77,16 +66,12 @@ pub(crate) const MAX_LOOP_ITERATIONS: usize = 10_000;
 /// Bytes the VM allows in one stack element (`txscript.MaxScriptElementSize`).
 const MAX_ELEMENT_SIZE: usize = 520;
 
-fn integer_op(value: usize) -> Op {
-    use crate::opcodes::Opcode::*;
-    const SMALL: [Opcode; 17] = [
-        Int0, Int1, Int2, Int3, Int4, Int5, Int6, Int7, Int8, Int9, Int10, Int11, Int12, Int13,
-        Int14, Int15, Int16,
-    ];
-    match SMALL.get(value) {
-        Some(&opcode) => opcode.into(),
-        None => Op::Push(value.to_string()),
-    }
+/// A binding on the top slot that the assignment being emitted rebinds in place.
+#[derive(Clone)]
+struct Replacement {
+    target: Path,
+    kind: BindingKind,
+    start: usize,
 }
 
 struct Generator {
@@ -96,40 +81,39 @@ struct Generator {
     /// The most items the stacks hold at once, data and alt together.
     max_depth: usize,
     scopes: Vec<(usize, types::Scope)>,
-    deferred: std::collections::HashSet<String>,
-    /// Placeholders of constructor parameters that flatten to other leaves.
+    deferred: HashSet<String>,
+    /// Composite constructor parameters and their leaf placeholders, so `new` can pass one whole.
     constructor_expansions: Vec<(String, Vec<String>)>,
-    structs: Vec<crate::models::StructDefinition>,
+    structs: Vec<StructDefinition>,
     scope: types::Scope,
     constructor_scope: types::Scope,
     functions: Vec<Function>,
     // Constructor leaves pushed at their single read instead of in the prologue.
-    inlined: std::collections::HashMap<Path, String>,
+    inlined: HashMap<Path, String>,
     // Emitted reads per constructor slot; runtime-indexed slots count as two.
-    constructor_reads: std::collections::HashMap<Path, usize>,
+    constructor_reads: HashMap<Path, usize>,
     // Read-only scalar parameters can name slots in the pinned caller frame.
-    aliases: std::collections::HashMap<Path, usize>,
+    aliases: HashMap<Path, usize>,
     // None outside a helper; Some(None) inside a void helper.
     return_type: Option<Option<TypeName>>,
     direct_return: bool,
     // Record reads once, then replay final uses at their new stack depths.
     final_reads: Vec<bool>,
-    last_reads: std::collections::HashMap<(Path, usize), usize>,
+    last_reads: HashMap<(Path, usize), usize>,
     read_cursor: Option<usize>,
     preserve_bindings: bool,
     pinned_stack_len: usize,
-    // Rebinding the top slot can consume its old value without changing a branch join.
-    replacement: Option<(Path, BindingKind, usize)>,
+    replacement: Option<Replacement>,
     /// How often each literal that takes 4 or more bytes is pushed.
-    wide_pushes: std::collections::BTreeMap<String, usize>,
+    wide_pushes: BTreeMap<String, usize>,
 }
 
 impl Generator {
     fn new(
         function_parameters: &[Parameter],
         constructor_parameters: &[Parameter],
-        structs: &[crate::models::StructDefinition],
-        inlined_bindings: &std::collections::HashSet<Path>,
+        structs: &[StructDefinition],
+        inlined_bindings: &HashSet<Path>,
     ) -> Result<Self> {
         let mut function_bindings = Vec::new();
         for parameter in function_parameters {
@@ -159,7 +143,7 @@ impl Generator {
             }
         }
         let mut asm = ir::Assembly::default();
-        let mut inlined = std::collections::HashMap::new();
+        let mut inlined = HashMap::new();
         for (placeholder, binding_name) in constructor_bindings.into_iter().rev() {
             if inlined_bindings.contains(&binding_name) {
                 inlined.insert(binding_name, placeholder);
@@ -183,22 +167,31 @@ impl Generator {
                     // Only empty and 0x01 equal their own 0NOTEQUAL, so `require`, `if` and `==` agree.
                     prologue_peak = prologue_peak.max(2);
                     asm.extend(match depth {
-                        0 => vec![Dup.into()],
-                        _ => vec![integer_op(depth), Pick.into()],
+                        0 => vec![Opcode::Dup.into()],
+                        _ => vec![Op::push_int(depth), Opcode::Pick.into()],
                     });
-                    asm.extend([Dup.into(), NotEqual0.into(), EqualVerify.into()]);
+                    asm.extend([
+                        Opcode::Dup.into(),
+                        Opcode::NotEqual0.into(),
+                        Opcode::EqualVerify.into(),
+                    ]);
                     continue;
                 }
                 _ => continue,
             };
-            // The copy, its size and the expected width.
+            // Extra items at the peak: the picked copy (only when depth > 0), its size and the
+            // expected width.
             prologue_peak = prologue_peak.max(2 + usize::from(depth > 0));
             if depth > 0 {
-                asm.extend([integer_op(depth), Pick.into()]);
+                asm.extend([Op::push_int(depth), Opcode::Pick.into()]);
             }
-            asm.extend([Size.into(), Op::Push(width.into()), EqualVerify.into()]);
+            asm.extend([
+                Opcode::Size.into(),
+                Op::Push(width.into()),
+                Opcode::EqualVerify.into(),
+            ]);
             if depth > 0 {
-                asm.push(Drop.into());
+                asm.push(Opcode::Drop.into());
             }
         }
         let constructor_scope = types::build_scope_with_structs(constructor_parameters, structs);
@@ -213,19 +206,19 @@ impl Generator {
             max_depth: stack.len() + prologue_peak,
             stack,
             scopes: Vec::new(),
-            deferred: std::collections::HashSet::new(),
+            deferred: HashSet::new(),
             constructor_expansions,
             structs: structs.to_vec(),
             scope,
             constructor_scope,
             functions: Vec::new(),
             inlined,
-            constructor_reads: std::collections::HashMap::new(),
-            aliases: std::collections::HashMap::new(),
+            constructor_reads: HashMap::new(),
+            aliases: HashMap::new(),
             return_type: None,
             direct_return: false,
             final_reads: Vec::new(),
-            last_reads: std::collections::HashMap::new(),
+            last_reads: HashMap::new(),
             read_cursor: None,
             preserve_bindings: false,
             pinned_stack_len: 0,
@@ -236,10 +229,11 @@ impl Generator {
 
     fn lower_raw_opcode(&mut self, opcode: Opcode) -> Result<()> {
         match opcode {
-            // These move bindings as well as temporaries.
-            Nip => self.nip(),
-            Swap => self.swap(),
-            Tunnel => {
+            // NIP and SWAP can move bindings, not only temporaries, so they keep their own stack
+            // bookkeeping.
+            Opcode::Nip => self.nip(),
+            Opcode::Swap => self.swap(),
+            Opcode::Tunnel => {
                 // Fixed exception counts are emitted immediately before the opcode.
                 let inputs = self
                     .asm
@@ -321,9 +315,8 @@ impl Generator {
     }
 
     fn emit_expression_items(&mut self, expression: &Expression, expected: usize) -> Result<()> {
-        // Counts temporaries instead of a stack watermark: a consuming read can
-        // remove a binding below the watermark, so only the top `expected` items
-        // are checked for being temporaries.
+        // Counts temporaries instead of a stack watermark: a consuming read can remove a
+        // binding below the watermark.
         let before = self
             .stack
             .iter()
@@ -333,24 +326,24 @@ impl Generator {
         let mut expression = expression.clone();
         let mut values = Vec::new();
         functions::extract_values(&mut expression, &mut values);
-        emit_expression_asm(&expression, &mut raw);
-        // ponytail: short-circuit joins need identical layouts, so reads inside an open branch stay
+        expr::emit_expression_asm(&expression, &mut raw);
+        // LIMITATION: short-circuit joins need identical layouts, so reads inside an open branch stay
         // copies and leave their slots to the final cleanup; moving them needs path-sensitive liveness.
         let preserved = self.preserve_bindings;
         let mut branches = Vec::new();
         for op in raw {
             self.preserve_bindings = preserved || !branches.is_empty();
             match op {
-                Op::Opcode(If) => {
-                    self.apply(If, 1, 0)?;
+                Op::Opcode(Opcode::If) => {
+                    self.apply(Opcode::If, 1, 0)?;
                     branches.push(self.stack.clone());
                 }
-                Op::Opcode(token @ (Else | EndIf)) => {
+                Op::Opcode(token @ (Opcode::Else | Opcode::EndIf)) => {
                     self.pop_temporaries(1, token)?;
                     if branches.last() != Some(&self.stack) {
                         return Err("logical branch must produce exactly one stack item".into());
                     }
-                    if token == EndIf {
+                    if token == Opcode::EndIf {
                         branches.pop();
                         self.stack.push(StackItem::Temporary);
                     }
@@ -366,16 +359,16 @@ impl Generator {
                         self.emit_composite_comparison(left, *op, right, &ty, false)?;
                     } else if matches!(&value.kind, ExprKind::Call { .. }) {
                         self.emit_call(value)?;
-                    } else if matches!(&value.kind, ExprKind::Builtin { builtin, .. } if matches!(builtin.lowering, crate::builtins::Lowering::Pairing))
+                    } else if matches!(&value.kind, ExprKind::Builtin { builtin, .. } if matches!(builtin.lowering, Lowering::Pairing))
                     {
                         self.emit_pairing(value)?;
-                    } else if matches!(&value.kind, ExprKind::Builtin { builtin, .. } if matches!(builtin.lowering, crate::builtins::Lowering::Multisig))
+                    } else if matches!(&value.kind, ExprKind::Builtin { builtin, .. } if matches!(builtin.lowering, Lowering::Multisig))
                     {
                         self.emit_multisig(value)?;
                     } else if matches!(
                         &value.kind,
                         ExprKind::GroupIOAccess {
-                            source: crate::models::GroupIOSource::Inputs,
+                            source: GroupIOSource::Inputs,
                             ..
                         }
                     ) {
@@ -419,7 +412,7 @@ impl Generator {
             return Err(CompileError::internal("unbalanced generator scope"));
         }
         self.asm.set_span(None);
-        self.push_temporary(Int1);
+        self.push_temporary(Opcode::Int1);
         while self.stack.len() > 1 {
             self.nip()?;
         }
@@ -432,59 +425,38 @@ impl Generator {
     }
 }
 
-/// Compiles an Arkade Language contract into a JSON-serializable structure.
-///
-/// Takes source code, parses it into an AST, and transforms it into a ContractJson
-/// structure. The output includes contract name, constructor inputs (with asset ID
-/// decomposition for lookup parameters), spend groups, optional Arkade Scripts,
-/// and L1 tapleaf assemblies.
-///
-/// # Arguments
-///
-/// * `source_code` - The Arkade Language source code
-///
-/// # Returns
-///
-/// A Result containing a ContractJson or an error message
 pub fn compile(source_code: &str) -> Result<ContractJson, String> {
-    crate::imports::compile_sources(
+    imports::compile_sources(
         "main.ark",
-        &std::collections::BTreeMap::from([("main.ark".to_string(), source_code.to_string())]),
+        &BTreeMap::from([("main.ark".to_string(), source_code.to_string())]),
         crate::CompileOptions::default(),
     )
 }
 
 /// A validated contract's warnings and its checked tapscript leaves, in declaration order.
 pub(crate) struct Prepared {
-    pub lints: crate::lint::Lints,
+    pub lints: Lints,
     pub leaves: Vec<tapscript::CheckedLeaf>,
 }
 
-/// Runs semantic validation, including type checking, on `contract`. Returns its
-/// warnings and checked leaves on success, every error (each its own diagnostic, not
-/// joined into one message) on failure. Diagnostic messages carry no location prefix —
-/// `Diagnostic::span` is the byte range; `diagnostics::render_errors` adds a
-/// `"line N, column M: "` prefix only when rendering the joined string.
+/// Every error is its own diagnostic, with no location prefix in its message;
+/// `diagnostics::render_errors` adds `line N, column M: ` when it joins them.
 pub(crate) fn prepare(
     contract: &mut Contract,
     require_entrypoint: bool,
     file: &str,
-) -> std::result::Result<Prepared, Vec<Diagnostic>> {
+) -> Result<Prepared, Vec<Diagnostic>> {
     types::annotate(contract);
-
-    // ── Semantic validation ────────────────────────────────────────────────
-    // Catch errors the PEG grammar cannot express (duplicate names, missing
-    // timelocks, etc.) before we attempt code generation.
     let ast_issues = validator::validate_ast(contract, require_entrypoint);
     if !ast_issues.is_empty() {
         return Err(ast_issues
             .iter()
             .map(|i| {
-                let suggestions = i.suggestion.iter().filter_map(|(replacement, span)| {
-                    Some(crate::diagnostics::Suggestion {
-                        message: format!("replace with '{replacement}'"),
-                        span: span.or(i.span)?,
-                        replacement: replacement.clone(),
+                let suggestions = i.suggestion.iter().filter_map(|suggestion| {
+                    Some(Suggestion {
+                        message: format!("replace with '{}'", suggestion.replacement),
+                        span: suggestion.span.or(i.span)?,
+                        replacement: suggestion.replacement.clone(),
                     })
                 });
                 Diagnostic::error(file, i.message.clone())
@@ -510,7 +482,7 @@ pub(crate) fn prepare(
         return Err(leaf_errors);
     }
     Ok(Prepared {
-        lints: crate::lint::check(contract),
+        lints: lint::check(contract),
         leaves,
     })
 }
@@ -518,20 +490,20 @@ pub(crate) fn prepare(
 pub(crate) fn emit(
     contract: &Contract,
     leaves: &[tapscript::CheckedLeaf],
-    source: crate::models::SourceBundle,
+    source: SourceBundle,
     warnings: Vec<String>,
     options: crate::CompileOptions,
     code_hash: &mut dyn FnMut(&str) -> Result<String>,
 ) -> Result<ContractJson> {
     let parameters = contract.parameters.clone();
     let entry_source = source.files.get(&source.entry).cloned().unwrap_or_default();
-    let mut messages = std::collections::HashMap::new();
+    let mut messages = HashMap::new();
     for function in contract.functions.iter().filter(|f| !f.is_imported()) {
         require_messages(&function.statements, &mut messages);
     }
 
     let mut json = ContractJson {
-        format_version: crate::models::ARTIFACT_FORMAT_VERSION,
+        format_version: ARTIFACT_FORMAT_VERSION,
         name: contract.name.clone(),
         structs: contract.structs.clone(),
         parameters,
@@ -549,9 +521,7 @@ pub(crate) fn emit(
         warnings,
     };
 
-    // Build the Arkade Script of each public function.
-    let mut scripts: std::collections::HashMap<String, ArkadeScript> =
-        std::collections::HashMap::new();
+    let mut scripts: HashMap<String, ArkadeScript> = HashMap::new();
     for function in contract.functions.iter().filter(|f| !f.is_private) {
         scripts.insert(
             function.name.clone(),
@@ -574,8 +544,6 @@ pub(crate) fn emit(
 
     json.functions = tapscript::build_function_groups(contract, leaves, scripts)?;
 
-    // ── Output invariant check ─────────────────────────────────────────────
-    // Self-check the emitted JSON for structural invariants.
     let output_issues = validator::validate_output(&json);
     if !output_issues.is_empty() {
         return Err(output_issues
@@ -585,7 +553,7 @@ pub(crate) fn emit(
             .join("; ")
             .into());
     }
-    let instantiated: std::collections::BTreeSet<String> = json
+    let instantiated: BTreeSet<String> = json
         .functions
         .iter()
         .filter_map(|group| group.arkade.as_ref())
@@ -617,13 +585,11 @@ pub(crate) fn emit(
     Ok(json)
 }
 
-/// The placeholder namespace a parameter list emits: array types (e.g.
-/// `pubkey[3]`) flatten to `name.0`, `name.1`, `name.2`; every other param
-/// passes through unchanged. This is the `<name>` namespace in `asm`, not the
-/// artifact ABI, which keeps one entry per source parameter.
+/// The `<name>` placeholders `asm` uses, where a composite parameter flattens (`pubkey[3]` to
+/// `name.0`, `name.1`, `name.2`); the artifact ABI keeps one entry per source parameter.
 pub(crate) fn expanded_placeholder_params(
     params: &[Parameter],
-    structs: &[crate::models::StructDefinition],
+    structs: &[StructDefinition],
 ) -> Result<Vec<Parameter>> {
     let mut result = Vec::new();
     for param in params {
@@ -638,25 +604,23 @@ pub(crate) fn expanded_placeholder_params(
     Ok(result)
 }
 
-/// Build an `ArkadeScript` for a public function.
 /// Compute budgets are deployment-configurable; compare the reported counts with the target
 /// emulator's limits rather than enforcing defaults here.
 fn arkade_script_for(
     function: &Function,
     constructor_parameters: &[Parameter],
-    structs: &[crate::models::StructDefinition],
+    structs: &[StructDefinition],
     functions: &[Function],
     optimize: bool,
-) -> Result<(Vec<FunctionInput>, Vec<Spanned>, Vec<crate::models::Cost>)> {
+) -> Result<(Vec<FunctionInput>, Vec<Spanned>, Vec<Cost>)> {
     let inputs = function_inputs(&function.parameters);
-    let references =
-        crate::validator::references::referenced_parameters(&function.statements, functions);
+    let references = references::referenced_parameters(&function.statements, functions);
     let retained_parameters = constructor_parameters
         .iter()
         .filter(|parameter| references.contains(parameter.name.as_str()))
         .cloned()
         .collect::<Vec<_>>();
-    let new = |inlined: &std::collections::HashSet<Path>| -> Result<Generator> {
+    let new = |inlined: &HashSet<Path>| -> Result<Generator> {
         let mut generator =
             Generator::new(&function.parameters, &retained_parameters, structs, inlined)?;
         generator.optimize = optimize;
@@ -665,7 +629,7 @@ fn arkade_script_for(
     };
     let mut counting = new(&Default::default())?;
     if !optimize {
-        let mut checked = std::collections::HashSet::new();
+        let mut checked = HashSet::new();
         lowering::check_folded(
             &function.statements,
             &counting.scope,
@@ -678,7 +642,7 @@ fn arkade_script_for(
     let body = counting.lower(&function.statements)?;
     emit_body(&body, &mut counting)?;
     // A leaf read once costs no more as an inline push than as a prologue slot; an unread leaf is never pushed.
-    let mut inlined = std::collections::HashSet::new();
+    let mut inlined = HashSet::new();
     for parameter in &retained_parameters {
         for_each_expanded_param(parameter, structs, |_, binding_name, _| {
             if counting
@@ -730,9 +694,9 @@ fn arkade_script_for(
         analysis
     };
     let (mut ops, mut peak) = emit(analysis, &[])?;
-    let mut widths = std::collections::HashMap::new();
+    let mut widths = HashMap::new();
     for parameter in &retained_parameters {
-        for leaf in crate::models::flatten_parameter(parameter, structs)? {
+        for leaf in models::flatten_parameter(parameter, structs)? {
             let width = match leaf.leaf_type.ark_type() {
                 types::ArkType::Signature => 64,
                 types::ArkType::Bytes32 => 32,
@@ -785,11 +749,11 @@ fn arkade_script_for(
     let mut executions = most_executions(&ops, &mut 0);
     // Conditional opcodes execute even inside skipped branches.
     for (op, _) in &ops {
-        if let Op::Opcode(opcode @ (If | Else | EndIf)) = op {
+        if let Op::Opcode(opcode @ (Opcode::If | Opcode::Else | Opcode::EndIf)) = op {
             *executions.entry(*opcode).or_default() += 1;
         }
     }
-    let cost = |name: &str, used| crate::models::Cost {
+    let cost = |name: &str, used| Cost {
         name: name.to_string(),
         used,
     };
@@ -806,11 +770,7 @@ fn arkade_script_for(
 }
 
 /// Runs of `ops` from one statement, located in `source`.
-fn source_map(
-    ops: &[Spanned],
-    source: &str,
-    messages: &std::collections::HashMap<Span, String>,
-) -> Vec<SourceRange> {
+fn source_map(ops: &[Spanned], source: &str, messages: &HashMap<Span, String>) -> Vec<SourceRange> {
     let mut ranges: Vec<(Span, SourceRange)> = Vec::new();
     for (index, (_, span)) in ops.iter().enumerate() {
         let Some(span) = *span else {
@@ -822,8 +782,7 @@ fn source_map(
                 continue;
             }
         }
-        let position =
-            |offset| crate::diagnostics::position(source, offset).map(<[usize; 2]>::from);
+        let position = |offset| diagnostics::position(source, offset).map(<[usize; 2]>::from);
         let (Some(start), Some(end)) = (position(span.start), position(span.end)) else {
             continue;
         };
@@ -839,10 +798,7 @@ fn source_map(
     ranges.into_iter().map(|(_, range)| range).collect()
 }
 
-fn require_messages(
-    statements: &[LocatedStatement],
-    messages: &mut std::collections::HashMap<Span, String>,
-) {
+fn require_messages(statements: &[LocatedStatement], messages: &mut HashMap<Span, String>) {
     for statement in statements {
         if let Some(message) = &statement.message {
             messages.insert(statement.span, message.clone());
@@ -866,18 +822,15 @@ fn require_messages(
 
 /// An upper bound on executions of each non-conditional opcode from `position` to the
 /// enclosing `Else` or `EndIf`. Correlated branch conditions are counted independently.
-fn most_executions(
-    ops: &[Spanned],
-    position: &mut usize,
-) -> std::collections::HashMap<Opcode, usize> {
-    let mut counts = std::collections::HashMap::new();
+fn most_executions(ops: &[Spanned], position: &mut usize) -> HashMap<Opcode, usize> {
+    let mut counts = HashMap::new();
     while let Some((op, _)) = ops.get(*position) {
         match op {
-            Op::Opcode(Else | EndIf) => break,
-            Op::Opcode(If) => {
+            Op::Opcode(Opcode::Else | Opcode::EndIf) => break,
+            Op::Opcode(Opcode::If) => {
                 *position += 1;
                 let mut branch = most_executions(ops, position);
-                if matches!(ops.get(*position), Some((Op::Opcode(Else), _))) {
+                if matches!(ops.get(*position), Some((Op::Opcode(Opcode::Else), _))) {
                     *position += 1;
                     for (opcode, count) in most_executions(ops, position) {
                         let longest = branch.entry(opcode).or_default();
@@ -908,10 +861,10 @@ fn function_inputs(params: &[Parameter]) -> Vec<FunctionInput> {
 
 fn for_each_expanded_param(
     param: &Parameter,
-    structs: &[crate::models::StructDefinition],
+    structs: &[StructDefinition],
     mut f: impl FnMut(String, Path, TypeName),
 ) -> Result<()> {
-    for leaf in crate::models::flatten_parameter(param, structs)? {
+    for leaf in models::flatten_parameter(param, structs)? {
         f(leaf.emitted_name, leaf.access, leaf.leaf_type);
     }
     Ok(())

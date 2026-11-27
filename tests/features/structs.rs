@@ -1,3 +1,4 @@
+use crate::common;
 use crate::common::{compile_unoptimized as compile, opcode_count_in_arkade};
 use arkade_compiler::opcodes::{
     OP_ADD, OP_BOOLAND, OP_CHECKSIG, OP_CHECKSIGFROMSTACK, OP_DUP, OP_ENDIF,
@@ -279,7 +280,7 @@ contract C(Pair left) {
 "#,
     )
     .expect("struct equality compares leaf by leaf");
-    let asm = crate::common::arkade_asm_tokens(&output, "spend");
+    let asm = common::arkade_asm_tokens(&output, "spend");
     assert_eq!(
         asm.iter()
             .filter(|token| *token == OP_NUMEQUALVERIFY)
@@ -333,7 +334,7 @@ fn struct_inequality_checks_the_final_leaf() {
          }",
     )
     .expect("only the final leaf differs");
-    let asm = crate::common::arkade_asm_tokens(&output, "spend");
+    let asm = common::arkade_asm_tokens(&output, "spend");
     assert_eq!(asm.iter().filter(|token| *token == OP_NUMEQUAL).count(), 4);
     assert_eq!(asm.iter().filter(|token| *token == OP_BOOLAND).count(), 3);
     assert!(
@@ -358,7 +359,7 @@ contract C() {
 "#,
     )
     .expect("helper parameter types stay inside the helper");
-    assert!(crate::common::arkade_asm(&after_call, "spend").contains(OP_NUMEQUALVERIFY));
+    assert!(common::arkade_asm(&after_call, "spend").contains(OP_NUMEQUALVERIFY));
 
     let after_block = compile(
         r#"
@@ -376,12 +377,12 @@ contract C() {
 "#,
     )
     .expect("block-local struct types end with the block");
-    assert!(crate::common::arkade_asm(&after_block, "spend").contains(OP_ENDIF));
+    assert!(common::arkade_asm(&after_block, "spend").contains(OP_ENDIF));
 }
 
 #[test]
 fn constructor_struct_arguments_expand_recursively() {
-    let output = crate::common::project(
+    let output = common::project(
         "main.ark",
         &[("main.ark", r#"
 import "child.ark";
@@ -493,11 +494,11 @@ contract C() {
     .expect("local struct array fields should support expression-indexed assignment");
 
     assert_eq!(output.functions.len(), 1);
-    let group = crate::common::group(&output, "spend");
+    let group = common::group(&output, "spend");
     assert_eq!(group.leaves.len(), 1);
     assert_eq!(group.leaves[0].name, "spend");
     assert_eq!(
-        crate::common::witness_names(&output, "spend", "spend"),
+        common::witness_names(&output, "spend", "spend"),
         ["operatorSig"]
     );
     assert!(group.leaves[0]
@@ -505,14 +506,11 @@ contract C() {
         .iter()
         .all(|w| w.elem_type == "signature" && w.injected));
     assert_eq!(
-        crate::common::leaf_asm(&output, "spend", "spend"),
+        common::leaf_asm(&output, "spend", "spend"),
         "<OPERATOR_KEY:spend> OP_CHECKSIG"
     );
     let script = group.arkade.as_ref().expect("spend Arkade Script");
-    assert_eq!(
-        crate::common::arkade_inputs(&output, "spend"),
-        ["index", "next"]
-    );
+    assert_eq!(common::arkade_inputs(&output, "spend"), ["index", "next"]);
     let asm = &script.asm;
     assert!(asm.iter().any(|token| token == OP_PUT), "{asm:?}");
     assert!(
@@ -745,15 +743,15 @@ contract C(Point origin, bytes32 t) {{
         let named = compile(&contract(named)).expect(named);
         let positional = compile(&contract(positional)).expect(positional);
         assert_eq!(
-            crate::common::arkade_asm_tokens(&named, "spend"),
-            crate::common::arkade_asm_tokens(&positional, "spend"),
+            common::arkade_asm_tokens(&named, "spend"),
+            common::arkade_asm_tokens(&positional, "spend"),
         );
     }
     // An exception list has no expected element type, so only a named literal fits it.
     let body = "require(this.tunnel(0, {script: true, value: true, assets: true}, [AssetId { txid: t, gidx: a }]));";
     let tunnel = compile(&contract(body)).expect(body);
     assert_eq!(
-        crate::common::arkade_asm_tokens(&tunnel, "spend"),
+        common::arkade_asm_tokens(&tunnel, "spend"),
         [
             "0",
             "7",
@@ -796,8 +794,8 @@ contract C(Point initial, Box box) {{
     ))
     .expect("deferred whole-value assignment");
     assert_eq!(
-        crate::common::arkade_asm_tokens(&initialized, "spend"),
-        crate::common::arkade_asm_tokens(&assigned, "spend"),
+        common::arkade_asm_tokens(&initialized, "spend"),
+        common::arkade_asm_tokens(&assigned, "spend"),
         "a copy initializer emits the whole-value assignment"
     );
 
@@ -998,19 +996,19 @@ contract C() {
     .expect("whole struct reassignment uses the existing flattened layout");
 
     assert_eq!(
-        crate::common::arkade_inputs(&output, "spend"),
+        common::arkade_inputs(&output, "spend"),
         ["base", "next", "index", "condition"]
     );
-    assert_eq!(crate::common::group(&output, "spend").leaves.len(), 1);
+    assert_eq!(common::group(&output, "spend").leaves.len(), 1);
     assert_eq!(
-        crate::common::witness_names(&output, "spend", "spend"),
+        common::witness_names(&output, "spend", "spend"),
         ["operatorSig"]
     );
     assert_eq!(
-        crate::common::leaf_asm(&output, "spend", "spend"),
+        common::leaf_asm(&output, "spend", "spend"),
         "<OPERATOR_KEY:spend> OP_CHECKSIG"
     );
-    let asm = crate::common::arkade_asm_tokens(&output, "spend");
+    let asm = common::arkade_asm_tokens(&output, "spend");
     assert!(asm.iter().any(|op| op == "OP_ECADD"));
     assert!(asm.iter().any(|op| op == "OP_ECMUL"));
     assert!(asm.iter().any(|op| op == OP_PUT));

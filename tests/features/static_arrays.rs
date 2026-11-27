@@ -1,4 +1,7 @@
+use crate::common;
 use crate::common::compile_unoptimized as compile;
+use arkade_compiler::models::ContractJson;
+use arkade_compiler::opcodes::OP_CHECKSIG;
 use arkade_compiler::opcodes::{
     OP_ADD, OP_CAT, OP_CHECKSIGFROMSTACK, OP_DUP, OP_NUMNOTEQUAL, OP_PUT, OP_VERIFY, OP_WITHIN,
 };
@@ -36,14 +39,14 @@ contract Sized(pubkey[2] owners) {
         "constructor inputs keep one entry per source parameter, sized"
     );
 
-    let inputs = crate::common::arkade_inputs(&output, "spend");
+    let inputs = common::arkade_inputs(&output, "spend");
     assert_eq!(
         inputs,
         vec!["sigs", "msg"],
         "Arkade Script inputs keep one entry per source parameter"
     );
 
-    let asm = crate::common::arkade_asm(&output, "spend");
+    let asm = common::arkade_asm(&output, "spend");
     for placeholder in ["<owners.0>", "<owners.1>"] {
         assert!(
             asm.contains(placeholder),
@@ -75,7 +78,7 @@ contract Quorum(pubkey[5] oracles) {
     )
     .expect("loop over a sized array must compile");
 
-    let asm = crate::common::arkade_asm_tokens(&output, "attest");
+    let asm = common::arkade_asm_tokens(&output, "attest");
     assert_eq!(
         asm.iter()
             .filter(|token| token.as_str() == OP_CHECKSIGFROMSTACK)
@@ -105,10 +108,10 @@ contract Counted(pubkey owner) {
     )
     .expect("counted loop must compile");
 
-    let asm = crate::common::arkade_asm_tokens(&output, "spend");
+    let asm = common::arkade_asm_tokens(&output, "spend");
     assert_eq!(
         asm.iter()
-            .filter(|token| token.as_str() == arkade_compiler::opcodes::OP_CHECKSIG)
+            .filter(|token| token.as_str() == OP_CHECKSIG)
             .count(),
         6,
         "counted loop unrolls its body once per iteration"
@@ -267,8 +270,8 @@ contract Sum(pubkey owner) {{
         expected.extend(["0x00", "OP_CAT", "OP_BIN2NUM", "OP_ADD"]);
     }
     expected.extend(["OP_ROT", "OP_NUMEQUAL", "OP_NIP"]);
-    assert_eq!(crate::common::arkade_asm_tokens(&range, "spend"), expected);
-    let bytes = |output: &arkade_compiler::models::ContractJson| {
+    assert_eq!(common::arkade_asm_tokens(&range, "spend"), expected);
+    let bytes = |output: &ContractJson| {
         let script = output.functions[0].arkade.as_ref().unwrap();
         script.costs[0].used
     };
@@ -309,8 +312,8 @@ contract Ranges(pubkey owner) {
 "#;
     for compile in [arkade_compiler::compile, compile] {
         assert_eq!(
-            crate::common::arkade_asm_tokens(&compile(looped).unwrap(), "spend"),
-            crate::common::arkade_asm_tokens(&compile(unrolled).unwrap(), "spend")
+            common::arkade_asm_tokens(&compile(looped).unwrap(), "spend"),
+            common::arkade_asm_tokens(&compile(unrolled).unwrap(), "spend")
         );
     }
 }
@@ -377,7 +380,7 @@ contract Bounds() {
     )
     .expect("runtime index must compile");
 
-    let asm = crate::common::arkade_asm_tokens(&output, "spend");
+    let asm = common::arkade_asm_tokens(&output, "spend");
     assert!(
         contains_tokens(&asm, &["OP_0", "OP_7", OP_WITHIN]),
         "bound check must compare against the declared size: {asm:?}"
@@ -434,7 +437,7 @@ contract Quorum(pubkey[5] oracles) {
     )
     .expect("arr.length must compile");
 
-    let asm = crate::common::arkade_asm_tokens(&output, "spend");
+    let asm = common::arkade_asm_tokens(&output, "spend");
     assert!(
         contains_tokens(&asm, &["OP_5", "OP_4", OP_ADD]),
         "each .length folds to its declared size: {asm:?}"
@@ -485,7 +488,7 @@ fn length_emits_the_same_assembly_as_its_equivalent() {
     };
     let asm = |body: &str| {
         let output = compile(&source(body)).unwrap_or_else(|error| panic!("{body}: {error}"));
-        crate::common::arkade_asm_tokens(&output, "spend")
+        common::arkade_asm_tokens(&output, "spend")
     };
     for (length, equivalent) in [
         ("require(data.length == 3);", "require(size(data) == 3);"),
@@ -529,7 +532,7 @@ contract Local(int limit) {
     )
     .expect("local array must compile");
 
-    let asm = crate::common::arkade_asm_tokens(&output, "spend");
+    let asm = common::arkade_asm_tokens(&output, "spend");
     assert!(
         contains_tokens(&asm, &["5", "2", "1"]),
         "elements are pushed deepest-last so element 0 sits closest to the top: {asm:?}"
@@ -555,7 +558,7 @@ contract Local() {
     )
     .expect("element assignment must compile");
 
-    let asm = crate::common::arkade_asm_tokens(&output, "spend");
+    let asm = common::arkade_asm_tokens(&output, "spend");
     assert!(
         contains_tokens(&asm, &["4", "OP_0", OP_PUT]),
         "assignment overwrites the element in place: {asm:?}"
@@ -577,7 +580,7 @@ contract Local() {
     )
     .expect("runtime expression-index assignment must compile");
 
-    let asm = crate::common::arkade_asm_tokens(&output, "spend");
+    let asm = common::arkade_asm_tokens(&output, "spend");
     assert!(
         contains_tokens(
             &asm,
@@ -692,7 +695,7 @@ contract Local(int limit) {
     )
     .expect("loop variables inside an array literal must be unrolled");
 
-    let asm = crate::common::arkade_asm_tokens(&output, "spend");
+    let asm = common::arkade_asm_tokens(&output, "spend");
     assert!(
         asm.iter().all(|token| !token.contains("$array:")),
         "internal bindings must not leak: {asm:?}"
@@ -714,7 +717,7 @@ contract Parts(bytes32 a, bytes32 b, bytes expected) {
     )
     .expect("byte concatenation inside an array literal must compile");
 
-    let asm = crate::common::arkade_asm_tokens(&output, "spend");
+    let asm = common::arkade_asm_tokens(&output, "spend");
     assert!(
         asm.iter().any(|token| token == OP_CAT),
         "adding two byte operands must emit {OP_CAT}, not arithmetic: {asm:?}"
@@ -778,7 +781,7 @@ contract Local() {
     )
     .expect("element assignment at a non-zero index must compile");
 
-    let asm = crate::common::arkade_asm_tokens(&output, "spend");
+    let asm = common::arkade_asm_tokens(&output, "spend");
     assert!(
         contains_tokens(&asm, &["9", "OP_1", OP_PUT]),
         "the write must replace the element at its own depth, not index 0's: {asm:?}"
@@ -805,10 +808,10 @@ contract Loops() {
     for output in [arkade_compiler::compile(source), compile(source)] {
         let output = output.expect("fixed-size array expressions are loop iterables");
         assert_eq!(
-            crate::common::opcode_count_in_arkade(&output, "spend", OP_NUMNOTEQUAL),
+            common::opcode_count_in_arkade(&output, "spend", OP_NUMNOTEQUAL),
             1,
             "the helper runs once, not once per element or read: {:?}",
-            crate::common::arkade_asm_tokens(&output, "spend")
+            common::arkade_asm_tokens(&output, "spend")
         );
     }
 

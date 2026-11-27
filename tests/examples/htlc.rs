@@ -1,3 +1,4 @@
+use crate::common;
 use arkade_compiler::compile_file;
 use arkade_compiler::opcodes::{
     OP_CHECKLOCKTIMEVERIFY, OP_CHECKSEQUENCEVERIFY, OP_CHECKSIG, OP_GREATERTHANOREQUAL, OP_HASH160,
@@ -5,6 +6,8 @@ use arkade_compiler::opcodes::{
 };
 use serde_json::Value;
 use std::fs;
+use std::path::Path;
+use std::process::Command;
 use tempfile::tempdir;
 
 // HTLC contract using the tapscript model.
@@ -42,7 +45,7 @@ fn test_htlc_contract() {
 
     // --- claim group -------------------------------------------------------
     // Arkade Script: checks output value >= input value
-    let claim_script = crate::common::arkade_asm(&output, "claim");
+    let claim_script = common::arkade_asm(&output, "claim");
     assert!(
         claim_script.contains(&format!(
             "OP_PUSHCURRENTINPUTINDEX {OP_INSPECTOUTPUTVALUE} OP_PUSHCURRENTINPUTINDEX {OP_INSPECTINPUTVALUE} {OP_GREATERTHANOREQUAL}"
@@ -57,7 +60,7 @@ fn test_htlc_contract() {
     );
 
     // Leaf: hash-preimage check + the operator key tweaked by claim
-    let claim_leaf = crate::common::leaf_asm(&output, "claim", "claim");
+    let claim_leaf = common::leaf_asm(&output, "claim", "claim");
     assert!(
         claim_leaf.contains(OP_HASH160),
         "claim leaf should hash the preimage: {claim_leaf}"
@@ -69,13 +72,13 @@ fn test_htlc_contract() {
 
     // Witness: preimage + operatorSig
     assert_eq!(
-        crate::common::witness_names(&output, "claim", "claim"),
+        common::witness_names(&output, "claim", "claim"),
         ["preimage", "operatorSig"]
     );
 
     // --- refund group ------------------------------------------------------
     // Arkade Script: checks output value >= input value
-    let refund_script = crate::common::arkade_asm(&output, "refund");
+    let refund_script = common::arkade_asm(&output, "refund");
     assert!(
         refund_script.contains(&format!(
             "OP_PUSHCURRENTINPUTINDEX {OP_INSPECTOUTPUTVALUE} OP_PUSHCURRENTINPUTINDEX {OP_INSPECTINPUTVALUE} {OP_GREATERTHANOREQUAL}"
@@ -90,7 +93,7 @@ fn test_htlc_contract() {
     );
 
     // Leaf: absolute timelock (CLTV) + the operator key tweaked by refund
-    let refund_leaf = crate::common::leaf_asm(&output, "refund", "refund");
+    let refund_leaf = common::leaf_asm(&output, "refund", "refund");
     assert!(
         refund_leaf.contains("<refundTime>"),
         "refund leaf should push refundTime: {refund_leaf}"
@@ -106,19 +109,19 @@ fn test_htlc_contract() {
 
     // Witness: operatorSig
     assert_eq!(
-        crate::common::witness_names(&output, "refund", "refund"),
+        common::witness_names(&output, "refund", "refund"),
         ["operatorSig"]
     );
 
     // --- unilateral group --------------------------------------------------
     // Standalone CSV exit leaf: no Arkade Script, pure Bitcoin.
-    let unilateral_group = crate::common::group(&output, "unilateral");
+    let unilateral_group = common::group(&output, "unilateral");
     assert!(
         unilateral_group.arkade.is_none(),
         "unilateral should have no Arkade Script"
     );
 
-    let unilateral_leaf = crate::common::leaf_asm(&output, "unilateral", "unilateral");
+    let unilateral_leaf = common::leaf_asm(&output, "unilateral", "unilateral");
     assert!(
         unilateral_leaf.contains("<OPERATOR_EXIT_DELAY>"),
         "unilateral leaf should push the operator exit delay: {unilateral_leaf}"
@@ -140,7 +143,7 @@ fn test_htlc_contract() {
 #[test]
 fn test_htlc_cli() {
     let temp_dir = tempdir().unwrap();
-    let input_path = std::path::Path::new(PATH);
+    let input_path = Path::new(PATH);
     let output_path = temp_dir.path().join("htlc.json");
 
     // Compile via library
@@ -148,7 +151,7 @@ fn test_htlc_cli() {
     assert!(result.is_ok());
 
     // Run the CLI command
-    let status = std::process::Command::new(env!("CARGO_BIN_EXE_arkadec"))
+    let status = Command::new(env!("CARGO_BIN_EXE_arkadec"))
         .arg(input_path.to_str().unwrap())
         .arg("-o")
         .arg(output_path.to_str().unwrap())

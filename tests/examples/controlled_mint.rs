@@ -1,8 +1,10 @@
+use crate::common;
 use arkade_compiler::compile;
 use arkade_compiler::opcodes::{
     OP_CHECKSIG, OP_FINDASSETGROUPBYASSETID, OP_INSPECTASSETGROUPCTRL, OP_INSPECTASSETGROUPSUM,
     OP_INSPECTOUTASSETLOOKUP, OP_SUB,
 };
+use std::process::Command;
 
 #[test]
 fn test_controlled_mint_contract() {
@@ -35,8 +37,8 @@ fn test_controlled_mint_contract() {
     assert_eq!(output.functions.len(), 4, "expected 4 groups");
 
     // Verify mint function
-    let mint_asm = crate::common::arkade_asm(&output, "mint");
-    let mint_inputs = &crate::common::group(&output, "mint")
+    let mint_asm = common::arkade_asm(&output, "mint");
+    let mint_inputs = &common::group(&output, "mint")
         .arkade
         .as_ref()
         .unwrap()
@@ -76,7 +78,7 @@ fn test_controlled_mint_contract() {
     );
 
     // Verify burn function
-    let burn_asm = crate::common::arkade_asm(&output, "burn");
+    let burn_asm = common::arkade_asm(&output, "burn");
 
     // Burn uses group sumInputs >= sumOutputs + amount
     assert!(
@@ -93,7 +95,7 @@ fn test_controlled_mint_contract() {
     );
 
     // Verify lockSupply function
-    let lock_asm = crate::common::arkade_asm(&output, "lockSupply");
+    let lock_asm = common::arkade_asm(&output, "lockSupply");
 
     // lockSupply checks sumOutputs == 0
     assert!(
@@ -106,7 +108,7 @@ fn test_controlled_mint_contract() {
     );
 
     // Unilateral exit leaf (CSV-based, pure L1)
-    let unilateral_asm = crate::common::leaf_asm(&output, "unilateral", "unilateral");
+    let unilateral_asm = common::leaf_asm(&output, "unilateral", "unilateral");
     assert!(
         unilateral_asm.contains("OP_CHECKSEQUENCEVERIFY"),
         "unilateral leaf should have CSV: {unilateral_asm}"
@@ -126,7 +128,7 @@ fn test_controlled_mint_cli() {
     let code = include_str!("../../examples/controlled_mint/controlled_mint.ark");
     fs::write(&input_path, code).unwrap();
 
-    let output = std::process::Command::new(env!("CARGO_BIN_EXE_arkadec"))
+    let output = Command::new(env!("CARGO_BIN_EXE_arkadec"))
         .arg(input_path.to_str().unwrap())
         .arg("-o")
         .arg(output_path.to_str().unwrap())

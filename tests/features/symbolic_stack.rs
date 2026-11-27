@@ -1,12 +1,14 @@
+use crate::common;
 use crate::common::compile_unoptimized as compile;
+use arkade_compiler::models::ArkadeScript;
 use arkade_compiler::opcodes::{
     OP_ADD, OP_DUP, OP_ELSE, OP_ENDIF, OP_GREATERTHAN, OP_GREATERTHANOREQUAL, OP_IF, OP_MUL,
     OP_PICK, OP_PUT, OP_ROLL, OP_VERIFY, OP_WITHIN,
 };
 
-fn arkade_script(source: &str, function: &str) -> arkade_compiler::models::ArkadeScript {
+fn arkade_script(source: &str, function: &str) -> ArkadeScript {
     let output = compile(source).unwrap_or_else(|error| panic!("compile failed: {error}"));
-    crate::common::group(&output, function)
+    common::group(&output, function)
         .arkade
         .clone()
         .expect("function must have an Arkade Script")
@@ -39,11 +41,11 @@ contract Shape(int limit) {
         serde_json::to_value(&raw).unwrap()["compiler"]["options"]["optimize"],
         false
     );
-    let raw_read = crate::common::arkade_asm_tokens(&raw, "read");
+    let raw_read = common::arkade_asm_tokens(&raw, "read");
     assert!(contains_tokens(&raw_read, &["OP_0", OP_PICK]));
     assert!(raw_read.ends_with(&[OP_VERIFY.to_string(), "OP_1".to_string()]));
     assert!(contains_tokens(
-        &crate::common::arkade_asm_tokens(&raw, "write"),
+        &common::arkade_asm_tokens(&raw, "write"),
         &["4", "OP_0", OP_PUT]
     ));
 
@@ -53,11 +55,11 @@ contract Shape(int limit) {
         true
     );
     assert_eq!(
-        crate::common::arkade_asm(&optimized, "read"),
+        common::arkade_asm(&optimized, "read"),
         "<limit> OP_DUP OP_NUMEQUAL"
     );
     assert_eq!(
-        crate::common::arkade_asm(&optimized, "write"),
+        common::arkade_asm(&optimized, "write"),
         "2 1 4 OP_NIP OP_ROT OP_OVER OP_GREATERTHANOREQUAL OP_NIP OP_NIP"
     );
 }
@@ -143,11 +145,11 @@ contract Mutate() {
     .expect("compile");
 
     assert_eq!(output.functions.len(), 1);
-    let group = crate::common::group(&output, "spend");
+    let group = common::group(&output, "spend");
     assert_eq!(group.leaves.len(), 1);
     assert_eq!(group.leaves[0].name, "spend");
     assert_eq!(
-        crate::common::witness_names(&output, "spend", "spend"),
+        common::witness_names(&output, "spend", "spend"),
         ["operatorSig"]
     );
     assert!(group.leaves[0]
@@ -155,14 +157,11 @@ contract Mutate() {
         .iter()
         .all(|w| w.elem_type == "signature" && w.injected));
     assert_eq!(
-        crate::common::leaf_asm(&output, "spend", "spend"),
+        common::leaf_asm(&output, "spend", "spend"),
         "<OPERATOR_KEY:spend> OP_CHECKSIG"
     );
     let script = group.arkade.as_ref().expect("spend Arkade Script");
-    assert_eq!(
-        crate::common::arkade_inputs(&output, "spend"),
-        ["value", "choose"]
-    );
+    assert_eq!(common::arkade_inputs(&output, "spend"), ["value", "choose"]);
 
     assert_eq!(
         script
@@ -243,11 +242,11 @@ contract RuntimeIndex() {
     .expect("compile");
 
     assert_eq!(output.functions.len(), 1);
-    let group = crate::common::group(&output, "spend");
+    let group = common::group(&output, "spend");
     assert_eq!(group.leaves.len(), 1);
     assert_eq!(group.leaves[0].name, "spend");
     assert_eq!(
-        crate::common::witness_names(&output, "spend", "spend"),
+        common::witness_names(&output, "spend", "spend"),
         ["operatorSig"]
     );
     assert!(group.leaves[0]
@@ -255,14 +254,11 @@ contract RuntimeIndex() {
         .iter()
         .all(|w| w.elem_type == "signature" && w.injected));
     assert_eq!(
-        crate::common::leaf_asm(&output, "spend", "spend"),
+        common::leaf_asm(&output, "spend", "spend"),
         "<OPERATOR_KEY:spend> OP_CHECKSIG"
     );
     let script = group.arkade.as_ref().expect("spend Arkade Script");
-    assert_eq!(
-        crate::common::arkade_inputs(&output, "spend"),
-        ["values", "index"]
-    );
+    assert_eq!(common::arkade_inputs(&output, "spend"), ["values", "index"]);
 
     for opcode in [OP_WITHIN, OP_DUP, OP_PICK] {
         assert!(
@@ -423,7 +419,7 @@ contract Paths(int unused, int left, int right, pubkey exitKey, int delay) {
     assert_eq!(output.parameters.len(), 5);
     assert_eq!(output.functions.len(), 4);
     for (name, parameter) in [("first", "left"), ("second", "right")] {
-        let group = crate::common::group(&output, name);
+        let group = common::group(&output, name);
         let script = group.arkade.as_ref().unwrap();
         assert_eq!(
             script.asm,
@@ -432,28 +428,22 @@ contract Paths(int unused, int left, int right, pubkey exitKey, int delay) {
                 .map(String::from)
                 .collect::<Vec<_>>()
         );
-        assert_eq!(crate::common::arkade_inputs(&output, name), ["value"]);
+        assert_eq!(common::arkade_inputs(&output, name), ["value"]);
         assert_eq!(group.leaves.len(), 1);
+        assert_eq!(common::witness_names(&output, name, name), ["operatorSig"]);
         assert_eq!(
-            crate::common::witness_names(&output, name, name),
-            ["operatorSig"]
-        );
-        assert_eq!(
-            crate::common::leaf_asm(&output, name, name),
+            common::leaf_asm(&output, name, name),
             format!("<OPERATOR_KEY:{name}> OP_CHECKSIG")
         );
     }
     assert_eq!(
-        crate::common::arkade_asm_tokens(&output, "neither"),
+        common::arkade_asm_tokens(&output, "neither"),
         ["OP_1", "OP_VERIFY", "OP_1"]
     );
-    assert!(crate::common::group(&output, "exit").arkade.is_none());
+    assert!(common::group(&output, "exit").arkade.is_none());
+    assert_eq!(common::witness_names(&output, "exit", "exit"), ["ownerSig"]);
     assert_eq!(
-        crate::common::witness_names(&output, "exit", "exit"),
-        ["ownerSig"]
-    );
-    assert_eq!(
-        crate::common::leaf_asm(&output, "exit", "exit"),
+        common::leaf_asm(&output, "exit", "exit"),
         "<delay> OP_CHECKSEQUENCEVERIFY OP_DROP <exitKey> OP_CHECKSIG"
     );
 }
@@ -478,7 +468,7 @@ fn constructor_references_cover_nested_bodies_and_named_operands() {
             .collect(),
         )
         .unwrap();
-        crate::common::group(&output, name).arkade.clone().unwrap()
+        common::group(&output, name).arkade.clone().unwrap()
     };
     for (parameters, inputs, body, expected) in [
         ("int limit, int alternate, bool choose", "int value",
@@ -838,7 +828,7 @@ fn else_if_compiles_as_the_nested_else_block() {
         "if (x == 1) { y = y + 1; } else { if (x == 2) { y = y * 2; } else { require(x > 2); } }",
     );
     for compile in [compile, arkade_compiler::compile] {
-        let asm = |source: &str| crate::common::arkade_asm(&compile(source).unwrap(), "spend");
+        let asm = |source: &str| common::arkade_asm(&compile(source).unwrap(), "spend");
         assert_eq!(asm(&chained), asm(&nested));
         assert_eq!(asm(&chained).matches(OP_IF).count(), 2, "{}", asm(&chained));
     }

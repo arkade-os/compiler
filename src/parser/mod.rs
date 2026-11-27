@@ -1,28 +1,33 @@
-use crate::diagnostics::CompileError;
-use crate::models::{
-    ArraySize, AssignmentTarget, Attribute, AttributeArg, Constant, Contract, ExprKind, Expression,
-    Function, LocatedStatement, Parameter, Statement, StructDefinition, TypeName,
-};
+//! Parses Arkade source into a `Contract` AST with pest, rewriting pest errors into
+//! source-language messages. Expressions, `tx`/`this` chains, casts and tapscript bodies are
+//! mapped in the submodules.
+
+use std::ops::Range;
+use std::sync::Mutex;
+use std::{array, iter, mem};
+
+use pest::error::Error as PestError;
 use pest::iterators::{Pair, Pairs};
 use pest::Parser;
 use pest_derive::Parser;
 
-/// Pest parser generated from grammar.pest
+use crate::diagnostics::{CompileError, Diagnostic, Span};
+use crate::models::{
+    ArraySize, AssignmentTarget, Attribute, AttributeArg, Constant, Contract, ExprKind, Expression,
+    Function, LocatedStatement, NamedTapscript, Parameter, Statement, StructDefinition, TypeName,
+};
+use crate::{builtins, compiler};
+
 #[derive(Parser)]
 #[grammar = "parser/grammar.pest"]
 pub struct ArkadeParser;
 
-// Parser split into domain submodules. Each declares its pub(crate)
-// parse_* helpers; siblings reach them via `use super::*`.
-mod crypto;
+mod casts;
 mod expr;
 mod introspection;
 mod tapscript;
 
-pub(crate) use crypto::*;
-pub(crate) use expr::*;
-pub(crate) use introspection::*;
-pub(crate) use tapscript::*;
+pub(crate) use expr::reserved_function_signature;
 
 #[cfg(test)]
 pub fn parse(source: &str) -> Result<Contract, String> {
@@ -30,9 +35,7 @@ pub fn parse(source: &str) -> Result<Contract, String> {
 }
 
 /// Each import's path and the span of its statement.
-pub(crate) fn imports(
-    pairs: &Pairs<'_, Rule>,
-) -> Result<Vec<(String, crate::diagnostics::Span)>, String> {
+pub(crate) fn imports(pairs: &Pairs<'_, Rule>) -> Result<Vec<(String, Span)>, String> {
     pairs
         .clone()
         .next()
@@ -42,16 +45,15 @@ pub(crate) fn imports(
         .map(|p| {
             let span = p.as_span().into();
             let path = p.into_inner().next().expect("import path");
-            Ok((parse_string_literal(path.as_str())?, span))
+            Ok((expr::parse_string_literal(path.as_str())?, span))
         })
         .collect()
 }
 
 /// Fail at the leading pragma of `source` when compiler `version` satisfies none of its
-/// alternatives. Only `version`'s major.minor.patch counts, so a prerelease satisfies what its
-/// release does. The pragma is parsed on its own, so a file written for another compiler fails
-/// here rather than on syntax this one does not know; an absent or malformed pragma passes, and
-/// the full parse reports a malformed one.
+/// alternatives; only major.minor.patch counts, so a prerelease satisfies what its release does.
+/// The pragma is parsed alone so a file for another compiler fails here, not on syntax this one
+/// lacks. An absent or malformed pragma passes; the full parse reports a malformed one.
 pub(crate) fn check_pragma(source: &str, version: &str) -> Result<(), CompileError> {
     let Ok(mut head) = ArkadeParser::parse(Rule::pragma_head, source) else {
         return Ok(());
@@ -94,13 +96,12 @@ pub(crate) fn check_pragma(source: &str, version: &str) -> Result<(), CompileErr
     .at(pragma.as_span().into()))
 }
 
-/// The major, minor and patch numbers that start `version`.
 fn version_numbers(version: &str) -> [u64; 3] {
     // A component beyond u64 saturates; the compiler's own never does, so comparisons stay exact.
     let mut parts = version
         .split(['.', '-', '+'])
         .map(|part| part.parse().unwrap_or(u64::MAX));
-    std::array::from_fn(|_| parts.next().expect("three version components"))
+    array::from_fn(|_| parts.next().expect("three version components"))
 }
 
 /// Whether `version` satisfies `operator` `wanted`, with npm's caret and tilde ranges.
@@ -118,7 +119,6 @@ fn satisfies(operator: &str, wanted: [u64; 3], version: [u64; 3]) -> bool {
     }
 }
 
-/// Parse a source file, naming expected tokens in source terms instead of grammar rules.
 #[cfg(test)]
 pub(crate) fn parse_main(source: &str) -> Result<Pairs<'_, Rule>, String> {
     try_parse(source).map_err(|e| format!("Parse error: {e}"))
@@ -126,7 +126,7 @@ pub(crate) fn parse_main(source: &str) -> Result<Pairs<'_, Rule>, String> {
 
 /// Rewrite a pest error in source-language terms: report the farthest position
 /// reached, quote the closing tokens expected there, and name rules in plain words.
-fn readable_error(error: pest::error::Error<Rule>, source: &str) -> pest::error::Error<Rule> {
+fn readable_error(error: PestError<Rule>, source: &str) -> PestError<Rule> {
     use pest::error::{Error, ErrorVariant, InputLocation};
     let Some(attempts) = error.parse_attempts() else {
         return error;
@@ -171,11 +171,11 @@ fn readable_error(error: pest::error::Error<Rule>, source: &str) -> pest::error:
     let mut at = attempts.max_position;
     if let Some(open) = unterminated {
         at = open;
-    } else if let Some((word, start, end)) = lone_word(source, at) {
-        let message = format!("`{word}` on its own is not a statement");
+    } else if let Some(word) = lone_word(source, at) {
+        let message = format!("`{}` on its own is not a statement", &source[word.clone()]);
         return match (
-            pest::Position::new(source, start),
-            pest::Position::new(source, end),
+            pest::Position::new(source, word.start),
+            pest::Position::new(source, word.end),
         ) {
             (Some(start), Some(end)) => {
                 Error::new_from_span(ErrorVariant::CustomError { message }, start.span(&end))
@@ -202,7 +202,6 @@ fn missing_at(source: &str, at: usize) -> usize {
     }
 }
 
-/// `text` without the whitespace and comments that end it.
 pub(crate) fn trim_trivia_end(text: &str) -> &str {
     &text[..code_end(text, text.len())]
 }
@@ -212,16 +211,15 @@ fn code_end(source: &str, at: usize) -> usize {
     code(&source[..at]).last().map_or(0, |code| code.end)
 }
 
-/// `text` without the whitespace and comments the grammar allows between terms.
 pub(crate) fn without_trivia(text: &str) -> String {
     code(text).map(|code| &text[code]).collect()
 }
 
 /// The byte ranges of `source` that are code: each character outside comments, string literal
 /// contents and escapes included, other than whitespace outside string literals.
-fn code(source: &str) -> impl Iterator<Item = std::ops::Range<usize>> + '_ {
+fn code(source: &str) -> impl Iterator<Item = Range<usize>> + '_ {
     let (mut i, mut quoted) = (0, false);
-    std::iter::from_fn(move || loop {
+    iter::from_fn(move || loop {
         let c = source[i..].chars().next()?;
         if let Some(comment) = comment_len(&source[i..]).filter(|_| !quoted) {
             i += comment;
@@ -265,9 +263,9 @@ pub(crate) fn comment_len(text: &str) -> Option<usize> {
     Some(body.find("*/").map_or(text.len(), |end| end + 4))
 }
 
-/// A single word that starts a statement and ends the code before `at`, as in `dasd` left on its
-/// own line: the word and its byte range.
-fn lone_word(source: &str, at: usize) -> Option<(&str, usize, usize)> {
+/// The range of a word that starts a statement and ends the code before `at`, as `dasd` on its
+/// own line.
+fn lone_word(source: &str, at: usize) -> Option<Range<usize>> {
     let end = code_end(source, at);
     let start = source[..end]
         .trim_end_matches(|c: char| c.is_ascii_alphanumeric() || c == '_')
@@ -281,7 +279,7 @@ fn lone_word(source: &str, at: usize) -> Option<(&str, usize, usize)> {
         && starts_statement
         && !keyword
         && !split;
-    lone.then_some((word, start, end))
+    lone.then_some(start..end)
 }
 
 fn rule_term(rule: &Rule) -> Option<String> {
@@ -320,8 +318,8 @@ fn rule_term(rule: &Rule) -> Option<String> {
         | Rule::empty_list => "an expression",
         Rule::number_literal => "a number",
         Rule::string_literal => "a string",
-        // ponytail: unmapped rules fall back to their grammar name with spaces, and a keyword
-        // rule to its quoted keyword; map any that show up confusingly in real errors.
+        // LIMITATION: unmapped rules read as their grammar name with spaces, or a keyword rule
+        // as its quoted keyword; map any that read confusingly in real errors.
         other => {
             let name = format!("{other:?}");
             return Some(match name.strip_suffix("_keyword") {
@@ -333,14 +331,13 @@ fn rule_term(rule: &Rule) -> Option<String> {
     Some(term.to_string())
 }
 
-/// The raw pest parse, with the error already rewritten in source-language
-/// terms by `readable_error`. Used where the byte position of a failure
-/// matters, e.g. `check()`, instead of `parse_main`'s rendered string.
-pub(crate) fn try_parse(source: &str) -> Result<Pairs<'_, Rule>, pest::error::Error<Rule>> {
+/// The raw pest parse, its error rewritten by `readable_error`, for callers that need the
+/// failure's byte position rather than a rendered message.
+pub(crate) fn try_parse(source: &str) -> Result<Pairs<'_, Rule>, PestError<Rule>> {
     // Tracking parse attempts, which only the error message needs, slows every parse, so a
     // failed parse is repeated with it unless it was already on, which an error with attempts
     // shows. The flag is global: only the lock holder turns it on, and back off.
-    static DETAILED: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    static DETAILED: Mutex<()> = Mutex::new(());
     ArkadeParser::parse(Rule::main, source)
         .or_else(|error| {
             if error.parse_attempts().is_some() {
@@ -358,10 +355,10 @@ pub(crate) fn try_parse(source: &str) -> Result<Pairs<'_, Rule>, pest::error::Er
 }
 
 pub(crate) fn parse_error_diagnostic(
-    error: &pest::error::Error<Rule>,
+    error: &PestError<Rule>,
     file: &str,
     source: &str,
-) -> crate::diagnostics::Diagnostic {
+) -> Diagnostic {
     use pest::error::InputLocation;
     let (start, end) = match error.location {
         // A point location still needs a non-empty span to underline: cover the
@@ -376,11 +373,9 @@ pub(crate) fn parse_error_diagnostic(
         },
         InputLocation::Span((start, end)) => (start, end),
     };
-    crate::diagnostics::Diagnostic::error(file, error.variant.message().into_owned())
-        .with_span(crate::diagnostics::Span { start, end })
+    Diagnostic::error(file, error.variant.message().into_owned()).with_span(Span { start, end })
 }
 
-/// Build a Contract AST from parsed Pest pairs
 pub(crate) fn build_ast(
     pairs: Pairs<Rule>,
     constants: &[Constant],
@@ -407,14 +402,13 @@ pub(crate) fn build_ast(
                     match inner_pair.as_rule() {
                         Rule::attribute => attributes.push(parse_attribute(inner_pair)?),
                         Rule::import_stmt => {
-                            // Extract the import path (string literal without quotes)
                             if let Some(path_pair) = inner_pair.into_inner().next() {
-                                let path = parse_string_literal(path_pair.as_str())?;
+                                let path = expr::parse_string_literal(path_pair.as_str())?;
                                 contract.imports.push(path);
                             }
                         }
                         Rule::contract | Rule::library => {
-                            contract.attributes = std::mem::take(&mut attributes);
+                            contract.attributes = mem::take(&mut attributes);
                             parse_contract(&mut contract, inner_pair)?;
                         }
                         Rule::struct_definition => {
@@ -437,7 +431,6 @@ pub(crate) fn build_ast(
     Ok(contract)
 }
 
-/// Parse `@name(arg, ...)`.
 fn parse_attribute(pair: Pair<Rule>) -> Result<Attribute, String> {
     let span = pair.as_span().into();
     let mut inner = pair.into_inner();
@@ -447,7 +440,7 @@ fn parse_attribute(pair: Pair<Rule>) -> Result<Attribute, String> {
             let span = arg.as_span().into();
             Ok(match arg.as_rule() {
                 Rule::string_literal => {
-                    AttributeArg::Text(parse_string_literal(arg.as_str())?, span)
+                    AttributeArg::Text(expr::parse_string_literal(arg.as_str())?, span)
                 }
                 _ => AttributeArg::Name(arg.as_str().to_string(), span),
             })
@@ -489,18 +482,15 @@ fn parse_struct_definition(pair: Pair<Rule>) -> Result<StructDefinition, String>
     Ok(StructDefinition { name, fields, span })
 }
 
-/// Parse a contract or library definition.
 fn parse_contract(contract: &mut Contract, pair: Pair<Rule>) -> Result<(), CompileError> {
     contract.is_library = pair.as_rule() == Rule::library;
     contract.declaration = pair.as_span().into();
     let mut inner_pairs = pair.into_inner().peekable();
 
-    // Contract name (required)
     let name = inner_pairs.next().ok_or("Missing contract name")?;
     contract.name = name.as_str().to_string();
     contract.span = name.as_span().into();
 
-    // Parameters (optional)
     if !contract.is_library {
         if let Some(param_list) = inner_pairs.next() {
             contract.parameters = parse_parameters(param_list)?;
@@ -516,7 +506,7 @@ fn parse_contract(contract: &mut Contract, pair: Pair<Rule>) -> Result<(), Compi
         })
         .collect::<Result<Vec<_>, _>>()?;
     contract.constants.extend(constants);
-    crate::compiler::resolve_constants(contract)?;
+    compiler::resolve_constants(contract)?;
     let mut parsing_constants = contract.constants.clone();
     parsing_constants.extend(
         contract
@@ -530,8 +520,6 @@ fn parse_contract(contract: &mut Contract, pair: Pair<Rule>) -> Result<(), Compi
             }),
     );
 
-    // Arkade Script and tapscript functions share the `function` rule;
-    // a tapscript carries a `tapscript_block` body.
     let mut attributes = Vec::new();
     for func_pair in inner_pairs {
         match func_pair.as_rule() {
@@ -542,18 +530,18 @@ fn parse_contract(contract: &mut Contract, pair: Pair<Rule>) -> Result<(), Compi
             Rule::function => {}
             _ => continue,
         }
-        let attributes = std::mem::take(&mut attributes);
-        if function_pair_is_tapscript(&func_pair) {
+        let attributes = mem::take(&mut attributes);
+        if tapscript::function_pair_is_tapscript(&func_pair) {
             let span = func_pair.as_span().into();
             if contract.is_library {
                 let message = "libraries cannot declare tapscript functions";
                 return Err(CompileError::from(message).at(span));
             }
-            let ts = parse_named_tapscript(func_pair, &parsing_constants)
+            let ts = tapscript::parse_named_tapscript(func_pair, &parsing_constants)
                 .map_err(|error| error.at(span))?;
             contract
                 .tapscripts
-                .push(crate::models::NamedTapscript { attributes, ..ts });
+                .push(NamedTapscript { attributes, ..ts });
         } else {
             let func = parse_function(func_pair, &parsing_constants, contract.is_library)?;
             contract.functions.push(Function { attributes, ..func });
@@ -568,7 +556,7 @@ fn parse_const_decl(pair: Pair<Rule>) -> Result<Constant, String> {
         .filter(|p| p.as_rule() != Rule::const_keyword);
     let const_type = parse_data_type(inner.next().ok_or("Missing constant type")?);
     let name = inner.next().ok_or("Missing constant name")?;
-    let value = parse_general_expression(inner.next().ok_or("Missing constant value")?)?;
+    let value = expr::parse_general_expression(inner.next().ok_or("Missing constant value")?)?;
     Ok(Constant {
         name: name.as_str().to_string(),
         const_type,
@@ -577,7 +565,6 @@ fn parse_const_decl(pair: Pair<Rule>) -> Result<Constant, String> {
     })
 }
 
-/// Parse a function definition
 fn parse_function(
     pair: Pair<Rule>,
     constants: &[Constant],
@@ -597,7 +584,7 @@ fn parse_function(
     let is_private = is_library || !visibility.is_empty();
     let is_exported = is_static && visibility != "private";
     let name = inner.next().ok_or("Missing function name")?;
-    let span = crate::diagnostics::Span {
+    let span = Span {
         start: name.as_span().start(),
         end: name.as_span().end(),
     };
@@ -623,7 +610,7 @@ fn parse_function(
     })
 }
 
-/// Parse a function body or block: statements, each after its own attributes.
+/// A function body or block's statements, each after its own attributes.
 fn parse_statements<'a>(
     function_name: &str,
     pairs: impl Iterator<Item = Pair<'a, Rule>>,
@@ -639,22 +626,21 @@ fn parse_statements<'a>(
         }
         let statement = parse_statement(function_name, pair, constants).map_err(|e| e.at(span))?;
         statements.extend(statement.map(|statement| LocatedStatement {
-            attributes: std::mem::take(&mut attributes),
+            attributes: mem::take(&mut attributes),
             ..statement
         }));
     }
     Ok(statements)
 }
 
-/// Parse a statement in a function body (require, let binding, function call, variable declaration)
 fn parse_statement(
     function_name: &str,
     pair: Pair<Rule>,
     constants: &[Constant],
 ) -> Result<Option<LocatedStatement>, CompileError> {
-    let mut span: crate::diagnostics::Span = pair.as_span().into();
+    let mut span: Span = pair.as_span().into();
     let mut names = Vec::new();
-    let mut branches: Vec<crate::diagnostics::Span> = Vec::new();
+    let mut branches: Vec<Span> = Vec::new();
     let mut message = None;
     let statement = match pair.as_rule() {
         Rule::require_stmt => {
@@ -668,10 +654,10 @@ fn parse_statement(
                     .into())
                 }
             };
-            let condition = parse_general_expression(expr)?;
+            let condition = expr::parse_general_expression(expr)?;
 
             if let Some(text) = inner.next() {
-                message = Some(parse_string_literal(text.as_str())?);
+                message = Some(expr::parse_string_literal(text.as_str())?);
             }
 
             Statement::Require(condition)
@@ -686,7 +672,7 @@ fn parse_statement(
             let value_pair = inner
                 .next()
                 .ok_or_else(|| "Parse error: Missing value in let binding".to_string())?;
-            let value = parse_general_expression(value_pair)?;
+            let value = expr::parse_general_expression(value_pair)?;
 
             Statement::LetBinding {
                 name,
@@ -704,7 +690,7 @@ fn parse_statement(
             let value_pair = inner
                 .next()
                 .ok_or_else(|| "Parse error: Missing value in assignment".to_string())?;
-            let value = parse_general_expression(value_pair)?;
+            let value = expr::parse_general_expression(value_pair)?;
 
             Statement::VarAssign { target, value }
         }
@@ -713,7 +699,7 @@ fn parse_statement(
             let condition_pair = inner
                 .next()
                 .ok_or_else(|| "Parse error: Missing condition in if statement".to_string())?;
-            let condition = parse_general_expression(condition_pair)?;
+            let condition = expr::parse_general_expression(condition_pair)?;
 
             let then_block = inner
                 .next()
@@ -726,7 +712,7 @@ fn parse_statement(
                     branches.push(else_block.as_span().into());
                     Some(match else_block.as_rule() {
                         Rule::if_stmt => {
-                            parse_statements(function_name, std::iter::once(else_block), constants)?
+                            parse_statements(function_name, iter::once(else_block), constants)?
                         }
                         _ => parse_block(function_name, else_block, constants)?,
                     })
@@ -757,16 +743,13 @@ fn parse_statement(
                     let value_var = inner.next().ok_or_else(|| {
                         "Parse error: Missing value variable in for loop".to_string()
                     })?;
-                    names.extend(
-                        [index_var.as_span(), value_var.as_span()]
-                            .map(crate::diagnostics::Span::from),
-                    );
+                    names.extend([index_var.as_span(), value_var.as_span()].map(Span::from));
                     let (index_var, value_var) = (
                         index_var.as_str().to_string(),
                         value_var.as_str().to_string(),
                     );
                     let iterable =
-                        parse_general_expression(inner.next().ok_or_else(|| {
+                        expr::parse_general_expression(inner.next().ok_or_else(|| {
                             "Parse error: Missing iterable in for loop".to_string()
                         })?)?;
                     let body = parse_block(
@@ -785,7 +768,7 @@ fn parse_statement(
                 }
                 Rule::for_count_stmt => {
                     let count =
-                        parse_general_expression(inner.next().ok_or_else(|| {
+                        expr::parse_general_expression(inner.next().ok_or_else(|| {
                             "Parse error: Missing count in for loop".to_string()
                         })?)?;
                     let body = parse_block(
@@ -814,8 +797,8 @@ fn parse_statement(
                     };
                     Statement::ForRange {
                         index_var: index_var.as_str().to_string(),
-                        start: Box::new(parse_general_expression(start)?),
-                        end: Box::new(parse_general_expression(end)?),
+                        start: Box::new(expr::parse_general_expression(start)?),
+                        end: Box::new(expr::parse_general_expression(end)?),
                         body: parse_block(function_name, body, constants)?,
                     }
                 }
@@ -833,22 +816,22 @@ fn parse_statement(
                 name.push(part.as_str());
             };
             let name = name.join(".");
-            if name == "this.tunnel" || crate::builtins::find(&name).is_some() {
+            if name == "this.tunnel" || builtins::find(&name).is_some() {
                 return Err(CompileError::from(format!(
                     "`{name}(...)` cannot be a statement; use it inside require()"
                 )));
             }
-            let span = crate::diagnostics::Span {
+            let span = Span {
                 start: span.start,
                 end: args.as_span().end(),
             };
-            Statement::Call(parse_call(name, args.into_inner().collect(), span)?)
+            Statement::Call(expr::parse_call(name, args.into_inner().collect(), span)?)
         }
         Rule::return_stmt => {
             let value = pair
                 .into_inner()
                 .nth(1)
-                .map(parse_general_expression)
+                .map(expr::parse_general_expression)
                 .transpose()?;
             Statement::Return(value)
         }
@@ -868,7 +851,7 @@ fn parse_statement(
                 Some(value) => Statement::LetBinding {
                     name,
                     declared_type: Some(declared_type),
-                    value: parse_general_expression(value)?,
+                    value: expr::parse_general_expression(value)?,
                 },
                 None => Statement::Declaration {
                     name,
@@ -902,9 +885,6 @@ fn parse_assignment_target(pair: Pair<Rule>) -> Result<AssignmentTarget, String>
     })
 }
 
-// ─── Expression Parsing ────────────────────────────────────────────────────────
-
-// Parse a block of statements
 fn parse_block(
     function_name: &str,
     pair: Pair<Rule>,
@@ -926,7 +906,6 @@ pub(crate) fn parse_data_type(type_pair: Pair<Rule>) -> TypeName {
     )
 }
 
-/// Parse parameter list from contracts or functions
 pub(crate) fn parse_parameters(params: Pair<Rule>) -> Result<Vec<Parameter>, String> {
     let mut parameters = Vec::new();
     for param_pair in params.into_inner() {
@@ -951,9 +930,13 @@ pub(crate) fn parse_parameters(params: Pair<Rule>) -> Result<Vec<Parameter>, Str
 
 #[cfg(test)]
 mod tests {
+    use std::sync::mpsc;
+    use std::thread;
+    use std::time::Duration;
+
     use super::parse;
     use crate::models::{
-        AssignmentTarget, Attribute, AttributeArg, ExprKind, Expression, Statement,
+        self, AssignmentTarget, Attribute, AttributeArg, ExprKind, Expression, Function, Statement,
     };
     use crate::operators::UnaryOperator;
     use crate::properties::TxProperty;
@@ -1023,7 +1006,6 @@ mod tests {
             );
             Ok(value.kind)
         };
-        // A member call resolves by its member: a group's `controlIs`, a `tx` or `this` member.
         assert!(matches!(
             value("g.controlIs(id)"),
             Ok(ExprKind::GroupControlIs { .. })
@@ -1087,7 +1069,6 @@ mod tests {
             .contains("wrong arguments to `this.tunnel`"));
         assert!(matches!(value("bytes32(x)"), Ok(ExprKind::Cast { .. })));
         assert!(matches!(value("int(0x0100)"), Ok(ExprKind::Literal(value)) if value == "256"));
-        // Fields after a member apply to its value.
         assert!(matches!(
             value("tx.inputs[0].script.program"),
             Ok(ExprKind::FieldAccess { value, .. }) if matches!(value.kind, ExprKind::InputIntrospection { .. })
@@ -1100,7 +1081,6 @@ mod tests {
         assert!(
             matches!(value("Lib.length(x)"), Ok(ExprKind::Call { name, .. }) if name == "Lib.length")
         );
-        // A chain no member spells keeps its spelling, strings included, for validation to report.
         for (chain, path) in [
             ("tx.inputs[0].valueX", "tx.inputs[0].valueX"),
             (
@@ -1117,7 +1097,6 @@ mod tests {
         for call in ["a.b.c(x)", "f(x).controlIs(id)", "(Lib).f(x)"] {
             assert!(value(call).unwrap_err().contains("cannot call"), "{call}");
         }
-        // A call statement names its function.
         for (call, name) in [
             ("g.controlIs(id)", "g.controlIs"),
             ("Lib . check(x)", "Lib.check"),
@@ -1134,8 +1113,8 @@ mod tests {
     #[test]
     fn nested_operands_parse_in_linear_time() {
         // Each operand has one parse, so a failure deep inside one is never retried by another.
-        let (sender, receiver) = std::sync::mpsc::channel();
-        std::thread::spawn(move || {
+        let (sender, receiver) = mpsc::channel();
+        thread::spawn(move || {
             let nested = [
                 "Lib.f(",
                 "size(tx.packet(",
@@ -1153,7 +1132,7 @@ mod tests {
             }
             sender.send(()).unwrap();
         });
-        let parsed = receiver.recv_timeout(std::time::Duration::from_secs(10));
+        let parsed = receiver.recv_timeout(Duration::from_secs(10));
         assert!(
             parsed.is_ok(),
             "deeply nested operands did not parse in time"
@@ -1284,7 +1263,7 @@ mod tests {
         let contract = parse(source).unwrap();
         assert_eq!(contract.name, "contractor");
         assert_eq!(contract.structs[0].name, "structure");
-        let names = |functions: &[crate::models::Function]| -> Vec<String> {
+        let names = |functions: &[Function]| -> Vec<String> {
             functions.iter().map(|f| f.name.clone()).collect()
         };
         assert_eq!(names(&contract.functions), ["format", "tapscriptX"]);
@@ -1390,7 +1369,7 @@ mod tests {
         let text = |e: &Expression| &source[e.span.start..e.span.end];
         fn walk<'a>(e: &'a Expression, out: &mut Vec<&'a Expression>) {
             out.push(e);
-            for child in crate::models::child_exprs(e) {
+            for child in models::child_exprs(e) {
                 assert!(
                     e.span.start <= child.span.start && child.span.end <= e.span.end,
                     "{child:?} escapes {e:?}"
@@ -1626,7 +1605,6 @@ contract C(pubkey k, int unused) {
             "struct Grid { int[2][N] cells; } contract C(pubkey[4][2][3] keys) { function spend(int [N] [M] grid) { int[2][3] local = [[1, 2, 3], [4, 5, 6]]; require(true); } }",
         )
         .unwrap();
-        // `T[a][b]` is `a` elements of `T[b]`.
         assert_eq!(
             contract.structs[0].fields[0].param_type,
             array(array(int(), "N"), "2")
@@ -1840,7 +1818,7 @@ contract C() {
             panic!("{right:?}");
         };
         assert!(matches!(&script.kind, ExprKind::OutputIntrospection { .. }));
-        // A grouped binding keeps its binding path.
+        // A parenthesized binding, `(p).x`, still parses as the plain path `p.x`.
         assert!(matches!(
             &statements[1].statement,
             Statement::Require(Expression { kind: ExprKind::BinaryOp { left, .. }, .. })
@@ -2052,7 +2030,6 @@ contract Demo(pubkey first, pubkey second) {{
         ] {
             assert!(parse(source).is_err(), "{source}");
         }
-        // Reported where it opens, also after the contract, where pest does not name `*/`.
         let error = parse("contract C() {}\n/* unterminated").unwrap_err();
         assert!(
             error.contains("--> 2:1") && error.contains("expected '*/'"),
@@ -2087,7 +2064,6 @@ contract Demo(pubkey first, pubkey second) {{
         assert_eq!(contract.parameters.len(), 2);
         assert_eq!(contract.functions[0].parameters.len(), 3);
         assert_eq!(contract.functions[0].statements.len(), 10);
-        // A lone quoted proof path is still checked at compile time.
         let error = parse(r#"contract C() { function spend() { let f = tx.proof.field("Bad Path",); require(f == f); } }"#).unwrap_err();
         assert!(error.contains("invalid proof message path"), "{error}");
         for list in [

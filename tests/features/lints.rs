@@ -1,6 +1,10 @@
+use crate::common;
+use arkade_compiler::errors::ErrorCode;
 use arkade_compiler::lint::{Level, Levels, Lint};
 use arkade_compiler::{analyze, Diagnostic, Severity};
 use std::collections::BTreeMap;
+use std::fs;
+use std::process::Command;
 
 fn diagnostics_with(source: &str, levels: &Levels) -> Vec<Diagnostic> {
     let files = BTreeMap::from([("main.ark".to_string(), source.to_string())]);
@@ -381,13 +385,13 @@ fn malformed_lint_attributes_are_errors() {
 fn the_cli_applies_lint_levels() {
     let dir = tempfile::tempdir().unwrap();
     let source = dir.path().join("c.ark");
-    std::fs::write(
+    fs::write(
         &source,
         "contract C(int n) { function f(int x) { require(x == n); } }",
     )
     .unwrap();
     let run = |args: &[&str]| {
-        let output = std::process::Command::new(env!("CARGO_BIN_EXE_arkadec"))
+        let output = Command::new(env!("CARGO_BIN_EXE_arkadec"))
             .arg(&source)
             .arg("-o")
             .arg(dir.path().join("c.json"))
@@ -564,7 +568,7 @@ fn a_helper_call_counts_as_a_use_and_an_empty_branch_does_not() {
         "{error}"
     );
     let output = arkade_compiler::compile(&checked(r#"@allow(unused-variable, "r")"#)).unwrap();
-    assert!(crate::common::arkade_asm(&output, "spend").contains("<owner> OP_CHECKSIGVERIFY"));
+    assert!(common::arkade_asm(&output, "spend").contains("<owner> OP_CHECKSIGVERIFY"));
 
     for (parameter, body, unread) in [
         (
@@ -607,7 +611,7 @@ fn an_allowed_unused_local_is_dropped_from_the_arkade_script_stack() {
     } }"#;
     let output = arkade_compiler::compile(source).unwrap();
     assert_eq!(
-        crate::common::arkade_asm(&output, "spend"),
+        common::arkade_asm(&output, "spend"),
         "OP_OVER 2 OP_MUL OP_ROT 0 OP_GREATERTHAN OP_VERIFY OP_SWAP <owner> OP_CHECKSIG OP_NIP"
     );
 }
@@ -624,7 +628,7 @@ fn every_lint_is_documented_and_explained() {
         assert!(!lint.explanation().trim().is_empty(), "{}", lint.id());
     }
     let explain = |args: &[&str]| {
-        std::process::Command::new(env!("CARGO_BIN_EXE_arkadec"))
+        Command::new(env!("CARGO_BIN_EXE_arkadec"))
             .arg("--explain")
             .args(args)
             .output()
@@ -640,7 +644,7 @@ fn every_lint_is_documented_and_explained() {
     let output = explain(&[]);
     let listed = String::from_utf8(output.stdout).unwrap();
     assert!(output.status.success());
-    let codes = arkade_compiler::errors::ErrorCode::ALL
+    let codes = ErrorCode::ALL
         .iter()
         .map(|code| (code.id(), code.summary()));
     let rows: Vec<_> = Lint::ALL

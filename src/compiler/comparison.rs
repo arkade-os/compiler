@@ -1,8 +1,10 @@
-use super::*;
-use crate::models::*;
-use crate::opcodes::Opcode::{NumEqualVerify, Roll};
+//! Compares array and struct values for equality one flattened leaf at a time.
+
+use super::{Generator, Result};
+use crate::models::{self, Expression, Path, TypeName};
+use crate::opcodes::Opcode;
 use crate::operators::{BinaryOperator, OperatorClass};
-use crate::types::{bind_local_type, ArkType};
+use crate::types::{self, bind_local_type, ArkType};
 
 impl Generator {
     pub(super) fn composite_type(&self, expression: &Expression) -> Option<TypeName> {
@@ -33,15 +35,15 @@ impl Generator {
         if op.class() != OperatorClass::Equality {
             return Err(format!("'{op}' is not defined for '{ty}' values").into());
         }
-        let leaves = crate::models::flatten_value(&Path::new(""), ty, &self.structs)?;
+        let leaves = models::flatten_value(&Path::new(""), ty, &self.structs)?;
         let width = leaves.len();
         self.emit_typed_value(left, ty)?;
         self.emit_typed_value(right, ty)?;
         for (leaf, remaining) in leaves.iter().zip((1..=width).rev()) {
-            let numeric = crate::types::is_numeric(&leaf.leaf_type.ark_type());
+            let numeric = types::is_numeric(&leaf.leaf_type.ark_type());
             let (equal, equal_verify) = match numeric {
-                true => (NumEqual, NumEqualVerify),
-                false => (Equal, EqualVerify),
+                true => (Opcode::NumEqual, Opcode::NumEqualVerify),
+                false => (Opcode::Equal, Opcode::EqualVerify),
             };
             if verify && op == BinaryOperator::Eq {
                 if remaining > 1 {
@@ -55,13 +57,13 @@ impl Generator {
                 self.roll(remaining + 1)?;
                 self.roll(2)?;
                 self.apply(equal, 2, 1)?;
-                self.apply(BoolAnd, 2, 1)?;
+                self.apply(Opcode::BoolAnd, 2, 1)?;
             }
         }
         if op == BinaryOperator::Ne {
-            self.apply(Not, 1, 1)?;
+            self.apply(Opcode::Not, 1, 1)?;
             if verify {
-                self.apply(Verify, 1, 0)?;
+                self.apply(Opcode::Verify, 1, 0)?;
             }
         }
         Ok(())
@@ -69,8 +71,8 @@ impl Generator {
 
     fn roll(&mut self, depth: usize) -> Result<()> {
         self.push_integer_temporary(depth);
-        self.pop_temporaries(1, Roll)?;
-        self.asm.push(Roll.into());
+        self.pop_temporaries(1, Opcode::Roll)?;
+        self.asm.push(Opcode::Roll.into());
         Ok(())
     }
 }

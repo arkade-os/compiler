@@ -1,13 +1,17 @@
-//! Definitions and references with their source positions, for editors.
+//! Definitions and references with their source positions, for editors. Each analyzed file's
+//! typed `Contract` is collected in turn; an import resolves through its dependency's exports.
 
 use std::collections::{HashMap, HashSet};
 
 use crate::diagnostics::Span;
 use crate::models::{
-    AssignmentTarget, Contract, ExprKind, Expression, LocatedStatement, Path, Statement, TypeName,
+    self, AssignmentTarget, Contract, ExprKind, Expression, LocatedStatement, Path, Statement,
+    TypeName,
 };
+use crate::parser;
 use crate::types::ArkType;
 
+/// What a [`Definition`] declares.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum SymbolKind {
@@ -23,6 +27,7 @@ pub enum SymbolKind {
     Field,
 }
 
+/// A declared name and where it is declared.
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub struct Definition {
@@ -49,8 +54,8 @@ pub struct Reference {
 }
 
 /// The definitions of every analyzed file and the references to them.
-// ponytail: references cover bindings, calls, `new` and constants; struct fields, type names and
-// tapscript operands carry no spans yet, so they are not recorded.
+// LIMITATION: references cover bindings, calls, `new` and constants; struct fields, type names
+// and tapscript operands have no spans in the AST, so they are skipped until they get them.
 #[derive(Debug, Clone, Default)]
 pub struct Symbols {
     definitions: Vec<Definition>,
@@ -303,7 +308,6 @@ impl Collector<'_> {
         frame.insert(name.to_string(), id);
     }
 
-    /// A local named at `span`, usable from `start` to `end`.
     fn local(&mut self, name: &str, ty: Option<TypeName>, span: Span, start: usize, end: usize) {
         let visible = Some(Span { start, end });
         self.bind(name, SymbolKind::Variable, ty, span, visible);
@@ -347,13 +351,13 @@ impl Collector<'_> {
 
     /// The first token at or after `start`, past the `(`, whitespace and comments that can open
     /// an expression's span.
-    // ponytail: recovers name positions from source text; syntax that puts anything else before
+    // LIMITATION: recovers name positions from source text; syntax that puts anything else before
     // a name needs the parser to record the name's span.
     fn token(&self, start: usize) -> usize {
         let mut rest = self.source.get(start..).unwrap_or_default();
         loop {
             rest = rest.trim_start_matches(['(', ' ', '\t', '\r', '\n']);
-            match crate::parser::comment_len(rest) {
+            match parser::comment_len(rest) {
                 Some(comment) => rest = &rest[comment..],
                 None => return self.source.len() - rest.len(),
             }
@@ -480,7 +484,7 @@ impl Collector<'_> {
             }
             _ => {}
         }
-        for child in crate::models::child_exprs(expression) {
+        for child in models::child_exprs(expression) {
             self.expression(child);
         }
     }

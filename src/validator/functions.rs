@@ -1,5 +1,20 @@
-use super::*;
-use crate::models::{Function, StructDefinition, TypeName};
+//! Function-level checks: returns, calls (arity, argument types, entrypoint and static rules),
+//! literal shapes against their expected types, recursion, loop unrolling limits, and that every
+//! entrypoint path enforces a requirement.
+
+use std::collections::{HashMap, HashSet};
+
+use super::ValidationIssue;
+use crate::builtins::BUILTINS;
+use crate::compiler::MAX_LOOP_ITERATIONS;
+use crate::diagnostics::Span;
+use crate::errors::{self, ErrorCode};
+use crate::models::{
+    self, Contract, ExprKind, Expression, Function, LocatedStatement, Parameter, Statement,
+    StructDefinition, TypeName,
+};
+use crate::operators::OperatorClass;
+use crate::types::{self, ArkType};
 
 pub(super) fn validate_functions(contract: &Contract, issues: &mut Vec<ValidationIssue>) {
     let definitions = contract
@@ -16,7 +31,7 @@ pub(super) fn validate_functions(contract: &Contract, issues: &mut Vec<Validatio
                     function.name
                 )));
             }
-            validate_declared_type(result, "return type", &definitions, issues);
+            super::validate_declared_type(result, "return type", &definitions, issues);
         }
         if function.is_static {
             let referenced = super::references::referenced_parameters(&function.statements, &[]);
@@ -30,7 +45,7 @@ pub(super) fn validate_functions(contract: &Contract, issues: &mut Vec<Validatio
             }
         }
         validate_body(&function.statements, function, contract, issues);
-        locate(&mut issues[first..], function.span);
+        super::locate(&mut issues[first..], function.span);
     }
 
     let mut guarantees = HashMap::new();
@@ -45,8 +60,8 @@ pub(super) fn validate_functions(contract: &Contract, issues: &mut Vec<Validatio
         unrolled_function(function, contract, &mut unrolled, issues);
     }
     for function in contract.functions.iter().filter(|f| !f.is_imported()) {
-        let flow = flow_block(&function.statements, 1, &guarantees);
-        if function.is_private && function.return_type.is_some() && flow.fallthrough != 0 {
+        let flow = flow_block(&function.statements, Paths::UNENFORCED, &guarantees);
+        if function.is_private && function.return_type.is_some() && flow.fallthrough.any() {
             issues.push(
                 ValidationIssue::error(format!(
                     "private function '{}' must return a value on every path",
@@ -55,7 +70,7 @@ pub(super) fn validate_functions(contract: &Contract, issues: &mut Vec<Validatio
                 .at(function.span),
             );
         }
-        if !function.is_private && (flow.fallthrough | flow.returned) & 1 != 0 {
+        if !function.is_private && flow.has_unenforced() {
             issues.push(ValidationIssue::error(format!("function '{}' has a spend path with no require(); every branch must enforce at least one condition", function.name)).at(function.span));
         }
     }
@@ -146,7 +161,7 @@ fn validate_body(
             | Statement::Require(_)
             | Statement::VarAssign { .. } => {}
         }
-        locate(&mut issues[first..], located.span);
+        super::locate(&mut issues[first..], located.span);
     }
 }
 
@@ -162,7 +177,7 @@ fn validate_comparison_literals(
             &value.kind,
             ExprKind::ArrayLiteral(_) | ExprKind::StructLiteral { .. }
         ) && matches!(other.ty, ArkType::Array(..) | ArkType::Struct(_))
-            && crate::types::resolved(&other.ty)
+            && types::resolved(&other.ty)
         {
             validate_value(
                 &TypeName::from(&other.ty),
@@ -196,14 +211,14 @@ fn validate_calls(
             ),
             None => {
                 let issue = ValidationIssue::error(format!("unknown function '{name}'"))
-                    .coded(crate::errors::ErrorCode::UnknownFunction);
+                    .coded(ErrorCode::UnknownFunction);
                 let own = contract.functions.iter().map(|f| f.name.as_str());
-                let builtins = crate::builtins::BUILTINS.iter().map(|b| b.name);
-                let span = crate::diagnostics::Span {
+                let builtins = BUILTINS.iter().map(|b| b.name);
+                let span = Span {
                     start: expression.span.start,
                     end: expression.span.start + name.len(),
                 };
-                issues.push(match crate::errors::closest(name, own.chain(builtins)) {
+                issues.push(match errors::closest(name, own.chain(builtins)) {
                     Some(candidate) => issue.suggest(candidate, Some(span)),
                     None => issue,
                 });
@@ -253,8 +268,8 @@ fn validate_calls(
         let context = format!("{name} literal");
         validate_fields(name, fields, &contract.structs, &context, issues);
     }
-    locate(&mut issues[first..], expression.span);
-    for child in child_exprs(expression) {
+    super::locate(&mut issues[first..], expression.span);
+    for child in models::child_exprs(expression) {
         validate_calls(child, true, caller, contract, issues);
     }
 }
@@ -291,7 +306,7 @@ pub(super) fn validate_value(
         }
         _ => {
             let actual = &value.ty;
-            if !binding_types_compatible(&expected_type, actual) {
+            if !expected_type.accepts(actual) {
                 issues.push(ValidationIssue::error(format!(
                     "{context}: expected '{expected}', got '{}'",
                     actual.as_str()
@@ -299,10 +314,9 @@ pub(super) fn validate_value(
             }
         }
     }
-    locate(&mut issues[first..], value.span);
+    super::locate(&mut issues[first..], value.span);
 }
 
-/// Check a struct literal's fields against the definition of struct `name`.
 fn validate_fields(
     name: &str,
     fields: &[(String, Expression)],
@@ -310,12 +324,12 @@ fn validate_fields(
     context: &str,
     issues: &mut Vec<ValidationIssue>,
 ) {
-    let native = crate::models::builtin_struct_fields(name).map(|fields| StructDefinition {
+    let native = models::builtin_struct_fields(name).map(|fields| StructDefinition {
         span: Default::default(),
         name: name.to_string(),
         fields: fields
             .iter()
-            .map(|(name, ty)| crate::models::Parameter {
+            .map(|(name, ty)| Parameter {
                 span: Default::default(),
                 name: name.to_string(),
                 param_type: TypeName::parse(ty),
@@ -379,11 +393,8 @@ fn analyze_function(
     }
     visiting.push(function.name.clone());
     analyze_calls(&function.statements, contract, visiting, guarantees)?;
-    let flow = flow_block(&function.statements, 1, guarantees);
-    guarantees.insert(
-        function.name.clone(),
-        (flow.fallthrough | flow.returned) & 1 == 0,
-    );
+    let flow = flow_block(&function.statements, Paths::UNENFORCED, guarantees);
+    guarantees.insert(function.name.clone(), !flow.has_unenforced());
     visiting.pop();
     Ok(())
 }
@@ -432,7 +443,7 @@ fn analyze_expression(
             analyze_function(function, contract, visiting, guarantees)?;
         }
     }
-    for child in child_exprs(expression) {
+    for child in models::child_exprs(expression) {
         analyze_expression(child, contract, visiting, guarantees)?;
     }
     Ok(())
@@ -471,7 +482,7 @@ fn unrolled_body(
     unrolled: &mut HashMap<String, usize>,
     issues: &mut Vec<ValidationIssue>,
 ) -> usize {
-    let limit = crate::compiler::MAX_LOOP_ITERATIONS;
+    let limit = MAX_LOOP_ITERATIONS;
     let mut most = 1;
     for located in statements {
         let statement = &located.statement;
@@ -496,8 +507,9 @@ fn unrolled_body(
                 let mut rereads = rereads.clone();
                 // Lowering may read a path iterable, calls in its indexes included, at each use of
                 // the item instead of binding it once.
-                // ponytail: counted also where lowering binds it, because the body writes nothing
-                // the iterable reads; share lowering's choice if that rejects a real contract.
+                // LIMITATION: counted also where lowering binds it, because the body writes
+                // nothing the iterable reads; share lowering's choice if that rejects a real
+                // contract.
                 if let Statement::ForIn {
                     value_var,
                     iterable,
@@ -511,7 +523,7 @@ fn unrolled_body(
                 }
                 let body = unrolled_body(body, contract, &rereads, unrolled, issues);
                 // An invalid count or range is reported with the loop's bindings.
-                let count = crate::models::loop_indexes(statement).map_or(1, |range| range.len());
+                let count = models::loop_indexes(statement).map_or(1, |range| range.len());
                 let total = count.saturating_mul(body);
                 if count == 0 {
                     issues.push(
@@ -558,43 +570,80 @@ fn unrolled_calls(
         }
         _ => {}
     }
-    for child in child_exprs(expression) {
+    for child in models::child_exprs(expression) {
         most = most.max(unrolled_calls(child, contract, rereads, unrolled, issues));
     }
     most
 }
 
-// Each mask records paths without (1) and with (2) an enforced requirement.
-#[derive(Default)]
+/// Which paths reach a point: some without an enforced requirement, some with one.
+#[derive(Clone, Copy)]
+struct Paths {
+    unenforced: bool,
+    enforced: bool,
+}
+
+impl Paths {
+    const NONE: Paths = Paths {
+        unenforced: false,
+        enforced: false,
+    };
+    const UNENFORCED: Paths = Paths {
+        unenforced: true,
+        enforced: false,
+    };
+    const ENFORCED: Paths = Paths {
+        unenforced: false,
+        enforced: true,
+    };
+
+    fn any(self) -> bool {
+        self.unenforced || self.enforced
+    }
+
+    fn or(self, other: Paths) -> Paths {
+        Paths {
+            unenforced: self.unenforced || other.unenforced,
+            enforced: self.enforced || other.enforced,
+        }
+    }
+}
+
 struct Flow {
-    fallthrough: u8,
-    returned: u8,
+    fallthrough: Paths,
+    returned: Paths,
+}
+
+impl Flow {
+    fn has_unenforced(&self) -> bool {
+        self.fallthrough.unenforced || self.returned.unenforced
+    }
 }
 
 fn expression_enforces(expression: &Expression, guarantees: &HashMap<String, bool>) -> bool {
     // Conservatively count only the always-evaluated left operand, even for literal conditions.
     if let ExprKind::BinaryOp { left, op, .. } = &expression.kind {
-        if op.class() == crate::operators::OperatorClass::Logical {
+        if op.class() == OperatorClass::Logical {
             return expression_enforces(left, guarantees);
         }
     }
     matches!(&expression.kind, ExprKind::Call { name, .. } if guarantees.get(name) == Some(&true))
-        || child_exprs(expression)
+        || models::child_exprs(expression)
             .into_iter()
             .any(|child| expression_enforces(child, guarantees))
 }
 
 fn flow_block(
     statements: &[LocatedStatement],
-    incoming: u8,
+    incoming: Paths,
     guarantees: &HashMap<String, bool>,
 ) -> Flow {
     let mut flow = Flow {
         fallthrough: incoming,
-        returned: 0,
+        returned: Paths::NONE,
     };
     for statement in statements {
-        if flow.fallthrough == 0 {
+        if !flow.fallthrough.any() {
             break;
         }
         let statement = &statement.statement;
@@ -603,13 +652,13 @@ fn flow_block(
             .into_iter()
             .any(|e| expression_enforces(e, guarantees))
         {
-            flow.fallthrough = 2;
+            flow.fallthrough = Paths::ENFORCED;
         }
         match statement {
-            Statement::Require(_) => flow.fallthrough = 2,
+            Statement::Require(_) => flow.fallthrough = Paths::ENFORCED,
             Statement::Return(_) => {
-                flow.returned |= flow.fallthrough;
-                flow.fallthrough = 0;
+                flow.returned = flow.returned.or(flow.fallthrough);
+                flow.fallthrough = Paths::NONE;
             }
             Statement::IfElse {
                 then_body,
@@ -622,8 +671,8 @@ fn flow_block(
                     flow.fallthrough,
                     guarantees,
                 );
-                flow.fallthrough = left.fallthrough | right.fallthrough;
-                flow.returned |= left.returned | right.returned;
+                flow.fallthrough = left.fallthrough.or(right.fallthrough);
+                flow.returned = flow.returned.or(left.returned).or(right.returned);
             }
             Statement::ForIn { body, .. }
             | Statement::ForCount { body, .. }
@@ -631,7 +680,7 @@ fn flow_block(
                 // A loop that runs zero times is an error, so every loop executes at least once.
                 let body = flow_block(body, flow.fallthrough, guarantees);
                 flow.fallthrough = body.fallthrough;
-                flow.returned |= body.returned;
+                flow.returned = flow.returned.or(body.returned);
             }
             Statement::Declaration { .. }
             | Statement::Call(_)
@@ -644,5 +693,7 @@ fn flow_block(
 
 /// Whether any path reaches the next statement, independent of spend conditions.
 pub(crate) fn falls_through(statements: &[LocatedStatement]) -> bool {
-    flow_block(statements, 1, &HashMap::new()).fallthrough != 0
+    flow_block(statements, Paths::UNENFORCED, &HashMap::new())
+        .fallthrough
+        .any()
 }

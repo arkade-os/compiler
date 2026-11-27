@@ -1,7 +1,10 @@
 //! The compiled contract as it is serialized to JSON: the public artifact format.
 
-use super::{Parameter, StructDefinition};
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
+
+use super::{Parameter, StructDefinition};
 
 fn is_false(value: &bool) -> bool {
     !*value
@@ -126,7 +129,7 @@ pub struct ContractJson {
     pub functions: Vec<AbiFunctionGroup>,
     /// The `codeHash` of each contract a `<CONTRACT:Name(...)>` placeholder names, by name.
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
-    pub contracts: std::collections::BTreeMap<String, String>,
+    pub contracts: BTreeMap<String, String>,
     /// `sha256:` and the SHA-256 of the compact JSON of the fields above, which determine the
     /// scripts.
     #[serde(rename = "codeHash", skip_serializing_if = "Option::is_none")]
@@ -170,7 +173,7 @@ impl ContractJson {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct SourceBundle {
     pub entry: String,
-    pub files: std::collections::BTreeMap<String, String>,
+    pub files: BTreeMap<String, String>,
 }
 
 /// Compiler information

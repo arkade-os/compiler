@@ -1,8 +1,11 @@
-//! Builtin functions: the language functions the compiler provides. Each entry
-//! is the single description of a builtin, read by the parser, the type checks,
-//! code generation and the builtin docs.
+//! Builtin functions and the calls and members the parser resolves itself. Each entry is the
+//! one description of a builtin, read by the parser, type checks, code generation and the docs.
 
-use crate::opcodes::Opcode::{self, *};
+use crate::opcodes::Opcode;
+use crate::properties::{
+    AssetProperty, GroupIoProperty, GroupProperty, InputProperty, OutputProperty, ThisProperty,
+    TxProperty,
+};
 
 #[derive(Debug)]
 pub struct Builtin {
@@ -65,7 +68,7 @@ pub(crate) const BUILTINS: &[Builtin] = &[
         "substr",
         &[("data", "bytes"), ("offset", "int"), ("size", "int")],
         "bytes",
-        &[Substr],
+        &[Opcode::Substr],
         "size bytes of data starting at offset. An offset or size below 0, or offset + size above \
          data's length, fails the spend.",
     ),
@@ -73,28 +76,28 @@ pub(crate) const BUILTINS: &[Builtin] = &[
         "left",
         &[("data", "bytes"), ("count", "int")],
         "bytes",
-        &[Left],
+        &[Opcode::Left],
         "The first count bytes of data. A count below 0 or above data's length fails the spend.",
     ),
     builtin(
         "right",
         &[("data", "bytes"), ("count", "int")],
         "bytes",
-        &[Right],
+        &[Opcode::Right],
         "The last count bytes of data. A count below 0 or above data's length fails the spend.",
     ),
     builtin(
         "cat",
         &[("a", "bytes"), ("b", "bytes")],
         "bytes",
-        &[Cat],
+        &[Opcode::Cat],
         "a followed by b. A result over 520 bytes fails the spend.",
     ),
     builtin(
         "bytes2int",
         &[("data", "bytes")],
         "int",
-        &[Bin2Num],
+        &[Opcode::Bin2Num],
         "Script-number bytes as an int: little-endian, with the top bit of the last byte as the \
          sign.",
     ),
@@ -103,7 +106,7 @@ pub(crate) const BUILTINS: &[Builtin] = &[
         "bytes2uint",
         &[("data", "bytes")],
         "int",
-        &[Cat, Bin2Num],
+        &[Opcode::Cat, Opcode::Bin2Num],
         "Unsigned little-endian bytes as a non-negative int, the same as bytes2int(data + 0x00). \
          Data over 519 bytes fails the spend.",
     ),
@@ -111,7 +114,7 @@ pub(crate) const BUILTINS: &[Builtin] = &[
         "int2bytes",
         &[("value", "int"), ("size", "int")],
         "bytes",
-        &[Num2Bin],
+        &[Opcode::Num2Bin],
         "value as little-endian Script-number bytes padded to size bytes. Fails the spend when \
          value does not fit or size is negative or above 520.",
     ),
@@ -119,21 +122,21 @@ pub(crate) const BUILTINS: &[Builtin] = &[
         "reverseBytes",
         &[("data", "bytes")],
         "bytes",
-        &[ReverseBytes],
+        &[Opcode::ReverseBytes],
         "data in reverse byte order.",
     ),
     builtin(
         "size",
         &[("data", "bytes")],
         "int",
-        &[Size, Nip],
+        &[Opcode::Size, Opcode::Nip],
         "Length of data in bytes, also written data.length.",
     ),
     builtin(
         "digest",
         &[("data", "bytes"), ("hashType", "int")],
         "bytes",
-        &[Digest],
+        &[Opcode::Digest],
         "Hash of data by hashType: 1 SHA-256, 2 SHA-1, 3 RIPEMD-160, 4 Keccak-256, 5 SHA3-256. \
          Any other hashType fails the spend.",
     ),
@@ -141,7 +144,7 @@ pub(crate) const BUILTINS: &[Builtin] = &[
         "sha1",
         &[("data", "bytes")],
         "bytes20",
-        &[Sha1],
+        &[Opcode::Sha1],
         "SHA-1 of data. Its collision resistance is broken; use it only for legacy \
          interoperability.",
     ),
@@ -149,35 +152,35 @@ pub(crate) const BUILTINS: &[Builtin] = &[
         "sha256",
         &[("data", "bytes")],
         "bytes32",
-        &[Sha256],
+        &[Opcode::Sha256],
         "SHA-256 of data.",
     ),
     builtin(
         "hash256",
         &[("data", "bytes")],
         "bytes32",
-        &[Hash256],
+        &[Opcode::Hash256],
         "Double SHA-256 of data.",
     ),
     builtin(
         "hash160",
         &[("data", "bytes")],
         "bytes20",
-        &[Hash160],
+        &[Opcode::Hash160],
         "RIPEMD-160 of the SHA-256 of data.",
     ),
     builtin(
         "ripemd160",
         &[("data", "bytes")],
         "bytes20",
-        &[Ripemd160],
+        &[Opcode::Ripemd160],
         "RIPEMD-160 of data.",
     ),
     builtin(
         "checkSig",
         &[("signature", "signature"), ("pubkey", "bytes")],
         "bool",
-        &[CheckSig],
+        &[Opcode::CheckSig],
         "Whether signature by pubkey is valid for the spending transaction. An empty pubkey fails \
          the spend; otherwise an empty signature is false and an invalid non-empty one fails the \
          spend.",
@@ -190,7 +193,7 @@ pub(crate) const BUILTINS: &[Builtin] = &[
             ("message", "bytes"),
         ],
         "bool",
-        &[Swap, CheckSigFromStack],
+        &[Opcode::Swap, Opcode::CheckSigFromStack],
         "Whether signature is valid by pubkey over message. An empty signature is false; a \
          non-empty one fails the spend unless it is valid and message is 32 bytes.",
     ),
@@ -201,7 +204,7 @@ pub(crate) const BUILTINS: &[Builtin] = &[
             ("pubkey", "bytes"),
             ("message", "bytes"),
         ],
-        &[Swap, CheckSigFromStack, Verify],
+        &[Opcode::Swap, Opcode::CheckSigFromStack, Opcode::Verify],
         "True when signature is valid by pubkey over message, which must be 32 bytes; otherwise \
          fails the spend.",
     ),
@@ -224,14 +227,14 @@ pub(crate) const BUILTINS: &[Builtin] = &[
         "sha256Initialize",
         &[("data", "bytes")],
         "bytes",
-        &[Sha256Initialize],
+        &[Opcode::Sha256Initialize],
         "Starts a streaming SHA-256 with data and returns its context.",
     ),
     builtin(
         "sha256Update",
         &[("ctx", "bytes"), ("chunk", "bytes")],
         "bytes",
-        &[Sha256Update],
+        &[Opcode::Sha256Update],
         "Adds chunk to a streaming SHA-256 context. Fails the spend when ctx is not a context \
          from sha256Initialize or sha256Update.",
     ),
@@ -239,7 +242,7 @@ pub(crate) const BUILTINS: &[Builtin] = &[
         "sha256Finalize",
         &[("ctx", "bytes"), ("lastChunk", "bytes")],
         "bytes32",
-        &[Sha256Finalize],
+        &[Opcode::Sha256Finalize],
         "Adds lastChunk and returns the streaming SHA-256 digest. Fails the spend when ctx is not \
          a context from sha256Initialize or sha256Update.",
     ),
@@ -247,7 +250,7 @@ pub(crate) const BUILTINS: &[Builtin] = &[
         "sighash",
         &[("hashType", "int")],
         "bytes32",
-        &[SigHash],
+        &[Opcode::SigHash],
         "The Arkade signature hash of the input being spent for hashType, the message checkSig \
          verifies; not the BIP-342 digest. An invalid hashType fails the spend.",
     ),
@@ -260,7 +263,7 @@ pub(crate) const BUILTINS: &[Builtin] = &[
             ("leaf", "bytes"),
         ],
         "bytes32",
-        &[MerkleBranchRoot],
+        &[Opcode::MerkleBranchRoot],
         "Root of a BIP-341 tagged-hash Merkle proof. Siblings in proof are 32 bytes each and \
          combined in sorted order. An empty leafTag takes a 32-byte leaf as already hashed. Fails \
          the spend when proof is not a multiple of 32 bytes, branchTag is empty, or an already \
@@ -270,7 +273,7 @@ pub(crate) const BUILTINS: &[Builtin] = &[
         "checkTime",
         &[("timestamp", "int")],
         "bool",
-        &[CheckTime],
+        &[Opcode::CheckTime],
         "Whether the operator's clock has reached timestamp, a Unix time in seconds. Independent \
          of the transaction locktime and sequence. A negative timestamp fails the spend.",
     ),
@@ -278,37 +281,43 @@ pub(crate) const BUILTINS: &[Builtin] = &[
         "modExp",
         &[("base", "int"), ("exponent", "int"), ("modulus", "int")],
         "int",
-        &[ModExp],
+        &[Opcode::ModExp],
         "base raised to exponent, modulo modulus, in 0 to modulus - 1. Fails the spend when \
          modulus <= 0, exponent < 0 or an operand exceeds 64 bytes.",
     ),
-    builtin("abs", &[("value", "int")], "int", &[Abs], "Absolute value."),
+    builtin(
+        "abs",
+        &[("value", "int")],
+        "int",
+        &[Opcode::Abs],
+        "Absolute value.",
+    ),
     builtin(
         "min",
         &[("a", "int"), ("b", "int")],
         "int",
-        &[Min],
+        &[Opcode::Min],
         "The smaller of a and b.",
     ),
     builtin(
         "max",
         &[("a", "int"), ("b", "int")],
         "int",
-        &[Max],
+        &[Opcode::Max],
         "The larger of a and b.",
     ),
     builtin(
         "within",
         &[("value", "int"), ("lower", "int"), ("upper", "int")],
         "bool",
-        &[Within],
+        &[Opcode::Within],
         "Whether lower <= value < upper. Empty or reversed ranges are false.",
     ),
     builtin(
         "ecAdd",
         &[("P", "ECPoint"), ("Q", "ECPoint"), ("curveId", "int")],
         "ECPoint",
-        &[EcAdd],
+        &[Opcode::EcAdd],
         "P + Q on curveId: 0 secp256k1, 1 secp256r1, 2 alt_bn128; (0, 0) is the point at \
          infinity. An unknown curve or an off-curve point fails the spend.",
     ),
@@ -316,7 +325,7 @@ pub(crate) const BUILTINS: &[Builtin] = &[
         "ecMul",
         &[("P", "ECPoint"), ("scalar", "int"), ("curveId", "int")],
         "ECPoint",
-        &[EcMul],
+        &[Opcode::EcMul],
         "scalar·P on curveId, numbered as for ecAdd. A scalar below 0 or not below the group \
          order, or an off-curve P, fails the spend.",
     ),
@@ -336,14 +345,14 @@ pub(crate) const BUILTINS: &[Builtin] = &[
     verify(
         "ecMulScalarVerify",
         &[("k", "bytes32"), ("P", "bytes"), ("Q", "bytes")],
-        &[EcMulScalarVerify],
+        &[Opcode::EcMulScalarVerify],
         "True when Q = k·P, with k 32-byte big-endian and P and Q compressed points; otherwise \
          fails the spend.",
     ),
     verify(
         "tweakVerify",
         &[("P", "bytes32"), ("k", "bytes32"), ("Q", "bytes")],
-        &[TweakVerify],
+        &[Opcode::TweakVerify],
         "True when Q = P + k·G, with P a 32-byte x-only key, k 32-byte big-endian and Q a 33-byte \
          compressed point; otherwise fails the spend.",
     ),
@@ -660,12 +669,12 @@ const SPELLED: &[Spelled] = &[
 /// Every builtin function and `tx`/`this` member as pretty JSON: calls under
 /// `functions`, dotted names under `members`.
 pub(crate) fn docs() -> String {
-    serde_json::to_string_pretty(&documented()).unwrap()
+    serde_json::to_string_pretty(&documented()).expect("a JSON value serializes")
 }
 
 /// The names documented directly under `owner`, a member path with indexes written `[]`.
 pub(crate) fn members_of(owner: &str) -> Vec<String> {
-    // ponytail: output assets share the members documented on input assets; document them
+    // LIMITATION: output assets reuse the members documented on input assets; document them
     // separately if the two ever differ.
     let owner = owner.replace("tx.outputs[].assets", "tx.inputs[].assets");
     let documented = documented();
@@ -681,7 +690,6 @@ pub(crate) fn members_of(owner: &str) -> Vec<String> {
 }
 
 fn documented() -> serde_json::Value {
-    use crate::properties::*;
     use serde_json::{json, Map};
 
     let mut functions = Map::new();
@@ -692,7 +700,10 @@ fn documented() -> serde_json::Value {
             .map(|(name, ty)| format!("{ty} {name}"))
             .collect();
         if matches!(builtin.lowering, Lowering::Multisig) {
-            params.last_mut().unwrap().push('?');
+            params
+                .last_mut()
+                .expect("multisig takes a threshold")
+                .push('?');
         }
         let entry = json!({ "params": params, "result": builtin.result, "doc": builtin.doc });
         functions.insert(builtin.name.into(), entry);
@@ -718,7 +729,6 @@ fn documented() -> serde_json::Value {
     }
     for &p in GroupIoProperty::ALL {
         property("tx.assetGroups[].inputs[]", p.describe());
-        // Output records have no txid.
         if p != GroupIoProperty::Txid {
             property("tx.assetGroups[].outputs[]", p.describe());
         }
@@ -749,7 +759,7 @@ fn documented() -> serde_json::Value {
     for entry in functions.values_mut().chain(members.values_mut()) {
         entry
             .as_object_mut()
-            .unwrap()
+            .expect("every entry is a JSON object")
             .retain(|_, value| !value.is_null());
     }
     json!({ "functions": functions, "members": members })
@@ -758,11 +768,12 @@ fn documented() -> serde_json::Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::models;
     use crate::types::ArkType;
 
     fn known(ty: &str) -> bool {
         match ArkType::parse(ty) {
-            ArkType::Struct(name) => crate::models::builtin_struct_fields(&name).is_some(),
+            ArkType::Struct(name) => models::builtin_struct_fields(&name).is_some(),
             parsed => parsed != ArkType::Unknown,
         }
     }

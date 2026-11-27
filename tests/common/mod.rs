@@ -4,12 +4,13 @@
 //! include this module via `#[path = "common/mod.rs"] mod common;`, so it is a
 //! plain module — never its own test target — and each grouped test file reaches
 //! the helpers through `crate::common::*`.
-//!
-//! `dead_code` is allowed module-wide: each binary compiles its own copy of this
-//! module and uses only the subset of helpers it needs, so a helper unused by
-//! one binary (but used by the other) would otherwise warn.
-#![allow(dead_code)]
+#![allow(
+    dead_code,
+    reason = "each test binary compiles its own copy and uses only some helpers"
+)]
 
+use arkade_compiler::lint::Category;
+use arkade_compiler::lint::Lint;
 use arkade_compiler::models::{AbiFunctionGroup, AbiLeaf, ContractJson};
 
 /// Settings with `optimize` set, built as a crate outside the compiler must build them.
@@ -137,8 +138,8 @@ pub fn user_signatures(out: &ContractJson, group_name: &str) -> Vec<String> {
 
 /// Whether `lint` judges a function's authorization or outputs; the toy contracts of tests for
 /// other features have neither, so those tests leave such lints out.
-pub fn is_security_lint(lint: arkade_compiler::lint::Lint) -> bool {
-    lint.category() == arkade_compiler::lint::Category::Security
+pub fn is_security_lint(lint: Lint) -> bool {
+    lint.category() == Category::Security
 }
 
 /// `out`'s warnings except security lints.

@@ -1,3 +1,4 @@
+use crate::common;
 use crate::common::compile_unoptimized as compile;
 use crate::common::*;
 
@@ -99,7 +100,7 @@ contract Composite(Pair initial) {
     )
     .expect("composite calls");
     assert!(
-        crate::common::feature_warnings(&output).is_empty(),
+        common::feature_warnings(&output).is_empty(),
         "{:?}",
         output.warnings
     );

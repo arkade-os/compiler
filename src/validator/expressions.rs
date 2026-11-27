@@ -1,7 +1,18 @@
+//! Per-expression checks over the types `types::annotate` stored: operand types, constant operand
+//! domains, casts, literal positions, constant index bounds, and resolution of names and paths.
+//! An expression over an invalid operand reports only the operand's fault.
+
 use super::bindings::{
     find_binding, validate_named_binding, BindingInfo, BindingScopes, BindingSource,
 };
-use super::*;
+use super::{operands, ValidationIssue};
+use crate::builtins;
+use crate::compiler::{constants, Op};
+use crate::diagnostics::Span;
+use crate::models::{self, ExprKind, Expression, GroupIOSource, Path, Segment};
+use crate::operators::{BinaryOperator, OperatorClass, UnaryOperator};
+use crate::properties::GroupIoProperty;
+use crate::types::{self, ArkType};
 
 pub(super) fn validate_binding_requirement(
     expression: &Expression,
@@ -31,7 +42,7 @@ fn validate_comparison(
     left: &Expression,
     op: BinaryOperator,
     right: &Expression,
-    span: crate::diagnostics::Span,
+    span: Span,
     scopes: &BindingScopes,
     issues: &mut Vec<ValidationIssue>,
 ) {
@@ -43,14 +54,14 @@ fn validate_comparison(
         composite |= whole;
     }
     let (left, right) = (&left.ty, &right.ty);
-    let bytes_like = crate::types::is_bytes_like;
+    let bytes_like = ArkType::is_bytes_like;
     let compatible = match op.class() {
         class if composite && class != OperatorClass::Equality => false,
         _ if issues.len() != before => return,
         // An array literal takes its type only from a typed array peer, and emission needs every
         // element's type; against a struct it is a mismatch instead.
         _ if matches!((left, right), (ArkType::Array(..), ArkType::Array(..)))
-            && !(crate::types::resolved(left) && crate::types::resolved(right)) =>
+            && !(types::resolved(left) && types::resolved(right)) =>
         {
             issues.push(
                 ValidationIssue::error(
@@ -122,13 +133,13 @@ pub(super) fn validate_binding_expression(
             "function '{name}' does not return a value"
         )));
     }
-    // An input's kind is only known at runtime, so `txid` on a local input fails the
-    // spend like `controlAssetId` without control; a type check before `||`/`&&` guards it.
+    // Only outputs are rejected: an input's kind is known only at runtime, so `txid` on a
+    // local input fails the spend, like `controlAssetId` without control.
     if matches!(
         &expression.kind,
         ExprKind::GroupIOAccess {
-            source: crate::models::GroupIOSource::Outputs,
-            property: Some(crate::properties::GroupIoProperty::Txid),
+            source: GroupIOSource::Outputs,
+            property: Some(GroupIoProperty::Txid),
             ..
         }
     ) {
@@ -181,7 +192,7 @@ pub(super) fn validate_binding_expression(
         validate_operands(expression, scopes, issues);
     }
     if issues.len() != first {
-        locate(&mut issues[first..], expression.span);
+        super::locate(&mut issues[first..], expression.span);
         return;
     }
     let registered_builtin = operands::operands(expression);
@@ -190,7 +201,7 @@ pub(super) fn validate_binding_expression(
         ExprKind::BinaryOp { left, op, right } if op.class() == OperatorClass::Bytewise => {
             for operand in [left, right] {
                 let actual = operand.ty.clone();
-                if !binding_types_compatible(&ArkType::Bytes, &actual) {
+                if !ArkType::Bytes.accepts(&actual) {
                     issues.push(
                         ValidationIssue::error(format!(
                             "bytewise '{op}' operand has type '{}', expected 'bytes'",
@@ -201,7 +212,7 @@ pub(super) fn validate_binding_expression(
                 }
             }
             // The VM aborts on operands of different lengths.
-            let widths = [left, right].map(|operand| crate::types::static_byte_width(operand));
+            let widths = [left, right].map(|operand| types::static_byte_width(operand));
             if let [Some(left), Some(right)] = widths {
                 if left != right {
                     issues.push(ValidationIssue::error(format!(
@@ -222,15 +233,13 @@ pub(super) fn validate_binding_expression(
                 _ => ("arithmetic", ArkType::Int),
             };
             let types = [left, right].map(|operand| operand.ty.clone());
-            // Bytes-like `+` is concatenation.
-            let concat =
-                *op == BinaryOperator::Add && types.iter().any(crate::types::is_bytes_like);
+            let concat = *op == BinaryOperator::Add && types.iter().any(ArkType::is_bytes_like);
             if concat {
                 // The width and byte order of a converted number are consensus-visible, so the author picks them.
                 for ((side, operand), actual) in
                     [("left", left), ("right", right)].iter().zip(&types)
                 {
-                    if !crate::types::is_bytes_like(actual) {
+                    if !actual.is_bytes_like() {
                         let hint = match actual {
                             ArkType::Int => "convert it explicitly with bytes(value) for minimal Script-number encoding or int2bytes(value, width) for fixed-width encoding",
                             ArkType::Bool => "convert it explicitly with bytes(value) for minimal Script-number encoding",
@@ -283,7 +292,7 @@ pub(super) fn validate_binding_expression(
         ExprKind::Unary { op, value } => {
             let (operator, expected) = (op.symbol(), ArkType::parse(op.operand_type()));
             let actual = value.ty.clone();
-            if !binding_types_compatible(&expected, &actual) {
+            if !expected.accepts(&actual) {
                 issues.push(
                     ValidationIssue::error(format!(
                         "unary '{}' operand has type '{}', expected '{}'",
@@ -298,14 +307,13 @@ pub(super) fn validate_binding_expression(
         _ if registered_builtin.is_some() => {
             let (name, operands) = registered_builtin.expect("guarded by the arm");
             let params = operands::find(name)
-                .unwrap_or_else(|| panic!("{name} has no registered signature"));
+                .unwrap_or_else(|| unreachable!("{name} has no registered signature"));
             assert!(
-                crate::builtins::find(name).map_or(operands.len() == params.len(), |builtin| {
+                builtins::find(name).map_or(operands.len() == params.len(), |builtin| {
                     builtin.accepts_arity(operands.len())
                 }),
                 "{name}: operands() and its signature disagree on arity"
             );
-            // Every `[]` operand takes the length of the first one.
             let mut length = None;
             for (operand, declared) in operands.iter().zip(params) {
                 let actual = operand.ty.clone();
@@ -344,7 +352,7 @@ pub(super) fn validate_binding_expression(
                                 &format!("{name} operand, element {index}"),
                                 issues,
                             );
-                        } else if !binding_types_compatible(element, actual) {
+                        } else if !element.accepts(actual) {
                             issues.push(
                                 ValidationIssue::error(format!(
                                     "{name} '{}' has type '{}', expected '{}'",
@@ -367,7 +375,7 @@ pub(super) fn validate_binding_expression(
                     }
                     continue;
                 }
-                if !binding_types_compatible(&expected, &actual) {
+                if !expected.accepts(&actual) {
                     issues.push(
                         ValidationIssue::error(format!(
                             "{name} operand has type '{}', expected '{}'",
@@ -385,9 +393,7 @@ pub(super) fn validate_binding_expression(
                 let Some(operand) = operands.get(index) else {
                     continue;
                 };
-                let Ok(value) =
-                    crate::compiler::constants::evaluate(operand, &mut |path| Err(path.key()))
-                else {
+                let Ok(value) = constants::evaluate(operand, &mut |path| Err(path.key())) else {
                     continue;
                 };
                 let accepted = value.parse::<i128>().map_or_else(
@@ -424,10 +430,8 @@ pub(super) fn validate_binding_expression(
                     if operand.ty != ArkType::Int {
                         continue;
                     }
-                    if let Ok(value) =
-                        crate::compiler::constants::evaluate(operand, &mut |path| Err(path.key()))
-                    {
-                        if crate::compiler::Op::Push(value).pushes_more_than(64) {
+                    if let Ok(value) = constants::evaluate(operand, &mut |path| Err(path.key())) {
+                        if Op::Push(value).pushes_more_than(64) {
                             issues.push(
                                 ValidationIssue::error(format!(
                                     "modExp {label} must fit in 64 Script-number bytes"
@@ -442,9 +446,7 @@ pub(super) fn validate_binding_expression(
             if let ("checkMultisig", Some(ArkType::Array(_, count)), Some(threshold)) =
                 (name, operands.first().map(|keys| &keys.ty), operands.get(2))
             {
-                if let Ok(value) =
-                    crate::compiler::constants::evaluate(threshold, &mut |path| Err(path.key()))
-                {
+                if let Ok(value) = constants::evaluate(threshold, &mut |path| Err(path.key())) {
                     if value
                         .parse::<usize>()
                         .map_or(true, |t| t == 0 || t > *count)
@@ -458,7 +460,7 @@ pub(super) fn validate_binding_expression(
             let width = |index: usize| {
                 operands
                     .get(index)
-                    .and_then(|o| crate::types::static_byte_width(o))
+                    .and_then(|o| types::static_byte_width(o))
             };
             let byte_rule = match name {
                 "checkSigFromStack" | "checkSigFromStackVerify" => width(2)
@@ -492,7 +494,7 @@ pub(super) fn validate_binding_expression(
             };
             // Same-type casts are no-ops; emission drops them.
             if actual != source
-                && !binding_types_compatible(&ArkType::parse(target), &actual)
+                && !ArkType::parse(target).accepts(&actual)
                 && !(target == "bytes" && actual == ArkType::Bool)
             {
                 issues.push(ValidationIssue::error(format!(
@@ -554,7 +556,6 @@ pub(super) fn validate_binding_expression(
         ExprKind::Name(path) if path.segments.is_empty() => {
             validate_named_binding(&path.root, None, "binding", scopes, issues);
         }
-        // A path under an unbound root reports the root.
         ExprKind::Name(path) | ExprKind::ArrayIndex { array: path, .. }
             if find_binding(scopes, &path.root).is_none() =>
         {
@@ -574,7 +575,7 @@ pub(super) fn validate_binding_expression(
                 let indexed = array
                     .segments
                     .iter()
-                    .any(|segment| matches!(segment, crate::models::Segment::Index(_)));
+                    .any(|segment| matches!(segment, Segment::Index(_)));
                 if !indexed && find_binding(scopes, &array.key()).is_some() {
                     validate_array_length(&array.key(), scopes, issues);
                     return;
@@ -673,16 +674,15 @@ pub(super) fn validate_binding_expression(
     {
         issues.push(ValidationIssue::reported());
     }
-    locate(&mut issues[first..], expression.span);
+    super::locate(&mut issues[first..], expression.span);
 }
 
-/// Validate the operands of `expression`, each as a value unless the operator takes it whole.
 fn validate_operands(
     expression: &Expression,
     scopes: &BindingScopes,
     issues: &mut Vec<ValidationIssue>,
 ) {
-    for child in child_exprs(expression) {
+    for child in models::child_exprs(expression) {
         if matches!(
             &expression.kind,
             ExprKind::Call { .. }
@@ -762,7 +762,8 @@ pub(super) fn validate_array_index(
     array_info.map(|(element_type, _, source)| (element_type, source))
 }
 
-/// Validate an int index into `array`: how diagnostics spell it, and its length.
+/// `array` is the indexed array as diagnostics spell it, with its length; without it the index is
+/// not range-checked.
 fn validate_index(
     index: &Expression,
     array: Option<(String, usize)>,
@@ -779,7 +780,7 @@ fn validate_index(
             .at(index.span),
         );
     }
-    let evaluated = crate::compiler::constants::evaluate(index, &mut |path| {
+    let evaluated = constants::evaluate(index, &mut |path| {
         let array = path
             .split_last()
             .filter(|&(_, field)| field == "length" && find_binding(scopes, &path.key()).is_none());
@@ -818,7 +819,7 @@ fn validate_index(
 fn literal_index(mut expression: &Expression) -> Option<(bool, &str)> {
     let mut negative = false;
     while let ExprKind::Unary {
-        op: crate::operators::UnaryOperator::Neg,
+        op: UnaryOperator::Neg,
         value,
     } = &expression.kind
     {
@@ -836,7 +837,7 @@ fn literal_index(mut expression: &Expression) -> Option<(bool, &str)> {
 
 /// Why `path`, under `tx` or `this`, names no value: its first member the builtin docs
 /// lack, with those they list at that level, or else that it needs an access or a call.
-fn unknown_member(path: &crate::models::Path) -> String {
+fn unknown_member(path: &Path) -> String {
     // A `tx` or `this` chain the parser resolves to no member keeps its indexes and calls,
     // as in `outputs[0]`.
     let text = path.key();
@@ -859,7 +860,7 @@ fn unknown_member(path: &crate::models::Path) -> String {
     let mut owner = path.root.clone();
     for (segment, dot) in flat.split('.').skip(1).zip(dots) {
         let name = segment.split(['[', '(']).next().unwrap_or_default();
-        let members = crate::builtins::members_of(&owner);
+        let members = builtins::members_of(&owner);
         if !members.iter().any(|member| member == name) {
             let expected = if members.is_empty() {
                 String::new()

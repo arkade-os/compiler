@@ -1,6 +1,11 @@
-use super::*;
+//! Rejects bindings that shadow a constructor parameter, a constant, or a binding live in an
+//! enclosing scope, and assignments to constructor parameters or constants.
 
-/// Check 1: reject any binding that shadows a name still live in an enclosing scope.
+use std::collections::HashSet;
+
+use super::ValidationIssue;
+use crate::models::{AssignmentTarget, Contract, LocatedStatement, Path, Statement};
+
 pub(super) fn check_shadowing(contract: &Contract, issues: &mut Vec<ValidationIssue>) {
     let ctor_names: HashSet<&str> = contract
         .parameters
@@ -34,7 +39,6 @@ pub(super) fn check_shadowing(contract: &Contract, issues: &mut Vec<ValidationIs
 
     for func in contract.functions.iter().filter(|f| !f.is_imported()) {
         let first = issues.len();
-        // Seed frame: constructor params + this function's params.
         let mut seed: HashSet<String> = ctor_names
             .iter()
             .chain(&const_names)
@@ -66,12 +70,10 @@ pub(super) fn check_shadowing(contract: &Contract, issues: &mut Vec<ValidationIs
             &const_names,
             issues,
         );
-        locate(&mut issues[first..], func.span);
+        super::locate(&mut issues[first..], func.span);
     }
 }
 
-/// Reject assignments to constructor parameters or their flattened children.
-/// Recurses into branch and loop bodies.
 fn check_ctor_assignment(
     stmts: &[LocatedStatement],
     fname: &str,
@@ -124,17 +126,15 @@ fn check_ctor_assignment(
             | Statement::Call(_)
             | Statement::Return(_) => {}
         }
-        locate(&mut issues[first..], stmt.span);
+        super::locate(&mut issues[first..], stmt.span);
     }
 }
 
-/// Returns true if `name` is bound in any frame currently on the stack.
 fn in_scope(stack: &[HashSet<String>], name: &str) -> bool {
     stack.iter().any(|frame| frame.contains(name))
 }
 
-/// Walk statements maintaining a lexical scope stack. Each block (`for` body,
-/// `if`/`else` branch) is a pushed frame, so sibling blocks do not conflict.
+/// Each block is its own frame, so bindings in sibling blocks do not conflict.
 fn walk_scope(
     stmts: &[LocatedStatement],
     fname: &str,
@@ -145,7 +145,11 @@ fn walk_scope(
         let first = issues.len();
         match &stmt.statement {
             Statement::Declaration { name, .. } | Statement::LetBinding { name, .. } => {
-                validate_source_identifier(name, &format!("binding in function '{fname}'"), issues);
+                super::validate_source_identifier(
+                    name,
+                    &format!("binding in function '{fname}'"),
+                    issues,
+                );
                 if in_scope(stack, name) {
                     issues.push(ValidationIssue::error(format!(
                         "binding '{name}' in function '{fname}' shadows an in-scope binding"
@@ -163,12 +167,12 @@ fn walk_scope(
                 body,
                 ..
             } => {
-                validate_source_identifier(
+                super::validate_source_identifier(
                     index_var,
                     &format!("loop variable in function '{fname}'"),
                     issues,
                 );
-                validate_source_identifier(
+                super::validate_source_identifier(
                     value_var,
                     &format!("loop variable in function '{fname}'"),
                     issues,
@@ -195,7 +199,7 @@ fn walk_scope(
             Statement::ForRange {
                 index_var, body, ..
             } => {
-                validate_source_identifier(
+                super::validate_source_identifier(
                     index_var,
                     &format!("loop variable in function '{fname}'"),
                     issues,
@@ -228,12 +232,11 @@ fn walk_scope(
                     stack.pop();
                 }
             }
-            // Reassignment is handled separately; requires introduce no bindings.
             Statement::VarAssign { .. }
             | Statement::Require(_)
             | Statement::Call(_)
             | Statement::Return(_) => {}
         }
-        locate(&mut issues[first..], stmt.span);
+        super::locate(&mut issues[first..], stmt.span);
     }
 }

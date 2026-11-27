@@ -4,6 +4,7 @@
 //! warn then takes the level the caller gives `warnings`, as rustc's `-D warnings` does.
 
 use std::collections::BTreeMap;
+use std::str::FromStr;
 
 use crate::diagnostics::{Diagnostic, Span};
 use crate::models::{Contract, TapItem, TapOperand};
@@ -110,6 +111,7 @@ fn timelock_units(contract: &Contract, findings: &mut Vec<Finding>) {
     }
 }
 
+/// How a finding is reported; `Allow` drops it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 #[non_exhaustive]
 pub enum Level {
@@ -118,6 +120,7 @@ pub enum Level {
     Deny,
 }
 
+/// A group of lints that [`Levels::set_named`] can set at once.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum Category {
@@ -197,7 +200,7 @@ impl Lint {
     }
 }
 
-impl std::str::FromStr for Lint {
+impl FromStr for Lint {
     type Err = String;
 
     fn from_str(id: &str) -> Result<Self, String> {

@@ -1,7 +1,14 @@
 //! The generator's model of the stack: which binding each slot holds, and the
 //! reads, assignments, scopes and joins that move them.
 
-use super::*;
+use std::iter;
+
+use super::ir::Op;
+use super::{BindingKind, Generator, Replacement, Result, StackItem};
+use crate::diagnostics::CompileError;
+use crate::models::{AssignmentTarget, Expression, Path, Segment};
+use crate::opcodes::Opcode;
+use crate::types;
 
 impl Generator {
     pub(super) fn push_temporary(&mut self, op: impl Into<Op>) {
@@ -37,9 +44,8 @@ impl Generator {
             self.push_integer_temporary(length);
             return Ok(());
         }
-        // Only an out-of-range constant index names no element. Validation and folding reject
-        // one on a reachable path; one left here is in code that folding removes, so it is
-        // checked at runtime.
+        // Only an out-of-range constant index names no element. Validation and folding reject a
+        // reachable one; one left here is in dead code, so it gets the runtime check.
         if let Some((Segment::Index(index), segments)) =
             name.segments.split_last().filter(|_| !is_binding)
         {
@@ -79,7 +85,8 @@ impl Generator {
             {
                 self.final_reads[previous] = false;
             }
-            // Arrays and outer scope slots stay pinned unless reassignment restores the slot.
+            // Only a read whose slot nothing needs later may consume it: arrays and outer-scope
+            // slots stay, unless the in-place rebinding refills the slot.
             self.final_reads.push(
                 take || (!self.preserve_bindings
                     && index >= self.pinned_stack_len
@@ -93,7 +100,7 @@ impl Generator {
                     }) || self
                         .replacement
                         .as_ref()
-                        .is_some_and(|(target, _, _)| target == name))),
+                        .is_some_and(|replacement| replacement.target == *name))),
             );
             false
         };
@@ -101,7 +108,7 @@ impl Generator {
         if consume {
             self.stack.remove(index);
         }
-        self.apply(if consume { Roll } else { Pick }, 1, 1)
+        self.apply(if consume { Opcode::Roll } else { Opcode::Pick }, 1, 1)
     }
 
     pub(super) fn count_constructor_reads(&mut self, index: usize, reads: usize) {
@@ -115,7 +122,7 @@ impl Generator {
     }
 
     /// Runtime indexes address leaves by their prologue slots.
-    // ponytail: pins every leaf of the indexed parameter, so unread siblings keep slots;
+    // LIMITATION: pins every leaf of the indexed parameter, so unread siblings keep slots;
     // pin only the indexed array's leaves if wide runtime-indexed structs become common.
     pub(super) fn pin_constructor_slots(&mut self, path: &Path) {
         for index in 0..self.stack.len() {
@@ -127,7 +134,7 @@ impl Generator {
     }
 
     pub(super) fn push_integer_temporary(&mut self, value: usize) {
-        self.push_temporary(integer_op(value));
+        self.push_temporary(Op::push_int(value));
     }
 
     pub(super) fn check_array_index(&mut self, length: usize) -> Result<()> {
@@ -136,11 +143,11 @@ impl Generator {
 
     /// Fails the spend unless the top value is in `min..max`, leaving it in place.
     pub(super) fn check_within(&mut self, min: usize, max: usize) -> Result<()> {
-        self.apply(Dup, 1, 2)?;
+        self.apply(Opcode::Dup, 1, 2)?;
         self.push_integer_temporary(min);
         self.push_integer_temporary(max);
-        self.apply(Within, 3, 1)?;
-        self.apply(Verify, 1, 0)
+        self.apply(Opcode::Within, 3, 1)?;
+        self.apply(Opcode::Verify, 1, 0)
     }
 
     pub(super) fn select_indexed_value(&mut self, array: &Path) -> Result<()> {
@@ -160,9 +167,9 @@ impl Generator {
         self.check_array_index(self.array_length(array))?;
         if first_depth_without_index != 0 {
             self.push_integer_temporary(first_depth_without_index);
-            self.apply(Add, 2, 1)?;
+            self.apply(Opcode::Add, 2, 1)?;
         }
-        self.apply(Pick, 1, 1)
+        self.apply(Opcode::Pick, 1, 1)
     }
 
     pub(super) fn pop_temporaries(&mut self, count: usize, opcode: Opcode) -> Result<()> {
@@ -183,7 +190,7 @@ impl Generator {
         self.pop_temporaries(inputs, opcode)?;
         self.asm.push(opcode.into());
         self.stack
-            .extend(std::iter::repeat_n(StackItem::Temporary, outputs));
+            .extend(iter::repeat_n(StackItem::Temporary, outputs));
         self.max_depth = self.max_depth.max(self.stack.len());
         Ok(())
     }
@@ -194,7 +201,7 @@ impl Generator {
         }
         let index = self.stack.len() - 2;
         self.stack.remove(index);
-        self.asm.push(Nip.into());
+        self.asm.push(Opcode::Nip.into());
         Ok(())
     }
 
@@ -204,7 +211,7 @@ impl Generator {
         }
         let len = self.stack.len();
         self.stack.swap(len - 2, len - 1);
-        self.asm.push(Swap.into());
+        self.asm.push(Opcode::Swap.into());
         Ok(())
     }
 
@@ -246,7 +253,12 @@ impl Generator {
                 "aliased parameter '{name}' is assigned"
             )));
         }
-        if let Some((target, kind, start)) = self.replacement.clone() {
+        if let Some(Replacement {
+            target,
+            kind,
+            start,
+        }) = self.replacement.clone()
+        {
             if target == name && !self.preserve_bindings {
                 if !matches!(self.stack.last(), Some(StackItem::Temporary)) {
                     return Err(CompileError::internal("assignment has no result value"));
@@ -299,7 +311,7 @@ impl Generator {
                 CompileError::internal(format!("invalid assignment target '{name}'"))
             })?;
         self.push_integer_temporary(depth);
-        self.apply(Put, 2, 0)
+        self.apply(Opcode::Put, 2, 0)
     }
 
     pub(super) fn assign_indexed_binding(
@@ -338,9 +350,9 @@ impl Generator {
         self.check_array_index(self.array_length(array))?;
         if first_depth_without_operands != 0 {
             self.push_integer_temporary(first_depth_without_operands);
-            self.apply(Add, 2, 1)?;
+            self.apply(Opcode::Add, 2, 1)?;
         }
-        self.apply(Put, 2, 0)
+        self.apply(Opcode::Put, 2, 0)
     }
 
     pub(super) fn enter_scope(&mut self) {
@@ -372,12 +384,12 @@ impl Generator {
     pub(super) fn drop_binding(&mut self, index: usize) -> Result<()> {
         let depth = self.stack.len() - index - 1;
         match depth {
-            0 => self.asm.push(Drop.into()),
-            1 => self.asm.push(Nip.into()),
+            0 => self.asm.push(Opcode::Drop.into()),
+            1 => self.asm.push(Opcode::Nip.into()),
             _ => {
                 self.push_integer_temporary(depth);
-                self.pop_temporaries(1, Roll)?;
-                self.asm.extend([Roll.into(), Drop.into()]);
+                self.pop_temporaries(1, Opcode::Roll)?;
+                self.asm.extend([Opcode::Roll.into(), Opcode::Drop.into()]);
             }
         }
         self.stack.remove(index);
@@ -401,7 +413,7 @@ impl Generator {
                     return Err(CompileError::internal("temporary at branch join"));
                 };
                 // Returning paths share the join frame; direct return lowering could remove this padding.
-                self.push_temporary(Int0);
+                self.push_temporary(Opcode::Int0);
                 self.bind_local(name.clone())?;
             }
         }
@@ -424,8 +436,8 @@ impl Generator {
                         self.swap()?;
                     } else {
                         self.push_integer_temporary(depth);
-                        self.pop_temporaries(1, Roll)?;
-                        self.asm.push(Roll.into());
+                        self.pop_temporaries(1, Opcode::Roll)?;
+                        self.asm.push(Opcode::Roll.into());
                         let item = self.stack.remove(index);
                         self.stack.push(item);
                     }
@@ -452,6 +464,8 @@ impl Generator {
 #[cfg(test)]
 mod symbolic_stack_tests {
     use super::*;
+    use crate::models::{ExprKind, Parameter};
+    use crate::operators::BinaryOperator;
 
     #[test]
     fn deep_assignment_uses_put_at_the_remaining_stack_depth() {
@@ -542,7 +556,7 @@ mod symbolic_stack_tests {
         generator
             .assign(&AssignmentTarget::ArrayIndex {
                 array: Path::new("values"),
-                index: Box::new(ExprKind::Name(crate::models::Path::from_key("i")).into()),
+                index: Box::new(ExprKind::Name(Path::from_key("i")).into()),
             })
             .expect("indexed assignment");
         assert_eq!(
@@ -589,8 +603,8 @@ mod symbolic_stack_tests {
                 array: Path::new("values"),
                 index: Box::new(
                     ExprKind::BinaryOp {
-                        left: Box::new(ExprKind::Name(crate::models::Path::from_key("i")).into()),
-                        op: crate::operators::BinaryOperator::Add,
+                        left: Box::new(ExprKind::Name(Path::from_key("i")).into()),
+                        op: BinaryOperator::Add,
                         right: Box::new(ExprKind::Literal("1".to_string()).into()),
                     }
                     .into(),

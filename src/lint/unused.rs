@@ -5,13 +5,14 @@ use std::collections::HashSet;
 
 use super::{Finding, Lint};
 use crate::models::{Contract, Statement};
+use crate::validator;
 use crate::validator::references::live_reads;
 
 pub(super) fn check(contract: &Contract, findings: &mut Vec<Finding>) {
     let mut used: HashSet<&str> = contract
         .tapscripts
         .iter()
-        .flat_map(crate::validator::tapscript_reads)
+        .flat_map(validator::tapscript_reads)
         .collect();
     for function in contract.functions.iter().filter(|f| !f.is_imported()) {
         let (live, mut dead) = live_reads(&function.statements);

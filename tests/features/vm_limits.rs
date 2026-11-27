@@ -1,3 +1,4 @@
+use crate::common;
 use arkade_compiler::compile;
 
 fn compile_error(source: &str) -> String {
@@ -71,7 +72,7 @@ fn constant_operands_inside_the_vm_domain_compile() {
 #[test]
 fn nonnegative_operand_domains_accept_integers_beyond_i128() {
     let large = "170141183460469231731687303715884105728";
-    for compile in [compile, crate::common::compile_unoptimized] {
+    for compile in [compile, common::compile_unoptimized] {
         for body in [
             format!("require(!checkTime({large}));"),
             format!("require(modExp(n, {large}, 3) == 1);"),
@@ -96,7 +97,7 @@ fn nonnegative_operand_domains_accept_integers_beyond_i128() {
 
 #[test]
 fn constant_expression_operands_are_checked_in_both_modes() {
-    for compile in [compile, crate::common::compile_unoptimized] {
+    for compile in [compile, common::compile_unoptimized] {
         for (body, expected) in [
             (
                 "require(size(digest(d, 4 + 5)) > 0);",
@@ -144,7 +145,7 @@ fn constant_expression_operands_are_checked_in_both_modes() {
 
 #[test]
 fn mod_exp_constant_operands_fit_the_vms_64_byte_limit() {
-    for compile in [compile, crate::common::compile_unoptimized] {
+    for compile in [compile, common::compile_unoptimized] {
         for (hex, accepted) in [
             (format!("7f{}", "ff".repeat(63)), true),
             (format!("80{}", "00".repeat(63)), false),
@@ -179,7 +180,7 @@ fn mod_exp_constant_operands_fit_the_vms_64_byte_limit() {
 
 #[test]
 fn pairing_only_accepts_the_bn254_curve() {
-    for compile in [compile, crate::common::compile_unoptimized] {
+    for compile in [compile, common::compile_unoptimized] {
         for curve in ["0", "1", "2", "1 + 1"] {
             let source = format!("contract C() {{ function f(ECPoint[1] p, G2Point[1] q) {{ require(ecPairing(p, q, {curve})); }} }}");
             if matches!(curve, "0" | "1") {
@@ -269,7 +270,7 @@ fn pushes_above_the_vm_element_size_do_not_compile() {
 
 #[test]
 fn numeric_pushes_respect_the_element_limit_and_sign_byte() {
-    for compile in [compile, crate::common::compile_unoptimized] {
+    for compile in [compile, common::compile_unoptimized] {
         for (hex, accepted) in [
             (format!("7f{}", "ff".repeat(519)), true),
             (format!("80{}", "00".repeat(519)), false),
@@ -339,7 +340,7 @@ fn signature_checks_that_may_be_false_warn() {
 
 #[test]
 fn multisig_thresholds_are_checked_in_both_modes_where_folding_removes_the_call() {
-    for compile in [compile, crate::common::compile_unoptimized] {
+    for compile in [compile, common::compile_unoptimized] {
         for body in [
             "if (false) { require(checkMultisig(k, s, 5)); }",
             "require(false && checkMultisig(k, s, 1 + 4));",

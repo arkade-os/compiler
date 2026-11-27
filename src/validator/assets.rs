@@ -1,9 +1,15 @@
-use super::*;
+//! Checks that every Asset ID operand (`lookup`, `has`, `tryLookup`, `controlIs`) is an `AssetId`
+//! and that a literal's constant `gidx` fits in a u16.
 
-/// Reject malformed canonical Asset ID operands at compile time instead of
-/// relying on the emulator's runtime `popAssetID` check: every
-/// `lookup`/`has`/`tryLookup`/`controlIs` operand must be an `AssetId`; checking
-/// it as one also range-checks a literal's constant gidx (see `validate_gidx`).
+use super::ValidationIssue;
+use crate::compiler::constants;
+use crate::models::{
+    self, AssignmentTarget, Contract, ExprKind, Expression, LocatedStatement, Statement,
+    StructDefinition, TypeName,
+};
+use crate::types::ArkType;
+
+/// Catches at compile time what the emulator's runtime `popAssetID` check would reject.
 pub(super) fn check_asset_id_operands(contract: &Contract, issues: &mut Vec<ValidationIssue>) {
     for func in contract.functions.iter().filter(|f| !f.is_imported()) {
         walk_asset_id_stmts(&func.statements, &contract.structs, issues);
@@ -12,7 +18,7 @@ pub(super) fn check_asset_id_operands(contract: &Contract, issues: &mut Vec<Vali
 
 fn walk_asset_id_stmts(
     stmts: &[LocatedStatement],
-    structs: &[crate::models::StructDefinition],
+    structs: &[StructDefinition],
     issues: &mut Vec<ValidationIssue>,
 ) {
     for stmt in stmts {
@@ -60,22 +66,15 @@ fn walk_asset_id_stmts(
                 walk_asset_id_stmts(body, structs, issues);
             }
         }
-        locate(&mut issues[first..], stmt.span);
+        super::locate(&mut issues[first..], stmt.span);
     }
 }
 
-/// Walk an expression, validating the operands of every Asset ID construct and
-/// recursing through every sub-expression that can nest one.
-///
-/// Traversal and validation are deliberately split: this function validates the
-/// Asset ID operands of the constructs that carry them, then recurses into *all*
-/// direct sub-expressions via [`child_exprs`]. Because `child_exprs` is an
-/// exhaustive match with no wildcard, any future `Expression` variant forces a
-/// decision there and can never silently bypass this validation by falling
-/// through a catch-all.
+/// Recurses through [`models::child_exprs`], whose exhaustive match keeps a new variant from
+/// bypassing this check.
 fn check_asset_id_expr(
     expr: &Expression,
-    structs: &[crate::models::StructDefinition],
+    structs: &[StructDefinition],
     issues: &mut Vec<ValidationIssue>,
 ) {
     match &expr.kind {
@@ -85,13 +84,13 @@ fn check_asset_id_expr(
         | ExprKind::GroupLookup { asset_id }
         | ExprKind::GroupHas { asset_id }
         | ExprKind::GroupControlIs { asset_id, .. } => {
-            let asset = crate::models::TypeName::Named("AssetId".to_string());
+            let asset = TypeName::Named("AssetId".to_string());
             super::functions::validate_value(&asset, asset_id, structs, "asset id", issues);
         }
         _ => {}
     }
 
-    for child in child_exprs(expr) {
+    for child in models::child_exprs(expr) {
         check_asset_id_expr(child, structs, issues);
     }
 }
@@ -104,7 +103,7 @@ pub(super) fn validate_gidx(fields: &[(String, Expression)], issues: &mut Vec<Va
     if gidx.ty != ArkType::Int || !is_constant(gidx) {
         return;
     }
-    match crate::compiler::constants::evaluate(gidx, &mut |path| Err(path.key())) {
+    match constants::evaluate(gidx, &mut |path| Err(path.key())) {
         Ok(v) if v.parse::<u16>().is_ok() => {}
         Ok(v) => issues.push(
             ValidationIssue::error(format!("asset id gidx {v} is out of range 0..65535"))
@@ -122,7 +121,7 @@ fn is_constant(expr: &Expression) -> bool {
     match &expr.kind {
         ExprKind::Literal(_) => true,
         ExprKind::Unary { .. } | ExprKind::BinaryOp { .. } => {
-            child_exprs(expr).into_iter().all(is_constant)
+            models::child_exprs(expr).into_iter().all(is_constant)
         }
         _ => false,
     }

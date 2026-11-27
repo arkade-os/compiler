@@ -1,4 +1,9 @@
 //! Feature/language tests exercising compiler behavior via inline snippets.
+#![allow(
+    clippy::panic,
+    clippy::unwrap_used,
+    reason = "a failing test should panic"
+)]
 #[path = "common/mod.rs"]
 mod common;
 

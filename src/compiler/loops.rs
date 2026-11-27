@@ -1,14 +1,16 @@
-use crate::models::*;
+//! Substitutes a literal for a scalar binding throughout a statement tree, to unroll loops and to
+//! fold literal arguments into a helper's body.
 
-// ─── Loop Unrolling ─────────────────────────────────────────────────────────────
+use crate::models::{
+    self, AssignmentTarget, ExprKind, Expression, LocatedStatement, Path, Segment, Statement,
+};
 
-/// Substitute `literal` for the scalar binding `name` in `body`. For a loop iteration,
-/// `element` names its value variable and the iterated items, and that variable and paths
-/// rooted at it become accesses on element `literal` of the items.
+/// For a loop iteration, `element` is the value variable and the iterated items; paths rooted at
+/// that variable become accesses on element `literal` of the items.
 ///
 /// The literal keeps the substituted name's type, and a rebuilt array read keeps its own;
-/// element accesses are untyped. Copies keep only the span and statement; names, branches and
-/// messages are read from the parsed body.
+/// element accesses are untyped. Copies drop `names`, `branches` and `message`, which are read
+/// from the parsed body.
 pub(crate) fn substitute_body(
     body: &[LocatedStatement],
     name: &str,
@@ -126,8 +128,6 @@ pub(crate) fn substitute_statement(
     }
 }
 
-/// Resolve a dotted binding path: `name` to `literal`, and `element`'s value variable paths to
-/// accesses on element `literal` of its items.
 fn substitute_path(
     path: &Path,
     at: &Expression,
@@ -194,7 +194,7 @@ pub(crate) fn substitute_expression(
         }
         _ => {
             let mut expression = expr.clone();
-            for child in crate::models::child_exprs_mut(&mut expression) {
+            for child in models::child_exprs_mut(&mut expression) {
                 *child = substitute_expression(child, name, literal, element);
             }
             expression
@@ -211,21 +211,15 @@ mod tests {
     fn loop_substitution_preserves_spans() {
         let span = Span { start: 10, end: 20 };
         let index = Expression::new(
-            ExprKind::Name(crate::models::Path::from_key("i")),
+            ExprKind::Name(Path::from_key("i")),
             Span { start: 12, end: 13 },
         );
-        let items = ExprKind::Name(crate::models::Path::from_key("xs")).into();
+        let items = ExprKind::Name(Path::from_key("xs")).into();
         for (kind, expected) in [
+            (ExprKind::Name(Path::from_key("i")), ["0", "1"]),
+            (ExprKind::Name(Path::from_key("x")), ["xs[0]", "xs[1]"]),
             (
-                ExprKind::Name(crate::models::Path::from_key("i")),
-                ["0", "1"],
-            ),
-            (
-                ExprKind::Name(crate::models::Path::from_key("x")),
-                ["xs[0]", "xs[1]"],
-            ),
-            (
-                ExprKind::Name(crate::models::Path::from_key("x.amount")),
+                ExprKind::Name(Path::from_key("x.amount")),
                 ["xs[0].amount", "xs[1].amount"],
             ),
             (

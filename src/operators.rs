@@ -2,7 +2,9 @@
 //! checks, constant folding and code generation read these properties
 //! instead of matching operator text.
 
-use crate::opcodes::Opcode::{self, *};
+use std::fmt;
+
+use crate::opcodes::Opcode;
 
 /// What an operator takes and gives, which decides how it is checked.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -68,27 +70,26 @@ impl BinaryOperator {
     /// Symbol, class, and the opcodes emitted after both operands. Logical
     /// operators emit none here: they lower to a branch.
     fn describe(self) -> (&'static str, OperatorClass, &'static [Opcode]) {
-        use OperatorClass::*;
         match self {
-            Self::Mul => ("*", Arithmetic, &[Mul]),
-            Self::Div => ("/", Arithmetic, &[Div]),
+            Self::Mul => ("*", OperatorClass::Arithmetic, &[Opcode::Mul]),
+            Self::Div => ("/", OperatorClass::Arithmetic, &[Opcode::Div]),
             // Truncated: the result takes the sign of the dividend.
-            Self::Rem => ("%", Arithmetic, &[Mod]),
-            Self::Add => ("+", Arithmetic, &[Add]),
-            Self::Sub => ("-", Arithmetic, &[Sub]),
-            Self::Shl => ("<<", Shift, &[LShift]),
-            Self::Shr => (">>", Shift, &[RShift]),
-            Self::BitAnd => ("&", Bytewise, &[And]),
-            Self::BitXor => ("^", Bytewise, &[Xor]),
-            Self::BitOr => ("|", Bytewise, &[Or]),
-            Self::Eq => ("==", Equality, &[Equal]),
-            Self::Ne => ("!=", Equality, &[Equal, Not]),
-            Self::Lt => ("<", Ordering, &[LessThan]),
-            Self::Le => ("<=", Ordering, &[LessThanOrEqual]),
-            Self::Gt => (">", Ordering, &[GreaterThan]),
-            Self::Ge => (">=", Ordering, &[GreaterThanOrEqual]),
-            Self::And => ("&&", Logical, &[]),
-            Self::Or => ("||", Logical, &[]),
+            Self::Rem => ("%", OperatorClass::Arithmetic, &[Opcode::Mod]),
+            Self::Add => ("+", OperatorClass::Arithmetic, &[Opcode::Add]),
+            Self::Sub => ("-", OperatorClass::Arithmetic, &[Opcode::Sub]),
+            Self::Shl => ("<<", OperatorClass::Shift, &[Opcode::LShift]),
+            Self::Shr => (">>", OperatorClass::Shift, &[Opcode::RShift]),
+            Self::BitAnd => ("&", OperatorClass::Bytewise, &[Opcode::And]),
+            Self::BitXor => ("^", OperatorClass::Bytewise, &[Opcode::Xor]),
+            Self::BitOr => ("|", OperatorClass::Bytewise, &[Opcode::Or]),
+            Self::Eq => ("==", OperatorClass::Equality, &[Opcode::Equal]),
+            Self::Ne => ("!=", OperatorClass::Equality, &[Opcode::Equal, Opcode::Not]),
+            Self::Lt => ("<", OperatorClass::Ordering, &[Opcode::LessThan]),
+            Self::Le => ("<=", OperatorClass::Ordering, &[Opcode::LessThanOrEqual]),
+            Self::Gt => (">", OperatorClass::Ordering, &[Opcode::GreaterThan]),
+            Self::Ge => (">=", OperatorClass::Ordering, &[Opcode::GreaterThanOrEqual]),
+            Self::And => ("&&", OperatorClass::Logical, &[]),
+            Self::Or => ("||", OperatorClass::Logical, &[]),
         }
     }
 
@@ -108,8 +109,8 @@ impl BinaryOperator {
     /// `OP_EQUAL` compares bytes and so accepts a non-minimal encoding of an equal number.
     pub(crate) fn opcodes_for(self, numeric: bool) -> &'static [Opcode] {
         match self {
-            Self::Eq if numeric => &[NumEqual],
-            Self::Ne if numeric => &[NumNotEqual],
+            Self::Eq if numeric => &[Opcode::NumEqual],
+            Self::Ne if numeric => &[Opcode::NumNotEqual],
             _ => self.opcodes(),
         }
     }
@@ -127,8 +128,8 @@ impl BinaryOperator {
     }
 }
 
-impl std::fmt::Display for BinaryOperator {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Display for BinaryOperator {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.symbol())
     }
 }
@@ -144,9 +145,9 @@ impl UnaryOperator {
     /// Symbol, operand and result type, and opcode.
     fn describe(self) -> (&'static str, &'static str, Opcode) {
         match self {
-            Self::Neg => ("-", "int", Negate),
-            Self::Not => ("!", "bool", Not),
-            Self::Invert => ("~", "bytes", Invert),
+            Self::Neg => ("-", "int", Opcode::Negate),
+            Self::Not => ("!", "bool", Opcode::Not),
+            Self::Invert => ("~", "bytes", Opcode::Invert),
         }
     }
 

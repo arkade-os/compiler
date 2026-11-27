@@ -1,15 +1,28 @@
-use super::*;
-use crate::models::{child_exprs_mut, TypeLeaf, TypeName};
+//! Emits typed (composite) values and inlines private function calls: arguments are bound or
+//! aliased, caller bindings hidden, and only the result left above the caller's stack.
+
+use std::collections::HashMap;
+use std::{mem, slice};
+
+use super::lowering::{self, Lowered};
+use super::{loops, statements, BindingKind, Generator, Result, StackItem};
+use crate::builtins::Lowering;
+use crate::models::{
+    self, child_exprs_mut, AssignmentTarget, ExprKind, Expression, Function, GroupIOSource,
+    LocatedStatement, Parameter, Path, Segment, Statement, TypeLeaf, TypeName,
+};
+use crate::opcodes::Opcode;
+use crate::types;
 
 pub(super) fn extract_values(expression: &mut Expression, values: &mut Vec<Expression>) {
     if matches!(
         &expression.kind,
         ExprKind::Call { .. } | ExprKind::FieldAccess { .. } | ExprKind::IndexAccess { .. }
-    ) || matches!(&expression.kind, ExprKind::Builtin { builtin, .. } if matches!(builtin.lowering, crate::builtins::Lowering::Pairing | crate::builtins::Lowering::Multisig))
+    ) || matches!(&expression.kind, ExprKind::Builtin { builtin, .. } if matches!(builtin.lowering, Lowering::Pairing | Lowering::Multisig))
         || matches!(
             &expression.kind,
             ExprKind::GroupIOAccess {
-                source: crate::models::GroupIOSource::Inputs,
+                source: GroupIOSource::Inputs,
                 ..
             }
         )
@@ -25,7 +38,7 @@ pub(super) fn extract_values(expression: &mut Expression, values: &mut Vec<Expre
         let mut replacement = expression.with_kind(ExprKind::Extracted(values.len()));
         // The placeholder stands for the extracted value, so it keeps its type.
         replacement.ty = expression.ty.clone();
-        values.push(std::mem::replace(expression, replacement));
+        values.push(mem::replace(expression, replacement));
     } else {
         for child in child_exprs_mut(expression) {
             extract_values(child, values);
@@ -54,7 +67,7 @@ pub(super) fn contains_return(statements: &[LocatedStatement]) -> bool {
 }
 
 /// Whether `statements` assign `name` or any part of it.
-// ponytail: scans the whole body per name; cache assigned roots if helper calls or loops grow.
+// LIMITATION: scans the whole body per name; cache assigned roots if helper calls or loops grow.
 pub(super) fn assigns(statements: &[LocatedStatement], name: &str) -> bool {
     statements
         .iter()
@@ -81,9 +94,8 @@ pub(super) fn assigns(statements: &[LocatedStatement], name: &str) -> bool {
         })
 }
 
-/// The literal `argument` passes for `parameter` when a folding call substitutes it into a copy
-/// of `function`'s body instead of binding it: one that `lowering::propagates`, for a parameter
-/// the body never reassigns.
+/// The literal a folding call substitutes into `function`'s body instead of binding it: one that
+/// `lowering::propagates`, for a parameter the body never reassigns.
 pub(super) fn literal_argument<'a>(
     function: &Function,
     parameter: &Parameter,
@@ -99,7 +111,6 @@ pub(super) fn literal_argument<'a>(
     }
 }
 
-/// `function`'s body with each `literal_argument` of `args` substituted for its parameter.
 pub(super) fn substitute_arguments(
     function: &Function,
     args: &[Expression],
@@ -107,7 +118,7 @@ pub(super) fn substitute_arguments(
     let mut body = function.statements.clone();
     for (argument, parameter) in args.iter().zip(&function.parameters) {
         if let Some(literal) = literal_argument(function, parameter, argument) {
-            body = substitute_body(&body, &parameter.name, literal, None);
+            body = loops::substitute_body(&body, &parameter.name, literal, None);
         }
     }
     body
@@ -115,7 +126,7 @@ pub(super) fn substitute_arguments(
 
 impl Generator {
     pub(super) fn value_leaves(&self, path: &Path, ty: &TypeName) -> Result<Vec<TypeLeaf>> {
-        Ok(crate::models::flatten_value(path, ty, &self.structs)?)
+        Ok(models::flatten_value(path, ty, &self.structs)?)
     }
 
     /// Stack slots a value of `ty` occupies.
@@ -178,7 +189,7 @@ impl Generator {
             }
             return Ok(());
         }
-        if crate::models::expression_result_struct(expression) == ty.name() {
+        if models::expression_result_struct(expression) == ty.name() {
             let width = self.width(ty)?;
             self.emit_expression_items(expression, width)?;
             // Native results are first deepest; reverse them so the first leaf is on top.
@@ -187,7 +198,7 @@ impl Generator {
                     self.swap()?;
                 } else {
                     self.push_integer_temporary(depth);
-                    self.apply(Roll, depth + 2, depth + 1)?;
+                    self.apply(Opcode::Roll, depth + 2, depth + 1)?;
                 }
             }
             return Ok(());
@@ -195,8 +206,7 @@ impl Generator {
         let ExprKind::StructLiteral { fields: values, .. } = &expression.kind else {
             return Err(format!("expected struct value of type '{ty}'").into());
         };
-        let fields = if let Some(fields) = ty.name().and_then(crate::models::builtin_struct_fields)
-        {
+        let fields = if let Some(fields) = ty.name().and_then(models::builtin_struct_fields) {
             fields
                 .iter()
                 .map(|(name, ty)| Parameter {
@@ -238,13 +248,13 @@ impl Generator {
         }
         let caller = self.stack.clone();
         let caller_scope = self.scope.clone();
-        let caller_deferred = std::mem::take(&mut self.deferred);
+        let caller_deferred = mem::take(&mut self.deferred);
         let baseline = caller.len();
-        let pinned = std::mem::replace(&mut self.pinned_stack_len, baseline);
+        let pinned = mem::replace(&mut self.pinned_stack_len, baseline);
         // A caller's top-slot rebinding must not match helper bindings with the same name.
         let replacement = self.replacement.take();
         let mut arguments = Vec::new();
-        let mut aliases = std::collections::HashMap::new();
+        let mut aliases = HashMap::new();
         for (index, (argument, parameter)) in args.iter().zip(&function.parameters).enumerate() {
             // The body is lowered with the literal in place of the parameter.
             if self.optimize && literal_argument(&function, parameter, argument).is_some() {
@@ -308,9 +318,7 @@ impl Generator {
         }
         // Calls hide caller bindings except hoisted constants; instance helpers also retain
         // constructor state.
-        let caller_inlined = function
-            .is_static
-            .then(|| std::mem::take(&mut self.inlined));
+        let caller_inlined = function.is_static.then(|| mem::take(&mut self.inlined));
         for (index, item) in self.stack[..baseline].iter_mut().enumerate() {
             if !matches!(
                 (&*item, function.is_static),
@@ -345,13 +353,13 @@ impl Generator {
                 };
             }
         }
-        let caller_scopes = std::mem::take(&mut self.scopes);
+        let caller_scopes = mem::take(&mut self.scopes);
         self.scope = if function.is_static {
             types::Scope::new()
         } else {
             self.constructor_scope.clone()
         };
-        let previous_aliases = std::mem::replace(&mut self.aliases, aliases);
+        let previous_aliases = mem::replace(&mut self.aliases, aliases);
         for parameter in &function.parameters {
             self.bind_type(&parameter.name, &parameter.param_type);
         }
@@ -359,9 +367,9 @@ impl Generator {
         // Nested returns need shared slots until their control flow can be lowered directly.
         let direct_return = !function.statements.iter().any(|statement| {
             !matches!(statement.statement, Statement::Return(_))
-                && contains_return(std::slice::from_ref(statement))
+                && contains_return(slice::from_ref(statement))
         });
-        let previous_direct_return = std::mem::replace(&mut self.direct_return, direct_return);
+        let previous_direct_return = mem::replace(&mut self.direct_return, direct_return);
         let results = function
             .return_type
             .as_ref()
@@ -369,10 +377,10 @@ impl Generator {
             .transpose()?
             .unwrap_or_default();
         if !direct_return {
-            self.push_temporary(Int0);
+            self.push_temporary(Opcode::Int0);
             self.bind_local(Path::new("$returned"))?;
             for leaf in results.iter().rev() {
-                self.push_temporary(Int0);
+                self.push_temporary(Opcode::Int0);
                 self.bind_local(leaf.access.clone())?;
             }
         }
@@ -384,7 +392,7 @@ impl Generator {
         }
         let emitted = self
             .lower(&function.statements)
-            .and_then(|body| emit_body(&body, self));
+            .and_then(|body| statements::emit_body(&body, self));
         if function.is_imported() {
             self.asm.unpin();
         }
@@ -421,15 +429,15 @@ impl Generator {
         while self.stack.len() > baseline + results {
             match results {
                 0 => {
-                    self.asm.push(Drop.into());
+                    self.asm.push(Opcode::Drop.into());
                     self.stack.pop();
                 }
                 1 => self.nip()?,
                 _ => {
                     self.push_integer_temporary(results);
-                    self.pop_temporaries(1, Roll)?;
-                    self.asm.push(Roll.into());
-                    self.asm.push(Drop.into());
+                    self.pop_temporaries(1, Opcode::Roll)?;
+                    self.asm.push(Opcode::Roll.into());
+                    self.asm.push(Opcode::Drop.into());
                     self.stack.remove(self.stack.len() - results - 1);
                 }
             }
@@ -457,7 +465,7 @@ impl Generator {
         if self.direct_return {
             Ok(())
         } else {
-            self.push_temporary(Int1);
+            self.push_temporary(Opcode::Int1);
             self.assign_static_binding(Path::new("$returned"))
         }
     }
@@ -474,8 +482,8 @@ impl Generator {
 
     pub(super) fn emit_unless_returned(&mut self, statements: &[Lowered]) -> Result<bool> {
         self.read_binding(&Path::new("$returned"))?;
-        self.apply(Not, 1, 1)?;
-        self.apply(If, 1, 0)?;
+        self.apply(Opcode::Not, 1, 1)?;
+        self.apply(Opcode::If, 1, 0)?;
         self.emit_branches(statements, None, false)
     }
 }

@@ -1,7 +1,20 @@
-//! Emission of lowered statements onto the generator.
+//! Emits lowered statements onto the generator's stack model, joining both arms of a branch to
+//! one stack layout.
 
-use super::*;
-use crate::builtins::{Builtin, Lowering::Check};
+use std::collections::HashSet;
+use std::slice;
+
+use super::ir::Op;
+use super::lowering::{self, Lowered};
+use super::{BindingKind, Generator, Replacement, Result, StackItem};
+use crate::builtins::Builtin;
+use crate::builtins::Lowering::Check;
+use crate::diagnostics::CompileError;
+use crate::models::{
+    self, AssignmentTarget, ExprKind, Expression, LocatedStatement, Path, Statement, TypeName,
+};
+use crate::opcodes::Opcode;
+use crate::types;
 
 impl Generator {
     pub(super) fn emit_branches(
@@ -35,7 +48,7 @@ impl Generator {
         let right = self.stack.clone();
         let right_deferred = self.deferred.clone();
         let right_asm = self.asm.split_off(start);
-        let initialized: std::collections::HashSet<_> = deferred
+        let initialized: HashSet<_> = deferred
             .iter()
             .filter(|name| {
                 (left_continues || right_continues)
@@ -44,7 +57,7 @@ impl Generator {
             })
             .cloned()
             .collect();
-        let mut initialized_leaves = std::collections::HashSet::new();
+        let mut initialized_leaves = HashSet::new();
         for name in &initialized {
             let ty = self
                 .scope
@@ -72,10 +85,10 @@ impl Generator {
         let right_joined = self.asm.split_off(start);
         self.asm.append(left_joined);
         if else_body.is_some() || !right_joined.is_empty() {
-            self.asm.push(Else.into());
+            self.asm.push(Opcode::Else.into());
             self.asm.append(right_joined);
         }
-        self.asm.push(EndIf.into());
+        self.asm.push(Opcode::EndIf.into());
         self.deferred = deferred.difference(&initialized).cloned().collect();
         self.last_reads
             .retain(|(_, slot), _| *slot < baseline.len());
@@ -83,11 +96,10 @@ impl Generator {
     }
 }
 
-/// Emit a public function's `body` after binding each `hoisted` literal, so every push of it
-/// reads the binding instead. A binding serves several statements, so, like the prologue, it
-/// maps to no statement.
-// ponytail: only Arkade Scripts hoist; tapscript leaves are assembled elsewhere in the fixed
-// closure shapes arkd matches.
+/// Every push of a `hoisted` literal reads its binding instead. A binding serves several
+/// statements, so, like the prologue, it maps to no statement.
+// LIMITATION: only Arkade Scripts hoist; tapscript leaves are assembled elsewhere in the fixed
+// closure shapes arkd matches, and could hoist only if arkd stopped matching those shapes.
 pub(super) fn emit_function(
     body: &[Lowered],
     generator: &mut Generator,
@@ -105,7 +117,7 @@ pub(super) fn emit_function(
     Ok(())
 }
 
-/// Emit `body` and report whether an emitted path falls through.
+/// Whether an emitted path falls through.
 pub(super) fn emit_body(body: &[Lowered], generator: &mut Generator) -> Result<bool> {
     let outer = generator.asm.span();
     let continues = emit_items(body, generator);
@@ -125,7 +137,7 @@ fn emit_items(body: &[Lowered], generator: &mut Generator) -> Result<bool> {
         if !continues {
             return Ok(false);
         }
-        if lowering::contains_return(std::slice::from_ref(item)) && index + 1 < body.len() {
+        if lowering::contains_return(slice::from_ref(item)) && index + 1 < body.len() {
             return generator.emit_unless_returned(&body[index + 1..]);
         }
     }
@@ -144,7 +156,7 @@ fn emit_lowered(item: &Lowered, generator: &mut Generator) -> Result<bool> {
             // The branch opcodes map to the condition, not the whole statement.
             generator.asm.set_span(Some(condition.span));
             generator.emit_expression(condition)?;
-            generator.apply(If, 1, 0)?;
+            generator.apply(Opcode::If, 1, 0)?;
             generator.emit_branches(then_body, else_body.as_deref(), true)
         }
         Lowered::Unrolled {
@@ -189,7 +201,6 @@ fn emit_lowered(item: &Lowered, generator: &mut Generator) -> Result<bool> {
     }
 }
 
-/// Emit one statement and report whether its path falls through.
 fn emit_statement(stmt: &LocatedStatement, generator: &mut Generator) -> Result<bool> {
     match &stmt.statement {
         Statement::Call(expression) => generator.emit_call(expression)?,
@@ -222,7 +233,7 @@ fn emit_statement(stmt: &LocatedStatement, generator: &mut Generator) -> Result<
                 .clone()
                 .or_else(|| match &value.kind {
                     ExprKind::Call { return_type, .. } => return_type.clone(),
-                    _ => crate::models::expression_result_struct(value).map(TypeName::from),
+                    _ => models::expression_result_struct(value).map(TypeName::from),
                 })
                 .or_else(|| generator.composite_type(value));
             if let Some(ty) = &result_type {
@@ -243,11 +254,11 @@ fn emit_statement(stmt: &LocatedStatement, generator: &mut Generator) -> Result<
                         && *kind != BindingKind::Constructor
                         && !generator.preserve_bindings =>
                 {
-                    Some((
-                        name.clone(),
-                        kind.clone(),
-                        generator.read_cursor.unwrap_or(generator.final_reads.len()),
-                    ))
+                    Some(Replacement {
+                        target: name.clone(),
+                        kind: kind.clone(),
+                        start: generator.read_cursor.unwrap_or(generator.final_reads.len()),
+                    })
                 }
                 _ => None,
             };
@@ -285,9 +296,7 @@ fn emit_statement(stmt: &LocatedStatement, generator: &mut Generator) -> Result<
     Ok(true)
 }
 
-/// Generate assembly that aborts unless `condition` holds.
 fn generate_requirement_asm(condition: &Expression, generator: &mut Generator) -> Result<()> {
-    // Composite operands verify leaf by leaf.
     if let ExprKind::BinaryOp { left, op, right } = &condition.kind {
         let composite = generator
             .composite_type(left)
@@ -299,9 +308,9 @@ fn generate_requirement_asm(condition: &Expression, generator: &mut Generator) -
     match &condition.kind {
         ExprKind::GroupLookup { .. } => {
             generator.emit_expression(condition)?;
-            generator.apply(Drop, 1, 0)?;
-            generator.push_temporary(Int1);
-            generator.apply(Verify, 1, 0)?;
+            generator.apply(Opcode::Drop, 1, 0)?;
+            generator.push_temporary(Opcode::Int1);
+            generator.apply(Opcode::Verify, 1, 0)?;
         }
         // The check fails the spend itself, so `require` leaves out its `true`.
         ExprKind::Builtin {
@@ -321,7 +330,7 @@ fn generate_requirement_asm(condition: &Expression, generator: &mut Generator) -
         }
         _ => {
             generator.emit_expression(condition)?;
-            generator.apply(Verify, 1, 0)?;
+            generator.apply(Opcode::Verify, 1, 0)?;
         }
     }
     Ok(())

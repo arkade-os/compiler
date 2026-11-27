@@ -1,8 +1,17 @@
 //! Function bodies ready for emission: loops unrolled and, when folding, constant expressions
 //! evaluated and statically dead code removed.
 
-use super::*;
-use crate::diagnostics::Span;
+use std::collections::HashSet;
+use std::{iter, slice};
+
+use super::ir::Op;
+use super::{loops, optimization, Result};
+use crate::diagnostics::{CompileError, Span};
+use crate::models::{
+    self, ExprKind, Expression, Function, LocatedStatement, Path, Statement, StructDefinition,
+    TypeName,
+};
+use crate::types;
 
 pub(super) enum Lowered {
     /// A statement with no nested statements.
@@ -64,7 +73,6 @@ pub(super) fn contains_return(body: &[Lowered]) -> bool {
     })
 }
 
-/// Whether some path through `body` reaches its end.
 fn falls_through(body: &[Lowered]) -> bool {
     body.iter().all(|item| match item {
         Lowered::Simple(_) => !item.is_return(),
@@ -82,22 +90,20 @@ fn falls_through(body: &[Lowered]) -> bool {
 
 /// Whether a never-reassigned local or helper parameter holding `literal` is replaced by it at
 /// every read instead of being bound.
-// ponytail: a substituted literal that does not fold costs its full push at every read, so a
-// literal that pushes 3 bytes and is read six times grows the script; count reads before
-// substituting to avoid that. Literals that push 4 or more bytes stay bound for the same
-// reason and never fold further; substitute them too once wide literals are hoisted into
+// LIMITATION: an unfolded substituted literal costs its push at every read (a 3-byte push read
+// six times grows the script), and 4-byte and wider literals stay bound and never fold further.
+// Count reads before substituting, and substitute wide literals once they are hoisted into
 // shared bindings.
 pub(super) fn propagates(literal: &str) -> bool {
     matches!(literal, "true" | "false") || !Op::Push(literal.to_string()).pushes_more_than(2)
 }
 
-/// Lower `statements` in `scope`, which gains their bindings as they are declared. When
-/// folding, a never-reassigned local folded to a literal that `propagates` is substituted into
-/// the statements after it, its whole scope, instead of being bound.
+/// `scope` gains bindings as they are declared. When folding, a never-reassigned local folded to
+/// a literal that `propagates` is substituted into the statements after it instead of being bound.
 pub(super) fn lower(
     statements: &[LocatedStatement],
     scope: &mut types::Scope,
-    structs: &[crate::models::StructDefinition],
+    structs: &[StructDefinition],
     fold: bool,
 ) -> Result<Vec<Lowered>> {
     let mut lowered = Vec::with_capacity(statements.len());
@@ -105,10 +111,11 @@ pub(super) fn lower(
     for (index, statement) in statements.iter().enumerate() {
         let span = statement.span;
         let mut statement = statement.clone();
-        // ponytail: each substitution rebuilds the statement; substitute all names in one pass
+        // LIMITATION: each substitution rebuilds the statement; substitute all names in one pass
         // if bodies with many propagated locals compile slowly.
         for (name, literal) in &literals {
-            statement.statement = substitute_statement(&statement.statement, name, literal, None);
+            statement.statement =
+                loops::substitute_statement(&statement.statement, name, literal, None);
         }
         if fold {
             optimization::fold_statement(&mut statement.statement, scope)
@@ -133,7 +140,7 @@ pub(super) fn lower(
         if let Some(item) =
             lower_statement(statement, scope, structs, fold).map_err(|error| error.at(span))?
         {
-            let ends = !falls_through(std::slice::from_ref(&item));
+            let ends = !falls_through(slice::from_ref(&item));
             lowered.push(item);
             // Emission stops at an item no path falls through, so the rest is dead.
             if ends {
@@ -147,7 +154,7 @@ pub(super) fn lower(
 fn lower_statement(
     statement: LocatedStatement,
     scope: &mut types::Scope,
-    structs: &[crate::models::StructDefinition],
+    structs: &[StructDefinition],
     fold: bool,
 ) -> Result<Option<Lowered>> {
     let span = statement.span;
@@ -206,9 +213,9 @@ fn lower_statement(
             };
             // A runtime-indexed access is bound only when the body writes nothing it reads, so the
             // copy matches a live read and folding an index to a literal never changes results.
-            // ponytail: such a body still re-evaluates the index per element, and the copy holds
-            // every leaf of the selected array even when the body reads few; binding just the
-            // index would cover both.
+            // LIMITATION: such a body still re-evaluates the index per element, and the copy holds
+            // every leaf of the selected array even when the body reads few; bind just the index
+            // if either cost matters.
             if iterable.static_path().is_none()
                 && (iterable.binding_path().is_none() || !assigns_read(&body, &iterable))
             {
@@ -243,7 +250,8 @@ fn lower_statement(
             }
             let iterations = (0..length).map(|k| {
                 let element = Some((value_var.as_str(), &iterable));
-                let mut substituted = substitute_body(&body, &index_var, &k.to_string(), element);
+                let mut substituted =
+                    loops::substitute_body(&body, &index_var, &k.to_string(), element);
                 // Substitution builds untyped nodes; return types and group members
                 // were resolved on the original body and survive the copy.
                 types::annotate_statements(&mut substituted, &mut scope.clone(), structs);
@@ -253,10 +261,9 @@ fn lower_statement(
             if iterable.static_path().is_some() {
                 unrolled
             } else {
-                // Reads stay in place, but reading the iterable's length evaluates and checks
-                // its runtime indexes once at entry, even if the body reads no element. A length
-                // is never zero, so the requirement holds.
-                // ponytail: the read also scales its offset and pushes the length to verify,
+                // Requiring the length evaluates and checks the runtime indexes once at entry,
+                // even if the body reads no element; a length is never zero, so it holds.
+                // LIMITATION: the read also scales its offset and pushes the length to verify,
                 // ops a bare index check skips; emit the checks directly if such loops grow common.
                 let mut length = iterable.with_kind(ExprKind::FieldAccess {
                     value: Box::new(iterable.clone()),
@@ -280,7 +287,7 @@ fn lower_statement(
                 _ => None,
             }
             .ok_or("loop count must be a non-negative integer compile-time constant")?;
-            unroll(span, std::iter::repeat_n(body, count), scope, structs, fold)?
+            unroll(span, iter::repeat_n(body, count), scope, structs, fold)?
         }
         Statement::ForRange {
             index_var,
@@ -288,8 +295,9 @@ fn lower_statement(
             end,
             body,
         } => {
-            let iterations = crate::models::loop_range(&start, &end)?.map(|k| {
-                let mut substituted = substitute_body(&body, &index_var, &k.to_string(), None);
+            let iterations = models::loop_range(&start, &end)?.map(|k| {
+                let mut substituted =
+                    loops::substitute_body(&body, &index_var, &k.to_string(), None);
                 types::annotate_statements(&mut substituted, &mut scope.clone(), structs);
                 substituted
             });
@@ -317,7 +325,7 @@ fn lower_statement(
                 .clone()
                 .or_else(|| match &value.kind {
                     ExprKind::Call { return_type, .. } => return_type.clone(),
-                    _ => crate::models::expression_result_struct(value).map(TypeName::from),
+                    _ => models::expression_result_struct(value).map(TypeName::from),
                 })
                 .or_else(|| match &value.ty {
                     composite @ (types::ArkType::Array(..) | types::ArkType::Struct(_)) => {
@@ -344,7 +352,7 @@ fn lower_statement(
 fn assigns_read(body: &[LocatedStatement], expression: &Expression) -> bool {
     matches!(&expression.kind, ExprKind::Name(path) | ExprKind::ArrayIndex { array: path, .. }
         if super::functions::assigns(body, &path.root))
-        || crate::models::child_exprs(expression)
+        || models::child_exprs(expression)
             .into_iter()
             .any(|child| assigns_read(body, child))
 }
@@ -354,7 +362,7 @@ fn unroll(
     span: Span,
     iterations: impl Iterator<Item = Vec<LocatedStatement>>,
     scope: &types::Scope,
-    structs: &[crate::models::StructDefinition],
+    structs: &[StructDefinition],
     fold: bool,
 ) -> Result<Lowered> {
     let mut lowered = Vec::new();
@@ -379,7 +387,7 @@ fn calls<'a>(body: &'a [Lowered], found: &mut Vec<(&'a Expression, Span)>) {
         if let ExprKind::Call { .. } = &expression.kind {
             found.push((expression, span));
         }
-        for child in crate::models::child_exprs(expression) {
+        for child in models::child_exprs(expression) {
             walk(child, span, found);
         }
     }
@@ -419,9 +427,9 @@ pub(super) fn check_folded(
     statements: &[LocatedStatement],
     scope: &types::Scope,
     constructor_scope: &types::Scope,
-    structs: &[crate::models::StructDefinition],
+    structs: &[StructDefinition],
     functions: &[Function],
-    checked: &mut std::collections::HashSet<(String, Vec<Option<String>>)>,
+    checked: &mut HashSet<(String, Vec<Option<String>>)>,
 ) -> Result<()> {
     let body = lower(statements, &mut scope.clone(), structs, true)?;
     let mut found = Vec::new();
@@ -444,7 +452,6 @@ pub(super) fn check_folded(
         if !checked.insert((name.clone(), literals)) {
             continue;
         }
-        // As at a call: the constructor's bindings, or none for a static helper, and the parameters.
         let mut scope = if helper.is_static {
             types::Scope::new()
         } else {

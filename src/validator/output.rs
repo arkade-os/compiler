@@ -1,10 +1,12 @@
-use super::*;
+//! Self-check of compiled [`ContractJson`]: structural invariants every valid source satisfies,
+//! so an error here is a compiler bug, not a user error.
 
-/// Validate the compiled [`ContractJson`] output for structural invariants.
-///
-/// This pass acts as a compiler self-check: a valid source contract should always
-/// produce output that satisfies these invariants. Any error here indicates a
-/// compiler bug rather than a user error.
+use std::collections::HashSet;
+
+use super::ValidationIssue;
+use crate::compiler;
+use crate::models::ContractJson;
+
 pub(crate) fn validate_output(output: &ContractJson) -> Vec<ValidationIssue> {
     let mut issues = Vec::new();
 
@@ -26,23 +28,22 @@ pub(crate) fn validate_output(output: &ContractJson) -> Vec<ValidationIssue> {
                     group.name
                 )));
             }
-            // Constructor leaves are pushed once: in the prologue, or inline at a single read.
-            let leaves = match crate::compiler::expanded_placeholder_params(
-                &output.parameters,
-                &output.structs,
-            ) {
-                Ok(parameters) => parameters
-                    .into_iter()
-                    .map(|parameter| format!("<{}>", parameter.name))
-                    .collect::<HashSet<_>>(),
-                Err(error) => {
-                    issues.push(ValidationIssue::error(format!(
-                        "group '{}' has an invalid type layout: {error}",
-                        group.name
-                    )));
-                    continue;
-                }
-            };
+            // A constructor placeholder is pushed at most once: in the prologue, or inline
+            // at its single read.
+            let placeholders =
+                match compiler::expanded_placeholder_params(&output.parameters, &output.structs) {
+                    Ok(parameters) => parameters
+                        .into_iter()
+                        .map(|parameter| format!("<{}>", parameter.name))
+                        .collect::<HashSet<_>>(),
+                    Err(error) => {
+                        issues.push(ValidationIssue::error(format!(
+                            "group '{}' has an invalid type layout: {error}",
+                            group.name
+                        )));
+                        continue;
+                    }
+                };
             let mut pushed = HashSet::new();
             if arkade
                 .asm
@@ -52,7 +53,7 @@ pub(crate) fn validate_output(output: &ContractJson) -> Vec<ValidationIssue> {
                         && token.ends_with('>')
                         && !token.starts_with("<CONTRACT:")
                 })
-                .any(|token| !leaves.contains(token) || !pushed.insert(token))
+                .any(|token| !placeholders.contains(token) || !pushed.insert(token))
             {
                 issues.push(ValidationIssue::error(format!(
                     "group '{}' Arkade Script has an invalid constructor placeholder",
@@ -67,10 +68,8 @@ pub(crate) fn validate_output(output: &ContractJson) -> Vec<ValidationIssue> {
                     leaf.name, group.name
                 )));
             }
-            // Leaf ASM must not carry signature placeholders (sigs are witness).
-            // Case-insensitive: a leaked placeholder may be named `<sig>`,
-            // `<ownersig>`, or `<operatorSig>` depending on the source naming —
-            // all must trip this compiler-bug self-check.
+            // Signatures are witness data. Matched case-insensitively, as a leaked placeholder
+            // may be `<ownersig>` or `<operatorSig>`.
             if leaf
                 .asm
                 .iter()

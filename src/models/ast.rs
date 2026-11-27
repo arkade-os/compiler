@@ -1,6 +1,18 @@
-//! The abstract syntax tree of an Arkade Language contract.
+//! The abstract syntax tree of an Arkade Language contract, as the parser builds it.
+//! Constant folding and `types::annotate` rewrite it in place before compilation.
+use std::fmt;
+use std::ops::Range;
 
-use super::*;
+use super::{Parameter, StructDefinition, TypeName};
+use crate::builtins::Builtin;
+use crate::diagnostics::Span;
+use crate::opcodes::Opcode;
+use crate::operators::{BinaryOperator, UnaryOperator};
+use crate::properties::{
+    AssetProperty, GroupIoProperty, GroupProperty, InputProperty, OutputProperty, ThisProperty,
+    TxProperty,
+};
+use crate::types::ArkType;
 
 /// A binding and the struct fields and constant array elements read through it,
 /// as in `s.inner.x` or `ps[0].x`.
@@ -77,8 +89,8 @@ impl Path {
     }
 }
 
-impl std::fmt::Display for Path {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Display for Path {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&self.key())
     }
 }
@@ -103,7 +115,7 @@ pub struct Contract {
     /// Contract or library name; empty for a source file containing only structs.
     pub name: String,
     /// Byte range of the name.
-    pub span: crate::diagnostics::Span,
+    pub span: Span,
     /// Whether this declaration is a library rather than an instantiable contract.
     pub is_library: bool,
     /// Struct types available to this contract.
@@ -119,18 +131,15 @@ pub struct Contract {
     /// Compile-time constants declared in the contract body.
     pub constants: Vec<Constant>,
     /// Byte range of the contract or library declaration, without its attributes.
-    pub declaration: crate::diagnostics::Span,
+    pub declaration: Span,
     pub attributes: Vec<Attribute>,
 }
 
 impl Contract {
     /// Each node of this file that has attributes, with the node's declaration span: the
     /// contract, its functions and tapscripts, and their statements.
-    pub(crate) fn attributed(&self) -> Vec<(crate::diagnostics::Span, &[Attribute])> {
-        fn walk<'a>(
-            statements: &'a [LocatedStatement],
-            out: &mut Vec<(crate::diagnostics::Span, &'a [Attribute])>,
-        ) {
+    pub(crate) fn attributed(&self) -> Vec<(Span, &[Attribute])> {
+        fn walk<'a>(statements: &'a [LocatedStatement], out: &mut Vec<(Span, &'a [Attribute])>) {
             for statement in statements {
                 out.push((statement.span, &statement.attributes));
                 match &statement.statement {
@@ -167,18 +176,18 @@ impl Contract {
 #[non_exhaustive]
 pub struct Attribute {
     pub name: String,
-    pub name_span: crate::diagnostics::Span,
+    pub name_span: Span,
     pub args: Vec<AttributeArg>,
-    pub span: crate::diagnostics::Span,
+    pub span: Span,
 }
 
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub enum AttributeArg {
     /// A name, such as a lint id: `outputs-shared-across-inputs`.
-    Name(String, crate::diagnostics::Span),
+    Name(String, Span),
     /// A string literal, such as a reason.
-    Text(String, crate::diagnostics::Span),
+    Text(String, Span),
 }
 
 /// A compile-time constant, folded into every use site before validation.
@@ -188,7 +197,7 @@ pub struct Constant {
     pub name: String,
     pub const_type: TypeName,
     pub value: Expression,
-    pub span: crate::diagnostics::Span,
+    pub span: Span,
 }
 
 /// Function AST
@@ -200,9 +209,9 @@ pub struct Function {
     /// Function arguments
     pub parameters: Vec<Parameter>,
     /// Byte range of the function name.
-    pub span: crate::diagnostics::Span,
+    pub span: Span,
     /// Byte range of the whole declaration, through its closing brace.
-    pub declaration: crate::diagnostics::Span,
+    pub declaration: Span,
     /// Function body statements.
     pub statements: Vec<LocatedStatement>,
     /// Whether this is a callable helper rather than a transaction entrypoint.
@@ -217,7 +226,7 @@ pub struct Function {
 }
 
 impl Function {
-    // Qualified helpers have already been checked in their defining file's scope.
+    // An imported helper is named `file.name` and was already checked in its defining file.
     pub(crate) fn is_imported(&self) -> bool {
         self.name.contains('.')
     }
@@ -227,18 +236,18 @@ impl Function {
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct LocatedStatement {
-    pub span: crate::diagnostics::Span,
+    pub span: Span,
     /// Byte ranges of the names the statement binds, in binding order.
-    pub names: Vec<crate::diagnostics::Span>,
+    pub names: Vec<Span>,
     /// Byte ranges of an `if`'s then and else blocks.
-    pub branches: Vec<crate::diagnostics::Span>,
+    pub branches: Vec<Span>,
     /// A `require`'s message.
     pub message: Option<String>,
     pub statement: Statement,
     pub attributes: Vec<Attribute>,
 }
 
-/// Statement AST - represents any executable statement in a function body
+/// A statement in a function body.
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub enum Statement {
@@ -323,12 +332,9 @@ impl Statement {
     }
 }
 
-/// The indexes `for (i) in start..end` visits, or why its bounds are invalid: each must be a
-/// non-negative integer literal, and `start` must not exceed `end`.
-pub(crate) fn loop_range(
-    start: &Expression,
-    end: &Expression,
-) -> Result<std::ops::Range<usize>, String> {
+/// The indexes `for (i) in start..end` visits; both bounds must be non-negative integer
+/// literals with `start <= end`.
+pub(crate) fn loop_range(start: &Expression, end: &Expression) -> Result<Range<usize>, String> {
     let bound = |bound: &Expression| match &bound.kind {
         ExprKind::Literal(value) => value.parse::<usize>().ok(),
         _ => None,
@@ -344,10 +350,10 @@ pub(crate) fn loop_range(
 
 /// The indexes loop `statement` visits, if its count and range bounds are non-negative integer
 /// literals and its iterable is an array.
-pub(crate) fn loop_indexes(statement: &Statement) -> Option<std::ops::Range<usize>> {
+pub(crate) fn loop_indexes(statement: &Statement) -> Option<Range<usize>> {
     match statement {
         Statement::ForIn { iterable, .. } => match iterable.ty {
-            crate::types::ArkType::Array(_, length) => Some(0..length),
+            ArkType::Array(_, length) => Some(0..length),
             _ => None,
         },
         Statement::ForCount { count, .. } => match &count.kind {
@@ -371,13 +377,12 @@ pub enum HashFn {
 
 impl HashFn {
     /// The opcode this hash function emits.
-    pub fn opcode(&self) -> crate::opcodes::Opcode {
-        use crate::opcodes::Opcode::{Hash160, Hash256, Ripemd160, Sha256};
+    pub fn opcode(&self) -> Opcode {
         match self {
-            HashFn::Sha256 => Sha256,
-            HashFn::Hash160 => Hash160,
-            HashFn::Hash256 => Hash256,
-            HashFn::Ripemd160 => Ripemd160,
+            HashFn::Sha256 => Opcode::Sha256,
+            HashFn::Hash160 => Opcode::Hash160,
+            HashFn::Hash256 => Opcode::Hash256,
+            HashFn::Ripemd160 => Opcode::Ripemd160,
         }
     }
 
@@ -415,8 +420,7 @@ impl HashFn {
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub enum KeyExpr {
-    /// A pubkey binding: the reserved `operator` role or any pubkey in scope
-    /// (constructor pubkey, struct field, array element, etc.).
+    /// A pubkey binding: the reserved `operator` role or any pubkey in scope.
     Ident(Path),
     /// A 32-byte x-only key from a `pubkey` constant, as `0x`-prefixed hex.
     Literal(String),
@@ -443,8 +447,8 @@ impl KeyExpr {
     }
 }
 
-/// One ordered component of a tapscript leaf body. Source order must follow the
-/// closure template: condition? · timelock? · multisig (validated in Context::Tapscript).
+/// One ordered component of a tapscript leaf body. Source order must follow arkd's
+/// closure template, `condition? · timelock? · multisig`, which the compiler enforces.
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub enum TapItem {
@@ -489,8 +493,8 @@ impl TapOperand {
     }
 }
 
-impl std::fmt::Display for TapOperand {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Display for TapOperand {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             TapOperand::Literal(text) => f.write_str(text),
             TapOperand::Name(path) => path.fmt(f),
@@ -512,9 +516,9 @@ pub enum TimeUnit {
 pub struct NamedTapscript {
     /// Declared name (decides function-binding by exact match).
     pub name: String,
-    pub span: crate::diagnostics::Span,
+    pub span: Span,
     /// Byte range of the whole declaration through its closing brace, without its attributes.
-    pub declaration: crate::diagnostics::Span,
+    pub declaration: Span,
     pub attributes: Vec<Attribute>,
     /// Declared witness inputs (signatures, preimages, …), in source order.
     pub inputs: Vec<Parameter>,
@@ -557,27 +561,30 @@ impl GroupIOSource {
 #[derive(Debug, Clone)]
 pub struct Expression {
     pub kind: ExprKind,
-    pub span: crate::diagnostics::Span,
+    pub span: Span,
     /// Set by `types::annotate`; `Unknown` until then.
-    pub(crate) ty: crate::types::ArkType,
+    pub(crate) ty: ArkType,
 }
 
 impl Expression {
-    pub fn new(kind: ExprKind, span: crate::diagnostics::Span) -> Self {
+    pub fn new(kind: ExprKind, span: Span) -> Self {
         Self {
             kind,
             span,
-            ty: crate::types::ArkType::Unknown,
+            ty: ArkType::Unknown,
         }
     }
 
-    /// A node replacing this one, at the same source position.
     pub(crate) fn with_kind(&self, kind: ExprKind) -> Self {
         Self::new(kind, self.span)
     }
 
+    pub(crate) fn is_active_input(&self) -> bool {
+        matches!(self.kind, ExprKind::This(ThisProperty::ActiveInputIndex))
+    }
+
     /// The type analysis gave this expression; `Unknown` before analysis.
-    pub fn ty(&self) -> &crate::types::ArkType {
+    pub fn ty(&self) -> &ArkType {
         &self.ty
     }
 }
@@ -585,7 +592,7 @@ impl Expression {
 #[cfg(test)]
 impl From<ExprKind> for Expression {
     fn from(kind: ExprKind) -> Self {
-        Self::new(kind, crate::diagnostics::Span { start: 0, end: 0 })
+        Self::new(kind, Span { start: 0, end: 0 })
     }
 }
 
@@ -601,7 +608,7 @@ pub enum ExprKind {
     },
     /// A builtin function call; its arguments are in parameter order.
     Builtin {
-        builtin: &'static crate::builtins::Builtin,
+        builtin: &'static Builtin,
         args: Vec<Expression>,
     },
     /// A binding, or a field of one: `x`, `s.field`, `s.inner.x`.
@@ -644,7 +651,7 @@ pub enum ExprKind {
     /// Array element selected by an integer expression.
     ArrayIndex { array: Path, index: Box<Expression> },
     /// `this.activeInputIndex`, `this.expiry`
-    This(crate::properties::ThisProperty),
+    This(ThisProperty),
     /// Asset lookup: tx.inputs[i].assets.lookup(id) or
     /// tx.outputs[o].assets.lookup(id) with an `AssetId` id. Asserts the asset is present
     /// (consumes the opcode success flag with OP_VERIFY) and leaves its amount.
@@ -680,27 +687,25 @@ pub enum ExprKind {
         source: AssetLookupSource,
         io_index: Box<Expression>,
         asset_index: Box<Expression>,
-        property: Option<crate::properties::AssetProperty>,
+        property: Option<AssetProperty>,
     },
     /// Transaction introspection: tx.version, tx.locktime, tx.numInputs, tx.numOutputs, tx.weight
-    TxIntrospection {
-        property: crate::properties::TxProperty,
-    },
+    TxIntrospection { property: TxProperty },
     /// Input introspection: tx.inputs[i].value, script, sequence, outpoint;
     /// tx.input.current.* indexes it with this.activeInputIndex
     InputIntrospection {
         index: Box<Expression>,
-        property: crate::properties::InputProperty,
+        property: InputProperty,
     },
     /// Output introspection: tx.outputs[o].value, script
     OutputIntrospection {
         index: Box<Expression>,
-        property: crate::properties::OutputProperty,
+        property: OutputProperty,
     },
     /// Binary operation (e.g., a + b, x >= y)
     BinaryOp {
         left: Box<Expression>,
-        op: crate::operators::BinaryOperator,
+        op: BinaryOperator,
         right: Box<Expression>,
     },
     /// Asset group lookup: tx.assetGroups.lookup(id) → the `AssetGroup` with
@@ -714,12 +719,10 @@ pub enum ExprKind {
     /// Asset group property: group.sumInputs, group.delta, etc.
     GroupProperty {
         group: Box<Expression>,
-        property: crate::properties::GroupProperty,
+        property: GroupProperty,
     },
-    /// Boolean equality over the complete canonical control Asset ID:
-    /// group.controlIs(id). False when control is absent or either
-    /// component differs. `group.hasControl` (presence only) is modeled as a
-    /// plain `GroupProperty { property: "hasControl" }`.
+    /// `group.controlIs(id)`: whether the group's control Asset ID equals `id`; false when
+    /// the group has no control asset. Presence alone is `GroupProperty::HasControl`.
     GroupControlIs {
         group: Box<Expression>,
         asset_id: Box<Expression>,
@@ -731,47 +734,43 @@ pub enum ExprKind {
         group: Box<Expression>,
         io_index: Box<Expression>,
         source: GroupIOSource,
-        // None is the whole record: an `AssetGroupInput` or `AssetGroupOutput`
-        property: Option<crate::properties::GroupIoProperty>,
+        // None reads the whole `AssetGroupInput` or `AssetGroupOutput` record.
+        property: Option<GroupIoProperty>,
     },
-    // ─── Arithmetic ────────────────────────────────────────────────────
     /// Prefix operator: -value, !value or ~value
     Unary {
-        op: crate::operators::UnaryOperator,
+        op: UnaryOperator,
         value: Box<Expression>,
     },
-    /// Contract instantiation: new ContractName(arg1, arg2, ...)
-    ///
-    /// Resolves to the Taproot program and witness version 1 of the named contract instantiated
-    /// with the given arguments. Options (operator key, exit timelock) are
-    /// inherited from the enclosing contract. Used to pin an output to another
-    /// contract: `tx.outputs[0].script == new Foo(x)`. A contract cannot
-    /// instantiate itself; it compares against `tx.input.current.script` instead.
+    /// `new Foo(x)`: the Taproot program and witness version 1 of `Foo` built from the
+    /// arguments, with the enclosing contract's operator key and exit delay, as in
+    /// `tx.outputs[0].script == new Foo(x)`. A contract cannot instantiate itself; it
+    /// compares against `tx.input.current.script` instead.
     ContractInstance {
-        /// Name of the contract to instantiate
+        /// Name of the contract to instantiate.
         contract_name: String,
-        /// Constructor arguments (typically Variable or Literal)
+        /// Constructor arguments.
         args: Vec<Expression>,
     },
-    // ─── Byte-string Manipulation (introspector extensions) ────────────
     /// Narrowing cast from bytes: pubkey(x), signature(x), bytes20(x), bytes32(x);
     /// or a scalar conversion: int(bool), bool(int), bytes(int), bytes(bool); bytes(bytes-like) widens.
+    /// bytes20/bytes32 check the length at runtime; pubkey and signature are left to the VM,
+    /// which validates them when consumed. bytes(int) is minimal Script-number bytes, and
+    /// bytes(bool) is empty for false and 0x01 for true.
     Cast {
         target: String,
         data: Box<Expression>,
     },
-    // ─── Packet Introspection ──────────────────────────────────────────
-    /// Current-tx packet content: tx.packet(packetType)
-    /// Emits the raw packet bytes and asserts presence via OP_INSPECTPACKET's
-    /// bool flag. Compiles to `<packetType> OP_INSPECTPACKET OP_1 OP_EQUALVERIFY`, or to
+    /// `tx.packet(packetType)`: the current transaction's packet bytes, asserting the packet is
+    /// present. Compiles to `<packetType> OP_INSPECTPACKET OP_1 OP_EQUALVERIFY`, or to
     /// `<packetType> OP_INSPECTPACKET OP_NIP` for `presence_only`.
     PacketInspect {
         packet_type: Box<Expression>,
         /// `tx.packet.has(type)`: the presence flag instead of the bytes
         presence_only: bool,
     },
-    /// Packet of the Arkade transaction that created input i: tx.inputs[i].packet(packetType)
-    /// Compiles to `<packetType> <i> OP_INSPECTINPUTPACKET OP_1 OP_EQUALVERIFY`, or to
+    /// `tx.inputs[i].packet(packetType)`: the packet of the Arkade transaction that created
+    /// input `i`. Compiles to `<packetType> <i> OP_INSPECTINPUTPACKET OP_1 OP_EQUALVERIFY`, or to
     /// `<packetType> <i> OP_INSPECTINPUTPACKET OP_NIP` for `presence_only`.
     InputPacketInspect {
         index: Box<Expression>,
@@ -799,7 +798,7 @@ pub fn expression_result_struct(expression: &Expression) -> Option<&'static str>
         ExprKind::OutputIntrospection { property, .. } => Some(property.value_type()),
         _ => None,
     }
-    .filter(|result| builtin_struct_fields(result).is_some())
+    .filter(|result| super::builtin_struct_fields(result).is_some())
 }
 
 /// Generates the shared and mutable traversals from one list of each variant's
@@ -809,7 +808,6 @@ macro_rules! expression_children {
     ($name:ident, $expr:ty, ($($borrow:tt)*), $iter:ident, $as_box:ident) => {
         pub(crate) fn $name(expr: $expr) -> Vec<$expr> {
             match $($borrow)* expr.kind {
-                // Leaf nodes: no nested expressions.
                 ExprKind::Name(_)
                 | ExprKind::Literal(_)
                 | ExprKind::This(_)
@@ -882,7 +880,6 @@ expression_children!(child_exprs, &Expression, (&), iter, as_ref);
 expression_children!(child_exprs_mut, &mut Expression, (&mut), iter_mut, as_mut);
 
 impl Expression {
-    /// The array index a literal spells.
     pub(crate) fn literal_index(&self) -> Option<usize> {
         match &self.kind {
             ExprKind::Literal(index) => index.parse().ok(),
@@ -927,8 +924,8 @@ impl Expression {
                 format!("tx.inputs[{}].{}", index.source_text(), property.name())
             }
             ExprKind::BinaryOp { left, op, right } => {
-                // ponytail: every nested operation is parenthesized, so `a + b + c` reads
-                // `(a + b) + c`; print by precedence if the extra parentheses hurt messages.
+                // LIMITATION: every nested operation is parenthesized (`(a + b) + c`); print by
+                // precedence if the extra parentheses hurt diagnostics.
                 let operand = |e: &Self| match e.kind {
                     ExprKind::BinaryOp { .. } => format!("({})", e.source_text()),
                     _ => e.source_text(),

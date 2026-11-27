@@ -2,16 +2,18 @@
 //! helpers it calls.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::{fmt, mem};
 
 use super::walk::{Visitor, Walk};
 use super::{Finding, Lint};
+use crate::compiler::constants;
 use crate::compiler::tapscript::{keeps_default_leaf, shared_tweak_func};
 use crate::diagnostics::Span;
 use crate::models::{
-    AssetLookupSource, Contract, ExprKind, Expression, Function, KeyExpr, LocatedStatement,
+    self, AssetLookupSource, Contract, ExprKind, Expression, Function, KeyExpr, LocatedStatement,
     Statement, TapItem,
 };
-use crate::properties::{OutputProperty, ThisProperty, TxProperty};
+use crate::properties::{InputProperty, OutputProperty, TxProperty};
 
 /// An output the function constrains at a fixed place; outputs at a computed index are not
 /// tracked.
@@ -25,13 +27,13 @@ impl OutputIndex {
     fn of(index: &Expression) -> Option<Self> {
         match index.literal_index() {
             Some(literal) => Some(OutputIndex::Literal(literal)),
-            None => is_active_input(index).then_some(OutputIndex::ActiveInput),
+            None => index.is_active_input().then_some(OutputIndex::ActiveInput),
         }
     }
 }
 
-impl std::fmt::Display for OutputIndex {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Display for OutputIndex {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             OutputIndex::Literal(index) => write!(f, "{index}"),
             OutputIndex::ActiveInput => f.write_str("this.activeInputIndex"),
@@ -39,7 +41,6 @@ impl std::fmt::Display for OutputIndex {
     }
 }
 
-/// What one output has checked.
 #[derive(Default)]
 struct OutputChecks {
     script: Option<Span>,
@@ -49,30 +50,30 @@ struct OutputChecks {
 
 /// What holds on every path through the statements walked so far.
 ///
-/// ponytail: a helper body counts as run to its end, which an early `return` cuts short. Track
+/// LIMITATION: a helper body counts as run to its end, which an early `return` cuts short. Track
 /// returns if a lint needs them.
 #[derive(Default, Clone, Copy)]
-struct Path {
+struct PathFacts {
     /// A transaction signature: `checkSig` or `checkMultisig`.
     signed: bool,
     never_passes: bool,
 }
 
-impl Path {
+impl PathFacts {
     /// What holds on every path through an `if`: what both arms hold, or what the other arm
     /// holds when one never passes. An absent `else` is an arm that holds nothing.
-    fn either(then: Path, other: Path) -> Path {
+    fn either(then: PathFacts, other: PathFacts) -> PathFacts {
         match (then, other) {
             (dead, live) | (live, dead) if dead.never_passes => live,
-            _ => Path {
+            _ => PathFacts {
                 signed: then.signed && other.signed,
-                ..Path::default()
+                ..PathFacts::default()
             },
         }
     }
 
-    fn followed_by(self, next: Path) -> Path {
-        Path {
+    fn followed_by(self, next: PathFacts) -> PathFacts {
+        PathFacts {
             signed: self.signed || next.signed,
             never_passes: self.never_passes || next.never_passes,
         }
@@ -84,10 +85,10 @@ struct Facts {
     /// A transaction signature anywhere in the function, which commits to every output; a
     /// `checkSigFromStack` message does not.
     signed: bool,
-    path: Path,
+    path: PathFacts,
     /// For each `if` arm being walked, the path before the `if`, and the `then` arm's path
     /// once it is walked.
-    arms: Vec<(Path, Option<Path>)>,
+    arms: Vec<(PathFacts, Option<PathFacts>)>,
     outputs: BTreeMap<OutputIndex, OutputChecks>,
     bounds_inputs: bool,
     locktime: Vec<Span>,
@@ -103,7 +104,6 @@ struct Facts {
 }
 
 impl Facts {
-    /// Where a finding at `span` belongs in the walked file.
     fn at(&self, span: Span) -> Span {
         self.import_call.map_or(span, |(call, _)| call)
     }
@@ -133,11 +133,11 @@ pub(super) fn check(contract: &Contract, findings: &mut Vec<Finding>) {
 /// A tapscript leaf, or the synthesized default leaf of an Arkade Script function that keeps it:
 /// whether it needs a constructor key's signature, and the Arkade Script function whose tweaked
 /// key it signs with, which must then pass too.
-type SpendingPath<'a> = (bool, Option<(&'a Function, Path)>);
+type SpendingPath<'a> = (bool, Option<(&'a Function, PathFacts)>);
 
 fn spending_paths<'a>(
     contract: &Contract,
-    functions: &[(&'a Function, Path)],
+    functions: &[(&'a Function, PathFacts)],
 ) -> Vec<SpendingPath<'a>> {
     let mut paths = Vec::new();
     for tapscript in &contract.tapscripts {
@@ -173,7 +173,7 @@ fn spending_paths<'a>(
 /// through a leaf that needs no constructor key's signature either. Introspection does not
 /// count: such a path may still be sound, as a hash lock or a stateful covenant is.
 fn unsigned_spend_path(
-    functions: &[(&Function, Path)],
+    functions: &[(&Function, PathFacts)],
     paths: &[SpendingPath],
     findings: &mut Vec<Finding>,
 ) {
@@ -287,19 +287,19 @@ impl<'a> Visitor<'a> for Facts {
     }
 
     fn enter_arm(&mut self, _id: usize, then: bool, _body: &'a [LocatedStatement]) {
-        let before = std::mem::take(&mut self.path);
+        let before = mem::take(&mut self.path);
         if then {
             self.arms.push((before, None));
         }
     }
 
     fn exit_arm(&mut self) {
-        let arm = std::mem::take(&mut self.path);
+        let arm = mem::take(&mut self.path);
         let (before, then) = self.arms.last_mut().expect("an arm is being walked");
         match then.take() {
             None => *then = Some(arm),
             Some(then) => {
-                self.path = before.followed_by(Path::either(then, arm));
+                self.path = before.followed_by(PathFacts::either(then, arm));
                 self.arms.pop();
             }
         }
@@ -327,7 +327,7 @@ impl<'a> Visitor<'a> for Facts {
                 facts.path.signed = true;
             }
             ExprKind::OutputIntrospection { index, property } => {
-                facts.bounds_inputs |= is_active_input(index);
+                facts.bounds_inputs |= index.is_active_input();
                 let Some(index) = OutputIndex::of(index) else {
                     return;
                 };
@@ -366,11 +366,10 @@ impl<'a> Visitor<'a> for Facts {
                 property: TxProperty::NumInputs,
             } => facts.bounds_inputs = true,
             ExprKind::BinaryOp { left, op, right } if op.compares() => {
-                facts.bounds_inputs |= [left, right].iter().any(|side| is_active_input(side))
+                facts.bounds_inputs |= [left, right].iter().any(|side| side.is_active_input())
             }
             ExprKind::InputIntrospection { property, .. } => {
-                facts.bounds_inputs |=
-                    matches!(property, crate::properties::InputProperty::Outpoint);
+                facts.bounds_inputs |= matches!(property, InputProperty::Outpoint);
             }
             ExprKind::TxIntrospection {
                 property: TxProperty::Locktime,
@@ -460,13 +459,6 @@ fn find_witness_choices(
 
 /// A requirement the constant folder evaluates to false, as in a disabled function.
 fn never_passes(condition: &Expression) -> bool {
-    let mut no_names = |_: &crate::models::Path| Err(String::new());
-    crate::compiler::constants::evaluate(condition, &mut no_names).as_deref() == Ok("false")
-}
-
-fn is_active_input(expression: &Expression) -> bool {
-    matches!(
-        expression.kind,
-        ExprKind::This(ThisProperty::ActiveInputIndex)
-    )
+    let mut no_names = |_: &models::Path| Err(String::new());
+    constants::evaluate(condition, &mut no_names).as_deref() == Ok("false")
 }

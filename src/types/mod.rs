@@ -1,10 +1,9 @@
-/// Type system for Arkade Language.
-///
-/// Provides:
-/// - `ArkType`: the canonical type enum for all Arkade Language values,
-///   including wire-encoding metadata used by client stub generators
-/// - `annotate`: stores every expression's type on it before validation;
-///   the validator and code generation read `Expression::ty`
+//! Typing. [`annotate`] takes a parsed contract and stores each expression's [`ArkType`] on
+//! `Expression::ty`, resolving call results, `.length` and asset-group members on the way; the
+//! validator and emission read only that field. An expression it cannot type stays `Unknown`.
+
+use crate::builtins;
+use crate::models::{self, GroupIOSource, HashFn, Parameter, StructDefinition};
 use std::collections::HashMap;
 
 use crate::models::{
@@ -13,17 +12,11 @@ use crate::models::{
 use crate::operators::{BinaryOperator, OperatorClass, UnaryOperator};
 use crate::properties::{GroupIoProperty, GroupProperty};
 
-// ─── Type Enum ────────────────────────────────────────────────────────────────
-
-/// All possible types in Arkade Language.
-///
-/// Declared types map directly to the grammar's `data_type` rule.
-/// Internal types are produced by introspection expressions; they never appear
-/// in user-written type annotations.
+/// The type of an Arkade value. `Void` and `Unknown` come only from typing; every other
+/// variant can be declared in source.
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub enum ArkType {
-    // ── Declared types (match grammar data_type rule) ──────────────────────
     /// 64-byte Schnorr signature
     Signature,
     /// Arbitrary-length byte array; `pubkey` is an alias
@@ -39,28 +32,43 @@ pub enum ArkType {
     /// Position of an asset group in the transaction's asset packet
     AssetGroup,
 
-    // ── Internal / introspection types ─────────────────────────────────────
-
-    // ── Composite ──────────────────────────────────────────────────────────
     /// Homogeneous fixed-size array (e.g., `pubkey[3]`)
     Array(Box<ArkType>, usize),
-    /// Named user-defined struct.
+    /// A struct by name, user-defined or built in such as `AssetId`.
     Struct(String),
 
     /// No stack value: a call to a function without a result.
     Void,
 
-    /// Type could not be resolved (variable not in scope, etc.)
+    /// Not resolved; the validator reports the expression.
     Unknown,
 }
 
 impl ArkType {
-    /// Parse from a grammar `data_type` string (e.g., `"pubkey"`, `"bytes32[4]"`).
-    pub fn parse(s: &str) -> ArkType {
-        crate::models::TypeName::parse(s).ark_type()
+    /// Whether the type widens to `bytes`: it can be concatenated with `+` and compared or
+    /// bound to `bytes`, but never to another sized type.
+    pub(crate) fn is_bytes_like(&self) -> bool {
+        matches!(
+            self,
+            ArkType::Bytes | ArkType::Bytes20 | ArkType::Bytes32 | ArkType::Signature
+        )
     }
 
-    /// The type a builtin or struct name denotes.
+    pub(crate) fn accepts(&self, actual: &ArkType) -> bool {
+        self == actual
+            || *self == ArkType::Bytes && actual.is_bytes_like()
+            || matches!(
+                (self, actual),
+                (ArkType::Array(expected, expected_len), ArkType::Array(actual, actual_len))
+                    if expected_len == actual_len && expected.accepts(actual)
+            )
+    }
+
+    /// Parse from a grammar `data_type` string (e.g., `"pubkey"`, `"bytes32[4]"`).
+    pub fn parse(s: &str) -> ArkType {
+        TypeName::parse(s).ark_type()
+    }
+
     pub(crate) fn named(s: &str) -> ArkType {
         match s {
             "signature" => ArkType::Signature,
@@ -75,10 +83,8 @@ impl ArkType {
         }
     }
 
-    /// Wire-encoding descriptor used in leaf `witness` / client stub output.
-    ///
-    /// These strings are stable identifiers; downstream code generators
-    /// (TypeScript, Go, etc.) can switch on them to pick the right serializer.
+    /// Wire encoding in leaf `witness` output. A stable identifier: client generators switch on
+    /// it to pick a serializer.
     pub fn encoding(&self) -> &'static str {
         match self {
             ArkType::Signature => "schnorr-64",
@@ -122,14 +128,9 @@ impl From<&ArkType> for TypeName {
     }
 }
 
-// ─── Scope ────────────────────────────────────────────────────────────────────
-
 pub type Scope = HashMap<String, ArkType>;
 
-pub fn build_scope_with_structs(
-    params: &[crate::models::Parameter],
-    structs: &[crate::models::StructDefinition],
-) -> Scope {
+pub fn build_scope_with_structs(params: &[Parameter], structs: &[StructDefinition]) -> Scope {
     let mut scope = Scope::new();
     for p in params {
         insert_type_bindings(&mut scope, &p.name, &p.param_type, structs, &mut Vec::new());
@@ -141,7 +142,7 @@ fn insert_type_bindings(
     scope: &mut Scope,
     name: &str,
     declared_type: &TypeName,
-    structs: &[crate::models::StructDefinition],
+    structs: &[StructDefinition],
     stack: &mut Vec<String>,
 ) {
     if let Some((base, length)) = declared_type.array_parts() {
@@ -155,7 +156,7 @@ fn insert_type_bindings(
         return;
     }
     let type_name = declared_type.name().unwrap_or_default();
-    if let Some(fields) = crate::models::builtin_struct_fields(type_name) {
+    if let Some(fields) = models::builtin_struct_fields(type_name) {
         scope.insert(name.to_string(), ArkType::Struct(type_name.to_string()));
         for (field_name, field_type) in fields {
             insert_type_bindings(
@@ -197,7 +198,7 @@ pub(crate) fn bind_local_type(
     name: &str,
     declared_type: Option<&TypeName>,
     inferred: ArkType,
-    structs: &[crate::models::StructDefinition],
+    structs: &[StructDefinition],
 ) {
     let expanded = match declared_type {
         Some(declared_type) => Some(declared_type.clone()),
@@ -248,7 +249,7 @@ pub(crate) fn annotate(contract: &mut Contract) {
 pub(crate) fn annotate_statements(
     statements: &mut [LocatedStatement],
     scope: &mut Scope,
-    structs: &[crate::models::StructDefinition],
+    structs: &[StructDefinition],
 ) {
     Typing {
         structs,
@@ -258,11 +259,10 @@ pub(crate) fn annotate_statements(
     .statements(statements, scope);
 }
 
-/// Type one expression of code that has not been annotated.
 pub(crate) fn annotate_expression(
     expression: &mut Expression,
     scope: &Scope,
-    structs: &[crate::models::StructDefinition],
+    structs: &[StructDefinition],
 ) {
     Typing {
         structs,
@@ -276,7 +276,7 @@ pub(crate) fn annotate_expression(
 type Signatures = HashMap<String, (Vec<TypeName>, Option<TypeName>)>;
 
 struct Typing<'a> {
-    structs: &'a [crate::models::StructDefinition],
+    structs: &'a [StructDefinition],
     /// Present on the first pass, which also resolves names.
     signatures: Option<&'a Signatures>,
     /// The result type of the function being typed.
@@ -316,7 +316,7 @@ impl Typing<'_> {
                     if let Some(declared_type) = declared_type {
                         self.expect(value, &declared_type.ark_type());
                     }
-                    // A binding holds a value, so one of a void initializer has no type.
+                    // A void initializer leaves no stack value to bind, so the binding is Unknown.
                     let ty = match (declared_type.as_ref(), &value.ty) {
                         (Some(declared_type), _) => declared_type.ark_type(),
                         (None, ArkType::Void) => ArkType::Unknown,
@@ -362,7 +362,7 @@ impl Typing<'_> {
                     body,
                 } => {
                     self.expression(iterable, scope);
-                    // A literal's elements after the first take the first's type.
+                    // Expecting its own type gives a literal's later elements the first one's type.
                     self.expect(iterable, &iterable.ty.clone());
                     let mut body_scope = scope.clone();
                     body_scope.insert(index_var.clone(), ArkType::Int);
@@ -394,7 +394,7 @@ impl Typing<'_> {
     }
 
     fn expression(&self, expression: &mut Expression, scope: &Scope) {
-        for child in crate::models::child_exprs_mut(expression) {
+        for child in models::child_exprs_mut(expression) {
             self.expression(child, scope);
         }
         if let ExprKind::BinaryOp { left, op, right } = &mut expression.kind {
@@ -418,7 +418,6 @@ impl Typing<'_> {
         }
         self.expect_operands(expression);
         expression.ty = match &expression.kind {
-            // An unknown function, which validation reports, has no result type.
             ExprKind::Call { name, .. }
                 if self
                     .signatures
@@ -426,8 +425,9 @@ impl Typing<'_> {
             {
                 ArkType::Unknown
             }
-            // A computed value's member, or one whose path an out-of-range constant index leaves
-            // unbound, is typed as the same member of a binding of its type.
+            // A field of a computed value, or of a path an out-of-range constant index leaves
+            // unbound, has no entry in `scope`: bind the value's type under a placeholder name and
+            // look the field up there.
             // TODO(ir): scopes key types by binding path, hence the made-up name `$`.
             ExprKind::FieldAccess { value, field }
                 if expression
@@ -441,7 +441,6 @@ impl Typing<'_> {
             }
             _ => infer_type(expression, scope),
         };
-        // A named literal's own type types its nested literals.
         if matches!(
             expression.kind,
             ExprKind::StructLiteral { name: Some(_), .. }
@@ -450,12 +449,11 @@ impl Typing<'_> {
         }
     }
 
-    /// Types the literal operands of a builtin or an asset lookup from its signature.
     fn expect_operands(&self, expression: &mut Expression) {
         match &mut expression.kind {
             ExprKind::Builtin { builtin, args } => {
                 for (arg, (_, parameter)) in args.iter_mut().zip(builtin.params) {
-                    // `T[]` takes its length from the operand.
+                    // `T[]` accepts any length; `expect` replaces this 0 with the operand's length.
                     let ty = match parameter.strip_suffix("[]") {
                         Some(element) => ArkType::Array(Box::new(ArkType::parse(element)), 0),
                         None => ArkType::parse(parameter),
@@ -489,7 +487,6 @@ impl Typing<'_> {
                 }
             }
             (ExprKind::StructLiteral { name, fields }, ArkType::Struct(_)) => {
-                // A named literal's fields follow its own name.
                 let own = name.as_ref().map(|name| ArkType::Struct(name.clone()));
                 let mut members = Scope::new();
                 let struct_type = own.unwrap_or_else(|| ty.clone());
@@ -631,8 +628,8 @@ fn resolve_length(expression: &mut Expression, scope: &Scope) {
         _ => None,
     };
     let resolved = match value.kind {
-        _ if is_bytes_like(&value.ty) => Some(ExprKind::Builtin {
-            builtin: crate::builtins::find("size").expect("size is a builtin"),
+        _ if value.ty.is_bytes_like() => Some(ExprKind::Builtin {
+            builtin: builtins::find("size").expect("size is a builtin"),
             args: vec![value],
         }),
         // `g.inputs.length`
@@ -664,26 +661,19 @@ fn group_binding(path: Path, at: &Expression, scope: &Scope) -> Option<Expressio
     (binding.ty == ArkType::AssetGroup).then_some(binding)
 }
 
-pub(crate) fn group_io_source(name: &str) -> Option<crate::models::GroupIOSource> {
+pub(crate) fn group_io_source(name: &str) -> Option<GroupIOSource> {
     match name {
-        "inputs" => Some(crate::models::GroupIOSource::Inputs),
-        "outputs" => Some(crate::models::GroupIOSource::Outputs),
+        "inputs" => Some(GroupIOSource::Inputs),
+        "outputs" => Some(GroupIOSource::Outputs),
         _ => None,
     }
 }
 
-/// Whether a value of type `t` can be compared with `hash_fn`'s digest.
-pub(crate) fn digest_accepts(hash_fn: &crate::models::HashFn, t: &ArkType) -> bool {
+pub(crate) fn digest_accepts(hash_fn: &HashFn, t: &ArkType) -> bool {
     *t == ArkType::Bytes || *t == ArkType::parse(hash_fn.digest_type())
 }
 
-// ─── Type Inference ───────────────────────────────────────────────────────────
-
-/// Infer the `ArkType` of an expression given the current variable scope and
-/// the types already stored on its children.
-///
-/// Returns `ArkType::Unknown` for expressions whose type cannot be determined
-/// statically (e.g., unresolved variables, not-yet-implemented forms).
+/// The type of `expr` from `scope` and the types already stored on its children.
 fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
     match &expr.kind {
         ExprKind::Call { return_type, .. } => return_type
@@ -736,7 +726,6 @@ fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
         ExprKind::InputIntrospection { property, .. } => ArkType::parse(property.value_type()),
         ExprKind::OutputIntrospection { property, .. } => ArkType::parse(property.value_type()),
 
-        // Asset introspection
         ExprKind::AssetLookup { .. } => ArkType::Int,
         ExprKind::AssetHas { .. } => ArkType::Bool,
         ExprKind::AssetCount { .. } => ArkType::Int,
@@ -745,7 +734,6 @@ fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
             ArkType::parse(property.map_or("AssetEntry", |p| p.value_type()))
         }
 
-        // Asset group introspection
         ExprKind::GroupLookup { .. } | ExprKind::AssetGroupAt { .. } => ArkType::AssetGroup,
         ExprKind::GroupHas { .. } => ArkType::Bool,
         ExprKind::GroupControlIs { .. } => ArkType::Bool,
@@ -757,7 +745,6 @@ fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
 
         ExprKind::Builtin { builtin, .. } => ArkType::parse(builtin.result),
 
-        // Arithmetic
         ExprKind::Unary {
             op: UnaryOperator::Invert,
             ..
@@ -770,7 +757,6 @@ fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
 
         ExprKind::Cast { target, .. } => ArkType::parse(target),
 
-        // Packet introspection — returns raw packet bytes.
         ExprKind::PacketInspect { presence_only, .. }
         | ExprKind::InputPacketInspect { presence_only, .. } => {
             if *presence_only {
@@ -787,13 +773,12 @@ fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
             }
         }
 
-        // Binary operations — type is determined by operand types and operator.
         ExprKind::BinaryOp { left, op, right } => {
             match op.class() {
-                // bytes-like on either side → concatenation (result Bytes).
+                // Bytes-like `+` is concatenation.
                 OperatorClass::Arithmetic
                     if *op == BinaryOperator::Add
-                        && (is_bytes_like(&left.ty) || is_bytes_like(&right.ty)) =>
+                        && (left.ty.is_bytes_like() || right.ty.is_bytes_like()) =>
                 {
                     ArkType::Bytes
                 }
@@ -807,7 +792,6 @@ fn infer_type(expr: &Expression, scope: &Scope) -> ArkType {
     }
 }
 
-/// Byte length of `expr` when it is known at compile time.
 pub(crate) fn static_byte_width(expr: &Expression) -> Option<usize> {
     match &expr.kind {
         ExprKind::Literal(value) if value.starts_with("0x") => Some((value.len() - 2) / 2),
@@ -843,27 +827,18 @@ pub(crate) fn resolved(ty: &ArkType) -> bool {
     }
 }
 
-/// Whether values of the type are script numbers.
 pub(crate) fn is_numeric(t: &ArkType) -> bool {
     t.encoding() == "scriptnum"
-}
-
-/// Returns true when the type widens to `bytes`: it can be concatenated with
-/// `+` and compared or bound to `bytes`, but never to another sized type.
-pub fn is_bytes_like(t: &ArkType) -> bool {
-    matches!(
-        t,
-        ArkType::Bytes | ArkType::Bytes20 | ArkType::Bytes32 | ArkType::Signature
-    )
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::parser;
 
     #[test]
     fn only_asset_groups_have_group_members() {
-        let mut contract = crate::parser::parse(
+        let mut contract = parser::parse(
             "struct S { int delta; }
             contract V(AssetGroup g, int x, S s, bytes b) {
                 function spend() { let p = g.delta; let q = x.delta; let r = s.delta; let t = (b + b).delta; }

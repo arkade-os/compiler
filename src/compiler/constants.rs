@@ -1,14 +1,16 @@
-use crate::diagnostics::{CompileError, Span};
-use crate::models::{
-    ArraySize, AssignmentTarget, Constant, Contract, ExprKind, Expression, LocatedStatement, Path,
-    Statement, TypeName,
-};
-use crate::operators::{BinaryOperator, OperatorClass, UnaryOperator};
+//! Constant folding: evaluates `const` declarations and replaces every reference to one with a
+//! literal. Runs before validation, so no later stage sees a constant name.
+
 use std::collections::HashMap;
 
-/// Validate constant declarations and fold every reference to them into a literal, returning
-/// the name and span of each reference folded in an expression.
-/// Runs before validation so no later stage ever observes a constant identifier.
+use crate::diagnostics::{CompileError, Span};
+use crate::models::{
+    self, ArraySize, AssignmentTarget, Constant, Contract, ExprKind, Expression, LocatedStatement,
+    Path, Statement, TypeName, RESERVED_NAMES, RESERVED_PLACEHOLDERS,
+};
+use crate::operators::{BinaryOperator, OperatorClass, UnaryOperator};
+
+/// Returns the path and span of each reference folded inside an expression.
 pub(crate) fn fold(contract: &mut Contract) -> Result<Vec<(Path, Span)>, CompileError> {
     let values = collect(contract)?;
     let mut uses = Vec::new();
@@ -40,8 +42,7 @@ fn at(span: Span) -> impl Fn(String) -> CompileError {
     move |message| CompileError::from(message).at(span)
 }
 
-/// An error about `constant`, located at it unless it was imported, which locates it in its
-/// own file.
+/// An imported constant (a dotted name) is declared in another file, so its errors carry no span.
 fn at_constant(constant: &Constant) -> impl Fn(String) -> CompileError + '_ {
     move |message| match constant.name.contains('.') {
         true => CompileError::from(message),
@@ -57,8 +58,8 @@ fn collect(contract: &Contract) -> Result<HashMap<String, String>, CompileError>
         } = constant;
         let error = at_constant(constant);
         if matches!(name.as_str(), "true" | "false")
-            || crate::models::RESERVED_NAMES.contains(&name.as_str())
-            || crate::models::RESERVED_PLACEHOLDERS.contains(&name.as_str())
+            || RESERVED_NAMES.contains(&name.as_str())
+            || RESERVED_PLACEHOLDERS.contains(&name.as_str())
         {
             return Err(error(format!("constant name '{name}' is reserved")));
         }
@@ -169,7 +170,7 @@ fn kind(value: &str) -> &'static str {
     }
 }
 
-// ponytail: literals, negation and equality are unbounded like BigNum, but arithmetic and
+// LIMITATION: literals, negation and equality are unbounded like BigNum, but arithmetic and
 // ordering fold in i128, so larger operands are rejected; use a bignum if contracts need them.
 fn integer(text: &str) -> Result<i128, String> {
     if kind(text) != "int" {
@@ -179,7 +180,7 @@ fn integer(text: &str) -> Result<i128, String> {
         .map_err(|_| format!("constant arithmetic exceeds 128 bits, got '{text}'"))
 }
 
-// Validate skipped operands without evaluating their arithmetic.
+/// Type-checks the operands `evaluate` short-circuits past, without evaluating arithmetic.
 fn validate_expression(
     expression: &Expression,
     resolve: &mut impl FnMut(&Path) -> Result<String, String>,
@@ -420,7 +421,6 @@ fn fold_statements(
     Ok(())
 }
 
-/// Fold a loop count or range bound to a literal when it is a constant expression.
 fn fold_count(
     count: &mut Expression,
     values: &HashMap<String, String>,
@@ -443,10 +443,9 @@ fn fold_expression(
             expression.kind = ExprKind::Literal(value.clone());
             return;
         }
-        // `KEY.length` is the length of the constant's value.
         if let Some((constant, "length")) = path.split_last() {
             if let Some(value) = values.get(&constant.key()) {
-                uses.push((constant.clone(), expression.span));
+                uses.push((constant, expression.span));
                 let value = Box::new(expression.with_kind(ExprKind::Literal(value.clone())));
                 let field = "length".to_string();
                 expression.kind = ExprKind::FieldAccess { value, field };
@@ -466,7 +465,7 @@ fn fold_expression(
             }
         }
     }
-    for child in crate::models::child_exprs_mut(expression) {
+    for child in models::child_exprs_mut(expression) {
         fold_expression(child, values, uses);
     }
 }

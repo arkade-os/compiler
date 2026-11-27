@@ -1,14 +1,21 @@
-use super::*;
-use crate::opcodes::Opcode::{FromAltStack, ToAltStack};
+//! Emits reads of and assignments to bindings, including runtime-indexed array accesses, and
+//! the builtins that read array arguments element by element.
+
+use std::mem;
+
+use super::ir::Op;
+use super::{BindingKind, Generator, Result, StackItem};
+use crate::diagnostics::CompileError;
+use crate::models::{self, ExprKind, Expression, Path, TypeName};
+use crate::opcodes::Opcode;
 use crate::properties::GroupIoProperty;
 use crate::types::ArkType;
 
-/// A `checkMultisig` threshold known at compile time: the key count when omitted, or a literal
-/// that must lie between 1 and `count`.
+/// `None` for a runtime threshold; an omitted one means all `count` keys.
 pub(super) fn multisig_threshold(
     threshold: Option<&Expression>,
     count: usize,
-) -> std::result::Result<Option<usize>, String> {
+) -> Result<Option<usize>, String> {
     let threshold = match threshold.map(|threshold| &threshold.kind) {
         None => count,
         Some(ExprKind::Literal(value)) => value
@@ -25,7 +32,8 @@ pub(super) fn multisig_threshold(
 }
 
 impl Generator {
-    /// Resolve an access to its layout path, collecting runtime indexes.
+    /// Collects each runtime index as `(index, array length, element width)` and returns the
+    /// layout path with element 0 in its place.
     fn access_indices<'a>(
         &self,
         value: &'a Expression,
@@ -43,8 +51,8 @@ impl Generator {
         let Some(ArkType::Array(element, length)) = self.scope.get(&array.key()) else {
             return Err(format!("'{array}' is not an array").into());
         };
-        // Validation and folding reject an out-of-range constant on a reachable path; one left
-        // here is in code that folding removes, so it is checked at runtime.
+        // Validation and folding reject a reachable out-of-range constant; one left here is in
+        // dead code, so it gets the runtime check.
         if let Some(literal) = index.literal_index().filter(|literal| literal < length) {
             return Ok(array.index(literal));
         }
@@ -58,10 +66,10 @@ impl Generator {
             self.check_array_index(*length)?;
             if *stride != 1 {
                 self.push_integer_temporary(*stride);
-                self.apply(Mul, 2, 1)?;
+                self.apply(Opcode::Mul, 2, 1)?;
             }
             if position > 0 {
-                self.apply(Add, 2, 1)?;
+                self.apply(Opcode::Add, 2, 1)?;
             }
         }
         Ok(())
@@ -92,7 +100,7 @@ impl Generator {
         }
         self.emit_access_offset(&indices)?;
         if let Some(length) = length {
-            self.apply(Drop, 1, 0)?;
+            self.apply(Opcode::Drop, 1, 0)?;
             self.push_integer_temporary(length);
             return Ok(());
         }
@@ -102,23 +110,23 @@ impl Generator {
             // Copy the offset until the last leaf consumes it; each index is evaluated once.
             if copied + 1 < leaves.len() {
                 self.push_integer_temporary(copied);
-                self.apply(Pick, 1, 1)?;
+                self.apply(Opcode::Pick, 1, 1)?;
             } else if copied > 0 {
                 self.push_integer_temporary(copied);
-                self.apply(Roll, 1, 0)?;
+                self.apply(Opcode::Roll, 1, 0)?;
             }
             let slot = self
                 .binding_index(&leaf.access)
                 .ok_or_else(|| format!("undefined binding '{}'", leaf.access))?;
             self.push_integer_temporary(self.stack.len() - slot - 2);
-            self.apply(Add, 2, 1)?;
-            self.apply(Pick, 1, 1)?;
+            self.apply(Opcode::Add, 2, 1)?;
+            self.apply(Opcode::Pick, 1, 1)?;
         }
         Ok(())
     }
 
-    /// Bind an access's computed root once, then read the access from that binding.
-    // ponytail: the read leaves are copied and the whole root dropped after, one copy and drop
+    /// Binds the computed root of an access once, then reads the access from that binding.
+    // LIMITATION: the read leaves are copied and the whole root dropped after, one copy and drop
     // more than a move; consume the final reads if script size matters.
     fn emit_computed_access(&mut self, value: &Expression, ty: &TypeName) -> Result<()> {
         fn root(access: &mut Expression) -> &mut Expression {
@@ -153,7 +161,7 @@ impl Generator {
                 // Keep the offset below the next value; runtime indexes are evaluated once.
                 self.swap()?;
                 self.push_integer_temporary(1);
-                self.apply(Pick, 1, 1)?;
+                self.apply(Opcode::Pick, 1, 1)?;
             }
             let slot = self
                 .binding_index(&leaf.access)
@@ -168,13 +176,12 @@ impl Generator {
                 return Err(format!("cannot assign to constructor parameter '{name}'").into());
             }
             self.push_integer_temporary(self.stack.len() - slot - 3);
-            self.apply(Add, 2, 1)?;
-            self.apply(Put, 2, 0)?;
+            self.apply(Opcode::Add, 2, 1)?;
+            self.apply(Opcode::Put, 2, 0)?;
         }
         Ok(())
     }
 
-    /// Evaluate `value` as `ty` into the local binding `name`.
     pub(super) fn emit_let(&mut self, name: &str, value: &Expression, ty: &TypeName) -> Result<()> {
         self.emit_typed_value(value, ty)?;
         self.bind_value(name, ty)?;
@@ -182,9 +189,8 @@ impl Generator {
         Ok(())
     }
 
-    /// Evaluate `value` once into a stack binding, then let `read` emit through an expression
-    /// naming it. `width` is the size of what `read` leaves, not of `value`: those items are
-    /// kept and the binding dropped.
+    /// `width` is the size of what `read` leaves, not of `value`: those items are kept and the
+    /// binding dropped.
     // TODO(ir): emission reads composite values only by binding path, so computed ones get a
     // made-up name here. Remove once operands are IR values instead of paths.
     pub(super) fn with_bound_value(
@@ -195,7 +201,7 @@ impl Generator {
     ) -> Result<()> {
         let baseline = self.stack.len();
         let scope = self.scope.clone();
-        let pinned = std::mem::replace(&mut self.pinned_stack_len, baseline);
+        let pinned = mem::replace(&mut self.pinned_stack_len, baseline);
         let ty = TypeName::from(&value.ty);
         // A later call at this depth reuses the name only after this binding is dropped.
         let name = format!("$bound:{baseline}");
@@ -210,7 +216,6 @@ impl Generator {
         Ok(())
     }
 
-    /// Emit a builtin call with argument `position` evaluated once.
     fn emit_with_bound_arg(
         &mut self,
         call: &Expression,
@@ -245,8 +250,7 @@ impl Generator {
             return Err("checkMultisig key and signature counts must match".into());
         }
         let threshold = args.get(2);
-        // Validation and folding reject an out-of-range constant on a reachable path; one left
-        // here is in a branch that folding removes, so it keeps the runtime check.
+        // As with indexes, a literal rejected here is in dead code and keeps the runtime check.
         let literal_threshold = multisig_threshold(threshold, count).ok().flatten();
         // Keys need indexed reads, so arrays without a static path are bound once.
         if !matches!(&keys.kind, ExprKind::ArrayLiteral(_)) && keys.static_path().is_none() {
@@ -266,7 +270,11 @@ impl Generator {
             key.ty = (*element).clone();
             self.emit_expression(&key)?;
             self.apply(
-                if index == 0 { CheckSig } else { CheckSigAdd },
+                if index == 0 {
+                    Opcode::CheckSig
+                } else {
+                    Opcode::CheckSigAdd
+                },
                 if index == 0 { 2 } else { 3 },
                 1,
             )?;
@@ -280,9 +288,9 @@ impl Generator {
         // At least the threshold must sign; for N-of-N that is all, which NUMEQUAL checks and
         // a following VERIFY fuses with.
         let compare = if literal_threshold == Some(count) {
-            NumEqual
+            Opcode::NumEqual
         } else {
-            GreaterThanOrEqual
+            Opcode::GreaterThanOrEqual
         };
         self.apply(compare, 2, 1)
     }
@@ -302,52 +310,57 @@ impl Generator {
         };
         self.emit_expression(group)?;
         self.emit_expression(io_index)?;
-        self.push_temporary(Int0);
+        self.push_temporary(Opcode::Int0);
         // A proof input record is four items, and normalizing sizes its txid with the items above
         // it dropped or parked on the alt stack: counting both stacks, at most five items for
         // a field and six for the whole record.
         let (items, peak) = if property.is_some() { (1, 5) } else { (3, 6) };
-        self.apply(InspectAssetGroup, 3, items)?;
+        self.apply(Opcode::InspectAssetGroup, 3, items)?;
         self.max_depth = self.max_depth.max(self.stack.len() - items + peak);
         // Only a proof input's txid is 32 bytes; the type below it is 1 or 2. Each
         // sequence takes back what it puts on the alt stack and leaves the items the
         // model holds, so the stack model needs no update.
-        let size_32 = [Size.into(), Op::Push("32".into())];
-        let drop_txid = [Equal.into(), If.into(), Drop.into(), EndIf.into()];
-        let restore = [Drop.into(), FromAltStack.into()];
+        let size_32 = [Opcode::Size.into(), Op::Push("32".into())];
+        let drop_txid = [
+            Opcode::Equal.into(),
+            Opcode::If.into(),
+            Opcode::Drop.into(),
+            Opcode::EndIf.into(),
+        ];
+        let restore = [Opcode::Drop.into(), Opcode::FromAltStack.into()];
         let ops: Vec<Op> = match property {
             None => [
-                vec![ToAltStack.into(), ToAltStack.into()],
+                vec![Opcode::ToAltStack.into(), Opcode::ToAltStack.into()],
                 size_32.to_vec(),
                 drop_txid.to_vec(),
-                vec![FromAltStack.into(), FromAltStack.into()],
+                vec![Opcode::FromAltStack.into(), Opcode::FromAltStack.into()],
             ]
             .concat(),
             Some(GroupIoProperty::Amount) => [
-                vec![ToAltStack.into(), Drop.into()],
+                vec![Opcode::ToAltStack.into(), Opcode::Drop.into()],
                 size_32.to_vec(),
                 drop_txid.to_vec(),
                 restore.to_vec(),
             ]
             .concat(),
             Some(GroupIoProperty::Index) => [
-                vec![Drop.into(), ToAltStack.into()],
+                vec![Opcode::Drop.into(), Opcode::ToAltStack.into()],
                 size_32.to_vec(),
                 drop_txid.to_vec(),
                 restore.to_vec(),
             ]
             .concat(),
             Some(GroupIoProperty::Type) => [
-                vec![Drop.into(), Drop.into()],
+                vec![Opcode::Drop.into(), Opcode::Drop.into()],
                 size_32.to_vec(),
                 drop_txid.to_vec(),
             ]
             .concat(),
             // A local input has no txid, so the size check fails the spend.
             Some(GroupIoProperty::Txid) => [
-                vec![Drop.into(), Drop.into()],
+                vec![Opcode::Drop.into(), Opcode::Drop.into()],
                 size_32.to_vec(),
-                vec![EqualVerify.into(), Nip.into()],
+                vec![Opcode::EqualVerify.into(), Opcode::Nip.into()],
             ]
             .concat(),
         };
@@ -391,7 +404,7 @@ impl Generator {
                         index,
                     },
                 });
-                for (field, field_type) in crate::models::builtin_struct_fields(ty)
+                for (field, field_type) in models::builtin_struct_fields(ty)
                     .ok_or_else(|| CompileError::internal("missing native point layout"))?
                 {
                     let leaf = points.with_kind(ExprKind::FieldAccess {
@@ -404,6 +417,6 @@ impl Generator {
         }
         self.push_integer_temporary(pairs);
         self.emit_expression(curve_id)?;
-        self.apply(EcPairing, 6 * pairs + 2, 1)
+        self.apply(Opcode::EcPairing, 6 * pairs + 2, 1)
     }
 }

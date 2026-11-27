@@ -1,12 +1,21 @@
+//! `tx` and `this` member chains, resolved into introspection nodes. A chain that spells no
+//! member parses as the plain path it spells, which validation reports.
+
+use std::array;
+
+use super::expr;
+use super::expr::Suffix;
 use super::Rule;
-#[allow(unused_imports)]
-use super::*;
 use crate::diagnostics::Span;
-use crate::models::*;
+use crate::models::AssetLookupSource;
+use crate::models::ExprKind;
+use crate::models::Expression;
+use crate::models::Path;
 use crate::properties::{
     AssetProperty, GroupIoProperty, GroupProperty, InputProperty, OutputProperty, ThisProperty,
     TxProperty,
 };
+use crate::types;
 use pest::iterators::Pair;
 use Suffix::{Call, Field, Index};
 
@@ -23,7 +32,7 @@ pub(crate) fn parse_this_chain(
 ) -> Result<Expression, String> {
     let start = this.span.start;
     let member = match suffixes {
-        [Index(..), ..] => return apply_suffixes(this, false, suffixes),
+        [Index(..), ..] => return expr::apply_suffixes(this, false, suffixes),
         [Call("tunnel", args, end), rest @ ..] => {
             let span = Span { start, end: *end };
             Some((parse_tunnel(args, span)?, *end, rest))
@@ -46,8 +55,8 @@ pub(crate) fn parse_tx_chain(
 ) -> Result<Expression, String> {
     let start = tx.span.start;
     let (kind, end, rest) = match suffixes {
-        [] | [Index(..), ..] => return apply_suffixes(tx, false, suffixes),
-        // ponytail: `tx.intent` is the deprecated spelling of `tx.proof`; remove it in 0.2.
+        [] | [Index(..), ..] => return expr::apply_suffixes(tx, false, suffixes),
+        // LIMITATION: accepts `tx.intent`, the deprecated spelling of `tx.proof`; remove it in 0.2.
         [Field("proof" | "intent", _), Call(member @ ("field" | "has"), args, end), rest @ ..]
             if args.len() == 1 =>
         {
@@ -141,7 +150,7 @@ pub(crate) fn parse_tx_chain(
                         .map(|property| property.name())
                         .collect::<Vec<_>>()
                         .join(", "),
-                    without_trivia(trim_trivia_end(text))
+                    super::without_trivia(super::trim_trivia_end(text))
                 ));
             };
             (current_input(property, Span { start, end }).kind, end, rest)
@@ -195,7 +204,7 @@ fn member_value(
     if rest.iter().any(|suffix| matches!(suffix, Call(..))) {
         return Ok(member_path(text, start));
     }
-    apply_suffixes(Expression::new(kind, Span { start, end }), false, rest)
+    expr::apply_suffixes(Expression::new(kind, Span { start, end }), false, rest)
 }
 
 /// The member read on the assets of input or output `index`, if `assets` spells one.
@@ -273,8 +282,7 @@ fn group_member<'s, 'a>(
             let kind = ExprKind::GroupIOAccess {
                 group: Box::new(group),
                 io_index: operand(index)?,
-                source: crate::types::group_io_source(source)
-                    .ok_or("Invalid asset group io source")?,
+                source: types::group_io_source(source).ok_or("Invalid asset group io source")?,
                 property,
             };
             (kind, end, rest)
@@ -292,32 +300,35 @@ fn group_member<'s, 'a>(
 
 /// A member chain that spells no member, as the path its `text` spells.
 fn member_path(text: &str, start: usize) -> Expression {
-    let text = trim_trivia_end(text);
+    let text = super::trim_trivia_end(text);
     let span = Span {
         start,
         end: start + text.len(),
     };
-    Expression::new(ExprKind::Name(Path::from_key(&without_trivia(text))), span)
+    Expression::new(
+        ExprKind::Name(Path::from_key(&super::without_trivia(text))),
+        span,
+    )
 }
 
 fn operand(pair: &Pair<Rule>) -> Result<Box<Expression>, String> {
-    parse_general_expression(pair.clone()).map(Box::new)
+    expr::parse_general_expression(pair.clone()).map(Box::new)
 }
 
 /// A proof message path operand; a lone string literal is checked at compile time, any other
 /// bytes expression by the VM.
 fn parse_proof_path(operand: &Pair<Rule>) -> Result<Expression, String> {
-    let literal = lone(operand);
+    let literal = expr::lone(operand);
     if literal.as_rule() != Rule::string_literal {
-        return parse_general_expression(operand.clone());
+        return expr::parse_general_expression(operand.clone());
     }
-    let text = parse_string_literal(literal.as_str())?;
+    let text = expr::parse_string_literal(literal.as_str())?;
     if !is_proof_path(&text) {
         return Err(format!("invalid proof message path '{text}'"));
     }
     let span = literal.as_span().into();
     Ok(Expression::new(
-        ExprKind::Literal(parse_named_operand(literal)?),
+        ExprKind::Literal(expr::parse_named_operand(literal)?),
         span,
     ))
 }
@@ -344,7 +355,7 @@ fn is_proof_path(path: &str) -> bool {
 /// `this.tunnel(outputIndex, policy?, exceptions?)`, its policy a struct literal and its
 /// exceptions a list literal.
 fn parse_tunnel(args: &[Pair<Rule>], span: Span) -> Result<ExprKind, String> {
-    let literal = |at: usize, rules: &[Rule]| match args.get(at).map(lone) {
+    let literal = |at: usize, rules: &[Rule]| match args.get(at).map(expr::lone) {
         Some(arg) if rules.contains(&arg.as_rule()) => Ok(Some(arg)),
         Some(_) => Err(()),
         None => Ok(None),
@@ -355,11 +366,12 @@ fn parse_tunnel(args: &[Pair<Rule>], span: Span) -> Result<ExprKind, String> {
         literal(2, &[Rule::array_literal, Rule::empty_list]),
     ) else {
         // Arguments no tunnel takes read as a call, which reports the signature.
-        return parse_call("this.tunnel".to_string(), args.to_vec(), span).map(|call| call.kind);
+        return expr::parse_call("this.tunnel".to_string(), args.to_vec(), span)
+            .map(|call| call.kind);
     };
-    let output_index = parse_general_expression(index.clone())?;
+    let output_index = expr::parse_general_expression(index.clone())?;
     let policy = if let Some(policy) = policy {
-        let ExprKind::StructLiteral { fields, .. } = parse_primary_expr(policy)?.kind else {
+        let ExprKind::StructLiteral { fields, .. } = expr::parse_primary_expr(policy)?.kind else {
             return Err("tunnel policy must be a struct literal".to_string());
         };
         let mut values = [None, None, None];
@@ -381,12 +393,12 @@ fn parse_tunnel(args: &[Pair<Rule>], span: Span) -> Result<ExprKind, String> {
             assets.ok_or("missing tunnel policy field 'assets'")?,
         ]
     } else {
-        std::array::from_fn(|_| Expression::new(ExprKind::Literal("true".to_string()), span))
+        array::from_fn(|_| Expression::new(ExprKind::Literal("true".to_string()), span))
     };
     let exceptions = exceptions
         .map(|list| {
             list.into_inner()
-                .map(parse_general_expression)
+                .map(expr::parse_general_expression)
                 .collect::<Result<Vec<_>, _>>()
         })
         .transpose()?
@@ -399,7 +411,7 @@ fn parse_tunnel(args: &[Pair<Rule>], span: Span) -> Result<ExprKind, String> {
 }
 
 /// `tx.inputs[this.activeInputIndex].<property>`, which `tx.input.current.*` spells.
-fn current_input(property: InputProperty, span: crate::diagnostics::Span) -> Expression {
+fn current_input(property: InputProperty, span: Span) -> Expression {
     let index = Expression::new(ExprKind::This(ThisProperty::ActiveInputIndex), span);
     Expression::new(
         ExprKind::InputIntrospection {

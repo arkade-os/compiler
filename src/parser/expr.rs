@@ -1,10 +1,13 @@
-use super::Rule;
-#[allow(unused_imports)]
-use super::*;
-use crate::models::*;
+//! Expressions: folds the grammar's precedence levels into left-associative `BinaryOp`s and
+//! resolves each operand's suffix chain into a binding path, access, call or introspection.
+
+use super::{casts, introspection, Rule};
+use crate::builtins;
+use crate::diagnostics::Span;
+use crate::models::{ExprKind, Expression, Path};
+use crate::operators::BinaryOperator;
 use pest::iterators::Pair;
 
-/// Whether `rule` is one of the grammar's binary-operator precedence levels.
 pub(crate) fn is_operator_level(rule: Rule) -> bool {
     matches!(
         rule,
@@ -21,7 +24,6 @@ pub(crate) fn is_operator_level(rule: Rule) -> bool {
     )
 }
 
-// Parse general expression (with operator precedence)
 pub(crate) fn parse_general_expression(pair: Pair<Rule>) -> Result<Expression, String> {
     match pair.as_rule() {
         rule if is_operator_level(rule) => {
@@ -29,9 +31,9 @@ pub(crate) fn parse_general_expression(pair: Pair<Rule>) -> Result<Expression, S
             let mut result = parse_general_expression(inner.next().ok_or("Empty expression")?)?;
             while let Some(op) = inner.next() {
                 let right = parse_general_expression(inner.next().ok_or("Missing right operand")?)?;
-                let op = crate::operators::BinaryOperator::from_symbol(op.as_str())
+                let op = BinaryOperator::from_symbol(op.as_str())
                     .ok_or_else(|| format!("unknown operator '{}'", op.as_str()))?;
-                let span = crate::diagnostics::Span {
+                let span = Span {
                     start: result.span.start,
                     end: right.span.end,
                 };
@@ -52,7 +54,7 @@ pub(crate) fn parse_general_expression(pair: Pair<Rule>) -> Result<Expression, S
 
 fn reject_reserved_call(name: &str, args: usize) -> Result<(), String> {
     if let Some(signature) = reserved_function_signature(name) {
-        if crate::builtins::tapscript_params(name).is_some_and(|params| params.len() == args) {
+        if builtins::tapscript_params(name).is_some_and(|params| params.len() == args) {
             let hint = match name {
                 "older" | "after" => "; Arkade Script functions use `checkTime(timestamp)`",
                 "tweak" => ", as a key inside checkSig or checkMultisig",
@@ -69,10 +71,10 @@ fn reject_reserved_call(name: &str, args: usize) -> Result<(), String> {
 }
 
 pub(crate) fn reserved_function_signature(name: &str) -> Option<String> {
-    if let Some(builtin) = crate::builtins::find(name) {
+    if let Some(builtin) = builtins::find(name) {
         return Some(builtin.signature());
     }
-    if let Some(params) = crate::builtins::tapscript_params(name) {
+    if let Some(params) = builtins::tapscript_params(name) {
         return Some(format!("{name}({})", params.join(", ")));
     }
     (name == "this.tunnel").then(|| "this.tunnel(outputIndex, policy?, exceptions?)".to_string())
@@ -97,7 +99,7 @@ pub(crate) fn parse_named_operand(pair: Pair<Rule>) -> Result<String, String> {
 }
 
 pub(crate) fn parse_primary_expr(pair: Pair<Rule>) -> Result<Expression, String> {
-    let span: crate::diagnostics::Span = pair.as_span().into();
+    let span: Span = pair.as_span().into();
     match pair.as_rule() {
         Rule::primary_expr => {
             let text = pair.as_str();
@@ -123,7 +125,7 @@ pub(crate) fn parse_primary_expr(pair: Pair<Rule>) -> Result<Expression, String>
                     Rule::invert_op => UnaryOperator::Invert,
                     _ => return Err("Unexpected unary operator".to_string()),
                 };
-                let span = crate::diagnostics::Span {
+                let span = Span {
                     start: operator.as_span().start(),
                     end: value.span.end,
                 };
@@ -138,7 +140,7 @@ pub(crate) fn parse_primary_expr(pair: Pair<Rule>) -> Result<Expression, String>
             Ok(value)
         }
         rule if is_operator_level(rule) => {
-            // Parenthesized expression
+            // An operator level in operand position is a parenthesized subexpression.
             parse_general_expression(pair)
         }
         Rule::identifier => Ok(Expression::new(
@@ -202,7 +204,7 @@ pub(crate) fn parse_primary_expr(pair: Pair<Rule>) -> Result<Expression, String>
         }
         Rule::constructor => parse_constructor_to_expression(pair),
         _ => {
-            // Default to treating as a property string
+            // Any other rule reads as the path its text spells.
             Ok(Expression::new(
                 ExprKind::Name(Path::from_key(pair.as_str())),
                 span,
@@ -210,8 +212,6 @@ pub(crate) fn parse_primary_expr(pair: Pair<Rule>) -> Result<Expression, String>
         }
     }
 }
-
-// ─── Byte-string Manipulation Parsing ──────────────────────────────────
 
 pub(crate) fn parse_property_access(pair: Pair<Rule>) -> Result<Expression, String> {
     let mut inner = pair.into_inner();
@@ -230,7 +230,6 @@ pub(crate) enum Suffix<'a> {
     Index(Pair<'a, Rule>, usize),
 }
 
-/// The suffixes `postfix` or `binding_suffix` pairs spell.
 fn suffixes<'a>(pairs: impl Iterator<Item = Pair<'a, Rule>>) -> Result<Vec<Suffix<'a>>, String> {
     pairs
         .map(|pair| {
@@ -253,7 +252,7 @@ fn suffixes<'a>(pairs: impl Iterator<Item = Pair<'a, Rule>>) -> Result<Vec<Suffi
 /// Resolve an operand and its suffixes: a member of `tx` or `this`, a group's
 /// `.controlIs(id)`, a library call, or fields and indexes of any value.
 fn parse_chain(head: Pair<Rule>, suffixes: Vec<Suffix>, text: &str) -> Result<Expression, String> {
-    let span: crate::diagnostics::Span = head.as_span().into();
+    let span: Span = head.as_span().into();
     let root = match head.as_rule() {
         Rule::identifier => head.as_str(),
         Rule::function_call => {
@@ -261,7 +260,7 @@ fn parse_chain(head: Pair<Rule>, suffixes: Vec<Suffix>, text: &str) -> Result<Ex
             let name = inner.next().ok_or("Missing function name")?.as_str();
             let args: Vec<_> = inner.collect();
             let value = match args.as_slice() {
-                [data] if is_cast(name) => parse_cast(name, data.clone(), span)?,
+                [data] if casts::is_cast(name) => casts::parse_cast(name, data.clone(), span)?,
                 _ => parse_call(name.to_string(), args, span)?,
             };
             return apply_suffixes(value, false, &suffixes);
@@ -270,8 +269,8 @@ fn parse_chain(head: Pair<Rule>, suffixes: Vec<Suffix>, text: &str) -> Result<Ex
     };
     let name = Expression::new(ExprKind::Name(Path::new(root)), span);
     match root {
-        "tx" => parse_tx_chain(name, &suffixes, text),
-        "this" => parse_this_chain(name, &suffixes, text),
+        "tx" => introspection::parse_tx_chain(name, &suffixes, text),
+        "this" => introspection::parse_this_chain(name, &suffixes, text),
         _ => apply_suffixes(name, true, &suffixes),
     }
 }
@@ -318,7 +317,7 @@ pub(crate) fn apply_suffixes(
             (Suffix::Call(name, args, end), ExprKind::Name(path))
                 if plain && path.segments.is_empty() =>
             {
-                let span = crate::diagnostics::Span { start, end: *end };
+                let span = Span { start, end: *end };
                 let name = format!("{}.{name}", path.root);
                 (parse_call(name, args.clone(), span)?.kind, end)
             }
@@ -339,20 +338,19 @@ pub(crate) fn apply_suffixes(
                 (ExprKind::IndexAccess { value, index }, end)
             }
         };
-        // A call's value is no binding.
+        // Suffixes after a call apply to a computed value, so they no longer extend a binding path.
         plain &= !matches!(suffix, Suffix::Call(..));
-        value = Expression::new(kind, crate::diagnostics::Span { start, end: *end });
+        value = Expression::new(kind, Span { start, end: *end });
     }
     Ok(value)
 }
 
-/// A call of the function or builtin `name`.
 pub(crate) fn parse_call(
     name: String,
     args: Vec<Pair<Rule>>,
-    span: crate::diagnostics::Span,
+    span: Span,
 ) -> Result<Expression, String> {
-    let builtin = crate::builtins::find(&name);
+    let builtin = builtins::find(&name);
     if builtin.is_none() {
         reject_reserved_call(&name, args.len())?;
     }
@@ -382,25 +380,17 @@ pub(crate) fn parse_call(
     Ok(Expression::new(ExprKind::Builtin { builtin, args }, span))
 }
 
-// ─── Constructor Parsing ───────────────────────────────────────────────────────
-
-/// Parse a `constructor` rule pair into an `ExprKind::ContractInstance`.
-///
-/// Handles `new ContractName(arg1, arg2, ...)` and produces
-/// `ContractInstance { contract_name, args }` which the compiler lowers to
-/// a `<CONTRACT:ContractName(...)>` 32-byte Taproot output-key placeholder.
+/// `new Name(args)`, which the compiler lowers to a `<CONTRACT:Name(...)>` placeholder.
 pub(crate) fn parse_constructor_to_expression(pair: Pair<Rule>) -> Result<Expression, String> {
-    let span: crate::diagnostics::Span = pair.as_span().into();
+    let span: Span = pair.as_span().into();
     let mut inner = pair.into_inner();
 
-    // First child: contract name identifier
     let contract_name = inner
         .next()
         .ok_or("Parse error: Missing contract name in constructor")?
         .as_str()
         .to_string();
 
-    // Second child (optional): constructor_args rule
     let args = if let Some(args_pair) = inner.next() {
         parse_constructor_args(args_pair)?
     } else {
@@ -416,9 +406,6 @@ pub(crate) fn parse_constructor_to_expression(pair: Pair<Rule>) -> Result<Expres
     ))
 }
 
-/// Parse constructor arguments into a Vec<Expression>.
-///
-/// Constructor arguments use the same expression parser as builtin calls.
 pub(crate) fn parse_constructor_args(pair: Pair<Rule>) -> Result<Vec<Expression>, String> {
     pair.into_inner().map(parse_general_expression).collect()
 }
