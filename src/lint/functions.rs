@@ -5,12 +5,12 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::{fmt, mem};
 
 use super::walk::{Visitor, Walk};
-use super::{Finding, Lint};
+use super::{Finding, FindingKind};
 use crate::compiler::constants;
 use crate::compiler::tapscript::{keeps_default_leaf, shared_tweak_func};
 use crate::diagnostics::Span;
 use crate::models::{
-    self, AssetLookupSource, Contract, ExprKind, Expression, Function, KeyExpr, LocatedStatement,
+    AssetLookupSource, Contract, ExprKind, Expression, Function, KeyExpr, LocatedStatement,
     Statement, TapItem,
 };
 use crate::properties::{InputProperty, OutputProperty, TxProperty};
@@ -18,7 +18,7 @@ use crate::properties::{InputProperty, OutputProperty, TxProperty};
 /// An output the function constrains at a fixed place; outputs at a computed index are not
 /// tracked.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-enum OutputIndex {
+pub(super) enum OutputIndex {
     Literal(usize),
     ActiveInput,
 }
@@ -184,98 +184,65 @@ fn unsigned_spend_path(
         if path.never_passes || path.signed || !unsigned_leaf {
             continue;
         }
-        findings.push(Finding::new(
-            Lint::UnsignedSpendPath,
-            function.span,
-            format!(
-                "function '{}' has a spending path with no transaction signature, so its other \
-                 conditions alone authorize the spend",
-                function.name
-            ),
-        ));
+        let kind = FindingKind::UnsignedSpendPath {
+            function: function.name.clone(),
+        };
+        findings.push(Finding::new(function.span, kind));
     }
 }
 
 fn report(function: &Function, facts: &Facts, findings: &mut Vec<Finding>) {
-    let name = &function.name;
+    let name = || function.name.clone();
     if facts.path.never_passes {
         return;
     }
-    for (index, checks) in &facts.outputs {
+    for (&index, checks) in &facts.outputs {
         match (checks.script, checks.value) {
-            (None, Some(value)) if !facts.signed => findings.push(Finding::new(
-                Lint::OutputScriptUnchecked,
-                value,
-                format!(
-                    "function '{name}' checks the value of tx.outputs[{index}] but not its \
-                         scriptPubKey, so that value can be paid to any script"
-                ),
-            )),
-            (Some(script), None) if !checks.assets && !facts.signed => findings.push(Finding::new(
-                Lint::OutputValueUnchecked,
-                script,
-                format!(
-                    "function '{name}' checks the scriptPubKey of tx.outputs[{index}] but not \
-                         its value or assets, so it can receive a dust amount while the rest goes \
-                         elsewhere"
-                ),
-            )),
+            (None, Some(value)) if !facts.signed => {
+                let kind = FindingKind::OutputScriptUnchecked {
+                    function: name(),
+                    index,
+                };
+                findings.push(Finding::new(value, kind));
+            }
+            (Some(script), None) if !checks.assets && !facts.signed => {
+                let kind = FindingKind::OutputValueUnchecked {
+                    function: name(),
+                    index,
+                };
+                findings.push(Finding::new(script, kind));
+            }
             _ => {}
         }
     }
     if !facts.outputs.is_empty() && !facts.bounds_inputs && !facts.signed {
-        findings.push(Finding::new(
-            Lint::OutputsSharedAcrossInputs,
-            function.span,
-            format!(
-                "function '{name}' constrains outputs by index without bounding tx.numInputs or \
-                     the active input, so two inputs locked by this contract can be satisfied by \
-                     the same outputs"
-            ),
-        ));
+        let kind = FindingKind::OutputsSharedAcrossInputs { function: name() };
+        findings.push(Finding::new(function.span, kind));
     }
     for (message, span) in &facts.unbound_messages {
-        findings.push(Finding::new(
-            Lint::OracleMessageUnbound,
-            *span,
-            format!(
-                "function '{name}' accepts a signature over the witness '{message}' as given, \
-                     so one signed message authorizes any spend; derive the message from what the \
-                     spend must match, such as its outputs or tx.input.current.outpoint"
-            ),
-        ));
+        let kind = FindingKind::OracleMessageUnbound {
+            function: name(),
+            message: message.clone(),
+        };
+        findings.push(Finding::new(*span, kind));
     }
     for (key, span) in &facts.witness_signers {
-        findings.push(Finding::new(
-            Lint::SignerFromWitness,
-            *span,
-            format!(
-                "function '{name}' takes '{key}' from the witness and checks a signature \
-                     against it, so the spender chooses who must sign; use a constructor \
-                     parameter, or bind it, for example with hash160({key}) == hash"
-            ),
-        ));
+        let kind = FindingKind::SignerFromWitness {
+            function: name(),
+            key: key.clone(),
+        };
+        findings.push(Finding::new(*span, kind));
     }
     for (threshold, span) in &facts.witness_thresholds {
-        findings.push(Finding::new(
-            Lint::SignerFromWitness,
-            *span,
-            format!(
-                "function '{name}' takes the multisig threshold '{threshold}' from the \
-                     witness, so the spender chooses how many must sign; use a constructor \
-                     parameter"
-            ),
-        ));
+        let kind = FindingKind::ThresholdFromWitness {
+            function: name(),
+            threshold: threshold.clone(),
+        };
+        findings.push(Finding::new(*span, kind));
     }
     for &span in &facts.locktime {
-        findings.push(Finding::new(
-            Lint::OffchainLocktime,
-            span,
-            format!(
-                "function '{name}' reads tx.locktime, which the operator sets to 0 when it rebuilds an \
-                     offchain spend; use checkTime(t) for time"
-            ),
-        ));
+        let kind = FindingKind::OffchainLocktime { function: name() };
+        findings.push(Finding::new(span, kind));
     }
 }
 
@@ -459,6 +426,5 @@ fn find_witness_choices(
 
 /// A requirement the constant folder evaluates to false, as in a disabled function.
 fn never_passes(condition: &Expression) -> bool {
-    let mut no_names = |_: &models::Path| Err(String::new());
-    constants::evaluate(condition, &mut no_names).as_deref() == Ok("false")
+    constants::evaluate(condition, &mut constants::no_names).as_deref() == Ok("false")
 }

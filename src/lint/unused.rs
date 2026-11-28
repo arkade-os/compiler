@@ -3,7 +3,7 @@
 
 use std::collections::HashSet;
 
-use super::{Finding, Lint};
+use super::{Finding, FindingKind};
 use crate::models::{Contract, Statement};
 use crate::validator;
 use crate::validator::references::live_reads;
@@ -22,14 +22,11 @@ pub(super) fn check(contract: &Contract, findings: &mut Vec<Finding>) {
             if let Statement::Declaration { name, .. } | Statement::LetBinding { name, .. } =
                 &statement.statement
             {
-                findings.push(Finding::new(
-                    Lint::UnusedVariable,
-                    statement.span,
-                    format!(
-                        "variable '{name}' in function '{}' is never used",
-                        function.name
-                    ),
-                ));
+                let kind = FindingKind::UnusedVariable {
+                    name: name.clone(),
+                    function: function.name.clone(),
+                };
+                findings.push(Finding::new(statement.span, kind));
             }
         }
     }
@@ -38,10 +35,9 @@ pub(super) fn check(contract: &Contract, findings: &mut Vec<Finding>) {
         .iter()
         .filter(|p| !used.contains(p.name.as_str()))
     {
-        findings.push(Finding::new(
-            Lint::UnusedParameter,
-            parameter.span,
-            format!("constructor parameter '{}' is never used", parameter.name),
-        ));
+        let kind = FindingKind::UnusedParameter {
+            name: parameter.name.clone(),
+        };
+        findings.push(Finding::new(parameter.span, kind));
     }
 }

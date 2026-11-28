@@ -3,9 +3,9 @@
 
 use std::mem;
 
+use super::error::{CompileErrorKind, InternalError};
 use super::ir::Op;
 use super::{BindingKind, Generator, Result, StackItem};
-use crate::diagnostics::CompileError;
 use crate::models::{self, ExprKind, Expression, Path, TypeName};
 use crate::opcodes::Opcode;
 use crate::properties::GroupIoProperty;
@@ -15,18 +15,16 @@ use crate::types::ArkType;
 pub(super) fn multisig_threshold(
     threshold: Option<&Expression>,
     count: usize,
-) -> Result<Option<usize>, String> {
+) -> Result<Option<usize>, CompileErrorKind> {
     let threshold = match threshold.map(|threshold| &threshold.kind) {
         None => count,
         Some(ExprKind::Literal(value)) => value
             .parse::<usize>()
-            .map_err(|_| "invalid multisig threshold")?,
+            .map_err(|_| CompileErrorKind::InvalidMultisigThreshold)?,
         Some(_) => return Ok(None),
     };
     if threshold == 0 || threshold > count {
-        return Err(
-            "checkMultisig threshold must be between 1 and the number of public keys".into(),
-        );
+        return Err(CompileErrorKind::MultisigThresholdRange);
     }
     Ok(Some(threshold))
 }
@@ -46,10 +44,15 @@ impl Generator {
             }
             ExprKind::ArrayIndex { array, index } => (array.clone(), index),
             ExprKind::IndexAccess { value, index } => (self.access_indices(value, indices)?, index),
-            _ => return Err("expected a binding access".into()),
+            _ => {
+                return Err(CompileErrorKind::Expected {
+                    what: "a binding access",
+                }
+                .into())
+            }
         };
         let Some(ArkType::Array(element, length)) = self.scope.get(&array.key()) else {
-            return Err(format!("'{array}' is not an array").into());
+            return Err(CompileErrorKind::NotAnArray { array }.into());
         };
         // Validation and folding reject a reachable out-of-range constant; one left here is in
         // dead code, so it gets the runtime check.
@@ -115,9 +118,11 @@ impl Generator {
                 self.push_integer_temporary(copied);
                 self.apply(Opcode::Roll, 1, 0)?;
             }
-            let slot = self
-                .binding_index(&leaf.access)
-                .ok_or_else(|| format!("undefined binding '{}'", leaf.access))?;
+            let slot = self.binding_index(&leaf.access).ok_or_else(|| {
+                CompileErrorKind::UndefinedBinding {
+                    name: leaf.access.clone(),
+                }
+            })?;
             self.push_integer_temporary(self.stack.len() - slot - 2);
             self.apply(Opcode::Add, 2, 1)?;
             self.apply(Opcode::Pick, 1, 1)?;
@@ -163,9 +168,11 @@ impl Generator {
                 self.push_integer_temporary(1);
                 self.apply(Opcode::Pick, 1, 1)?;
             }
-            let slot = self
-                .binding_index(&leaf.access)
-                .ok_or_else(|| format!("undefined binding '{}'", leaf.access))?;
+            let slot = self.binding_index(&leaf.access).ok_or_else(|| {
+                CompileErrorKind::UndefinedBinding {
+                    name: leaf.access.clone(),
+                }
+            })?;
             if matches!(
                 self.stack[slot],
                 StackItem::Binding {
@@ -173,7 +180,7 @@ impl Generator {
                     ..
                 }
             ) {
-                return Err(format!("cannot assign to constructor parameter '{name}'").into());
+                return Err(CompileErrorKind::ConstructorParameterAssigned { name }.into());
             }
             self.push_integer_temporary(self.stack.len() - slot - 3);
             self.apply(Opcode::Add, 2, 1)?;
@@ -223,7 +230,10 @@ impl Generator {
         emit: fn(&mut Self, &Expression) -> Result<()>,
     ) -> Result<()> {
         let ExprKind::Builtin { args, .. } = &call.kind else {
-            return Err("expected a builtin call".into());
+            return Err(CompileErrorKind::Expected {
+                what: "a builtin call",
+            }
+            .into());
         };
         self.with_bound_value(&args[position], 1, |generator, bound| {
             let mut call = call.clone();
@@ -236,18 +246,21 @@ impl Generator {
 
     pub(super) fn emit_multisig(&mut self, expression: &Expression) -> Result<()> {
         let ExprKind::Builtin { args, .. } = &expression.kind else {
-            return Err("expected checkMultisig".into());
+            return Err(CompileErrorKind::Expected {
+                what: "checkMultisig",
+            }
+            .into());
         };
         let keys = &args[0];
         let signatures = &args[1];
         let ArkType::Array(element, count) = keys.ty.clone() else {
-            return Err("checkMultisig public keys must be an array".into());
+            return Err(CompileErrorKind::MultisigKeysNotArray.into());
         };
         if count == 0 || count > 999 {
-            return Err("checkMultisig needs between 1 and 999 public keys".into());
+            return Err(CompileErrorKind::MultisigKeyCount.into());
         }
         if !matches!(signatures.ty, ArkType::Array(_, length) if length == count) {
-            return Err("checkMultisig key and signature counts must match".into());
+            return Err(CompileErrorKind::MultisigCountMismatch.into());
         }
         let threshold = args.get(2);
         // As with indexes, a literal rejected here is in dead code and keeps the runtime check.
@@ -306,7 +319,10 @@ impl Generator {
             ..
         } = &record.kind
         else {
-            return Err("expected an asset group input record".into());
+            return Err(CompileErrorKind::Expected {
+                what: "an asset group input record",
+            }
+            .into());
         };
         self.emit_expression(group)?;
         self.emit_expression(io_index)?;
@@ -371,13 +387,13 @@ impl Generator {
     /// Push each (G1, G2) pair with fields first-deepest, as OP_ECPAIRING reads them.
     pub(super) fn emit_pairing(&mut self, pairing: &Expression) -> Result<()> {
         let ExprKind::Builtin { args, .. } = &pairing.kind else {
-            return Err("expected ecPairing".into());
+            return Err(CompileErrorKind::Expected { what: "ecPairing" }.into());
         };
         let [g1, g2, curve_id] = args.as_slice() else {
-            return Err("ecPairing takes three arguments".into());
+            return Err(CompileErrorKind::EcPairingArity.into());
         };
         let ArkType::Array(_, pairs) = g1.ty else {
-            return Err("ecPairing G1 points must be an ECPoint array".into());
+            return Err(CompileErrorKind::EcPairingPointsNotArray.into());
         };
         // Pairs need indexed reads, so arrays without a static path are bound once, G1 first.
         if let Some(position) = [g1, g2]
@@ -387,7 +403,7 @@ impl Generator {
             if matches!(&args[position].kind, ExprKind::ArrayLiteral(points)
                 if points.iter().any(|point| matches!(point.kind, ExprKind::StructLiteral { name: None, .. })))
             {
-                return Err("struct literals may only initialize a typed struct declaration; composite values are not supported".into());
+                return Err(CompileErrorKind::CompositeStructLiteral.into());
             }
             return self.emit_with_bound_arg(pairing, position, Self::emit_pairing);
         }
@@ -404,8 +420,8 @@ impl Generator {
                         index,
                     },
                 });
-                for (field, field_type) in models::builtin_struct_fields(ty)
-                    .ok_or_else(|| CompileError::internal("missing native point layout"))?
+                for (field, field_type) in
+                    models::builtin_struct_fields(ty).ok_or(InternalError::MissingPointLayout)?
                 {
                     let leaf = points.with_kind(ExprKind::FieldAccess {
                         value: Box::new(element.clone()),

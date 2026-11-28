@@ -4,11 +4,12 @@
 
 use std::collections::{HashMap, HashSet};
 
-use super::ValidationIssue;
+use super::error::{Declared, ValueContext};
+use super::{ValidationError, ValidationIssue};
 use crate::builtins::BUILTINS;
 use crate::compiler::MAX_LOOP_ITERATIONS;
 use crate::diagnostics::Span;
-use crate::errors::{self, ErrorCode};
+use crate::errors;
 use crate::models::{
     self, Contract, ExprKind, Expression, Function, LocatedStatement, Parameter, Statement,
     StructDefinition, TypeName,
@@ -26,21 +27,20 @@ pub(super) fn validate_functions(contract: &Contract, issues: &mut Vec<Validatio
         let first = issues.len();
         if let Some(result) = &function.return_type {
             if !function.is_private {
-                issues.push(ValidationIssue::error(format!(
-                    "Arkade Script function '{}' cannot declare a return type",
-                    function.name
-                )));
+                let function = function.name.clone();
+                issues.push(ValidationError::EntrypointReturnType { function }.into());
             }
-            super::validate_declared_type(result, "return type", &definitions, issues);
+            super::validate_declared_type(result, Declared::ReturnType, &definitions, issues);
         }
         if function.is_static {
             let referenced = super::references::referenced_parameters(&function.statements, &[]);
             for parameter in &contract.parameters {
                 if referenced.contains(parameter.name.as_str()) {
-                    issues.push(ValidationIssue::error(format!(
-                        "static function '{}' cannot reference constructor parameter '{}'",
-                        function.name, parameter.name
-                    )));
+                    let error = ValidationError::StaticReadsConstructorParameter {
+                        function: function.name.clone(),
+                        parameter: parameter.name.clone(),
+                    };
+                    issues.push(error.into());
                 }
             }
         }
@@ -51,7 +51,7 @@ pub(super) fn validate_functions(contract: &Contract, issues: &mut Vec<Validatio
     let mut guarantees = HashMap::new();
     for function in contract.functions.iter().filter(|f| !f.is_imported()) {
         if let Err(error) = analyze_function(function, contract, &mut Vec::new(), &mut guarantees) {
-            issues.push(ValidationIssue::error(error).at(function.span));
+            issues.push(error.at(function.span));
             return;
         }
     }
@@ -62,16 +62,16 @@ pub(super) fn validate_functions(contract: &Contract, issues: &mut Vec<Validatio
     for function in contract.functions.iter().filter(|f| !f.is_imported()) {
         let flow = flow_block(&function.statements, Paths::UNENFORCED, &guarantees);
         if function.is_private && function.return_type.is_some() && flow.fallthrough.any() {
-            issues.push(
-                ValidationIssue::error(format!(
-                    "private function '{}' must return a value on every path",
-                    function.name
-                ))
-                .at(function.span),
-            );
+            let error = ValidationError::MissingReturnPath {
+                function: function.name.clone(),
+            };
+            issues.push(error.at(function.span));
         }
         if !function.is_private && flow.has_unenforced() {
-            issues.push(ValidationIssue::error(format!("function '{}' has a spend path with no require(); every branch must enforce at least one condition", function.name)).at(function.span));
+            let error = ValidationError::UnenforcedPath {
+                function: function.name.clone(),
+            };
+            issues.push(error.at(function.span));
         }
     }
 }
@@ -97,27 +97,26 @@ fn validate_body(
         match statement {
             Statement::Return(value) => {
                 if !function.is_private {
-                    issues.push(ValidationIssue::error(format!(
-                        "return is only allowed in private functions: '{}'",
-                        function.name
-                    )));
+                    let function = function.name.clone();
+                    issues.push(ValidationError::ReturnInEntrypoint { function }.into());
                 }
+                let name = function.name.clone();
                 match (&function.return_type, value) {
                     (Some(expected), Some(value)) => validate_value(
                         expected,
                         value,
                         &contract.structs,
-                        &format!("return from '{}'", function.name),
+                        ValueContext::Return { function: name },
                         issues,
                     ),
-                    (Some(_), None) => issues.push(ValidationIssue::error(format!(
-                        "function '{}' must return a value",
-                        function.name
-                    ))),
-                    (None, Some(_)) => issues.push(ValidationIssue::error(format!(
-                        "void function '{}' cannot return a value",
-                        function.name
-                    ))),
+                    (Some(_), None) => {
+                        let error = ValidationError::MissingReturnValue { function: name };
+                        issues.push(error.into());
+                    }
+                    (None, Some(_)) => {
+                        let error = ValidationError::VoidReturnsValue { function: name };
+                        issues.push(error.into());
+                    }
                     (None, None) => {}
                 }
             }
@@ -136,7 +135,10 @@ fn validate_body(
                         expected,
                         value,
                         &contract.structs,
-                        &format!("binding '{name}' in '{}'", function.name),
+                        ValueContext::Binding {
+                            name: name.clone(),
+                            function: function.name.clone(),
+                        },
                         issues,
                     );
                 }
@@ -183,7 +185,9 @@ fn validate_comparison_literals(
                 &TypeName::from(&other.ty),
                 value,
                 &contract.structs,
-                &format!("comparison in '{}'", function.name),
+                ValueContext::Comparison {
+                    function: function.name.clone(),
+                },
                 issues,
             );
         }
@@ -206,12 +210,12 @@ fn validate_calls(
     if let ExprKind::Call { name, args, .. } = &expression.kind {
         match contract.functions.iter().find(|f| f.name == *name) {
             // `require(ok, 5);` parses as a call only because its message is not a string.
-            None if name == "require" && !value_position && args.len() == 2 => issues.push(
-                ValidationIssue::error("the message of require must be a string"),
-            ),
+            None if name == "require" && !value_position && args.len() == 2 => {
+                issues.push(ValidationError::RequireMessageNotString.into())
+            }
             None => {
-                let issue = ValidationIssue::error(format!("unknown function '{name}'"))
-                    .coded(ErrorCode::UnknownFunction);
+                let issue =
+                    ValidationIssue::from(ValidationError::UnknownFunction { name: name.clone() });
                 let own = contract.functions.iter().map(|f| f.name.as_str());
                 let builtins = BUILTINS.iter().map(|b| b.name);
                 let span = Span {
@@ -225,34 +229,38 @@ fn validate_calls(
             }
             Some(function) => {
                 if !function.is_private {
-                    issues.push(ValidationIssue::error(format!(
-                        "Arkade Script function '{name}' is an entrypoint and cannot be called"
-                    )));
+                    let name = name.clone();
+                    issues.push(ValidationError::EntrypointCalled { name }.into());
                 }
                 if caller.is_static && !function.is_static {
-                    issues.push(ValidationIssue::error(format!(
-                        "static function '{}' cannot call non-static function '{name}'",
-                        caller.name
-                    )));
+                    let error = ValidationError::StaticCallsNonStatic {
+                        caller: caller.name.clone(),
+                        callee: name.clone(),
+                    };
+                    issues.push(error.into());
                 }
                 if !value_position && function.return_type.is_some() {
-                    issues.push(ValidationIssue::error(format!(
-                        "return value of '{name}' must be used"
-                    )));
+                    let name = name.clone();
+                    issues.push(ValidationError::UnusedReturnValue { name }.into());
                 }
                 if function.parameters.len() != args.len() {
-                    issues.push(ValidationIssue::error(format!(
-                        "function '{name}' expects {} arguments, got {}",
-                        function.parameters.len(),
-                        args.len()
-                    )));
+                    let error = ValidationError::ArgumentCount {
+                        name: name.clone(),
+                        expected: function.parameters.len(),
+                        got: args.len(),
+                    };
+                    issues.push(error.into());
                 }
                 for (parameter, argument) in function.parameters.iter().zip(args) {
+                    let context = ValueContext::Argument {
+                        parameter: parameter.name.clone(),
+                        function: name.clone(),
+                    };
                     validate_value(
                         &parameter.param_type,
                         argument,
                         &contract.structs,
-                        &format!("argument '{}' to '{name}'", parameter.name),
+                        context,
                         issues,
                     );
                 }
@@ -265,8 +273,8 @@ fn validate_calls(
         fields,
     } = &expression.kind
     {
-        let context = format!("{name} literal");
-        validate_fields(name, fields, &contract.structs, &context, issues);
+        let context = ValueContext::Literal { name: name.clone() };
+        validate_fields(name, fields, &contract.structs, context, issues);
     }
     super::locate(&mut issues[first..], expression.span);
     for child in models::child_exprs(expression) {
@@ -278,7 +286,7 @@ pub(super) fn validate_value(
     expected: &TypeName,
     value: &Expression,
     structs: &[StructDefinition],
-    context: &str,
+    context: ValueContext,
     issues: &mut Vec<ValidationIssue>,
 ) {
     let first = issues.len();
@@ -286,19 +294,17 @@ pub(super) fn validate_value(
     match (&value.kind, expected.array_parts(), &expected_type) {
         (ExprKind::ArrayLiteral(elements), Some((element, length)), _) => {
             if elements.len() != length {
-                issues.push(ValidationIssue::error(format!(
-                    "{context}: expected {length} array elements, got {}",
-                    elements.len()
-                )));
+                let error = ValidationError::ArrayLiteralLength {
+                    context: context.clone(),
+                    expected: length,
+                    got: elements.len(),
+                };
+                issues.push(error.into());
             }
             for (index, value) in elements.iter().enumerate() {
-                validate_value(
-                    element,
-                    value,
-                    structs,
-                    &format!("{context}, element {index}"),
-                    issues,
-                );
+                let of = Box::new(context.clone());
+                let context = ValueContext::Element { of, index };
+                validate_value(element, value, structs, context, issues);
             }
         }
         (ExprKind::StructLiteral { name: None, fields }, _, ArkType::Struct(name)) => {
@@ -307,10 +313,12 @@ pub(super) fn validate_value(
         _ => {
             let actual = &value.ty;
             if !expected_type.accepts(actual) {
-                issues.push(ValidationIssue::error(format!(
-                    "{context}: expected '{expected}', got '{}'",
-                    actual.as_str()
-                )));
+                let error = ValidationError::ValueType {
+                    context,
+                    expected: expected.clone(),
+                    actual: actual.into(),
+                };
+                issues.push(error.into());
             }
         }
     }
@@ -321,7 +329,7 @@ fn validate_fields(
     name: &str,
     fields: &[(String, Expression)],
     structs: &[StructDefinition],
-    context: &str,
+    context: ValueContext,
     issues: &mut Vec<ValidationIssue>,
 ) {
     let native = models::builtin_struct_fields(name).map(|fields| StructDefinition {
@@ -343,30 +351,25 @@ fn validate_fields(
         let mut seen = HashSet::new();
         for (name, value) in fields {
             if !seen.insert(name) {
-                issues.push(ValidationIssue::error(format!(
-                    "{context}: duplicate field '{name}'"
-                )));
+                let (context, field) = (context.clone(), name.clone());
+                issues.push(ValidationError::DuplicateLiteralField { context, field }.into());
             }
             if let Some(field) = definition.fields.iter().find(|f| f.name == *name) {
-                validate_value(
-                    &field.param_type,
-                    value,
-                    structs,
-                    &format!("{context}, field '{name}'"),
-                    issues,
-                );
+                let of = Box::new(context.clone());
+                let context = ValueContext::Field {
+                    of,
+                    name: name.clone(),
+                };
+                validate_value(&field.param_type, value, structs, context, issues);
             } else {
-                issues.push(ValidationIssue::error(format!(
-                    "{context}: unknown field '{name}'"
-                )));
+                let (context, field) = (context.clone(), name.clone());
+                issues.push(ValidationError::UnknownLiteralField { context, field }.into());
             }
         }
         for field in &definition.fields {
             if !seen.contains(&field.name) {
-                issues.push(ValidationIssue::error(format!(
-                    "{context}: missing field '{}'",
-                    field.name
-                )));
+                let (context, field) = (context.clone(), field.name.clone());
+                issues.push(ValidationError::MissingLiteralField { context, field }.into());
             }
         }
         if name == "AssetId" {
@@ -380,16 +383,14 @@ fn analyze_function(
     contract: &Contract,
     visiting: &mut Vec<String>,
     guarantees: &mut HashMap<String, bool>,
-) -> Result<(), String> {
+) -> Result<(), ValidationError> {
     if guarantees.contains_key(&function.name) {
         return Ok(());
     }
     if visiting.contains(&function.name) {
         visiting.push(function.name.clone());
-        return Err(format!(
-            "recursive function call: {}",
-            visiting.join(" -> ")
-        ));
+        let cycle = visiting.clone();
+        return Err(ValidationError::RecursiveCall { cycle });
     }
     visiting.push(function.name.clone());
     analyze_calls(&function.statements, contract, visiting, guarantees)?;
@@ -404,7 +405,7 @@ fn analyze_calls(
     contract: &Contract,
     visiting: &mut Vec<String>,
     guarantees: &mut HashMap<String, bool>,
-) -> Result<(), String> {
+) -> Result<(), ValidationError> {
     for statement in statements {
         let statement = &statement.statement;
         for expression in statement.expressions() {
@@ -437,7 +438,7 @@ fn analyze_expression(
     contract: &Contract,
     visiting: &mut Vec<String>,
     guarantees: &mut HashMap<String, bool>,
-) -> Result<(), String> {
+) -> Result<(), ValidationError> {
     if let ExprKind::Call { name, .. } = &expression.kind {
         if let Some(function) = contract.functions.iter().find(|f| f.name == *name) {
             analyze_function(function, contract, visiting, guarantees)?;
@@ -526,22 +527,10 @@ fn unrolled_body(
                 let count = models::loop_indexes(statement).map_or(1, |range| range.len());
                 let total = count.saturating_mul(body);
                 if count == 0 {
-                    issues.push(
-                        ValidationIssue::error(
-                            "loop runs zero times, so its body never executes; remove the loop \
-                             or make it run at least once",
-                        )
-                        .at(located.span),
-                    );
+                    issues.push(ValidationError::LoopRunsZeroTimes.at(located.span));
                 } else if total > limit && body <= limit {
                     // A nest already above the limit is reported at its own loop.
-                    issues.push(
-                        ValidationIssue::error(format!(
-                            "loop unrolls {total} iterations, nested loops and called helpers \
-                             included, above the limit of {limit}"
-                        ))
-                        .at(located.span),
-                    );
+                    issues.push(ValidationError::LoopUnrollLimit { total }.at(located.span));
                 }
                 total
             }

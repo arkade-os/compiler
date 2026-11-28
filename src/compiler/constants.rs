@@ -2,6 +2,7 @@
 //! literal. Runs before validation, so no later stage sees a constant name.
 
 use std::collections::HashMap;
+use std::{error, fmt, result};
 
 use crate::diagnostics::{CompileError, Span};
 use crate::models::{
@@ -9,6 +10,148 @@ use crate::models::{
     Path, Statement, TypeName, RESERVED_NAMES, RESERVED_PLACEHOLDERS,
 };
 use crate::operators::{BinaryOperator, OperatorClass, UnaryOperator};
+
+type Result<T, E = ConstantError> = result::Result<T, E>;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum ConstantError {
+    ReservedName {
+        name: String,
+    },
+    Duplicate {
+        name: String,
+    },
+    CollidesWithParameter {
+        name: String,
+    },
+    CollidesWithFunction {
+        name: String,
+    },
+    UnsupportedType {
+        name: String,
+    },
+    UnknownConstant {
+        name: String,
+    },
+    Cyclic {
+        name: String,
+    },
+    TooDeep,
+    InConstant {
+        name: String,
+        error: Box<ConstantError>,
+    },
+    InvalidLiteral {
+        name: String,
+        ty: TypeName,
+    },
+    ExpectedIntegerGot {
+        value: String,
+    },
+    ExpectedInteger,
+    IntegerTooWide {
+        value: String,
+    },
+    UnsupportedOperator {
+        op: &'static str,
+    },
+    NotRequiresBool,
+    RequiresBool {
+        op: BinaryOperator,
+    },
+    RequiresSameType {
+        op: BinaryOperator,
+    },
+    NotConstantExpression,
+    Overflow,
+    DivisionByZero,
+    ModuloByZero,
+    NegativeShift,
+    ShiftTooWide,
+    UnsupportedConstantOperator {
+        op: BinaryOperator,
+    },
+    ArraySizeNotPositive {
+        written: String,
+    },
+}
+
+impl ConstantError {
+    pub(crate) fn unknown(path: &Path) -> Self {
+        ConstantError::UnknownConstant { name: path.key() }
+    }
+}
+
+/// A resolver for expressions that may name no constant.
+pub(crate) fn no_names(path: &Path) -> Result<String> {
+    Err(ConstantError::unknown(path))
+}
+
+impl fmt::Display for ConstantError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ConstantError::ReservedName { name } => write!(f, "constant name '{name}' is reserved"),
+            ConstantError::Duplicate { name } => write!(f, "duplicate constant '{name}'"),
+            ConstantError::CollidesWithParameter { name } => write!(
+                f,
+                "constant '{name}' collides with constructor parameter '{name}'"
+            ),
+            ConstantError::CollidesWithFunction { name } => {
+                write!(f, "constant '{name}' collides with function '{name}'")
+            }
+            ConstantError::UnsupportedType { name } => write!(
+                f,
+                "constant '{name}' must be int, bool, bytes, bytes20, bytes32 or pubkey"
+            ),
+            ConstantError::UnknownConstant { name } => write!(f, "unknown constant '{name}'"),
+            ConstantError::Cyclic { name } => write!(f, "cyclic constant reference '{name}'"),
+            ConstantError::TooDeep => f.write_str("constant dependency depth exceeds 128"),
+            ConstantError::InConstant { name, error } => write!(f, "constant '{name}': {error}"),
+            ConstantError::InvalidLiteral { name, ty } => {
+                write!(f, "constant '{name}' is not a valid '{ty}' literal")
+            }
+            ConstantError::ExpectedIntegerGot { value } => {
+                write!(f, "expected an integer, got '{value}'")
+            }
+            ConstantError::ExpectedInteger => f.write_str("expected an integer"),
+            ConstantError::IntegerTooWide { value } => {
+                write!(f, "constant arithmetic exceeds 128 bits, got '{value}'")
+            }
+            ConstantError::UnsupportedOperator { op } => {
+                write!(
+                    f,
+                    "operator '{op}' is not supported in constant expressions"
+                )
+            }
+            ConstantError::NotRequiresBool => f.write_str("operator '!' requires a bool constant"),
+            ConstantError::RequiresBool { op } => {
+                write!(f, "operator '{op}' requires bool constants")
+            }
+            ConstantError::RequiresSameType { op } => {
+                write!(f, "operator '{op}' requires constants of the same type")
+            }
+            ConstantError::NotConstantExpression => {
+                f.write_str("initializer must be a constant expression")
+            }
+            ConstantError::Overflow => f.write_str("integer overflow in constant expression"),
+            ConstantError::DivisionByZero => f.write_str("division by zero in constant expression"),
+            ConstantError::ModuloByZero => f.write_str("modulo by zero in constant expression"),
+            ConstantError::NegativeShift => {
+                f.write_str("negative shift count in constant expression")
+            }
+            ConstantError::ShiftTooWide => f.write_str("shift count exceeds 4-byte script number"),
+            ConstantError::UnsupportedConstantOperator { op } => {
+                write!(f, "unsupported constant operator '{op}'")
+            }
+            ConstantError::ArraySizeNotPositive { written } => write!(
+                f,
+                "array size '{written}' must be a positive integer literal or int constant"
+            ),
+        }
+    }
+}
+
+impl error::Error for ConstantError {}
 
 /// Returns the path and span of each reference folded inside an expression.
 pub(crate) fn fold(contract: &mut Contract) -> Result<Vec<(Path, Span)>, CompileError> {
@@ -38,15 +181,15 @@ pub(crate) fn fold(contract: &mut Contract) -> Result<Vec<(Path, Span)>, Compile
     Ok(uses)
 }
 
-fn at(span: Span) -> impl Fn(String) -> CompileError {
-    move |message| CompileError::from(message).at(span)
+fn at(span: Span) -> impl Fn(ConstantError) -> CompileError {
+    move |error| CompileError::from(error).at(span)
 }
 
 /// An imported constant (a dotted name) is declared in another file, so its errors carry no span.
-fn at_constant(constant: &Constant) -> impl Fn(String) -> CompileError + '_ {
-    move |message| match constant.name.contains('.') {
-        true => CompileError::from(message),
-        false => CompileError::from(message).at(constant.span),
+fn at_constant(constant: &Constant) -> impl Fn(ConstantError) -> CompileError + '_ {
+    move |error| match constant.name.contains('.') {
+        true => CompileError::from(error),
+        false => CompileError::from(error).at(constant.span),
     }
 }
 
@@ -57,36 +200,31 @@ fn collect(contract: &Contract) -> Result<HashMap<String, String>, CompileError>
             name, const_type, ..
         } = constant;
         let error = at_constant(constant);
+        let name = name.clone();
         if matches!(name.as_str(), "true" | "false")
             || RESERVED_NAMES.contains(&name.as_str())
             || RESERVED_PLACEHOLDERS.contains(&name.as_str())
         {
-            return Err(error(format!("constant name '{name}' is reserved")));
+            return Err(error(ConstantError::ReservedName { name }));
         }
-        if declarations.contains_key(name) {
-            return Err(error(format!("duplicate constant '{name}'")));
+        if declarations.contains_key(&name) {
+            return Err(error(ConstantError::Duplicate { name }));
         }
-        if contract.parameters.iter().any(|p| p.name == *name) {
-            return Err(error(format!(
-                "constant '{name}' collides with constructor parameter '{name}'"
-            )));
+        if contract.parameters.iter().any(|p| p.name == name) {
+            return Err(error(ConstantError::CollidesWithParameter { name }));
         }
-        if contract.functions.iter().any(|f| f.name == *name)
-            || contract.tapscripts.iter().any(|t| t.name == *name)
+        if contract.functions.iter().any(|f| f.name == name)
+            || contract.tapscripts.iter().any(|t| t.name == name)
         {
-            return Err(error(format!(
-                "constant '{name}' collides with function '{name}'"
-            )));
+            return Err(error(ConstantError::CollidesWithFunction { name }));
         }
         if !matches!(
             const_type.name(),
             Some("int" | "bool" | "bytes" | "bytes20" | "bytes32" | "pubkey")
         ) {
-            return Err(error(format!(
-                "constant '{name}' must be int, bool, bytes, bytes20, bytes32 or pubkey"
-            )));
+            return Err(error(ConstantError::UnsupportedType { name }));
         }
-        declarations.insert(name.clone(), constant);
+        declarations.insert(name, constant);
     }
     for constant in contract.constants.iter().filter(|c| !c.name.contains('.')) {
         declarations.insert(format!("{}.{}", contract.name, constant.name), constant);
@@ -119,29 +257,34 @@ fn resolve_value(
     declarations: &HashMap<String, &Constant>,
     values: &mut HashMap<String, String>,
     active: &mut Vec<String>,
-) -> Result<String, String> {
+) -> Result<String> {
     let constant = declarations
         .get(name)
-        .ok_or_else(|| format!("unknown constant '{name}'"))?;
+        .ok_or_else(|| ConstantError::UnknownConstant {
+            name: name.to_string(),
+        })?;
     let name = &constant.name;
     if let Some(value) = values.get(name) {
         return Ok(value.clone());
     }
     if active.contains(name) {
-        return Err(format!("cyclic constant reference '{name}'"));
+        return Err(ConstantError::Cyclic { name: name.clone() });
     }
     // Recursive evaluation is bounded; use an iterative traversal for deeper expressions.
     if active.len() >= 128 {
-        return Err("constant dependency depth exceeds 128".to_string());
+        return Err(ConstantError::TooDeep);
     }
     active.push(name.clone());
     // A nested failure already names the constant it came from; keep that one name.
     let mut resolve = |path: &Path| resolve_value(&path.key(), declarations, values, active);
     let value = validate_expression(&constant.value, &mut resolve)
         .and_then(|_| evaluate(&constant.value, &mut resolve))
-        .map_err(|error| match error.starts_with("constant '") {
-            true => error,
-            false => format!("constant '{name}': {error}"),
+        .map_err(|error| match error {
+            ConstantError::InConstant { .. } | ConstantError::InvalidLiteral { .. } => error,
+            _ => ConstantError::InConstant {
+                name: name.clone(),
+                error: Box::new(error),
+            },
         })?;
     active.pop();
     let width = value.strip_prefix("0x").map(|hex| hex.len() / 2);
@@ -152,10 +295,10 @@ fn resolve_value(
         declared => declared == Some(kind(&value)),
     };
     if !valid {
-        return Err(format!(
-            "constant '{name}' is not a valid '{}' literal",
-            constant.const_type
-        ));
+        return Err(ConstantError::InvalidLiteral {
+            name: name.clone(),
+            ty: constant.const_type.clone(),
+        });
     }
     values.insert(name.clone(), value.clone());
     Ok(value)
@@ -172,38 +315,38 @@ fn kind(value: &str) -> &'static str {
 
 // LIMITATION: literals, negation and equality are unbounded like BigNum, but arithmetic and
 // ordering fold in i128, so larger operands are rejected; use a bignum if contracts need them.
-fn integer(text: &str) -> Result<i128, String> {
+fn integer(text: &str) -> Result<i128> {
     if kind(text) != "int" {
-        return Err(format!("expected an integer, got '{text}'"));
+        return Err(ConstantError::ExpectedIntegerGot {
+            value: text.to_string(),
+        });
     }
-    text.parse()
-        .map_err(|_| format!("constant arithmetic exceeds 128 bits, got '{text}'"))
+    text.parse().map_err(|_| ConstantError::IntegerTooWide {
+        value: text.to_string(),
+    })
 }
 
 /// Type-checks the operands `evaluate` short-circuits past, without evaluating arithmetic.
 fn validate_expression(
     expression: &Expression,
-    resolve: &mut impl FnMut(&Path) -> Result<String, String>,
-) -> Result<&'static str, String> {
+    resolve: &mut impl FnMut(&Path) -> Result<String>,
+) -> Result<&'static str> {
     match &expression.kind {
         ExprKind::Literal(text) => Ok(kind(text)),
         ExprKind::Name(path) => Ok(kind(&resolve(path)?)),
         ExprKind::Unary { op, value } => {
             let expected = match op {
                 UnaryOperator::Invert => {
-                    return Err(format!(
-                        "operator '{}' is not supported in constant expressions",
-                        op.symbol()
-                    ))
+                    return Err(ConstantError::UnsupportedOperator { op: op.symbol() })
                 }
                 UnaryOperator::Not => "bool",
                 UnaryOperator::Neg => "int",
             };
             if validate_expression(value, resolve)? != expected {
                 return Err(if expected == "bool" {
-                    "operator '!' requires a bool constant".to_string()
+                    ConstantError::NotRequiresBool
                 } else {
-                    "expected an integer".to_string()
+                    ConstantError::ExpectedInteger
                 });
             }
             Ok(expected)
@@ -215,9 +358,7 @@ fn validate_expression(
                 OperatorClass::Logical => left == "bool" && right == "bool",
                 OperatorClass::Equality => left == right,
                 OperatorClass::Bytewise => {
-                    return Err(format!(
-                        "operator '{op}' is not supported in constant expressions"
-                    ))
+                    return Err(ConstantError::UnsupportedOperator { op: op.symbol() })
                 }
                 OperatorClass::Arithmetic | OperatorClass::Shift | OperatorClass::Ordering => {
                     left == "int" && right == "int"
@@ -225,11 +366,9 @@ fn validate_expression(
             };
             if !valid {
                 return Err(match op.class() {
-                    OperatorClass::Logical => format!("operator '{op}' requires bool constants"),
-                    OperatorClass::Equality => {
-                        format!("operator '{op}' requires constants of the same type")
-                    }
-                    _ => "expected an integer".to_string(),
+                    OperatorClass::Logical => ConstantError::RequiresBool { op: *op },
+                    OperatorClass::Equality => ConstantError::RequiresSameType { op: *op },
+                    _ => ConstantError::ExpectedInteger,
                 });
             }
             Ok(
@@ -240,15 +379,14 @@ fn validate_expression(
                 },
             )
         }
-        _ => Err("initializer must be a constant expression".to_string()),
+        _ => Err(ConstantError::NotConstantExpression),
     }
 }
 
 pub(crate) fn evaluate(
     expression: &Expression,
-    resolve: &mut impl FnMut(&Path) -> Result<String, String>,
-) -> Result<String, String> {
-    let overflow = || "integer overflow in constant expression".to_string();
+    resolve: &mut impl FnMut(&Path) -> Result<String>,
+) -> Result<String> {
     match &expression.kind {
         ExprKind::Literal(text) => Ok(text.clone()),
         ExprKind::Name(path) => resolve(path),
@@ -258,7 +396,7 @@ pub(crate) fn evaluate(
         } => {
             let value = evaluate(value, resolve)?;
             if kind(&value) != "int" {
-                return Err(format!("expected an integer, got '{value}'"));
+                return Err(ConstantError::ExpectedIntegerGot { value });
             }
             Ok(match value.strip_prefix('-') {
                 Some(magnitude) => magnitude.to_string(),
@@ -274,7 +412,7 @@ pub(crate) fn evaluate(
             match value.as_str() {
                 "true" => Ok("false".to_string()),
                 "false" => Ok("true".to_string()),
-                _ => Err("operator '!' requires a bool constant".to_string()),
+                _ => Err(ConstantError::NotRequiresBool),
             }
         }
         ExprKind::BinaryOp { left, op, right } => {
@@ -290,9 +428,7 @@ pub(crate) fn evaluate(
             let right = evaluate(right, resolve)?;
             if op.class() == OperatorClass::Equality {
                 if kind(&left) != kind(&right) {
-                    return Err(format!(
-                        "operator '{op}' requires constants of the same type"
-                    ));
+                    return Err(ConstantError::RequiresSameType { op: *op });
                 }
                 return Ok(((left == right) == (*op == BinaryOperator::Eq)).to_string());
             }
@@ -301,20 +437,16 @@ pub(crate) fn evaluate(
                 BinaryOperator::Add => left.checked_add(right),
                 BinaryOperator::Sub => left.checked_sub(right),
                 BinaryOperator::Mul => left.checked_mul(right),
-                BinaryOperator::Div if right == 0 => {
-                    return Err("division by zero in constant expression".to_string())
-                }
+                BinaryOperator::Div if right == 0 => return Err(ConstantError::DivisionByZero),
                 BinaryOperator::Div => left.checked_div(right),
-                BinaryOperator::Rem if right == 0 => {
-                    return Err("modulo by zero in constant expression".to_string())
-                }
+                BinaryOperator::Rem if right == 0 => return Err(ConstantError::ModuloByZero),
                 BinaryOperator::Rem => Some(left.wrapping_rem(right)),
                 BinaryOperator::Shl | BinaryOperator::Shr if right < 0 => {
-                    return Err("negative shift count in constant expression".to_string())
+                    return Err(ConstantError::NegativeShift)
                 }
                 // OP_LSHIFT and OP_RSHIFT read the count as a 4-byte script number.
                 BinaryOperator::Shl | BinaryOperator::Shr if right > i128::from(i32::MAX) => {
-                    return Err("shift count exceeds 4-byte script number".to_string())
+                    return Err(ConstantError::ShiftTooWide)
                 }
                 // OP_LSHIFT leaves zero as zero for any count.
                 BinaryOperator::Shl if left == 0 => Some(0),
@@ -329,15 +461,15 @@ pub(crate) fn evaluate(
                 BinaryOperator::Le => return Ok((left <= right).to_string()),
                 BinaryOperator::Gt => return Ok((left > right).to_string()),
                 BinaryOperator::Ge => return Ok((left >= right).to_string()),
-                _ => return Err(format!("unsupported constant operator '{op}'")),
+                _ => return Err(ConstantError::UnsupportedConstantOperator { op: *op }),
             };
-            Ok(value.ok_or_else(overflow)?.to_string())
+            Ok(value.ok_or(ConstantError::Overflow)?.to_string())
         }
-        _ => Err("initializer must be a constant expression".to_string()),
+        _ => Err(ConstantError::NotConstantExpression),
     }
 }
 
-fn fold_type(declared_type: &mut TypeName, values: &HashMap<String, String>) -> Result<(), String> {
+fn fold_type(declared_type: &mut TypeName, values: &HashMap<String, String>) -> Result<()> {
     let TypeName::Array(element, size) = declared_type else {
         return Ok(());
     };
@@ -352,7 +484,7 @@ fn fold_type(declared_type: &mut TypeName, values: &HashMap<String, String>) -> 
             ArraySize::Fixed(length) => length.to_string(),
             ArraySize::Const(name) => name.clone(),
         };
-        format!("array size '{written}' must be a positive integer literal or int constant")
+        ConstantError::ArraySizeNotPositive { written }
     })?);
     fold_type(element, values)
 }
@@ -427,7 +559,7 @@ fn fold_count(
     uses: &mut Vec<(Path, Span)>,
 ) {
     fold_expression(count, values, uses);
-    if let Ok(value) = evaluate(count, &mut |_| Err("runtime value".to_string())) {
+    if let Ok(value) = evaluate(count, &mut no_names) {
         count.kind = ExprKind::Literal(value);
     }
 }
@@ -459,7 +591,7 @@ fn fold_expression(
                 values
                     .get(&path.key())
                     .cloned()
-                    .ok_or_else(|| format!("unknown constant '{path}'"))
+                    .ok_or_else(|| ConstantError::unknown(path))
             }) {
                 value.kind = ExprKind::Literal(literal);
             }

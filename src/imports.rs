@@ -4,16 +4,207 @@
 //! one file.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
-use std::fs;
 use std::path::{self, Component, Path, PathBuf};
+use std::{error, fmt, fs};
 
+use crate::compiler::error::InternalError;
 use crate::diagnostics::{self, CompileError, Diagnostic, Severity, Span};
 use crate::lint::{Levels, Lints};
 use crate::models::{
     self, Contract, ContractJson, ExprKind, Expression, LocatedStatement, SourceBundle, Statement,
 };
+use crate::parser::ParseError;
 use crate::symbols::Symbols;
 use crate::{compiler, parser, types, validator};
+
+const MAX_IMPORT_DEPTH: usize = 128;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum LoadError {
+    SourceNotFound {
+        path: String,
+    },
+    Unreadable {
+        path: String,
+        message: String,
+    },
+    AbsolutePath {
+        message: String,
+    },
+    DuplicateSourcePath {
+        path: String,
+    },
+    SourcePathNotRelative {
+        path: String,
+    },
+    PathEscapesRoot {
+        path: String,
+    },
+    NotArkFile {
+        path: String,
+    },
+    PathNotUtf8,
+    ImportNotRelative {
+        import: String,
+    },
+    CircularImport {
+        chain: Vec<String>,
+        path: String,
+    },
+    ImportTooDeep,
+    LibraryEntry,
+    DependencyFails {
+        name: String,
+        path: String,
+        message: String,
+    },
+    ReservedContractName {
+        name: String,
+    },
+    DuplicateDeclaration {
+        name: String,
+        previous: String,
+        path: String,
+    },
+    ShadowsContract {
+        name: String,
+    },
+    UnknownType {
+        name: String,
+    },
+    UnknownContract {
+        name: String,
+    },
+    UnknownFunction {
+        name: String,
+    },
+    NotStaticFunction {
+        name: String,
+    },
+    PrivateLibraryFunction {
+        name: String,
+    },
+    UnknownConstant {
+        name: String,
+    },
+    NotStructType {
+        name: String,
+    },
+    LibraryInstantiated {
+        name: String,
+    },
+    SelfInstantiation {
+        name: String,
+    },
+    ConstructorArgumentCount {
+        contract: String,
+        expected: usize,
+        got: usize,
+    },
+    ConstructorArgumentType {
+        contract: String,
+        parameter: String,
+        expected: models::TypeName,
+        got: String,
+    },
+}
+
+impl fmt::Display for LoadError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            LoadError::SourceNotFound { path } => write!(
+                f,
+                "source file '{path}' not found; imports require source files supplied with the entry"
+            ),
+            LoadError::Unreadable { path, message } => write!(f, "cannot read '{path}': {message}"),
+            LoadError::AbsolutePath { message } => f.write_str(message),
+            LoadError::DuplicateSourcePath { path } => write!(f, "duplicate source path '{path}'"),
+            LoadError::SourcePathNotRelative { path } => write!(
+                f,
+                "source path '{path}' must be a relative .ark path using '/'"
+            ),
+            LoadError::PathEscapesRoot { path } => write!(f, "path '{path}' escapes the source root"),
+            LoadError::NotArkFile { path } => {
+                write!(f, "source path '{path}' must have .ark extension")
+            }
+            LoadError::PathNotUtf8 => f.write_str("source paths must be UTF-8"),
+            LoadError::ImportNotRelative { import } => write!(
+                f,
+                "import '{import}' must be a relative .ark path using '/'"
+            ),
+            LoadError::CircularImport { chain, path } => {
+                write!(f, "circular import: {} -> {path}", chain.join(" -> "))
+            }
+            LoadError::ImportTooDeep => {
+                write!(f, "import depth exceeds {MAX_IMPORT_DEPTH} files")
+            }
+            LoadError::LibraryEntry => {
+                f.write_str("entry file must declare a contract, not a library")
+            }
+            LoadError::DependencyFails {
+                name,
+                path,
+                message,
+            } => write!(
+                f,
+                "contract '{name}' does not compile on its own: {path}: {message}"
+            ),
+            LoadError::ReservedContractName { name } => {
+                write!(f, "contract name '{name}' is reserved")
+            }
+            LoadError::DuplicateDeclaration {
+                name,
+                previous,
+                path,
+            } => write!(
+                f,
+                "duplicate declaration '{name}' in '{previous}' and '{path}'"
+            ),
+            LoadError::ShadowsContract { name } => {
+                write!(f, "binding '{name}' shadows a contract namespace")
+            }
+            LoadError::UnknownType { name } => {
+                write!(f, "unknown type '{name}'; import its defining file")
+            }
+            LoadError::UnknownContract { name } => {
+                write!(f, "unknown contract '{name}'; import its defining file")
+            }
+            LoadError::UnknownFunction { name } => write!(f, "unknown function '{name}'"),
+            LoadError::NotStaticFunction { name } => write!(f, "'{name}' is not a static function"),
+            LoadError::PrivateLibraryFunction { name } => {
+                write!(f, "library function '{name}' is private")
+            }
+            LoadError::UnknownConstant { name } => write!(f, "unknown constant '{name}'"),
+            LoadError::NotStructType { name } => write!(f, "'{name}' is not a struct type"),
+            LoadError::LibraryInstantiated { name } => {
+                write!(f, "library '{name}' cannot be instantiated")
+            }
+            LoadError::SelfInstantiation { name } => write!(
+                f,
+                "contract '{name}' cannot instantiate itself, since its address would depend on itself; to keep funds in this contract, compare against the input's own script, e.g. `tx.outputs[0].script == tx.input.current.script`"
+            ),
+            LoadError::ConstructorArgumentCount {
+                contract,
+                expected,
+                got,
+            } => write!(
+                f,
+                "constructor '{contract}' expects {expected} arguments, got {got}"
+            ),
+            LoadError::ConstructorArgumentType {
+                contract,
+                parameter,
+                expected,
+                got,
+            } => write!(
+                f,
+                "constructor '{contract}' argument '{parameter}' expects {expected}, got {got}"
+            ),
+        }
+    }
+}
+
+impl error::Error for LoadError {}
 
 // Dependency definitions are copied per module; use a shared symbol table if quadratic copying becomes costly.
 struct Module {
@@ -25,30 +216,29 @@ struct Module {
 
 /// `load()`'s failure: one error, or the diagnostics `compiler::prepare` collected for one
 /// file, with that file's source.
-pub(crate) enum LoadError {
-    /// An error `load` has yet to tie to the file it was loading.
+pub(crate) enum LoadFailure {
     Message(CompileError),
     /// A diagnostic, and the string the `compile_*` functions return.
     Located(Box<Diagnostic>, String),
     Diagnostics(Vec<Diagnostic>, String),
 }
 
-impl From<String> for LoadError {
-    fn from(message: String) -> Self {
-        LoadError::Message(message.into())
+impl From<LoadError> for LoadFailure {
+    fn from(error: LoadError) -> Self {
+        LoadFailure::Message(error.into())
     }
 }
 
-impl From<CompileError> for LoadError {
+impl From<CompileError> for LoadFailure {
     fn from(error: CompileError) -> Self {
-        LoadError::Message(error)
+        LoadFailure::Message(error)
     }
 }
 
 /// A program after parsing, import resolution, typing and validation, before code generation.
 pub struct Analysis {
     entry: String,
-    loaded: Result<Loaded, LoadError>,
+    loaded: Result<Loaded, LoadFailure>,
     /// The text of every file read, by the path diagnostics and symbols name it with.
     sources: BTreeMap<String, String>,
     symbols: Symbols,
@@ -59,13 +249,13 @@ pub struct Analysis {
 impl Analysis {
     fn load(
         entry: String,
-        mut read: impl FnMut(&str) -> Result<String, String>,
+        mut read: impl FnMut(&str) -> Result<String, LoadError>,
         filesystem: bool,
         symbols: bool,
     ) -> Self {
         let mut sources = BTreeMap::new();
         let mut table = Symbols::default();
-        let mut record = |path: &str| -> Result<String, String> {
+        let mut record = |path: &str| -> Result<String, LoadError> {
             let source = read(path)?;
             sources.insert(path.to_string(), source.clone());
             Ok(source)
@@ -80,10 +270,10 @@ impl Analysis {
         }
     }
 
-    fn failed(entry: &str, message: String, filesystem: bool) -> Self {
+    fn failed(entry: &str, error: LoadError, filesystem: bool) -> Self {
         Analysis {
             entry: entry.to_string(),
-            loaded: Err(LoadError::Message(message.into())),
+            loaded: Err(error.into()),
             sources: BTreeMap::new(),
             symbols: Default::default(),
             filesystem,
@@ -170,7 +360,12 @@ impl Analysis {
                 &mut BTreeMap::new(),
             )
             .map_err(|error| match error {
-                EmitError::Library => vec![Diagnostic::error(&self.entry, LIBRARY_ENTRY)],
+                EmitError::Library => {
+                    vec![Diagnostic::error(
+                        &self.entry,
+                        LoadError::LibraryEntry.to_string(),
+                    )]
+                }
                 EmitError::Lints(errors) => errors,
                 EmitError::Code(error, _) => vec![error.diagnostic(&self.entry)],
             })
@@ -192,7 +387,7 @@ impl Analysis {
                 &mut BTreeMap::new(),
             )
             .map_err(|error| match error {
-                EmitError::Library => format!("{}: {LIBRARY_ENTRY}", self.entry),
+                EmitError::Library => format!("{}: {}", self.entry, LoadError::LibraryEntry),
                 EmitError::Lints(errors) => format!(
                     "{}: {}",
                     self.entry,
@@ -205,21 +400,21 @@ impl Analysis {
     }
 }
 
-impl LoadError {
+impl LoadFailure {
     fn diagnostics(&self, entry: &str) -> Vec<Diagnostic> {
         match self {
-            LoadError::Diagnostics(diagnostics, _) => diagnostics.clone(),
-            LoadError::Located(diagnostic, _) => vec![(**diagnostic).clone()],
+            LoadFailure::Diagnostics(diagnostics, _) => diagnostics.clone(),
+            LoadFailure::Located(diagnostic, _) => vec![(**diagnostic).clone()],
             // An error `load` has not located is about the entry itself, such as reading it.
-            LoadError::Message(error) => vec![Diagnostic::error(entry, error.to_string())],
+            LoadFailure::Message(error) => vec![Diagnostic::error(entry, error.to_string())],
         }
     }
 
     fn message(&self, entry: &str) -> String {
         match self {
-            LoadError::Message(error) => error.to_string(),
-            LoadError::Located(_, message) => message.clone(),
-            LoadError::Diagnostics(diagnostics, source) => format!(
+            LoadFailure::Message(error) => error.to_string(),
+            LoadFailure::Located(_, message) => message.clone(),
+            LoadFailure::Diagnostics(diagnostics, source) => format!(
                 "{}: {}",
                 diagnostics.first().map_or(entry, |d| d.file.as_str()),
                 diagnostics::render_errors(diagnostics, source)
@@ -240,22 +435,31 @@ pub(crate) fn analyze(entry: &str, files: &BTreeMap<String, String>, symbols: bo
         Err(e) => return Analysis::failed(&entry, e, false),
     };
     let read = |path: &str| {
-        files.get(path).cloned().ok_or_else(|| {
-            format!("source file '{path}' not found; imports require source files supplied with the entry")
-        })
+        files
+            .get(path)
+            .cloned()
+            .ok_or_else(|| LoadError::SourceNotFound {
+                path: path.to_string(),
+            })
     };
     Analysis::load(entry, read, false, symbols)
 }
 
 pub(crate) fn analyze_file(path: &Path, symbols: bool) -> Analysis {
     let entry = path::absolute(path)
-        .map_err(|e| e.to_string())
+        .map_err(|e| LoadError::AbsolutePath {
+            message: e.to_string(),
+        })
         .and_then(|absolute| normalize(&absolute));
-    let read =
-        |path: &str| fs::read_to_string(path).map_err(|e| format!("cannot read '{path}': {e}"));
+    let read = |path: &str| {
+        fs::read_to_string(path).map_err(|e| LoadError::Unreadable {
+            path: path.to_string(),
+            message: e.to_string(),
+        })
+    };
     match entry {
         Ok(entry) => Analysis::load(entry, read, true, symbols),
-        Err(message) => Analysis::failed(&path.to_string_lossy(), message, true),
+        Err(error) => Analysis::failed(&path.to_string_lossy(), error, true),
     }
 }
 
@@ -271,12 +475,14 @@ pub(crate) fn compile_sources(
     analyze(entry, files, false).compile_message(options)
 }
 
-fn normalize_files(files: &BTreeMap<String, String>) -> Result<BTreeMap<String, String>, String> {
+fn normalize_files(
+    files: &BTreeMap<String, String>,
+) -> Result<BTreeMap<String, String>, LoadError> {
     let mut normalized = BTreeMap::new();
     for (path, source) in files {
         let path = relative_path(path)?;
         if normalized.insert(path.clone(), source.clone()).is_some() {
-            return Err(format!("duplicate source path '{path}'"));
+            return Err(LoadError::DuplicateSourcePath { path });
         }
     }
     Ok(normalized)
@@ -289,23 +495,25 @@ pub(crate) fn compile_file(
     analyze_file(path, false).compile_message(options)
 }
 
-pub(crate) fn relative_path(path: &str) -> Result<String, String> {
+pub(crate) fn relative_path(path: &str) -> Result<String, LoadError> {
     if path.starts_with('/') || path.contains('\\') || path.contains(':') {
-        return Err(format!(
-            "source path '{path}' must be a relative .ark path using '/'"
-        ));
+        return Err(LoadError::SourcePathNotRelative {
+            path: path.to_string(),
+        });
     }
     normalize(Path::new(path))
 }
 
-fn normalize(path: &Path) -> Result<String, String> {
+fn normalize(path: &Path) -> Result<String, LoadError> {
     let mut normalized = PathBuf::new();
     for component in path.components() {
         match component {
             Component::CurDir => {}
             Component::ParentDir => {
                 if !normalized.pop() {
-                    return Err(format!("path '{}' escapes the source root", path.display()));
+                    return Err(LoadError::PathEscapesRoot {
+                        path: path.display().to_string(),
+                    });
                 }
             }
             _ => normalized.push(component),
@@ -315,22 +523,21 @@ fn normalize(path: &Path) -> Result<String, String> {
         .extension()
         .is_none_or(|extension| extension != "ark")
     {
-        return Err(format!(
-            "source path '{}' must have .ark extension",
-            path.display()
-        ));
+        return Err(LoadError::NotArkFile {
+            path: path.display().to_string(),
+        });
     }
     normalized
         .into_os_string()
         .into_string()
-        .map_err(|_| "source paths must be UTF-8".to_string())
+        .map_err(|_| LoadError::PathNotUtf8)
 }
 
-fn import_path(importer: &str, import: &str) -> Result<String, String> {
+fn import_path(importer: &str, import: &str) -> Result<String, LoadError> {
     if import.starts_with('/') || import.contains('\\') || import.contains(':') {
-        return Err(format!(
-            "import '{import}' must be a relative .ark path using '/'"
-        ));
+        return Err(LoadError::ImportNotRelative {
+            import: import.to_string(),
+        });
     }
     normalize(
         &Path::new(importer)
@@ -339,8 +546,6 @@ fn import_path(importer: &str, import: &str) -> Result<String, String> {
             .join(import),
     )
 }
-
-const LIBRARY_ENTRY: &str = "entry file must declare a contract, not a library";
 
 struct Loaded {
     modules: BTreeMap<String, Module>,
@@ -355,9 +560,9 @@ enum EmitError {
 impl Loaded {
     fn load(
         entry: &str,
-        read: &mut impl FnMut(&str) -> Result<String, String>,
+        read: &mut impl FnMut(&str) -> Result<String, LoadError>,
         symbols: Option<&mut Symbols>,
-    ) -> Result<Self, LoadError> {
+    ) -> Result<Self, LoadFailure> {
         let mut loaded = Loaded {
             modules: BTreeMap::new(),
         };
@@ -496,15 +701,18 @@ impl Loaded {
             .modules
             .iter()
             .find(|(_, module)| module.contract.name == name)
-            .ok_or_else(|| CompileError::internal(format!("contract '{name}' is not loaded")))?;
+            .ok_or_else(|| {
+                let name = name.to_string();
+                CompileError::from(InternalError::ContractNotLoaded { name })
+            })?;
         let source = files.get(path).map_or("", String::as_str);
         // Loading prepared this module as an import, without the checks only an entry gets.
         let compiled = match validator::validate_ast(&module.contract, true).first() {
-            Some(issue) => Err(diagnostics::located(&issue.message, issue.span, source)),
+            Some(issue) => Err(diagnostics::located(&issue.to_string(), issue.span, source)),
             None => self
                 .emit(path, files, filesystem, options, levels, hashes)
                 .map_err(|error| match error {
-                    EmitError::Library => LIBRARY_ENTRY.to_string(),
+                    EmitError::Library => LoadError::LibraryEntry.to_string(),
                     EmitError::Lints(errors) => diagnostics::render_errors(&errors, source),
                     EmitError::Code(error, _) => {
                         diagnostics::located(&error.to_string(), error.span, source)
@@ -513,9 +721,11 @@ impl Loaded {
         };
         let hash = compiled
             .map_err(|message| {
-                CompileError::from(format!(
-                    "contract '{name}' does not compile on its own: {path}: {message}"
-                ))
+                CompileError::from(LoadError::DependencyFails {
+                    name: name.to_string(),
+                    path: path.clone(),
+                    message,
+                })
             })?
             .code_hash
             .expect("emit sets codeHash");
@@ -543,35 +753,38 @@ fn instantiation(contract: &Contract, name: &str) -> Option<Span> {
 fn load(
     path: &str,
     entry: &str,
-    read: &mut impl FnMut(&str) -> Result<String, String>,
+    read: &mut impl FnMut(&str) -> Result<String, LoadError>,
     loaded: &mut Loaded,
     active: &mut Vec<String>,
     declarations: &mut HashMap<String, String>,
     mut symbols: Option<&mut Symbols>,
-) -> Result<(), LoadError> {
+) -> Result<(), LoadFailure> {
     if loaded.modules.contains_key(path) {
         return Ok(());
     }
     if active.iter().any(|p| p == path) {
-        return Err(format!("circular import: {} -> {path}", active.join(" -> ")).into());
+        let chain = active.clone();
+        return Err(LoadError::CircularImport {
+            chain,
+            path: path.to_string(),
+        }
+        .into());
     }
     // Recursive loading is bounded; use an iterative traversal for deeper projects.
-    if active.len() >= 128 {
-        return Err("import depth exceeds 128 files".to_string().into());
+    if active.len() >= MAX_IMPORT_DEPTH {
+        return Err(LoadError::ImportTooDeep.into());
     }
     // An unreadable file is an error of the file importing it.
     let source = read(path)?;
     active.push(path.to_string());
-    let result = (|| -> Result<(), LoadError> {
+    let result = (|| -> Result<(), LoadFailure> {
         let source = &source;
         parser::check_pragma(source, env!("CARGO_PKG_VERSION"))
             .map_err(|error| locate(path, source, error, None))?;
         let pairs = parser::try_parse(source).map_err(|error| {
             let diagnostic = parser::parse_error_diagnostic(&error, path, source);
-            LoadError::Located(
-                Box::new(diagnostic),
-                format!("{path}: Parse error: {error}"),
-            )
+            let error = ParseError::Syntax(Box::new(error));
+            LoadFailure::Located(Box::new(diagnostic), format!("{path}: {error}"))
         })?;
         let imports =
             parser::imports(&pairs).map_err(|error| locate(path, source, error.into(), None))?;
@@ -581,8 +794,8 @@ fn load(
         // does not load one twice, if editors need the later imports' symbols.
         let mut failed = None;
         for (import, span) in imports {
-            let at_import = |error: LoadError| match error {
-                LoadError::Message(error) => locate(path, source, error.at(span), None),
+            let at_import = |error: LoadFailure| match error {
+                LoadFailure::Message(error) => locate(path, source, error.at(span), None),
                 other => other,
             };
             let imported = match import_path(path, &import) {
@@ -627,7 +840,7 @@ fn load(
         let own_structs: HashSet<_> = contract.structs.iter().map(|s| s.name.clone()).collect();
         let declared = match failed {
             Some(error) => Err(error),
-            None => declare(path, &contract, declarations).map_err(LoadError::from),
+            None => declare(path, &contract, declarations).map_err(LoadFailure::from),
         };
         if let Err(error) = declared {
             // The contract is not typed yet, so an inferred `let` gets no type in its symbol.
@@ -740,8 +953,8 @@ fn load(
                 &constant_uses,
             );
         }
-        let prepared =
-            prepared.map_err(|diagnostics| LoadError::Diagnostics(diagnostics, source.clone()))?;
+        let prepared = prepared
+            .map_err(|diagnostics| LoadFailure::Diagnostics(diagnostics, source.clone()))?;
         loaded.modules.insert(
             path.to_string(),
             Module {
@@ -755,8 +968,8 @@ fn load(
     })();
     active.pop();
     result.map_err(|error| match error {
-        LoadError::Message(error) => {
-            let code = if error.internal {
+        LoadFailure::Message(error) => {
+            let code = if error.is_internal() {
                 "internal"
             } else {
                 "validation"
@@ -768,11 +981,11 @@ fn load(
 }
 
 /// `error` in the file at `path`, with `code`; import errors have none.
-fn locate(path: &str, source: &str, error: CompileError, code: Option<&str>) -> LoadError {
+fn locate(path: &str, source: &str, error: CompileError, code: Option<&str>) -> LoadFailure {
     let message = diagnostics::located(&error.to_string(), error.span, source);
     let mut diagnostic = Diagnostic::error(path, error.to_string()).with_span(error.span);
     diagnostic.code = code.map(str::to_string);
-    LoadError::Located(Box::new(diagnostic), format!("{path}: {message}"))
+    LoadFailure::Located(Box::new(diagnostic), format!("{path}: {message}"))
 }
 
 /// Reject a reserved contract name, then record `contract`'s declarations as made in `path`,
@@ -786,8 +999,9 @@ fn declare(
         || models::is_builtin_struct(&contract.name)
         || matches!(contract.name.as_str(), "tx" | "this")
     {
-        let message = format!("contract name '{}' is reserved", contract.name);
-        return Err(CompileError::from(message).at(contract.span));
+        let name = contract.name.clone();
+        let error = LoadError::ReservedContractName { name };
+        return Err(CompileError::from(error).at(contract.span));
     }
     for (name, span) in contract
         .structs
@@ -796,8 +1010,12 @@ fn declare(
         .chain((!contract.name.is_empty()).then_some((&contract.name, contract.span)))
     {
         if let Some(previous) = declarations.insert(name.clone(), path.to_string()) {
-            let message = format!("duplicate declaration '{name}' in '{previous}' and '{path}'");
-            return Err(CompileError::from(message).at(span));
+            let error = LoadError::DuplicateDeclaration {
+                name: name.clone(),
+                previous,
+                path: path.to_string(),
+            };
+            return Err(CompileError::from(error).at(span));
         }
     }
     Ok(())
@@ -808,12 +1026,14 @@ fn validate_scope(
     structs: &HashSet<String>,
     contracts: &HashMap<String, &Contract>,
 ) -> Result<(), CompileError> {
-    let at = |result: Result<(), String>, span| {
+    let at = |result: Result<(), LoadError>, span| {
         result.map_err(|error| CompileError::from(error).at(span))
     };
     let check_binding = |name: &str| {
         if contracts.contains_key(name) {
-            Err(format!("binding '{name}' shadows a contract namespace"))
+            Err(LoadError::ShadowsContract {
+                name: name.to_string(),
+            })
         } else {
             Ok(())
         }
@@ -829,7 +1049,9 @@ fn validate_scope(
         {
             Ok(())
         } else {
-            Err(format!("unknown type '{base}'; import its defining file"))
+            Err(LoadError::UnknownType {
+                name: base.to_string(),
+            })
         }
     };
     for parameter in contract
@@ -864,56 +1086,58 @@ fn validate_scope(
             match &expression.kind {
                 ExprKind::Call { name, .. } if name.contains('.') => {
                     let (owner, member) = name.split_once('.').expect("qualified name");
-                    let target = contracts.get(owner).ok_or_else(|| {
-                        format!("unknown contract '{owner}'; import its defining file")
-                    })?;
+                    let target =
+                        contracts
+                            .get(owner)
+                            .ok_or_else(|| LoadError::UnknownContract {
+                                name: owner.to_string(),
+                            })?;
                     let function = target
                         .functions
                         .iter()
                         .find(|f| f.name == member)
-                        .ok_or_else(|| format!("unknown function '{name}'"))?;
+                        .ok_or_else(|| LoadError::UnknownFunction { name: name.clone() })?;
                     if !function.is_static {
-                        return Err(format!("'{name}' is not a static function"));
+                        return Err(LoadError::NotStaticFunction { name: name.clone() });
                     }
                     // Static but unexported is reachable only for a library's private helpers.
                     if !function.is_exported && owner != contract.name {
-                        return Err(format!("library function '{name}' is private"));
+                        return Err(LoadError::PrivateLibraryFunction { name: name.clone() });
                     }
                 }
                 ExprKind::Name(path)
                     if !path.segments.is_empty() && contracts.contains_key(&path.root) =>
                 {
-                    return Err(format!("unknown constant '{}'", path.key()));
+                    return Err(LoadError::UnknownConstant { name: path.key() });
                 }
                 ExprKind::StructLiteral {
                     name: Some(name), ..
                 } => {
                     check_type(&models::TypeName::Named(name.clone()))?;
                     if models::is_builtin_type(name) {
-                        return Err(format!("'{name}' is not a struct type"));
+                        return Err(LoadError::NotStructType { name: name.clone() });
                     }
                 }
                 ExprKind::ContractInstance {
                     contract_name,
                     args,
                 } => {
-                    let target = contracts.get(contract_name).ok_or_else(|| {
-                        format!("unknown contract '{contract_name}'; import its defining file")
-                    })?;
+                    let name = contract_name.clone();
+                    let Some(target) = contracts.get(contract_name) else {
+                        return Err(LoadError::UnknownContract { name });
+                    };
                     if target.is_library {
-                        return Err(format!("library '{contract_name}' cannot be instantiated"));
+                        return Err(LoadError::LibraryInstantiated { name });
                     }
                     if contract_name == &contract.name {
-                        return Err(format!(
-                            "contract '{contract_name}' cannot instantiate itself, since its address would depend on itself; to keep funds in this contract, compare against the input's own script, e.g. `tx.outputs[0].script == tx.input.current.script`"
-                        ));
+                        return Err(LoadError::SelfInstantiation { name });
                     }
                     if args.len() != target.parameters.len() {
-                        return Err(format!(
-                            "constructor '{contract_name}' expects {} arguments, got {}",
-                            target.parameters.len(),
-                            args.len()
-                        ));
+                        return Err(LoadError::ConstructorArgumentCount {
+                            contract: name,
+                            expected: target.parameters.len(),
+                            got: args.len(),
+                        });
                     }
                     for (arg, param) in args.iter().zip(&target.parameters) {
                         let mut arg = arg.clone();
@@ -922,12 +1146,12 @@ fn validate_scope(
                         if actual != types::ArkType::Unknown
                             && !param.param_type.ark_type().accepts(&actual)
                         {
-                            return Err(format!(
-                                "constructor '{contract_name}' argument '{}' expects {}, got {}",
-                                param.name,
-                                param.param_type,
-                                actual.as_str()
-                            ));
+                            return Err(LoadError::ConstructorArgumentType {
+                                contract: name,
+                                parameter: param.name.clone(),
+                                expected: param.param_type.clone(),
+                                got: actual.as_str(),
+                            });
                         }
                     }
                 }
@@ -941,11 +1165,11 @@ fn validate_scope(
 
 fn validate_local_types(
     statements: &[LocatedStatement],
-    check: &impl Fn(&models::TypeName) -> Result<(), String>,
-    binding: &impl Fn(&str) -> Result<(), String>,
+    check: &impl Fn(&models::TypeName) -> Result<(), LoadError>,
+    binding: &impl Fn(&str) -> Result<(), LoadError>,
 ) -> Result<(), CompileError> {
     for statement in statements {
-        let at = |result: Result<(), String>| {
+        let at = |result: Result<(), LoadError>| {
             result.map_err(|error| CompileError::from(error).at(statement.span))
         };
         match &statement.statement {
@@ -1003,7 +1227,7 @@ fn validate_local_types(
 
 fn visit_statements(
     statements: &mut [LocatedStatement],
-    visit: &mut impl FnMut(&mut Expression) -> Result<(), String>,
+    visit: &mut impl FnMut(&mut Expression) -> Result<(), LoadError>,
 ) -> Result<(), CompileError> {
     for statement in statements {
         match &mut statement.statement {
@@ -1053,7 +1277,7 @@ fn visit_statements(
 
 fn visit_expression(
     expr: &mut Expression,
-    visit: &mut impl FnMut(&mut Expression) -> Result<(), String>,
+    visit: &mut impl FnMut(&mut Expression) -> Result<(), LoadError>,
 ) -> Result<(), CompileError> {
     for child in models::child_exprs_mut(expr) {
         visit_expression(child, visit)?;

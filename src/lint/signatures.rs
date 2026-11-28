@@ -2,7 +2,7 @@
 //! the spend on a non-empty invalid signature, so such a check is false only for an empty one.
 
 use super::walk::{Visitor, Walk};
-use super::{Finding, Lint};
+use super::{Finding, FindingKind};
 use crate::models::{Contract, ExprKind, Expression, LocatedStatement, Statement};
 use crate::operators::{BinaryOperator, UnaryOperator};
 
@@ -42,13 +42,10 @@ impl<'a> Visitor<'a> for Results {
                     ) =>
             {
                 self.findings.push(Finding::new(
-                    Lint::SignatureMayFail,
                     expression.span,
-                    format!(
-                        "{} fails the spend on an invalid non-empty signature instead of \
-                         returning false; pass an empty signature where the check may fail",
-                        builtin.name
-                    ),
+                    FindingKind::SignatureMayFail {
+                        check: builtin.name,
+                    },
                 ));
                 false
             }

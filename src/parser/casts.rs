@@ -1,5 +1,6 @@
 //! Cast calls such as `bytes32(x)`, parsed into `ExprKind::Cast`.
 
+use super::error::Result;
 use super::{expr, Rule};
 use crate::diagnostics::Span;
 use crate::models::{ExprKind, Expression};
@@ -14,11 +15,7 @@ pub(crate) fn is_cast(name: &str) -> bool {
 }
 
 /// `type(x)`, folding `int(0x..)` big-endian into a decimal literal.
-pub(crate) fn parse_cast(
-    target: &str,
-    data_pair: Pair<Rule>,
-    span: Span,
-) -> Result<Expression, String> {
+pub(crate) fn parse_cast(target: &str, data_pair: Pair<Rule>, span: Span) -> Result<Expression> {
     let target = target.to_string();
     let text = super::trim_trivia_end(data_pair.as_str());
     let data = expr::parse_general_expression(data_pair)?;

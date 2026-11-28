@@ -3,16 +3,338 @@
 //! artifact's spend groups.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::{error, fmt};
 
+use super::error::{CompileErrorKind, InternalError};
+use crate::diagnostics::CompileError;
 use crate::models::{
     self, AbiFunctionGroup, AbiLeaf, ArkadeScript, Contract, HashFn, KeyExpr, NamedTapscript,
-    Parameter, TapItem, TapOperand, TimeUnit, WitnessElement, OPERATOR, OPERATOR_EXIT_DELAY,
+    Parameter, Path, TapItem, TapOperand, TimeUnit, WitnessElement, OPERATOR, OPERATOR_EXIT_DELAY,
 };
 use crate::opcodes::{
     OP_CHECKLOCKTIMEVERIFY, OP_CHECKSEQUENCEVERIFY, OP_CHECKSIG, OP_CHECKSIGVERIFY, OP_DROP,
     OP_EQUAL, OP_EQUALVERIFY, OP_SIZE, OP_VERIFY,
 };
 use crate::types::{self, bytes_of_width, digest_accepts, ArkType};
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum TapscriptError {
+    ConditionAfterMultisig {
+        tapscript: String,
+    },
+    ConditionAfterTimelock {
+        tapscript: String,
+    },
+    SecondCondition {
+        tapscript: String,
+    },
+    TimelockAfterMultisig {
+        tapscript: String,
+    },
+    SecondTimelock {
+        tapscript: String,
+    },
+    SecondSignatureCheck {
+        tapscript: String,
+    },
+    MissingSignatureCheck {
+        tapscript: String,
+    },
+    ConditionWithCltv {
+        tapscript: String,
+    },
+    EmptyKeySet {
+        tapscript: String,
+    },
+    PrivateFunctionBinding {
+        tapscript: String,
+    },
+    TweakToOtherFunction {
+        tapscript: String,
+        func: String,
+    },
+    CsvDelayOnFunctionLeaf {
+        tapscript: String,
+    },
+    MissingFunctionTweak {
+        tapscript: String,
+    },
+    TweakTargetsDiffer {
+        tapscript: String,
+    },
+    InputInLeafScript {
+        tapscript: String,
+        name: String,
+        role: &'static str,
+    },
+    UnknownKey {
+        tapscript: String,
+        key: Path,
+    },
+    InvalidTweakBase {
+        tapscript: String,
+        base: String,
+        func: String,
+    },
+    UnknownTweakFunction {
+        tapscript: String,
+        base: String,
+        func: String,
+    },
+    AmbiguousTweakTargets {
+        tapscript: String,
+        base: String,
+    },
+    SignatureCountMismatch {
+        tapscript: String,
+        keys: usize,
+        signatures: usize,
+    },
+    UndeclaredSignature {
+        tapscript: String,
+        signature: Path,
+    },
+    PreimageNotInput {
+        tapscript: String,
+        preimage: String,
+        constructor: bool,
+    },
+    HashValueNotParameter {
+        tapscript: String,
+        hash: String,
+    },
+    HashValueType {
+        tapscript: String,
+        hash_fn: &'static str,
+        hash: String,
+        found: String,
+        expected: &'static str,
+    },
+    ExitDelayWithUnit {
+        tapscript: String,
+    },
+    /// `raw` is the constructor parameter that could be pushed without the unit.
+    TimelockNotInteger {
+        tapscript: String,
+        call: &'static str,
+        operand: String,
+        raw: Option<String>,
+    },
+    TimelockNotOperand {
+        tapscript: String,
+        value: String,
+    },
+    TimelockType {
+        tapscript: String,
+        value: String,
+        found: String,
+    },
+    TimelockOutOfRange {
+        tapscript: String,
+        call: &'static str,
+        operand: String,
+        expected: &'static str,
+    },
+    ForfeitWithoutOperator {
+        tapscript: String,
+    },
+}
+
+impl fmt::Display for TapscriptError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            TapscriptError::ConditionAfterMultisig { tapscript } => write!(
+                f,
+                "tapscript `{tapscript}`: condition must come before the multisig (out of order)"
+            ),
+            TapscriptError::ConditionAfterTimelock { tapscript } => write!(
+                f,
+                "tapscript `{tapscript}`: condition must come before the timelock (out of order)"
+            ),
+            TapscriptError::SecondCondition { tapscript } => write!(
+                f,
+                "tapscript `{tapscript}`: at most one condition (single hashlock) is allowed"
+            ),
+            TapscriptError::TimelockAfterMultisig { tapscript } => write!(
+                f,
+                "tapscript `{tapscript}`: timelock must come before the multisig (out of order)"
+            ),
+            TapscriptError::SecondTimelock { tapscript } => write!(
+                f,
+                "tapscript `{tapscript}`: only one timelock (CSV or CLTV) per leaf"
+            ),
+            TapscriptError::SecondSignatureCheck { tapscript } => write!(
+                f,
+                "tapscript `{tapscript}`: only one checkSig/checkMultisig suffix per leaf"
+            ),
+            TapscriptError::MissingSignatureCheck { tapscript } => write!(
+                f,
+                "tapscript `{tapscript}`: missing checkSig/checkMultisig suffix (no multisig)"
+            ),
+            TapscriptError::ConditionWithCltv { tapscript } => write!(
+                f,
+                "tapscript `{tapscript}`: condition + CLTV is not a recognized closure shape; \
+                 split into two tapscripts (one ConditionMultisig forfeit, one CLTV forfeit)"
+            ),
+            TapscriptError::EmptyKeySet { tapscript } => {
+                write!(f, "tapscript `{tapscript}`: empty key set (F1)")
+            }
+            TapscriptError::PrivateFunctionBinding { tapscript } => write!(
+                f,
+                "tapscript '{tapscript}' cannot bind to a private function"
+            ),
+            TapscriptError::TweakToOtherFunction { tapscript, func } => write!(
+                f,
+                "function-bound tapscript `{tapscript}` may tweak keys only to `{tapscript}`, not \
+                 `{func}`"
+            ),
+            TapscriptError::CsvDelayOnFunctionLeaf { tapscript } => write!(
+                f,
+                "tapscript `{tapscript}` has a CSV delay, so it sits beside `{tapscript}`'s default \
+                 leaf, which is named `{tapscript}`; give the tapscript another name, and it still \
+                 joins `{tapscript}`'s spend group through its tweak"
+            ),
+            TapscriptError::MissingFunctionTweak { tapscript } => write!(
+                f,
+                "function-bound tapscript `{tapscript}` must tweak a key to `{tapscript}`, e.g. \
+                 tweak(operator, {tapscript})"
+            ),
+            TapscriptError::TweakTargetsDiffer { tapscript } => write!(
+                f,
+                "tapscript `{tapscript}`: keys may be tweaked to only one Arkade Script function"
+            ),
+            TapscriptError::InputInLeafScript {
+                tapscript,
+                name,
+                role,
+            } => write!(
+                f,
+                "tapscript `{tapscript}`: `{name}` is a tapscript input, but a {role} is part of \
+                 the leaf script, which is fixed when the address is made; take it from a \
+                 constructor parameter"
+            ),
+            TapscriptError::UnknownKey { tapscript, key } => {
+                write!(f, "unknown key `{key}` in tapscript `{tapscript}`")
+            }
+            TapscriptError::InvalidTweakBase {
+                tapscript,
+                base,
+                func,
+            } => write!(
+                f,
+                "tweak({base}, {func}) in tapscript `{tapscript}`: `{base}` is not `operator` or a \
+                 constructor pubkey"
+            ),
+            TapscriptError::UnknownTweakFunction {
+                tapscript,
+                base,
+                func,
+            } => write!(
+                f,
+                "tweak({base}, {func}) in tapscript `{tapscript}`: no function named `{func}`"
+            ),
+            TapscriptError::AmbiguousTweakTargets { tapscript, base } => write!(
+                f,
+                "ambiguous constructor tweak targets for `{base}` in tapscript `{tapscript}`"
+            ),
+            TapscriptError::SignatureCountMismatch {
+                tapscript,
+                keys,
+                signatures,
+            } => write!(
+                f,
+                "tapscript `{tapscript}`: checkSig/checkMultisig has {keys} key(s) but \
+                 {signatures} signature(s); signatures must align 1:1 with keys"
+            ),
+            TapscriptError::UndeclaredSignature {
+                tapscript,
+                signature,
+            } => write!(
+                f,
+                "tapscript `{tapscript}`: signature operand `{signature}` is not a declared \
+                 `signature` input"
+            ),
+            TapscriptError::PreimageNotInput {
+                tapscript,
+                preimage,
+                constructor,
+            } => {
+                write!(f, "tapscript `{tapscript}`: hash preimage `{preimage}` is ")?;
+                f.write_str(if *constructor {
+                    "a constructor parameter, but the leaf consumes its preimage from the \
+                     witness; declare it as a tapscript input"
+                } else {
+                    "not a tapscript input"
+                })
+            }
+            TapscriptError::HashValueNotParameter { tapscript, hash } => write!(
+                f,
+                "tapscript `{tapscript}`: hash value `{hash}` is not a scalar constructor parameter"
+            ),
+            TapscriptError::HashValueType {
+                tapscript,
+                hash_fn,
+                hash,
+                found,
+                expected,
+            } => write!(
+                f,
+                "tapscript `{tapscript}`: {hash_fn} value `{hash}` has type '{found}', expected \
+                 {expected}"
+            ),
+            TapscriptError::ExitDelayWithUnit { tapscript } => write!(
+                f,
+                "tapscript `{tapscript}`: operatorExitDelay has its own unit; write \
+                 older(operatorExitDelay)"
+            ),
+            TapscriptError::TimelockNotInteger {
+                tapscript,
+                call,
+                operand,
+                raw,
+            } => {
+                write!(
+                    f,
+                    "tapscript `{tapscript}`: {call}({operand}) takes an integer literal or \
+                     constant"
+                )?;
+                match raw {
+                    Some(value) => write!(f, "; pass `{value}` without a unit to push it raw"),
+                    None => Ok(()),
+                }
+            }
+            TapscriptError::TimelockNotOperand { tapscript, value } => write!(
+                f,
+                "tapscript `{tapscript}`: timelock `{value}` is not a literal or scalar \
+                 constructor parameter"
+            ),
+            TapscriptError::TimelockType {
+                tapscript,
+                value,
+                found,
+            } => write!(
+                f,
+                "tapscript `{tapscript}`: timelock `{value}` has type '{found}', expected 'int'"
+            ),
+            TapscriptError::TimelockOutOfRange {
+                tapscript,
+                call,
+                operand,
+                expected,
+            } => write!(
+                f,
+                "tapscript `{tapscript}`: {call}({operand}) must be {expected}"
+            ),
+            TapscriptError::ForfeitWithoutOperator { tapscript } => write!(
+                f,
+                "forfeit tapscript `{tapscript}` must include `operator` or `tweak(operator, fn)` \
+                 (the operator co-signs every offchain spend)"
+            ),
+        }
+    }
+}
+
+impl error::Error for TapscriptError {}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ClosureClass {
@@ -91,7 +413,7 @@ enum TimelockKind {
 
 /// Enforces the `condition? · timelock? · multisig` template in source order. The compiler does
 /// not reorder, so any out-of-order, duplicate or unrepresentable combination is an error.
-pub fn assemble_closure(ts: &NamedTapscript) -> Result<Closure, String> {
+pub(crate) fn assemble_closure(ts: &NamedTapscript) -> Result<Closure, TapscriptError> {
     let mut condition: Option<(HashFn, String)> = None;
     let mut preimage_width = None;
     let mut timelock: Option<(String, Option<TimeUnit>)> = None;
@@ -106,22 +428,19 @@ pub fn assemble_closure(ts: &NamedTapscript) -> Result<Closure, String> {
                 hash,
             } => {
                 if multisig.is_some() {
-                    return Err(format!(
-                        "tapscript `{}`: condition must come before the multisig (out of order)",
-                        ts.name
-                    ));
+                    return Err(TapscriptError::ConditionAfterMultisig {
+                        tapscript: ts.name.clone(),
+                    });
                 }
                 if timelock.is_some() {
-                    return Err(format!(
-                        "tapscript `{}`: condition must come before the timelock (out of order)",
-                        ts.name
-                    ));
+                    return Err(TapscriptError::ConditionAfterTimelock {
+                        tapscript: ts.name.clone(),
+                    });
                 }
                 if condition.is_some() {
-                    return Err(format!(
-                        "tapscript `{}`: at most one condition (single hashlock) is allowed",
-                        ts.name
-                    ));
+                    return Err(TapscriptError::SecondCondition {
+                        tapscript: ts.name.clone(),
+                    });
                 }
                 condition = Some((hash_fn.clone(), hash.to_string()));
                 preimage_width = ts
@@ -136,37 +455,31 @@ pub fn assemble_closure(ts: &NamedTapscript) -> Result<Closure, String> {
             }
             TapItem::Older { value, unit } | TapItem::After { value, unit } => {
                 if multisig.is_some() {
-                    return Err(format!(
-                        "tapscript `{}`: timelock must come before the multisig (out of order)",
-                        ts.name
-                    ));
+                    return Err(TapscriptError::TimelockAfterMultisig {
+                        tapscript: ts.name.clone(),
+                    });
                 }
                 if timelock.is_some() {
-                    return Err(format!(
-                        "tapscript `{}`: only one timelock (CSV or CLTV) per leaf",
-                        ts.name
-                    ));
+                    return Err(TapscriptError::SecondTimelock {
+                        tapscript: ts.name.clone(),
+                    });
                 }
                 timelock = Some((value.to_string(), *unit));
                 is_csv = matches!(item, TapItem::Older { .. });
             }
             TapItem::Sig { keys, sigs: _ } => {
                 if multisig.is_some() {
-                    return Err(format!(
-                        "tapscript `{}`: only one checkSig/checkMultisig suffix per leaf",
-                        ts.name
-                    ));
+                    return Err(TapscriptError::SecondSignatureCheck {
+                        tapscript: ts.name.clone(),
+                    });
                 }
                 multisig = Some(keys.clone());
             }
         }
     }
 
-    let keys = multisig.ok_or_else(|| {
-        format!(
-            "tapscript `{}`: missing checkSig/checkMultisig suffix (no multisig)",
-            ts.name
-        )
+    let keys = multisig.ok_or_else(|| TapscriptError::MissingSignatureCheck {
+        tapscript: ts.name.clone(),
     })?;
 
     let class = match (&condition, &timelock, is_csv) {
@@ -176,11 +489,9 @@ pub fn assemble_closure(ts: &NamedTapscript) -> Result<Closure, String> {
         (Some(_), None, _) => ClosureClass::ConditionMultisig,
         (Some(_), Some(_), true) => ClosureClass::ConditionCsvMultisig,
         (Some(_), Some(_), false) => {
-            return Err(format!(
-                "tapscript `{}`: condition + CLTV is not a recognized closure shape; \
-                 split into two tapscripts (one ConditionMultisig forfeit, one CLTV forfeit)",
-                ts.name
-            ))
+            return Err(TapscriptError::ConditionWithCltv {
+                tapscript: ts.name.clone(),
+            })
         }
     };
 
@@ -192,9 +503,11 @@ pub fn assemble_closure(ts: &NamedTapscript) -> Result<Closure, String> {
 }
 
 /// Closure-shape acceptance beyond `assemble_closure`'s template check.
-pub fn validate_closure_shape(c: &Closure, ts_name: &str) -> Result<(), String> {
+pub(crate) fn validate_closure_shape(c: &Closure, ts_name: &str) -> Result<(), TapscriptError> {
     if c.keys.is_empty() {
-        return Err(format!("tapscript `{ts_name}`: empty key set (F1)"));
+        return Err(TapscriptError::EmptyKeySet {
+            tapscript: ts_name.to_string(),
+        });
     }
     Ok(())
 }
@@ -202,16 +515,18 @@ pub fn validate_closure_shape(c: &Closure, ts_name: &str) -> Result<(), String> 
 /// A leaf named after an Arkade Script function tweaks a key to that function, so the leaf binds
 /// its Arkade Script, and has no CSV delay, since a CSV leaf sits beside the function's default
 /// leaf, which carries that name.
-pub fn resolve_binding(contract: &Contract, ts: &NamedTapscript) -> Result<(), String> {
+pub(crate) fn resolve_binding(
+    contract: &Contract,
+    ts: &NamedTapscript,
+) -> Result<(), TapscriptError> {
     if contract
         .functions
         .iter()
         .any(|f| f.is_private && f.name == ts.name)
     {
-        return Err(format!(
-            "tapscript '{}' cannot bind to a private function",
-            ts.name
-        ));
+        return Err(TapscriptError::PrivateFunctionBinding {
+            tapscript: ts.name.clone(),
+        });
     }
     if !contract
         .functions
@@ -229,34 +544,33 @@ pub fn resolve_binding(contract: &Contract, ts: &NamedTapscript) -> Result<(), S
         })
         .unwrap_or_default();
     match shared_tweak_func(&ts.name, keys)? {
-        Some(func) if func != ts.name => Err(format!(
-            "function-bound tapscript `{}` may tweak keys only to `{}`, not `{func}`",
-            ts.name, ts.name
-        )),
+        Some(func) if func != ts.name => Err(TapscriptError::TweakToOtherFunction {
+            tapscript: ts.name.clone(),
+            func,
+        }),
         Some(_)
             if ts
                 .items
                 .iter()
                 .any(|item| matches!(item, TapItem::Older { .. })) =>
         {
-            Err(format!(
-                "tapscript `{0}` has a CSV delay, so it sits beside `{0}`'s default leaf, which \
-                 is named `{0}`; give the tapscript another name, and it still joins `{0}`'s \
-                 spend group through its tweak",
-                ts.name
-            ))
+            Err(TapscriptError::CsvDelayOnFunctionLeaf {
+                tapscript: ts.name.clone(),
+            })
         }
         Some(_) => Ok(()),
-        None => Err(format!(
-            "function-bound tapscript `{0}` must tweak a key to `{0}`, e.g. tweak(operator, {0})",
-            ts.name
-        )),
+        None => Err(TapscriptError::MissingFunctionTweak {
+            tapscript: ts.name.clone(),
+        }),
     }
 }
 
 /// The one Arkade Script function this leaf tweaks a key to. A leaf joins one `leaves` array, so
 /// its tweaks may name only one function.
-pub(crate) fn shared_tweak_func(ts_name: &str, keys: &[KeyExpr]) -> Result<Option<String>, String> {
+pub(crate) fn shared_tweak_func(
+    ts_name: &str,
+    keys: &[KeyExpr],
+) -> Result<Option<String>, TapscriptError> {
     let mut target: Option<String> = None;
     for key in keys {
         let KeyExpr::Tweak { func, .. } = key else {
@@ -264,9 +578,9 @@ pub(crate) fn shared_tweak_func(ts_name: &str, keys: &[KeyExpr]) -> Result<Optio
         };
         if let Some(prev) = &target {
             if prev != func {
-                return Err(format!(
-                    "tapscript `{ts_name}`: keys may be tweaked to only one Arkade Script function"
-                ));
+                return Err(TapscriptError::TweakTargetsDiffer {
+                    tapscript: ts_name.to_string(),
+                });
             }
         } else {
             target = Some(func.clone());
@@ -296,19 +610,18 @@ pub fn validate_arkd_rules(
     contract: &Contract,
     ts: &NamedTapscript,
     c: &Closure,
-) -> Result<LeafScript, String> {
+) -> Result<LeafScript, TapscriptError> {
     let constructor_scope =
         types::build_scope_with_structs(&contract.parameters, &contract.structs);
     let is_input = |name: &str| ts.inputs.iter().any(|p| p.name == name);
     // The type of a scalar constructor binding the script pushes as `role`.
-    let fixed = |name: &str, role: &str| -> Result<Option<ArkType>, String> {
+    let fixed = |name: &str, role: &'static str| -> Result<Option<ArkType>, TapscriptError> {
         if is_input(name) {
-            return Err(format!(
-                "tapscript `{}`: `{name}` is a tapscript input, but a {role} is part of the \
-                 leaf script, which is fixed when the address is made; take it from a \
-                 constructor parameter",
-                ts.name
-            ));
+            return Err(TapscriptError::InputInLeafScript {
+                tapscript: ts.name.clone(),
+                name: name.to_string(),
+                role,
+            });
         }
         Ok(constructor_scope
             .get(name)
@@ -324,27 +637,31 @@ pub fn validate_arkd_rules(
             KeyExpr::Literal(key) => Pushed::Literal(key.clone()),
             KeyExpr::Ident(id) => {
                 if fixed(&id.key(), "key")? != Some(ArkType::Bytes) {
-                    return Err(format!("unknown key `{id}` in tapscript `{}`", ts.name));
+                    return Err(TapscriptError::UnknownKey {
+                        tapscript: ts.name.clone(),
+                        key: id.clone(),
+                    });
                 }
                 Pushed::Constructor(id.key())
             }
             KeyExpr::Tweak { base, func } => {
                 if base != OPERATOR && fixed(base, "key")? != Some(ArkType::Bytes) {
-                    return Err(format!(
-                        "tweak({base}, {func}) in tapscript `{}`: `{base}` is not `operator` or a \
-                         constructor pubkey",
-                        ts.name
-                    ));
+                    return Err(TapscriptError::InvalidTweakBase {
+                        tapscript: ts.name.clone(),
+                        base: base.clone(),
+                        func: func.clone(),
+                    });
                 }
                 if !contract
                     .functions
                     .iter()
                     .any(|f| !f.is_private && &f.name == func)
                 {
-                    return Err(format!(
-                        "tweak({base}, {func}) in tapscript `{}`: no function named `{func}`",
-                        ts.name
-                    ));
+                    return Err(TapscriptError::UnknownTweakFunction {
+                        tapscript: ts.name.clone(),
+                        base: base.clone(),
+                        func: func.clone(),
+                    });
                 }
                 if base == OPERATOR {
                     Pushed::TweakedOperator(func.clone())
@@ -363,10 +680,10 @@ pub fn validate_arkd_rules(
     }
     for (base, funcs) in &constructor_tweak_funcs {
         if funcs.len() > 1 {
-            return Err(format!(
-                "ambiguous constructor tweak targets for `{base}` in tapscript `{}`",
-                ts.name
-            ));
+            return Err(TapscriptError::AmbiguousTweakTargets {
+                tapscript: ts.name.clone(),
+                base: base.clone(),
+            });
         }
     }
     shared_tweak_func(&ts.name, &c.keys)?;
@@ -381,20 +698,18 @@ pub fn validate_arkd_rules(
     for item in &ts.items {
         if let TapItem::Sig { keys, sigs, .. } = item {
             if sigs.len() != keys.len() {
-                return Err(format!(
-                    "tapscript `{}`: checkSig/checkMultisig has {} key(s) but {} signature(s); \
-                     signatures must align 1:1 with keys",
-                    ts.name,
-                    keys.len(),
-                    sigs.len()
-                ));
+                return Err(TapscriptError::SignatureCountMismatch {
+                    tapscript: ts.name.clone(),
+                    keys: keys.len(),
+                    signatures: sigs.len(),
+                });
             }
             for s in sigs {
                 if !sig_input(&s.key()) {
-                    return Err(format!(
-                        "tapscript `{}`: signature operand `{s}` is not a declared `signature` input",
-                        ts.name
-                    ));
+                    return Err(TapscriptError::UndeclaredSignature {
+                        tapscript: ts.name.clone(),
+                        signature: s.clone(),
+                    });
                 }
             }
         }
@@ -413,16 +728,11 @@ pub fn validate_arkd_rules(
             } => {
                 let preimage = preimage.key();
                 if !is_input(&preimage) {
-                    let why = if constructor_scope.contains_key(&preimage) {
-                        "a constructor parameter, but the leaf consumes its preimage from the \
-                         witness; declare it as a tapscript input"
-                    } else {
-                        "not a tapscript input"
-                    };
-                    return Err(format!(
-                        "tapscript `{}`: hash preimage `{preimage}` is {why}",
-                        ts.name
-                    ));
+                    return Err(TapscriptError::PreimageNotInput {
+                        tapscript: ts.name.clone(),
+                        constructor: constructor_scope.contains_key(&preimage),
+                        preimage,
+                    });
                 }
                 let (t, hash_operand) = match hash {
                     TapOperand::Literal(bytes) => (
@@ -431,10 +741,10 @@ pub fn validate_arkd_rules(
                     ),
                     TapOperand::Name(path) => {
                         let Some(t) = fixed(&path.key(), "hash value")? else {
-                            return Err(format!(
-                                "tapscript `{}`: hash value `{hash}` is not a scalar constructor parameter",
-                                ts.name
-                            ));
+                            return Err(TapscriptError::HashValueNotParameter {
+                                tapscript: ts.name.clone(),
+                                hash: hash.to_string(),
+                            });
                         };
                         (t, Pushed::Constructor(path.key()))
                     }
@@ -443,13 +753,13 @@ pub fn validate_arkd_rules(
                 // never equals a digest.
                 let unsized_literal = matches!(hash, TapOperand::Literal(_)) && t == ArkType::Bytes;
                 if unsized_literal || !digest_accepts(hash_fn, &t) {
-                    return Err(format!(
-                        "tapscript `{}`: {} value `{hash}` has type '{}', expected {}",
-                        ts.name,
-                        hash_fn.name(),
-                        t.as_str(),
-                        hash_fn.digest_type()
-                    ));
+                    return Err(TapscriptError::HashValueType {
+                        tapscript: ts.name.clone(),
+                        hash_fn: hash_fn.name(),
+                        hash: hash.to_string(),
+                        found: t.as_str(),
+                        expected: hash_fn.digest_type(),
+                    });
                 }
                 condition = Some((hash_fn.clone(), c.preimage_width, hash_operand));
             }
@@ -470,39 +780,35 @@ pub fn validate_arkd_rules(
                 timelock = Some((timelock_operand(&value, *unit, kind), kind));
                 if kind == TimelockKind::Csv && value == OPERATOR_EXIT_DELAY {
                     if unit.is_some() {
-                        return Err(format!(
-                            "tapscript `{}`: operatorExitDelay has its own unit; write older(operatorExitDelay)",
-                            ts.name
-                        ));
+                        return Err(TapscriptError::ExitDelayWithUnit {
+                            tapscript: ts.name.clone(),
+                        });
                     }
                     continue;
                 }
                 let Some(n) = timelock_number(&value) else {
                     let declared = fixed(&value, "timelock")?;
                     if unit.is_some() {
-                        let hint = if declared.is_some() {
-                            format!("; pass `{value}` without a unit to push it raw")
-                        } else {
-                            String::new()
-                        };
-                        return Err(format!(
-                            "tapscript `{}`: {call}({operand}) takes an integer literal or constant{hint}",
-                            ts.name
-                        ));
+                        return Err(TapscriptError::TimelockNotInteger {
+                            tapscript: ts.name.clone(),
+                            call,
+                            operand,
+                            raw: declared.map(|_| value),
+                        });
                     }
                     match declared {
                         None => {
-                            return Err(format!(
-                                "tapscript `{}`: timelock `{value}` is not a literal or scalar constructor parameter",
-                                ts.name
-                            ))
+                            return Err(TapscriptError::TimelockNotOperand {
+                                tapscript: ts.name.clone(),
+                                value,
+                            })
                         }
                         Some(t) if t != ArkType::Int => {
-                            return Err(format!(
-                                "tapscript `{}`: timelock `{value}` has type '{}', expected 'int'",
-                                ts.name,
-                                t.as_str()
-                            ))
+                            return Err(TapscriptError::TimelockType {
+                                tapscript: ts.name.clone(),
+                                value,
+                                found: t.as_str(),
+                            })
                         }
                         Some(_) => continue,
                     }
@@ -535,10 +841,12 @@ pub fn validate_arkd_rules(
                     ),
                 };
                 if !valid {
-                    return Err(format!(
-                        "tapscript `{}`: {call}({operand}) must be {expected}",
-                        ts.name
-                    ));
+                    return Err(TapscriptError::TimelockOutOfRange {
+                        tapscript: ts.name.clone(),
+                        call,
+                        operand,
+                        expected,
+                    });
                 }
             }
             TapItem::Sig { .. } => {}
@@ -546,11 +854,9 @@ pub fn validate_arkd_rules(
     }
 
     if c.class.is_forfeit() && !c.keys.iter().any(KeyExpr::is_operator) {
-        return Err(format!(
-            "forfeit tapscript `{}` must include `operator` or `tweak(operator, fn)` (the operator \
-             co-signs every offchain spend)",
-            ts.name
-        ));
+        return Err(TapscriptError::ForfeitWithoutOperator {
+            tapscript: ts.name.clone(),
+        });
     }
 
     // LIMITATION: whether a CLTV may use seconds or blocks is left to arkd; check it here once
@@ -678,7 +984,7 @@ pub(crate) struct CheckedLeaf {
 pub(crate) fn check_tapscript(
     contract: &Contract,
     ts: &NamedTapscript,
-) -> Result<CheckedLeaf, String> {
+) -> Result<CheckedLeaf, TapscriptError> {
     let closure = assemble_closure(ts)?;
     validate_closure_shape(&closure, &ts.name)?;
     resolve_binding(contract, ts)?;
@@ -693,14 +999,14 @@ pub(crate) fn build_function_groups(
     contract: &Contract,
     leaves: &[CheckedLeaf],
     mut scripts: HashMap<String, ArkadeScript>,
-) -> Result<Vec<AbiFunctionGroup>, String> {
+) -> Result<Vec<AbiFunctionGroup>, CompileError> {
     // A tweak joins that function's group. A leaf that tweaks nothing keeps its own name.
     use std::collections::BTreeMap;
     let mut grouped: BTreeMap<String, Vec<AbiLeaf>> = BTreeMap::new();
 
     // A shorter list would silently drop leaves from the artifact.
     if leaves.len() != contract.tapscripts.len() {
-        return Err("internal compiler error: checked leaves do not match the tapscripts".into());
+        return Err(InternalError::LeavesMismatch.into());
     }
     for (ts, leaf) in contract.tapscripts.iter().zip(leaves) {
         let mut asm = emit_leaf_asm(&leaf.script);
@@ -742,7 +1048,7 @@ pub(crate) fn build_function_groups(
     }
 
     if !grouped.is_empty() {
-        return Err("unassigned tapscript groups (compiler bug)".to_string());
+        return Err(CompileErrorKind::UnassignedTapscriptGroups.into());
     }
 
     Ok(groups)
@@ -751,11 +1057,14 @@ pub(crate) fn build_function_groups(
 fn resolve_constructor_field_placeholders(
     asm: &mut [String],
     contract: &Contract,
-) -> Result<(), String> {
+) -> Result<(), CompileErrorKind> {
     let replacements = contract
         .parameters
         .iter()
-        .map(|parameter| models::flatten_parameter(parameter, &contract.structs))
+        .map(|parameter| {
+            let access = Path::new(&parameter.name);
+            models::flatten_value(&access, &parameter.param_type, &contract.structs)
+        })
         .collect::<Result<Vec<_>, _>>()?
         .into_iter()
         .flatten()
@@ -893,7 +1202,7 @@ mod tests {
         ]))
         .unwrap_err();
         assert!(
-            err.contains("condition") && err.contains("CLTV"),
+            matches!(err, TapscriptError::ConditionWithCltv { .. }),
             "got: {err}"
         );
     }
@@ -905,7 +1214,10 @@ mod tests {
             unit: None,
         }]))
         .unwrap_err();
-        assert!(err.contains("multisig"), "got: {err}");
+        assert!(
+            matches!(err, TapscriptError::MissingSignatureCheck { .. }),
+            "got: {err}"
+        );
     }
 
     #[test]
@@ -922,7 +1234,10 @@ mod tests {
             },
         ]))
         .unwrap_err();
-        assert!(err.contains("order"), "got: {err}");
+        assert!(
+            matches!(err, TapscriptError::ConditionAfterMultisig { .. }),
+            "got: {err}"
+        );
     }
 
     #[test]
@@ -1034,7 +1349,10 @@ mod tests {
             vec![ident("operator"), ident("owner")],
         ] {
             let err = resolve_binding(&c, &named("claim", keys)).unwrap_err();
-            assert!(err.contains("must tweak a key to `claim`"), "got: {err}");
+            assert!(
+                matches!(err, TapscriptError::MissingFunctionTweak { .. }),
+                "got: {err}"
+            );
         }
     }
 
@@ -1044,7 +1362,7 @@ mod tests {
         let err =
             resolve_binding(&c, &named("claim", vec![tweak("operator", "refund")])).unwrap_err();
         assert!(
-            err.contains("may tweak keys only to `claim`, not `refund`"),
+            matches!(&err, TapscriptError::TweakToOtherFunction { func, .. } if func == "refund"),
             "got: {err}"
         );
     }
@@ -1088,7 +1406,10 @@ mod tests {
         let leaf = named("direct", vec![tweak("operator", "nope")]);
         let c = contract_with(&["claim"], vec![leaf.clone()]);
         let err = validate_arkd_rules(&c, &leaf, &closure_of(&leaf)).unwrap_err();
-        assert!(err.contains("no function named `nope`"), "got: {err}");
+        assert!(
+            matches!(&err, TapscriptError::UnknownTweakFunction { func, .. } if func == "nope"),
+            "got: {err}"
+        );
     }
 
     #[test]
@@ -1100,7 +1421,7 @@ mod tests {
         let c = contract_with(&["claim", "refund"], vec![leaf.clone()]);
         let err = validate_arkd_rules(&c, &leaf, &closure_of(&leaf)).unwrap_err();
         assert!(
-            err.contains("keys may be tweaked to only one Arkade Script function"),
+            matches!(err, TapscriptError::TweakTargetsDiffer { .. }),
             "got: {err}"
         );
     }
@@ -1152,7 +1473,7 @@ mod tests {
         resolve_binding(&c, &leaf).unwrap();
         let err = validate_arkd_rules(&c, &leaf, &cl).unwrap_err();
         assert!(
-            err.contains("must include `operator` or `tweak(operator, fn)`"),
+            matches!(err, TapscriptError::ForfeitWithoutOperator { .. }),
             "got: {err}"
         );
     }
@@ -1203,7 +1524,10 @@ mod tests {
         let cl = closure_of(&leaf);
         resolve_binding(&c, &leaf).unwrap();
         let err = validate_arkd_rules(&c, &leaf, &cl).unwrap_err();
-        assert!(err.contains("unknown key"), "got: {err}");
+        assert!(
+            matches!(err, TapscriptError::UnknownKey { .. }),
+            "got: {err}"
+        );
     }
 
     #[test]
@@ -1317,7 +1641,9 @@ mod tests {
             };
             let c = contract_with(&[], vec![leaf.clone()]);
             match (validate_arkd_rules(&c, &leaf, &closure_of(&leaf)), expected) {
-                (Err(err), Some(expected)) => assert!(err.contains(expected), "{value}: {err}"),
+                (Err(err), Some(expected)) => {
+                    assert!(err.to_string().contains(expected), "{value}: {err}")
+                }
                 (result, expected) => {
                     assert!(result.is_ok() && expected.is_none(), "{value}: {result:?}")
                 }
@@ -1364,7 +1690,10 @@ mod tests {
         let cl = closure_of(&leaf);
         resolve_binding(&c, &leaf).unwrap();
         let err = validate_arkd_rules(&c, &leaf, &cl).unwrap_err();
-        assert!(err.contains("align 1:1"), "got: {err}");
+        assert!(
+            matches!(err, TapscriptError::SignatureCountMismatch { .. }),
+            "got: {err}"
+        );
     }
 
     #[test]
@@ -1385,7 +1714,7 @@ mod tests {
         resolve_binding(&c, &leaf).unwrap();
         let err = validate_arkd_rules(&c, &leaf, &cl).unwrap_err();
         assert!(
-            err.contains("not a declared `signature` input"),
+            matches!(err, TapscriptError::UndeclaredSignature { .. }),
             "got: {err}"
         );
     }
@@ -1410,7 +1739,10 @@ mod tests {
         let cl = closure_of(&leaf);
         resolve_binding(&c, &leaf).unwrap();
         let err = validate_arkd_rules(&c, &leaf, &cl).unwrap_err();
-        assert!(err.contains("timelock `typoDelay`"), "got: {err}");
+        assert!(
+            matches!(&err, TapscriptError::TimelockNotOperand { value, .. } if value == "typoDelay"),
+            "got: {err}"
+        );
     }
 
     #[test]
@@ -1448,7 +1780,10 @@ mod tests {
         let cl = closure_of(&leaf);
         resolve_binding(&c, &leaf).unwrap();
         let err = validate_arkd_rules(&c, &leaf, &cl).unwrap_err();
-        assert!(err.contains("hash value `typoHash`"), "got: {err}");
+        assert!(
+            matches!(&err, TapscriptError::HashValueNotParameter { hash, .. } if hash == "typoHash"),
+            "got: {err}"
+        );
     }
 
     use crate::opcodes::{

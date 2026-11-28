@@ -2,6 +2,8 @@
 //! diagnostic `code` and printed by `arkadec --explain`, as lints are.
 
 use std::str::FromStr;
+use std::{error, fmt};
+
 macro_rules! errors {
     ($($variant:ident: $id:literal, $summary:literal;)*) => {
         #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -41,15 +43,28 @@ errors! {
     UnknownFunction: "unknown-function", "a call to no builtin and no function of the contract";
 }
 
-impl FromStr for ErrorCode {
-    type Err = String;
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnknownErrorCode {
+    id: String,
+}
 
-    fn from_str(id: &str) -> Result<Self, String> {
+impl fmt::Display for UnknownErrorCode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "unknown error code '{}'", self.id)
+    }
+}
+
+impl error::Error for UnknownErrorCode {}
+
+impl FromStr for ErrorCode {
+    type Err = UnknownErrorCode;
+
+    fn from_str(id: &str) -> Result<Self, UnknownErrorCode> {
         ErrorCode::ALL
             .iter()
             .copied()
             .find(|code| code.id() == id)
-            .ok_or_else(|| format!("unknown error code '{id}'"))
+            .ok_or_else(|| UnknownErrorCode { id: id.to_string() })
     }
 }
 

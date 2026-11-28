@@ -4,12 +4,12 @@
 use std::collections::HashSet;
 use std::slice;
 
+use super::error::InternalError;
 use super::ir::Op;
 use super::lowering::{self, Lowered};
 use super::{BindingKind, Generator, Replacement, Result, StackItem};
 use crate::builtins::Builtin;
 use crate::builtins::Lowering::Check;
-use crate::diagnostics::CompileError;
 use crate::models::{
     self, AssignmentTarget, ExprKind, Expression, LocatedStatement, Path, Statement, TypeName,
 };
@@ -62,7 +62,7 @@ impl Generator {
             let ty = self
                 .scope
                 .get(name)
-                .ok_or_else(|| CompileError::internal("missing declaration type"))?;
+                .ok_or(InternalError::MissingDeclarationType)?;
             for leaf in self.value_leaves(&Path::new(name), &TypeName::from(ty))? {
                 initialized_leaves.insert(leaf.access);
             }
@@ -73,7 +73,7 @@ impl Generator {
             matches!(item, StackItem::Binding { name, .. } if initialized_leaves.contains(name))
         }).cloned());
         if !left.starts_with(&baseline) || !right.starts_with(&baseline) {
-            return Err(CompileError::internal("branch changed outer stack layout"));
+            return Err(InternalError::BranchChangedLayout.into());
         }
         self.stack = left;
         self.asm.append(left_asm);
@@ -175,9 +175,7 @@ fn emit_lowered(item: &Lowered, generator: &mut Generator) -> Result<bool> {
                 };
                 generator.exit_scope()?;
                 if !generator.stack.starts_with(&baseline) {
-                    return Err(CompileError::internal(format!(
-                        "loop iteration {k} changed outer stack layout"
-                    )));
+                    return Err(InternalError::LoopIterationChangedLayout { iteration: k }.into());
                 }
             }
             Ok(continues)
@@ -213,9 +211,7 @@ fn emit_statement(stmt: &LocatedStatement, generator: &mut Generator) -> Result<
         | Statement::ForIn { .. }
         | Statement::ForCount { .. }
         | Statement::ForRange { .. } => {
-            return Err(CompileError::internal(
-                "control flow reached emission unlowered",
-            ));
+            return Err(InternalError::UnloweredControlFlow.into());
         }
         Statement::Declaration {
             name,

@@ -3,9 +3,10 @@
 
 use std::cmp::Reverse;
 
-use super::{Finding, Level, Lint};
+use super::{Finding, FindingKind, Level, Lint};
 use crate::diagnostics::Span;
 use crate::models::{Attribute, AttributeArg, Contract};
+use crate::validator::ValidationError;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Kind {
@@ -30,12 +31,11 @@ impl Kind {
 
 /// Why `attribute` is malformed: an unknown attribute, no lint, or text other than one closing
 /// reason, which `@allow` and `@expect` require.
-pub(crate) fn error(attribute: &Attribute) -> Option<(String, Span)> {
-    let name = &attribute.name;
-    let Some(kind) = Kind::named(name) else {
-        let message =
-            format!("unknown attribute '@{name}'; expected @allow, @warn, @deny or @expect");
-        return Some((message, attribute.name_span));
+pub(crate) fn error(attribute: &Attribute) -> Option<(ValidationError, Span)> {
+    let name = attribute.name.clone();
+    let Some(kind) = Kind::named(&name) else {
+        let error = ValidationError::UnknownAttribute { name };
+        return Some((error, attribute.name_span));
     };
     let (texts, lints): (Vec<_>, Vec<_>) = attribute
         .args
@@ -46,16 +46,17 @@ pub(crate) fn error(attribute: &Attribute) -> Option<(String, Span)> {
         _ => None,
     };
     if lints.is_empty() {
-        return Some((format!("@{name} needs a lint to name"), attribute.span));
+        let error = ValidationError::AttributeWithoutLint { name };
+        return Some((error, attribute.span));
     }
     if texts.len() > usize::from(reason.is_some()) {
-        let message = format!("@{name} takes lint names, then one reason");
-        return Some((message, attribute.span));
+        let error = ValidationError::AttributeArguments { name };
+        return Some((error, attribute.span));
     }
     let silences = matches!(kind, Kind::Allow | Kind::Expect);
     if silences && reason.is_none_or(|reason| reason.trim().is_empty()) {
-        let message = format!("@{name} needs a reason: @{name}(lint, \"why\")");
-        return Some((message, attribute.span));
+        let error = ValidationError::AttributeWithoutReason { name };
+        return Some((error, attribute.span));
     }
     None
 }
@@ -96,9 +97,8 @@ pub(super) fn levels(contract: &Contract, findings: Vec<Finding>) -> Vec<(Findin
                         fulfilled: false,
                     }),
                     Err(_) => unknown.push(Finding::new(
-                        Lint::UnknownLint,
                         *name_span,
-                        format!("unknown lint '{name}'"),
+                        FindingKind::UnknownLint { name: name.clone() },
                     )),
                 }
             }
@@ -113,8 +113,8 @@ pub(super) fn levels(contract: &Contract, findings: Vec<Finding>) -> Vec<(Findin
         .iter()
         .filter(|entry| entry.kind == Kind::Expect && !entry.fulfilled)
         .map(|entry| {
-            let message = format!("'{}' is expected here but does not fire", entry.lint.id());
-            Finding::new(Lint::UnfulfilledExpectation, entry.name_span, message)
+            let kind = FindingKind::UnfulfilledExpectation { lint: entry.lint };
+            Finding::new(entry.name_span, kind)
         })
         .collect();
     for finding in unfulfilled {
@@ -132,7 +132,7 @@ fn level(entries: &mut [Entry], finding: &Finding) -> Option<Level> {
         .iter()
         .enumerate()
         .filter(|(_, entry)| {
-            entry.lint == finding.lint
+            entry.lint == finding.kind.lint()
                 && entry.scope.start <= finding.span.start
                 && finding.span.end <= entry.scope.end
         })

@@ -332,18 +332,40 @@ impl Statement {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum LoopRangeError {
+    NotConstant,
+    Reversed { start: usize, end: usize },
+}
+
+impl fmt::Display for LoopRangeError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            LoopRangeError::NotConstant => {
+                f.write_str("loop range bounds must be non-negative integer compile-time constants")
+            }
+            LoopRangeError::Reversed { start, end } => {
+                write!(f, "loop range start {start} exceeds its end {end}")
+            }
+        }
+    }
+}
+
 /// The indexes `for (i) in start..end` visits; both bounds must be non-negative integer
 /// literals with `start <= end`.
-pub(crate) fn loop_range(start: &Expression, end: &Expression) -> Result<Range<usize>, String> {
+pub(crate) fn loop_range(
+    start: &Expression,
+    end: &Expression,
+) -> Result<Range<usize>, LoopRangeError> {
     let bound = |bound: &Expression| match &bound.kind {
         ExprKind::Literal(value) => value.parse::<usize>().ok(),
         _ => None,
     };
     let (Some(start), Some(end)) = (bound(start), bound(end)) else {
-        return Err("loop range bounds must be non-negative integer compile-time constants".into());
+        return Err(LoopRangeError::NotConstant);
     };
     if start > end {
-        return Err(format!("loop range start {start} exceeds its end {end}"));
+        return Err(LoopRangeError::Reversed { start, end });
     }
     Ok(start..end)
 }

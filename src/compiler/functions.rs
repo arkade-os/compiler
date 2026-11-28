@@ -4,6 +4,7 @@
 use std::collections::HashMap;
 use std::{mem, slice};
 
+use super::error::CompileErrorKind;
 use super::lowering::{self, Lowered};
 use super::{loops, statements, BindingKind, Generator, Result, StackItem};
 use crate::builtins::Lowering;
@@ -137,12 +138,12 @@ impl Generator {
     pub(super) fn bind_value(&mut self, name: &str, ty: &TypeName) -> Result<()> {
         let leaves = self.value_leaves(&Path::new(name), ty)?;
         if self.stack.len() < leaves.len() {
-            return Err("missing function result".into());
+            return Err(CompileErrorKind::MissingFunctionResult.into());
         }
         let start = self.stack.len() - leaves.len();
         for (item, leaf) in self.stack[start..].iter_mut().zip(leaves.iter().rev()) {
             if *item != StackItem::Temporary {
-                return Err("function result is not a temporary".into());
+                return Err(CompileErrorKind::FunctionResultNotTemporary.into());
             }
             *item = StackItem::Binding {
                 name: leaf.access.clone(),
@@ -179,10 +180,10 @@ impl Generator {
         }
         if let Some((element, length)) = ty.array_parts() {
             let ExprKind::ArrayLiteral(elements) = &expression.kind else {
-                return Err(format!("expected array value of type '{ty}'").into());
+                return Err(CompileErrorKind::ExpectedArrayValue { ty: ty.clone() }.into());
             };
             if elements.len() != length {
-                return Err(format!("expected {length} array elements").into());
+                return Err(CompileErrorKind::ArrayElementCount { length }.into());
             }
             for element_value in elements.iter().rev() {
                 self.emit_typed_value(element_value, element)?;
@@ -204,7 +205,7 @@ impl Generator {
             return Ok(());
         }
         let ExprKind::StructLiteral { fields: values, .. } = &expression.kind else {
-            return Err(format!("expected struct value of type '{ty}'").into());
+            return Err(CompileErrorKind::ExpectedStructValue { ty: ty.clone() }.into());
         };
         let fields = if let Some(fields) = ty.name().and_then(models::builtin_struct_fields) {
             fields
@@ -219,7 +220,7 @@ impl Generator {
             self.structs
                 .iter()
                 .find(|s| ty.name() == Some(&s.name))
-                .ok_or_else(|| format!("unknown struct '{ty}'"))?
+                .ok_or_else(|| CompileErrorKind::UnknownStruct { ty: ty.clone() })?
                 .fields
                 .clone()
         };
@@ -227,7 +228,9 @@ impl Generator {
             let value = values
                 .iter()
                 .find(|(name, _)| *name == field.name)
-                .ok_or_else(|| format!("missing field '{}'", field.name))?;
+                .ok_or_else(|| CompileErrorKind::MissingField {
+                    name: field.name.clone(),
+                })?;
             self.emit_typed_value(&value.1, &field.param_type)?;
         }
         Ok(())
@@ -235,16 +238,19 @@ impl Generator {
 
     pub(super) fn emit_call(&mut self, expression: &Expression) -> Result<()> {
         let ExprKind::Call { name, args, .. } = &expression.kind else {
-            return Err("expected private function call".into());
+            return Err(CompileErrorKind::Expected {
+                what: "private function call",
+            }
+            .into());
         };
         let mut function = self
             .functions
             .iter()
             .find(|f| f.name == *name && f.is_private)
             .cloned()
-            .ok_or_else(|| format!("unknown function '{name}'"))?;
+            .ok_or_else(|| CompileErrorKind::UnknownFunction { name: name.clone() })?;
         if args.len() != function.parameters.len() {
-            return Err(format!("wrong argument count for '{name}'").into());
+            return Err(CompileErrorKind::WrongArgumentCount { name: name.clone() }.into());
         }
         let caller = self.stack.clone();
         let caller_scope = self.scope.clone();
@@ -449,7 +455,7 @@ impl Generator {
         let ty = self
             .return_type
             .clone()
-            .ok_or("return outside private function")?;
+            .ok_or(CompileErrorKind::ReturnOutsideFunction)?;
         match (ty.as_ref(), value) {
             (Some(ty), Some(value)) => {
                 self.emit_typed_value(value, ty)?;
@@ -460,7 +466,7 @@ impl Generator {
                 }
             }
             (None, None) => {}
-            _ => return Err("return value does not match function signature".into()),
+            _ => return Err(CompileErrorKind::ReturnMismatch.into()),
         }
         if self.direct_return {
             Ok(())

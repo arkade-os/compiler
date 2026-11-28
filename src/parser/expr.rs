@@ -1,6 +1,7 @@
 //! Expressions: folds the grammar's precedence levels into left-associative `BinaryOp`s and
 //! resolves each operand's suffix chain into a binding path, access, call or introspection.
 
+use super::error::{ParseError, Result};
 use super::{casts, introspection, Rule};
 use crate::builtins;
 use crate::diagnostics::Span;
@@ -24,15 +25,24 @@ pub(crate) fn is_operator_level(rule: Rule) -> bool {
     )
 }
 
-pub(crate) fn parse_general_expression(pair: Pair<Rule>) -> Result<Expression, String> {
+pub(crate) fn parse_general_expression(pair: Pair<Rule>) -> Result<Expression> {
     match pair.as_rule() {
         rule if is_operator_level(rule) => {
             let mut inner = pair.into_inner();
-            let mut result = parse_general_expression(inner.next().ok_or("Empty expression")?)?;
+            let mut result = parse_general_expression(
+                inner
+                    .next()
+                    .ok_or(ParseError::Empty { what: "expression" })?,
+            )?;
             while let Some(op) = inner.next() {
-                let right = parse_general_expression(inner.next().ok_or("Missing right operand")?)?;
-                let op = BinaryOperator::from_symbol(op.as_str())
-                    .ok_or_else(|| format!("unknown operator '{}'", op.as_str()))?;
+                let right = parse_general_expression(inner.next().ok_or(ParseError::Missing {
+                    part: "right operand",
+                })?)?;
+                let op = BinaryOperator::from_symbol(op.as_str()).ok_or_else(|| {
+                    ParseError::UnknownOperator {
+                        operator: op.as_str().to_string(),
+                    }
+                })?;
                 let span = Span {
                     start: result.span.start,
                     end: right.span.end,
@@ -52,7 +62,7 @@ pub(crate) fn parse_general_expression(pair: Pair<Rule>) -> Result<Expression, S
     }
 }
 
-fn reject_reserved_call(name: &str, args: usize) -> Result<(), String> {
+fn reject_reserved_call(name: &str, args: usize) -> Result<()> {
     if let Some(signature) = reserved_function_signature(name) {
         if builtins::tapscript_params(name).is_some_and(|params| params.len() == args) {
             let hint = match name {
@@ -60,11 +70,15 @@ fn reject_reserved_call(name: &str, args: usize) -> Result<(), String> {
                 "tweak" => ", as a key inside checkSig or checkMultisig",
                 _ => ", inside older(...) or after(...)",
             };
-            return Err(format!(
-                "`{name}(...)` is only available in tapscript functions{hint}"
-            ));
+            return Err(ParseError::TapscriptOnlyCall {
+                name: name.to_string(),
+                hint,
+            });
         }
-        return Err(format!("wrong arguments to `{name}`: expected {signature}"));
+        return Err(ParseError::WrongReservedArguments {
+            name: name.to_string(),
+            signature,
+        });
     }
 
     Ok(())
@@ -80,11 +94,13 @@ pub(crate) fn reserved_function_signature(name: &str) -> Option<String> {
     (name == "this.tunnel").then(|| "this.tunnel(outputIndex, policy?, exceptions?)".to_string())
 }
 
-pub(crate) fn parse_string_literal(text: &str) -> Result<String, String> {
-    serde_json::from_str(text).map_err(|error| format!("Invalid string literal: {error}"))
+pub(crate) fn parse_string_literal(text: &str) -> Result<String> {
+    serde_json::from_str(text).map_err(|error| ParseError::InvalidStringLiteral {
+        message: error.to_string(),
+    })
 }
 
-pub(crate) fn parse_named_operand(pair: Pair<Rule>) -> Result<String, String> {
+pub(crate) fn parse_named_operand(pair: Pair<Rule>) -> Result<String> {
     let text = pair.as_str();
     if text.starts_with('"') {
         use std::fmt::Write;
@@ -98,24 +114,30 @@ pub(crate) fn parse_named_operand(pair: Pair<Rule>) -> Result<String, String> {
     }
 }
 
-pub(crate) fn parse_primary_expr(pair: Pair<Rule>) -> Result<Expression, String> {
+pub(crate) fn parse_primary_expr(pair: Pair<Rule>) -> Result<Expression> {
     let span: Span = pair.as_span().into();
     match pair.as_rule() {
         Rule::primary_expr => {
             let text = pair.as_str();
             let mut inner = pair.into_inner();
-            let head = inner.next().ok_or("Empty primary expression")?;
+            let head = inner.next().ok_or(ParseError::Empty {
+                what: "primary expression",
+            })?;
             parse_chain(head, suffixes(inner)?, text)
         }
         Rule::parenthesized_expr => {
-            let inner = pair.into_inner().next().ok_or("Empty grouped expression")?;
+            let inner = pair.into_inner().next().ok_or(ParseError::Empty {
+                what: "grouped expression",
+            })?;
             let mut value = parse_primary_expr(inner)?;
             value.span = span;
             Ok(value)
         }
         Rule::unary_expr => {
             let mut inner = pair.into_inner();
-            let operand = inner.next_back().ok_or("Empty unary expression")?;
+            let operand = inner.next_back().ok_or(ParseError::Empty {
+                what: "unary expression",
+            })?;
             let mut value = parse_primary_expr(operand)?;
             for operator in inner.rev() {
                 use crate::operators::UnaryOperator;
@@ -123,7 +145,7 @@ pub(crate) fn parse_primary_expr(pair: Pair<Rule>) -> Result<Expression, String>
                     Rule::sub_op => UnaryOperator::Neg,
                     Rule::not_op => UnaryOperator::Not,
                     Rule::invert_op => UnaryOperator::Invert,
-                    _ => return Err("Unexpected unary operator".to_string()),
+                    _ => return Err(ParseError::UnexpectedUnaryOperator),
                 };
                 let span = Span {
                     start: operator.as_span().start(),
@@ -168,10 +190,14 @@ pub(crate) fn parse_primary_expr(pair: Pair<Rule>) -> Result<Expression, String>
             let mut inner = pair.into_inner();
             let name = inner
                 .next()
-                .ok_or("Missing struct type")?
+                .ok_or(ParseError::Missing {
+                    part: "struct type",
+                })?
                 .as_str()
                 .to_string();
-            let mut literal = parse_primary_expr(inner.next().ok_or("Missing struct literal")?)?;
+            let mut literal = parse_primary_expr(inner.next().ok_or(ParseError::Missing {
+                part: "struct literal",
+            })?)?;
             if let ExprKind::StructLiteral { name: ty, .. } = &mut literal.kind {
                 *ty = Some(name);
             }
@@ -187,21 +213,22 @@ pub(crate) fn parse_primary_expr(pair: Pair<Rule>) -> Result<Expression, String>
                         let mut field = field.into_inner();
                         let name = field
                             .next()
-                            .ok_or("Missing struct literal field name")?
+                            .ok_or(ParseError::Missing {
+                                part: "struct literal field name",
+                            })?
                             .as_str()
                             .to_string();
-                        let value = parse_general_expression(
-                            field.next().ok_or("Missing struct literal field value")?,
-                        )?;
+                        let value =
+                            parse_general_expression(field.next().ok_or(ParseError::Missing {
+                                part: "struct literal field value",
+                            })?)?;
                         Ok((name, value))
                     })
-                    .collect::<Result<Vec<_>, String>>()?,
+                    .collect::<Result<Vec<_>>>()?,
             },
             span,
         )),
-        Rule::empty_list => {
-            Err("`[]` is an empty list, which only `this.tunnel` takes, for its exceptions".into())
-        }
+        Rule::empty_list => Err(ParseError::EmptyListOutsideTunnel),
         Rule::constructor => parse_constructor_to_expression(pair),
         _ => {
             // Any other rule reads as the path its text spells.
@@ -213,9 +240,11 @@ pub(crate) fn parse_primary_expr(pair: Pair<Rule>) -> Result<Expression, String>
     }
 }
 
-pub(crate) fn parse_property_access(pair: Pair<Rule>) -> Result<Expression, String> {
+pub(crate) fn parse_property_access(pair: Pair<Rule>) -> Result<Expression> {
     let mut inner = pair.into_inner();
-    let name = inner.next().ok_or("Missing binding name")?;
+    let name = inner.next().ok_or(ParseError::Missing {
+        part: "binding name",
+    })?;
     let value = Expression::new(
         ExprKind::Name(Path::new(name.as_str())),
         name.as_span().into(),
@@ -230,13 +259,13 @@ pub(crate) enum Suffix<'a> {
     Index(Pair<'a, Rule>, usize),
 }
 
-fn suffixes<'a>(pairs: impl Iterator<Item = Pair<'a, Rule>>) -> Result<Vec<Suffix<'a>>, String> {
+fn suffixes<'a>(pairs: impl Iterator<Item = Pair<'a, Rule>>) -> Result<Vec<Suffix<'a>>> {
     pairs
         .map(|pair| {
             // A pair's span can run past its last term over trailing whitespace.
             let end = pair.as_span().end();
             let mut parts = pair.into_inner();
-            let part = parts.next().ok_or("Missing suffix")?;
+            let part = parts.next().ok_or(ParseError::Missing { part: "suffix" })?;
             Ok(match (part.as_rule(), parts.next()) {
                 (Rule::identifier, None) => Suffix::Field(part.as_str(), part.as_span().end()),
                 (Rule::identifier, Some(args)) => {
@@ -251,13 +280,18 @@ fn suffixes<'a>(pairs: impl Iterator<Item = Pair<'a, Rule>>) -> Result<Vec<Suffi
 
 /// Resolve an operand and its suffixes: a member of `tx` or `this`, a group's
 /// `.controlIs(id)`, a library call, or fields and indexes of any value.
-fn parse_chain(head: Pair<Rule>, suffixes: Vec<Suffix>, text: &str) -> Result<Expression, String> {
+fn parse_chain(head: Pair<Rule>, suffixes: Vec<Suffix>, text: &str) -> Result<Expression> {
     let span: Span = head.as_span().into();
     let root = match head.as_rule() {
         Rule::identifier => head.as_str(),
         Rule::function_call => {
             let mut inner = head.into_inner();
-            let name = inner.next().ok_or("Missing function name")?.as_str();
+            let name = inner
+                .next()
+                .ok_or(ParseError::Missing {
+                    part: "function name",
+                })?
+                .as_str();
             let args: Vec<_> = inner.collect();
             let value = match args.as_slice() {
                 [data] if casts::is_cast(name) => casts::parse_cast(name, data.clone(), span)?,
@@ -298,7 +332,7 @@ pub(crate) fn apply_suffixes(
     mut value: Expression,
     mut plain: bool,
     suffixes: &[Suffix],
-) -> Result<Expression, String> {
+) -> Result<Expression> {
     let start = value.span.start;
     for suffix in suffixes {
         let (kind, end) = match (suffix, value.kind) {
@@ -322,10 +356,9 @@ pub(crate) fn apply_suffixes(
                 (parse_call(name, args.clone(), span)?.kind, end)
             }
             (Suffix::Call(name, ..), _) => {
-                return Err(format!(
-                    "cannot call `.{name}(...)` here; only library functions, `tx` and `this` \
-                     members and `controlIs` on a group binding take arguments"
-                ));
+                return Err(ParseError::UncallableSuffix {
+                    name: name.to_string(),
+                });
             }
             (Suffix::Field(field, end), kind) => {
                 let value = Box::new(Expression { kind, ..value });
@@ -345,11 +378,7 @@ pub(crate) fn apply_suffixes(
     Ok(value)
 }
 
-pub(crate) fn parse_call(
-    name: String,
-    args: Vec<Pair<Rule>>,
-    span: Span,
-) -> Result<Expression, String> {
+pub(crate) fn parse_call(name: String, args: Vec<Pair<Rule>>, span: Span) -> Result<Expression> {
     let builtin = builtins::find(&name);
     if builtin.is_none() {
         reject_reserved_call(&name, args.len())?;
@@ -370,24 +399,25 @@ pub(crate) fn parse_call(
         ));
     };
     if !builtin.accepts_arity(args.len()) {
-        return Err(format!(
-            "wrong number of arguments to `{}`: expected {}, got {}",
-            builtin.name,
-            builtin.signature(),
-            args.len()
-        ));
+        return Err(ParseError::WrongArgumentCount {
+            name: builtin.name,
+            signature: builtin.signature(),
+            got: args.len(),
+        });
     }
     Ok(Expression::new(ExprKind::Builtin { builtin, args }, span))
 }
 
 /// `new Name(args)`, which the compiler lowers to a `<CONTRACT:Name(...)>` placeholder.
-pub(crate) fn parse_constructor_to_expression(pair: Pair<Rule>) -> Result<Expression, String> {
+pub(crate) fn parse_constructor_to_expression(pair: Pair<Rule>) -> Result<Expression> {
     let span: Span = pair.as_span().into();
     let mut inner = pair.into_inner();
 
     let contract_name = inner
         .next()
-        .ok_or("Parse error: Missing contract name in constructor")?
+        .ok_or(ParseError::MissingInStatement {
+            part: "contract name in constructor",
+        })?
         .as_str()
         .to_string();
 
@@ -406,6 +436,6 @@ pub(crate) fn parse_constructor_to_expression(pair: Pair<Rule>) -> Result<Expres
     ))
 }
 
-pub(crate) fn parse_constructor_args(pair: Pair<Rule>) -> Result<Vec<Expression>, String> {
+pub(crate) fn parse_constructor_args(pair: Pair<Rule>) -> Result<Vec<Expression>> {
     pair.into_inner().map(parse_general_expression).collect()
 }

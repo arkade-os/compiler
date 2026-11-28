@@ -147,7 +147,7 @@ fn analyzed(entry: &str, files: &str) -> Result<(String, Rc<crate::Analysis>), S
         static ANALYZED: RefCell<Option<(String, String, Rc<crate::Analysis>)>> =
             Default::default();
     }
-    let entry = imports::relative_path(entry)?;
+    let entry = imports::relative_path(entry).map_err(|error| error.to_string())?;
     let analysis = ANALYZED.with_borrow_mut(|analyzed| match analyzed {
         Some((e, f, analysis)) if *e == entry && f == files => Ok(analysis.clone()),
         _ => {

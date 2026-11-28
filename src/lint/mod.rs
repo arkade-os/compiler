@@ -5,33 +5,32 @@
 
 use std::collections::BTreeMap;
 use std::str::FromStr;
+use std::{error, fmt};
 
 use crate::diagnostics::{Diagnostic, Span};
 use crate::models::{Contract, TapItem, TapOperand};
 
 pub(crate) mod attributes;
 mod expressions;
+mod finding;
 mod functions;
 mod inspections;
 mod signatures;
 mod unused;
 mod walk;
 
+use finding::FindingKind;
+
 /// One lint's finding, at the node that reports it.
 #[derive(Debug, Clone)]
 pub(crate) struct Finding {
-    lint: Lint,
     span: Span,
-    message: String,
+    kind: FindingKind,
 }
 
 impl Finding {
-    fn new(lint: Lint, span: Span, message: impl Into<String>) -> Self {
-        Self {
-            lint,
-            span,
-            message: message.into(),
-        }
+    fn new(span: Span, kind: FindingKind) -> Self {
+        Self { span, kind }
     }
 }
 
@@ -51,7 +50,8 @@ impl Lints {
         self.0
             .iter()
             .filter_map(|(finding, attribute)| {
-                let mut level = attribute.unwrap_or_else(|| levels.level(finding.lint));
+                let lint = finding.kind.lint();
+                let mut level = attribute.unwrap_or_else(|| levels.level(lint));
                 if level == Level::Warn {
                     level = levels.warnings.unwrap_or(level);
                 }
@@ -60,10 +60,10 @@ impl Lints {
                 }
                 let diagnostic = match level {
                     Level::Allow => return None,
-                    Level::Warn => Diagnostic::warning(file, finding.message.clone()),
-                    Level::Deny => Diagnostic::error(file, finding.message.clone()),
+                    Level::Warn => Diagnostic::warning(file, finding.kind.to_string()),
+                    Level::Deny => Diagnostic::error(file, finding.kind.to_string()),
                 };
-                Some(diagnostic.with_lint(finding.lint).with_span(finding.span))
+                Some(diagnostic.with_lint(lint).with_span(finding.span))
             })
             .collect()
     }
@@ -85,28 +85,24 @@ pub(crate) fn check(contract: &Contract) -> Lints {
 fn timelock_units(contract: &Contract, findings: &mut Vec<Finding>) {
     for tapscript in &contract.tapscripts {
         for item in &tapscript.items {
-            let (call, value, raw) = match item {
+            let kind = match item {
                 TapItem::Older {
                     value: TapOperand::Literal(value),
                     unit: None,
-                } => ("older", value, "BIP68 sequence"),
+                } if value.parse::<i64>().is_ok() => FindingKind::RawSequence {
+                    tapscript: tapscript.name.clone(),
+                    value: value.clone(),
+                },
                 TapItem::After {
                     value: TapOperand::Literal(value),
                     unit: None,
-                } => ("after", value, "nLockTime"),
+                } if value.parse::<i64>().is_ok() => FindingKind::RawLockTime {
+                    tapscript: tapscript.name.clone(),
+                    value: value.clone(),
+                },
                 _ => continue,
             };
-            if value.parse::<i64>().is_ok() {
-                let message = format!(
-                    "tapscript '{}': {call}({value}) is a raw {raw}; write blocks(n) or seconds(n) to state its unit",
-                    tapscript.name
-                );
-                findings.push(Finding::new(
-                    Lint::TimelockWithoutUnit,
-                    tapscript.span,
-                    message,
-                ));
-            }
+            findings.push(Finding::new(tapscript.span, kind));
         }
     }
 }
@@ -200,15 +196,34 @@ impl Lint {
     }
 }
 
-impl FromStr for Lint {
-    type Err = String;
+#[derive(Clone, PartialEq, Eq)]
+pub struct UnknownLint {
+    id: String,
+}
 
-    fn from_str(id: &str) -> Result<Self, String> {
+impl fmt::Display for UnknownLint {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "unknown lint '{}'", self.id)
+    }
+}
+
+impl fmt::Debug for UnknownLint {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Debug::fmt(&self.to_string(), f)
+    }
+}
+
+impl error::Error for UnknownLint {}
+
+impl FromStr for Lint {
+    type Err = UnknownLint;
+
+    fn from_str(id: &str) -> Result<Self, UnknownLint> {
         Lint::ALL
             .iter()
             .copied()
             .find(|lint| lint.id() == id)
-            .ok_or_else(|| format!("unknown lint '{id}'"))
+            .ok_or_else(|| UnknownLint { id: id.to_string() })
     }
 }
 
@@ -227,7 +242,7 @@ impl Levels {
 
     /// Sets the lints `id` names: one lint, a category (`security`, `correctness`,
     /// `performance`, `style`), `all`, or `warnings` for every finding left at warn.
-    pub fn set_named(&mut self, id: &str, level: Level) -> Result<(), String> {
+    pub fn set_named(&mut self, id: &str, level: Level) -> Result<(), UnknownLint> {
         if id == "warnings" {
             self.warnings = Some(level);
             return Ok(());

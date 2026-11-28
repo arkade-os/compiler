@@ -5,6 +5,7 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
+use crate::compiler::error::CompileErrorKind;
 use crate::diagnostics::Span;
 use crate::types::ArkType;
 
@@ -209,23 +210,15 @@ pub fn flatten_parameter(
     parameter: &Parameter,
     structs: &[StructDefinition],
 ) -> Result<Vec<TypeLeaf>, String> {
-    let mut leaves = Vec::new();
-    flatten_type(
-        Path::new(&parameter.name),
-        &parameter.name,
-        &parameter.param_type,
-        structs,
-        &mut Vec::new(),
-        &mut leaves,
-    )?;
-    Ok(leaves)
+    flatten_value(&Path::new(&parameter.name), &parameter.param_type, structs)
+        .map_err(|error| error.to_string())
 }
 
 pub(crate) fn flatten_value(
     access: &Path,
     declared_type: &TypeName,
     structs: &[StructDefinition],
-) -> Result<Vec<TypeLeaf>, String> {
+) -> Result<Vec<TypeLeaf>, CompileErrorKind> {
     let mut leaves = Vec::new();
     let emitted_name = access.key();
     flatten_type(
@@ -246,7 +239,7 @@ fn flatten_type(
     structs: &[StructDefinition],
     stack: &mut Vec<String>,
     leaves: &mut Vec<TypeLeaf>,
-) -> Result<(), String> {
+) -> Result<(), CompileErrorKind> {
     if let Some((element_type, length)) = declared_type.array_parts() {
         for index in 0..length {
             flatten_type(
@@ -286,9 +279,13 @@ fn flatten_type(
     let definition = structs
         .iter()
         .find(|definition| definition.name == name)
-        .ok_or_else(|| format!("unknown type '{declared_type}'"))?;
+        .ok_or_else(|| CompileErrorKind::UnknownType {
+            declared_type: declared_type.clone(),
+        })?;
     if stack.iter().any(|ty| ty == name) {
-        return Err(format!("recursive struct layout: {declared_type}"));
+        return Err(CompileErrorKind::RecursiveStruct {
+            declared_type: declared_type.clone(),
+        });
     }
     stack.push(name.to_string());
     for field in &definition.fields {

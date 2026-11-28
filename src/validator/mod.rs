@@ -3,10 +3,9 @@
 //! compiles but is likely wrong is a [`crate::lint`] warning instead.
 
 use std::collections::{HashMap, HashSet};
-use std::iter;
+use std::{fmt, iter};
 
 use crate::diagnostics::Span;
-use crate::errors::ErrorCode;
 use crate::lint::attributes;
 use crate::models::{
     self, child_exprs, Contract, Expression, KeyExpr, LocatedStatement, NamedTapscript, Statement,
@@ -17,6 +16,7 @@ use crate::types::ArkType;
 
 mod assets;
 mod bindings;
+pub(crate) mod error;
 mod expressions;
 mod functions;
 mod operands;
@@ -26,19 +26,18 @@ mod shadowing;
 
 use assets::check_asset_id_operands;
 use bindings::check_binding_semantics;
+use error::Declared;
+pub(crate) use error::ValidationError;
 use shadowing::check_shadowing;
 
 pub(crate) use functions::falls_through;
 pub(crate) use output::validate_output;
 
-/// A validation error: the contract cannot be safely emitted.
 #[derive(Debug, Clone)]
 pub struct ValidationIssue {
-    pub message: String,
+    pub kind: ValidationError,
     /// Byte range of the expression, statement or function that caused it.
     pub span: Option<Span>,
-    /// Diagnostic code: `validation`, or `type` for operand type mismatches.
-    pub code: &'static str,
     pub suggestion: Option<IssueSuggestion>,
 }
 
@@ -50,48 +49,32 @@ pub struct IssueSuggestion {
 }
 
 impl ValidationIssue {
-    fn error(message: impl Into<String>) -> Self {
-        Self {
-            message: message.into(),
-            span: None,
-            code: "validation",
-            suggestion: None,
-        }
-    }
-
-    fn at(mut self, span: Span) -> Self {
-        self.span = Some(span);
-        self
-    }
-
-    fn coded(mut self, code: ErrorCode) -> Self {
-        self.code = code.id();
-        self
-    }
-
     /// Suggesting `replacement` for `span`, or for the issue's own span once it is located.
     fn suggest(mut self, replacement: &str, span: Option<Span>) -> Self {
-        self.message
-            .push_str(&format!("; did you mean '{replacement}'?"));
         self.suggestion = Some(IssueSuggestion {
             replacement: replacement.to_string(),
             span,
         });
         self
     }
+}
 
-    fn type_error(message: impl Into<String>) -> Self {
+impl From<ValidationError> for ValidationIssue {
+    fn from(kind: ValidationError) -> Self {
         Self {
-            code: "type",
-            ..Self::error(message)
+            kind,
+            span: None,
+            suggestion: None,
         }
     }
+}
 
-    /// Marks an expression whose error is reported elsewhere; `validate_ast` drops it.
-    fn reported() -> Self {
-        Self {
-            code: "reported",
-            ..Self::error("")
+impl fmt::Display for ValidationIssue {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.kind.fmt(f)?;
+        match &self.suggestion {
+            Some(suggestion) => write!(f, "; did you mean '{}'?", suggestion.replacement),
+            None => Ok(()),
         }
     }
 }
@@ -111,7 +94,7 @@ pub(crate) fn validate_ast(contract: &Contract, require_entrypoint: bool) -> Vec
     check_struct_definitions(contract, &mut issues);
 
     if require_entrypoint && contract.name.is_empty() {
-        issues.push(ValidationIssue::error("contract name must not be empty"));
+        issues.push(ValidationError::EmptyContractName.into());
     }
 
     let public_count = contract.functions.iter().filter(|f| !f.is_private).count();
@@ -119,34 +102,30 @@ pub(crate) fn validate_ast(contract: &Contract, require_entrypoint: bool) -> Vec
         // A file with no contract has no name to locate this at.
         issues.push(ValidationIssue {
             span: (!contract.name.is_empty()).then_some(contract.span),
-            ..ValidationIssue::error(
-                "contract must declare at least one Arkade Script or tapscript function",
-            )
+            ..ValidationError::NoEntrypoint.into()
         });
     }
 
     // Structs, parameters, inputs and locals are checked where they are walked.
     let kind = if contract.is_library {
-        "library"
+        Declared::Library
     } else {
-        "contract"
+        Declared::Contract
     };
     let constants = contract.constants.iter().filter(|c| !c.name.contains('.'));
     let functions = contract.functions.iter().filter(|f| !f.is_imported());
     let tapscripts = contract.tapscripts.iter();
     let declarations = iter::once((kind, &contract.name, contract.span))
-        .chain(constants.map(|c| ("constant", &c.name, c.span)))
-        .chain(functions.map(|f| ("function", &f.name, f.span)))
-        .chain(tapscripts.map(|t| ("tapscript", &t.name, t.span)));
+        .chain(constants.map(|c| (Declared::Constant, &c.name, c.span)))
+        .chain(functions.map(|f| (Declared::Function, &f.name, f.span)))
+        .chain(tapscripts.map(|t| (Declared::Tapscript, &t.name, t.span)));
     for (context, name, span) in declarations {
         let first = issues.len();
+        let callable = matches!(context, Declared::Function | Declared::Tapscript);
         validate_source_identifier(name, context, &mut issues);
-        if matches!(context, "function" | "tapscript")
-            && parser::reserved_function_signature(name).is_some()
-        {
-            issues.push(ValidationIssue::error(format!(
-                "function name '{name}' is reserved"
-            )));
+        if callable && parser::reserved_function_signature(name).is_some() {
+            let name = name.clone();
+            issues.push(ValidationError::ReservedFunctionName { name }.into());
         }
         locate(&mut issues[first..], span);
     }
@@ -155,13 +134,8 @@ pub(crate) fn validate_ast(contract: &Contract, require_entrypoint: bool) -> Vec
         let mut seen: HashSet<&str> = HashSet::new();
         for func in contract.functions.iter().filter(|f| !f.is_imported()) {
             if !seen.insert(func.name.as_str()) {
-                issues.push(
-                    ValidationIssue::error(format!(
-                        "duplicate function name '{}'; each function must have a unique name",
-                        func.name
-                    ))
-                    .at(func.span),
-                );
+                let name = func.name.clone();
+                issues.push(ValidationError::DuplicateFunction { name }.at(func.span));
             }
         }
     }
@@ -170,12 +144,10 @@ pub(crate) fn validate_ast(contract: &Contract, require_entrypoint: bool) -> Vec
         let mut seen: HashSet<&str> = HashSet::new();
         for param in &contract.parameters {
             let first = issues.len();
-            validate_source_identifier(&param.name, "constructor parameter", &mut issues);
+            validate_source_identifier(&param.name, Declared::ConstructorParameter, &mut issues);
             if !seen.insert(param.name.as_str()) {
-                issues.push(ValidationIssue::error(format!(
-                    "duplicate constructor parameter '{}'",
-                    param.name
-                )));
+                let name = param.name.clone();
+                issues.push(ValidationError::DuplicateConstructorParameter { name }.into());
             }
             locate(&mut issues[first..], param.span);
         }
@@ -185,16 +157,17 @@ pub(crate) fn validate_ast(contract: &Contract, require_entrypoint: bool) -> Vec
         let first = issues.len();
         let mut seen: HashSet<&str> = HashSet::new();
         for param in &func.parameters {
-            validate_source_identifier(
-                &param.name,
-                &format!("parameter in function '{}'", func.name),
-                &mut issues,
-            );
+            let function = func.name.clone();
+            let context = Declared::FunctionParameter { function };
+            validate_source_identifier(&param.name, context, &mut issues);
             if !seen.insert(param.name.as_str()) {
-                issues.push(ValidationIssue::error(format!(
-                    "duplicate parameter '{}' in function '{}'",
-                    param.name, func.name
-                )));
+                issues.push(
+                    ValidationError::DuplicateParameter {
+                        name: param.name.clone(),
+                        function: func.name.clone(),
+                    }
+                    .into(),
+                );
             }
         }
         locate(&mut issues[first..], func.span);
@@ -206,13 +179,8 @@ pub(crate) fn validate_ast(contract: &Contract, require_entrypoint: bool) -> Vec
         let mut seen: HashSet<&str> = HashSet::new();
         for ts in &contract.tapscripts {
             if !seen.insert(ts.name.as_str()) {
-                issues.push(
-                    ValidationIssue::error(format!(
-                        "duplicate tapscript name '{}'; each tapscript must have a unique name",
-                        ts.name
-                    ))
-                    .at(ts.span),
-                );
+                let name = ts.name.clone();
+                issues.push(ValidationError::DuplicateTapscript { name }.at(ts.span));
             }
         }
     }
@@ -220,36 +188,33 @@ pub(crate) fn validate_ast(contract: &Contract, require_entrypoint: bool) -> Vec
     // The operator supplies the reserved names, so no constructor parameter may.
     for p in &contract.parameters {
         if RESERVED_NAMES.contains(&p.name.as_str()) {
-            issues.push(
-                ValidationIssue::error(format!(
-                    "constructor parameter '{}' collides with a reserved name",
-                    p.name
-                ))
-                .at(p.span),
-            );
+            let name = p.name.clone();
+            issues.push(ValidationError::ReservedConstructorParameter { name }.at(p.span));
         }
     }
 
     for ts in &contract.tapscripts {
         for p in &ts.inputs {
             let first = issues.len();
+            let tapscript = ts.name.clone();
             validate_source_identifier(
                 &p.name,
-                &format!("input in tapscript '{}'", ts.name),
+                Declared::TapscriptInput { tapscript },
                 &mut issues,
             );
+            let (tapscript, input, ty) = (ts.name.clone(), p.name.clone(), p.param_type.clone());
             if RESERVED_NAMES.contains(&p.name.as_str()) {
-                issues.push(ValidationIssue::error(format!(
-                    "tapscript '{}' input '{}' collides with a reserved name",
-                    ts.name, p.name
-                )));
+                let (tapscript, input) = (tapscript.clone(), input.clone());
+                issues.push(ValidationError::ReservedTapscriptInput { tapscript, input }.into());
             }
             if p.param_type.array_parts().is_some() {
-                issues.push(ValidationIssue::error(format!(
-                    "tapscript '{}' input '{}' has array type '{}'; array witnesses are not \
-                     supported in tapscript functions",
-                    ts.name, p.name, p.param_type
-                )));
+                let (tapscript, input, ty) = (tapscript.clone(), input.clone(), ty.clone());
+                let error = ValidationError::ArrayTapscriptInput {
+                    tapscript,
+                    input,
+                    ty,
+                };
+                issues.push(error.into());
             }
             if p.param_type.is_builtin_struct()
                 || contract
@@ -257,23 +222,21 @@ pub(crate) fn validate_ast(contract: &Contract, require_entrypoint: bool) -> Vec
                     .iter()
                     .any(|definition| p.param_type.name() == Some(&definition.name))
             {
-                issues.push(ValidationIssue::error(format!(
-                    "tapscript '{}' input '{}' has struct type '{}'; struct witnesses are not supported in tapscript functions",
-                    ts.name, p.name, p.param_type
-                )));
+                let error = ValidationError::StructTapscriptInput {
+                    tapscript,
+                    input,
+                    ty,
+                };
+                issues.push(error.into());
             }
             locate(&mut issues[first..], p.span);
         }
         let mut seen = HashSet::new();
         for p in &ts.inputs {
             if !seen.insert(p.name.as_str()) {
-                issues.push(
-                    ValidationIssue::error(format!(
-                        "duplicate input '{}' in tapscript '{}'",
-                        p.name, ts.name
-                    ))
-                    .at(p.span),
-                );
+                let (input, tapscript) = (p.name.clone(), ts.name.clone());
+                issues
+                    .push(ValidationError::DuplicateTapscriptInput { input, tapscript }.at(p.span));
             }
         }
     }
@@ -284,13 +247,13 @@ pub(crate) fn validate_ast(contract: &Contract, require_entrypoint: bool) -> Vec
     check_asset_id_operands(contract, &mut issues);
     for (_, attributes) in contract.attributed() {
         for attribute in attributes {
-            if let Some((message, span)) = attributes::error(attribute) {
-                issues.push(ValidationIssue::error(message).at(span));
+            if let Some((error, span)) = attributes::error(attribute) {
+                issues.push(error.at(span));
             }
         }
     }
     // Errors leave their expressions `Unknown`, so this backstop runs only on a clean contract.
-    issues.retain(|issue| issue.code != "reported");
+    issues.retain(|issue| issue.kind != ValidationError::Reported);
     if issues.is_empty() {
         for function in contract.functions.iter().filter(|f| !f.is_imported()) {
             check_typed(&function.statements, &mut issues);
@@ -306,13 +269,8 @@ fn check_typed(statements: &[LocatedStatement], issues: &mut Vec<ValidationIssue
     fn visit(expression: &Expression, issues: &mut Vec<ValidationIssue>) {
         let children = child_exprs(expression);
         if expression.ty == ArkType::Unknown && children.iter().all(|c| c.ty != ArkType::Unknown) {
-            issues.push(
-                ValidationIssue::type_error(format!(
-                    "cannot infer the type of '{}'",
-                    expression.source_text()
-                ))
-                .at(expression.span),
-            );
+            let text = expression.source_text();
+            issues.push(ValidationError::CannotInferType { text }.at(expression.span));
         }
         children.into_iter().for_each(|child| visit(child, issues));
     }
@@ -344,41 +302,29 @@ fn check_struct_definitions(contract: &Contract, issues: &mut Vec<ValidationIssu
     for definition in &contract.structs {
         if models::is_builtin_type(&definition.name) || models::is_builtin_struct(&definition.name)
         {
-            issues.push(
-                ValidationIssue::error(format!(
-                    "struct '{}' collides with a built-in type",
-                    definition.name
-                ))
-                .at(definition.span),
-            );
+            let name = definition.name.clone();
+            issues.push(ValidationError::StructCollidesWithBuiltin { name }.at(definition.span));
         } else {
             let first = issues.len();
-            validate_source_identifier(&definition.name, "struct", issues);
+            validate_source_identifier(&definition.name, Declared::Struct, issues);
             locate(&mut issues[first..], definition.span);
         }
         if !names.insert(definition.name.as_str()) {
-            issues.push(ValidationIssue::error(format!(
-                "duplicate struct definition '{}'",
-                definition.name
-            )));
+            let name = definition.name.clone();
+            issues.push(ValidationError::DuplicateStruct { name }.into());
         }
         let mut fields = HashSet::new();
         for field in &definition.fields {
             let first = issues.len();
-            validate_source_identifier(
-                &field.name,
-                &format!("struct '{}' field", definition.name),
-                issues,
-            );
+            let name = definition.name.clone();
+            validate_source_identifier(&field.name, Declared::StructField { name }, issues);
             locate(&mut issues[first..], field.span);
             if !fields.insert(field.name.as_str()) {
-                issues.push(
-                    ValidationIssue::error(format!(
-                        "duplicate field '{}' in struct '{}'",
-                        field.name, definition.name
-                    ))
-                    .at(field.span),
-                );
+                let error = ValidationError::DuplicateStructField {
+                    field: field.name.clone(),
+                    name: definition.name.clone(),
+                };
+                issues.push(error.at(field.span));
             }
         }
     }
@@ -404,12 +350,22 @@ fn check_struct_definitions(contract: &Contract, issues: &mut Vec<ValidationIssu
             .iter()
             .flat_map(|tapscript| &tapscript.inputs),
     ) {
-        validate_declared_type(&parameter.param_type, "parameter", &definitions, issues);
+        validate_declared_type(
+            &parameter.param_type,
+            Declared::Parameter,
+            &definitions,
+            issues,
+        );
     }
     for function in &contract.functions {
         let first = issues.len();
         for parameter in &function.parameters {
-            validate_declared_type(&parameter.param_type, "parameter", &definitions, issues);
+            validate_declared_type(
+                &parameter.param_type,
+                Declared::Parameter,
+                &definitions,
+                issues,
+            );
         }
         // Imported helpers are positioned in their defining file.
         if !function.is_imported() {
@@ -434,12 +390,9 @@ fn validate_local_types(
                 ..
             } => {
                 if !declared_type.is_builtin_struct() {
-                    validate_declared_type(
-                        declared_type,
-                        &format!("local declaration in function '{function_name}'"),
-                        definitions,
-                        issues,
-                    );
+                    let function = function_name.to_string();
+                    let context = Declared::LocalDeclaration { function };
+                    validate_declared_type(declared_type, context, definitions, issues);
                 }
             }
             Statement::IfElse {
@@ -471,14 +424,9 @@ fn validate_struct_fields<'a>(
     issues: &mut Vec<ValidationIssue>,
 ) {
     if stack.contains(&definition.name.as_str()) {
-        let mut cycle = stack.join(" -> ");
-        if !cycle.is_empty() {
-            cycle.push_str(" -> ");
-        }
-        cycle.push_str(&definition.name);
-        issues.push(
-            ValidationIssue::error(format!("recursive struct layout: {cycle}")).at(definition.span),
-        );
+        let cycle = stack.iter().copied().chain([definition.name.as_str()]);
+        let cycle = cycle.map(str::to_string).collect();
+        issues.push(ValidationError::RecursiveStruct { cycle }.at(definition.span));
         return;
     }
     if !validated.insert(definition.name.as_str()) {
@@ -491,12 +439,11 @@ fn validate_struct_fields<'a>(
         if models::is_builtin_type(base) || models::is_builtin_struct(base) {
             continue;
         }
-        validate_declared_type(
-            &field.param_type,
-            &format!("field '{}.{}'", definition.name, field.name),
-            definitions,
-            issues,
-        );
+        let context = Declared::Field {
+            name: definition.name.clone(),
+            field: field.name.clone(),
+        };
+        validate_declared_type(&field.param_type, context, definitions, issues);
         if let Some(nested) = definitions.get(base) {
             validate_struct_fields(nested, definitions, stack, validated, issues);
         }
@@ -506,7 +453,7 @@ fn validate_struct_fields<'a>(
 
 fn validate_declared_type(
     declared_type: &TypeName,
-    context: &str,
+    context: Declared,
     definitions: &HashMap<&str, &StructDefinition>,
     issues: &mut Vec<ValidationIssue>,
 ) {
@@ -515,17 +462,15 @@ fn validate_declared_type(
         && !models::is_builtin_struct(base)
         && !definitions.contains_key(base)
     {
-        issues.push(ValidationIssue::error(format!(
-            "{context} uses unknown type '{base}'"
-        )));
+        let base = base.to_string();
+        issues.push(ValidationError::UnknownType { context, base }.into());
     }
 }
 
-fn validate_source_identifier(name: &str, context: &str, issues: &mut Vec<ValidationIssue>) {
+fn validate_source_identifier(name: &str, context: Declared, issues: &mut Vec<ValidationIssue>) {
     if RESERVED_PLACEHOLDERS.contains(&name) {
-        issues.push(ValidationIssue::error(format!(
-            "{context} '{name}' uses a compiler-reserved placeholder name"
-        )));
+        let (context, name) = (context.clone(), name.to_string());
+        issues.push(ValidationError::PlaceholderName { context, name }.into());
     }
     const RESERVED: &[&str] = &[
         "int",
@@ -559,9 +504,8 @@ fn validate_source_identifier(name: &str, context: &str, issues: &mut Vec<Valida
         "this",
     ];
     if RESERVED.contains(&name) {
-        issues.push(ValidationIssue::error(format!(
-            "{context} '{name}' uses a reserved keyword or type name"
-        )));
+        let name = name.to_string();
+        issues.push(ValidationError::ReservedName { context, name }.into());
     }
 }
 
@@ -578,13 +522,11 @@ fn check_unused(contract: &Contract, issues: &mut Vec<ValidationIssue>) {
             .iter()
             .filter(|i| !used.contains(i.name.as_str()))
         {
-            issues.push(
-                ValidationIssue::error(format!(
-                    "input '{}' in tapscript '{}' is never used",
-                    input.name, tapscript.name
-                ))
-                .at(input.span),
-            );
+            let error = ValidationError::UnusedTapscriptInput {
+                input: input.name.clone(),
+                tapscript: tapscript.name.clone(),
+            };
+            issues.push(error.at(input.span));
         }
     }
     for function in contract.functions.iter().filter(|f| !f.is_imported()) {
@@ -594,13 +536,11 @@ fn check_unused(contract: &Contract, issues: &mut Vec<ValidationIssue>) {
             .iter()
             .filter(|p| !used.contains(p.name.as_str()))
         {
-            issues.push(
-                ValidationIssue::error(format!(
-                    "parameter '{}' of function '{}' is never used",
-                    parameter.name, function.name
-                ))
-                .at(parameter.span),
-            );
+            let error = ValidationError::UnusedParameter {
+                parameter: parameter.name.clone(),
+                function: function.name.clone(),
+            };
+            issues.push(error.at(parameter.span));
         }
     }
 }
@@ -687,11 +627,12 @@ mod tests {
             let issues = parse_and_validate(&format!(
                 "contract C() {{ function spend(int[3] values) {{ {statement} require(true); }} }}"
             ));
+            let missing = ValidationError::UndefinedName {
+                label: "binding",
+                name: "missing".into(),
+            };
             assert_eq!(
-                issues
-                    .iter()
-                    .filter(|issue| issue.message.contains("'missing'"))
-                    .count(),
+                issues.iter().filter(|issue| issue.kind == missing).count(),
                 1,
                 "{statement}: {issues:?}"
             );
@@ -717,13 +658,38 @@ contract Demo() {
 
     #[test]
     fn rejects_invalid_array_assignment_targets_once() {
+        let out_of_range = |value: &str| ValidationError::IndexOutOfRange {
+            value: value.into(),
+            array: "values[3]".into(),
+        };
         for (target, expected) in [
-            ("value[0]", "binding 'value' is not an array"),
-            ("missing[0]", "array 'missing' is undefined"),
-            ("values[flag]", "array index has type 'bool'"),
-            ("values[missing]", "binding 'missing' is undefined"),
-            ("values[3]", "array index '3' is out of range"),
-            ("values[-1]", "array index '-1' is out of range"),
+            (
+                "value[0]",
+                ValidationError::NotAnArray {
+                    binding: "value".into(),
+                },
+            ),
+            (
+                "missing[0]",
+                ValidationError::UndefinedArray {
+                    array: "missing".into(),
+                },
+            ),
+            (
+                "values[flag]",
+                ValidationError::IndexType {
+                    actual: "bool".into(),
+                },
+            ),
+            (
+                "values[missing]",
+                ValidationError::UndefinedName {
+                    label: "binding",
+                    name: "missing".into(),
+                },
+            ),
+            ("values[3]", out_of_range("3")),
+            ("values[-1]", out_of_range("-1")),
         ] {
             let source = format!(
                 r#"
@@ -739,10 +705,7 @@ contract Demo() {{
             );
             let issues = parse_and_validate(&source);
             assert_eq!(
-                issues
-                    .iter()
-                    .filter(|issue| issue.message.contains(expected))
-                    .count(),
+                issues.iter().filter(|issue| issue.kind == expected).count(),
                 1,
                 "{issues:?}"
             );
@@ -762,40 +725,52 @@ contract Demo() {
 }
 "#,
         );
-        assert!(issues.iter().any(|issue| issue
-            .message
-            .contains("assignment to an element of 'values' changes its type")));
+        assert!(issues.iter().any(|issue| matches!(
+            &issue.kind,
+            ValidationError::ElementAssignmentType { array, .. } if array.key() == "values"
+        )));
     }
 
     #[test]
     fn builtin_array_literals_report_each_fault_once() {
+        let element = |expected: &str| ValidationError::BuiltinElementType {
+            builtin: "checkMultisig",
+            value: "1".into(),
+            actual: "int".into(),
+            expected: expected.into(),
+        };
         for (call, expected) in [
-            (
-                "checkMultisig([1], [sig])",
-                "checkMultisig '1' has type 'int', expected 'bytes'",
-            ),
-            (
-                "checkMultisig([key], [1])",
-                "checkMultisig '1' has type 'int', expected 'signature'",
-            ),
-            (
-                "checkMultisig([key, 1], [sig, sig])",
-                "checkMultisig '1' has type 'int', expected 'bytes'",
-            ),
+            ("checkMultisig([1], [sig])", element("bytes")),
+            ("checkMultisig([key], [1])", element("signature")),
+            ("checkMultisig([key, 1], [sig, sig])", element("bytes")),
             (
                 "checkMultisig([key], [sig, sig])",
-                "checkMultisig operand has 2 elements, expected 1",
+                ValidationError::BuiltinElementCount {
+                    builtin: "checkMultisig",
+                    got: 2,
+                    expected: 1,
+                },
             ),
             (
                 "checkMultisig([key], [signature(substr(1, 0, 64))])",
-                "substr operand has type 'int', expected 'bytes'",
+                ValidationError::BuiltinOperandType {
+                    builtin: "substr",
+                    actual: "int".into(),
+                    expected: "bytes".into(),
+                },
             ),
-            ("checkMultisig([key], [missing])", "'missing' is undefined"),
+            (
+                "checkMultisig([key], [missing])",
+                ValidationError::UndefinedName {
+                    label: "binding",
+                    name: "missing".into(),
+                },
+            ),
         ] {
             let source = format!("contract C(pubkey key) {{ function spend(signature sig) {{ require(checkSig(sig, key)); require({call}); }} }}");
             let issues = parse_and_validate(&source);
             assert_eq!(issues.len(), 1, "{call}: {issues:?}");
-            assert!(issues[0].message.contains(expected), "{call}: {issues:?}");
+            assert_eq!(issues[0].kind, expected, "{call}");
         }
     }
 
@@ -892,7 +867,7 @@ contract Demo() {
         assert!(!issues.is_empty());
         assert!(issues
             .iter()
-            .any(|i| i.message.contains("spend path with no require()")));
+            .any(|i| matches!(i.kind, ValidationError::UnenforcedPath { .. })));
     }
 
     #[test]
@@ -923,7 +898,9 @@ contract Demo() {
         let contract = make_contract("");
         let issues = validate(&contract);
         assert!(!issues.is_empty());
-        assert!(issues.iter().any(|i| i.message.contains("name")));
+        assert!(issues
+            .iter()
+            .any(|i| i.kind == ValidationError::EmptyContractName));
     }
 
     #[test]
@@ -934,7 +911,7 @@ contract Demo() {
         assert!(!issues.is_empty());
         assert!(issues
             .iter()
-            .any(|i| i.message.contains("at least one Arkade Script")));
+            .any(|i| i.kind == ValidationError::NoEntrypoint));
     }
 
     #[test]
@@ -951,7 +928,10 @@ contract Demo() {
         contract.functions.push(contract.functions[0].clone());
         let issues = validate(&contract);
         assert!(!issues.is_empty());
-        assert!(issues.iter().any(|i| i.message.contains("spend")));
+        let duplicate = ValidationError::DuplicateFunction {
+            name: "spend".into(),
+        };
+        assert!(issues.iter().any(|i| i.kind == duplicate));
     }
 
     #[test]
@@ -1065,7 +1045,9 @@ contract Demo() {
         output.functions[0].leaves[0].asm.clear();
         let issues = validate_output(&output);
         assert!(!issues.is_empty());
-        assert!(issues.iter().any(|i| i.message.contains("empty asm")));
+        assert!(issues
+            .iter()
+            .any(|i| matches!(i, ValidationError::EmptyLeafAsm { .. })));
     }
 
     #[test]
@@ -1081,7 +1063,7 @@ contract Demo() {
             assert!(
                 issues
                     .iter()
-                    .any(|i| i.message.contains("signature in asm")),
+                    .any(|i| matches!(i, ValidationError::SignatureInLeafAsm { .. })),
                 "expected sig-leak message for {leaked}"
             );
         }
