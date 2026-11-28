@@ -2,6 +2,12 @@
 
 All notable changes to the Arkade Compiler are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html). `arkade-compiler` and `@arkade-os/compiler` share one version.
 
+## [Unreleased]
+
+**Breaking**
+
+- In Rust, `Lint::from_str` and `Levels::set_named` fail with `UnknownLint`, and `ErrorCode::from_str` with `UnknownErrorCode`, instead of `String`. Both implement `Display` with the same message and `std::error::Error`.
+
 ## [0.1.1] - 2026-11-25
 
 - `tx.intent.field(path)` and `tx.intent.has(path)` are now `tx.proof.field(path)` and `tx.proof.has(path)`, since "intent" names Arkade Intents. `tx.intent` remains a deprecated alias that compiles to the same script, and 0.2 removes it.
