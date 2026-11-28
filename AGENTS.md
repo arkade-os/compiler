@@ -25,6 +25,8 @@ Preserve unrelated worktree changes. Do not edit secrets or Git internals. Do no
 
 ## Project map
 
+The phases, invariants and code map are in `ARCHITECTURE.md`; the rules for writing code (types, errors, imports, comments) are in `docs/rules.md`. Follow both.
+
 This is a Cargo workspace whose only member is the compiler crate at the repository root.
 
 - `src/parser/grammar.pest` defines the language grammar.
