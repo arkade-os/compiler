@@ -34,9 +34,8 @@ pub(crate) use expr::reserved_function_signature;
 use error::Result;
 
 #[cfg(test)]
-pub fn parse(source: &str) -> Result<Contract, String> {
-    let pairs = parse_main(source).map_err(|error| error.to_string())?;
-    build_ast(pairs, &[]).map_err(|error| error.to_string())
+pub fn parse(source: &str) -> Result<Contract, CompileError> {
+    build_ast(parse_main(source)?, &[])
 }
 
 /// Each import's path and the span of its statement.
@@ -905,7 +904,9 @@ mod tests {
     use std::thread;
     use std::time::Duration;
 
-    use super::parse;
+    use super::{parse, ParseError};
+    use crate::compiler::error::CompileErrorKind;
+    use crate::diagnostics::CompileError;
     use crate::models::{
         self, AssignmentTarget, Attribute, AttributeArg, ExprKind, Expression, Function, Statement,
     };
@@ -954,7 +955,10 @@ mod tests {
         ] {
             let error = value(misuse).unwrap_err();
             assert!(
-                error.contains("tx.input.current requires one of"),
+                matches!(
+                    error.kind,
+                    CompileErrorKind::Parse(ParseError::CurrentInputMemberRequired { .. })
+                ),
                 "{misuse}: {error}"
             );
         }
@@ -962,13 +966,13 @@ mod tests {
 
     #[test]
     fn member_chains_resolve_after_parsing() {
-        let value = |expression: &str| {
+        let value = |expression: &str| -> Result<ExprKind, CompileError> {
             let source = format!(
                 "contract C() {{ function spend(AssetGroup g) {{ let v = {expression}; }} }}"
             );
-            let statement = parse(&source).map(|c| c.functions[0].statements[0].statement.clone());
-            let Ok(Statement::LetBinding { value, .. }) = statement else {
-                return Err(format!("{statement:?}"));
+            let statement = parse(&source)?.functions[0].statements[0].statement.clone();
+            let Statement::LetBinding { value, .. } = statement else {
+                panic!("{statement:?}");
             };
             let start = source.find(expression).unwrap();
             assert_eq!(
@@ -1035,9 +1039,10 @@ mod tests {
             Ok(ExprKind::Tunnel { exceptions, .. }) if exceptions.is_empty()
         ));
         let error = value("this.tunnel(0, ({script: true, value: true, assets: true}))");
-        assert!(error
-            .unwrap_err()
-            .contains("wrong arguments to `this.tunnel`"));
+        assert!(matches!(
+            error.unwrap_err().kind,
+            CompileErrorKind::Parse(ParseError::WrongReservedArguments { name, .. }) if name == "this.tunnel"
+        ));
         assert!(matches!(value("bytes32(x)"), Ok(ExprKind::Cast { .. })));
         assert!(matches!(value("int(0x0100)"), Ok(ExprKind::Literal(value)) if value == "256"));
         assert!(matches!(
@@ -1066,7 +1071,13 @@ mod tests {
             );
         }
         for call in ["a.b.c(x)", "f(x).controlIs(id)", "(Lib).f(x)"] {
-            assert!(value(call).unwrap_err().contains("cannot call"), "{call}");
+            assert!(
+                matches!(
+                    value(call).unwrap_err().kind,
+                    CompileErrorKind::Parse(ParseError::UncallableSuffix { .. })
+                ),
+                "{call}"
+            );
         }
         for (call, name) in [
             ("g.controlIs(id)", "g.controlIs"),
@@ -1317,7 +1328,7 @@ mod tests {
             ("for (i) 0..N {}", "Parse error"),
         ] {
             let source = format!("contract C() {{ function spend() {{ {statement} }} }}");
-            let error = parse(&source).unwrap_err();
+            let error = parse(&source).unwrap_err().to_string();
             assert!(error.contains(expected), "{statement}: {error}");
         }
     }
@@ -2001,7 +2012,9 @@ contract Demo(pubkey first, pubkey second) {{
         ] {
             assert!(parse(source).is_err(), "{source}");
         }
-        let error = parse("contract C() {}\n/* unterminated").unwrap_err();
+        let error = parse("contract C() {}\n/* unterminated")
+            .unwrap_err()
+            .to_string();
         assert!(
             error.contains("--> 2:1") && error.contains("expected '*/'"),
             "{error}"
@@ -2036,7 +2049,10 @@ contract Demo(pubkey first, pubkey second) {{
         assert_eq!(contract.functions[0].parameters.len(), 3);
         assert_eq!(contract.functions[0].statements.len(), 10);
         let error = parse(r#"contract C() { function spend() { let f = tx.proof.field("Bad Path",); require(f == f); } }"#).unwrap_err();
-        assert!(error.contains("invalid proof message path"), "{error}");
+        assert!(
+            matches!(&error.kind, CompileErrorKind::Parse(ParseError::InvalidProofPath { path }) if path == "Bad Path"),
+            "{error}"
+        );
         for list in [
             "f(,)",
             "f(n,,)",

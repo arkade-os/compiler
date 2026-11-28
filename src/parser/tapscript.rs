@@ -462,7 +462,9 @@ pub(crate) fn parse_key_expr(pair: Pair<Rule>, constants: &[Constant]) -> Result
 #[cfg(test)]
 mod tests {
     //! Parser-level tests for the `tapscript` modifier: AST routing, not ABI output.
+    use crate::compiler::error::CompileErrorKind;
     use crate::models::{Contract, HashFn, KeyExpr, Path, TapItem, TapOperand};
+    use crate::parser::ParseError;
 
     fn parse(src: &str) -> Contract {
         super::super::parse(src).expect("parse should succeed")
@@ -605,7 +607,7 @@ contract Demo(pubkey[2] keys, Policy[2] ps) {
         let src = "contract Demo(pubkey[2] keys) { function exit(signature s, int i) tapscript { require(checkSig(s, keys[i])); } }";
         let err = super::super::parse(src).unwrap_err();
         assert!(
-            err.contains("`keys[i]` must be indexed by an integer literal or constant"),
+            matches!(&err.kind, CompileErrorKind::Parse(ParseError::IndexNotConstant { binding }) if binding == "keys[i]"),
             "got: {err}"
         );
     }
@@ -646,7 +648,10 @@ contract Demo(pubkey owner, int deadline) {
 "#;
 
         let err = super::super::parse(src).unwrap_err();
-        assert!(err.contains("use `after(...)`"));
+        assert_eq!(
+            err.kind,
+            CompileErrorKind::Parse(ParseError::LocktimeInTapscript)
+        );
     }
 
     #[test]
@@ -661,7 +666,7 @@ contract Demo(pubkey owner) {
 
         let err = super::super::parse(src).expect_err("unsupported tapscript call should fail");
         assert!(
-            err.contains("unsupported tapscript call `foo(...)`"),
+            matches!(&err.kind, CompileErrorKind::Parse(ParseError::UnsupportedTapscriptCall { name }) if name == "foo"),
             "unexpected error: {err}"
         );
     }
