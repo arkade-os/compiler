@@ -8,6 +8,7 @@ use crate::compiler::error::{CompileErrorKind, InternalError};
 use crate::errors::ErrorCode;
 use crate::imports::LoadError;
 use crate::lint::Lint;
+use crate::models::LoopRangeError;
 use crate::parser::ParseError;
 
 /// A byte-offset range into one file's source text.
@@ -237,6 +238,12 @@ impl From<LoadError> for CompileError {
 impl From<ConstantError> for CompileError {
     fn from(error: ConstantError) -> Self {
         CompileErrorKind::Constant(error).into()
+    }
+}
+
+impl From<LoopRangeError> for CompileError {
+    fn from(error: LoopRangeError) -> Self {
+        CompileErrorKind::LoopRange(error).into()
     }
 }
 

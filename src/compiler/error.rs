@@ -5,7 +5,7 @@ use std::{error, fmt};
 use super::constants::ConstantError;
 use super::{MAX_ELEMENT_SIZE, MAX_SCRIPT_SIZE, MAX_STACK_ITEMS};
 use crate::imports::LoadError;
-use crate::models::{Path, TypeName};
+use crate::models::{LoopRangeError, Path, TypeName};
 use crate::opcodes::Opcode;
 use crate::operators::BinaryOperator;
 use crate::parser::ParseError;
@@ -54,8 +54,7 @@ pub(crate) enum CompileErrorKind {
     ReturnMismatch,
     UnsupportedLoopIterable,
     LoopCountNotConstant,
-    LoopRangeNotConstant,
-    LoopRangeReversed { start: usize, end: usize },
+    LoopRange(LoopRangeError),
     IndexOutOfRange { index: String, array: String },
     UnknownType { declared_type: TypeName },
     RecursiveStruct { declared_type: TypeName },
@@ -199,12 +198,7 @@ impl fmt::Display for CompileErrorKind {
             CompileErrorKind::LoopCountNotConstant => {
                 f.write_str("loop count must be a non-negative integer compile-time constant")
             }
-            CompileErrorKind::LoopRangeNotConstant => {
-                f.write_str("loop range bounds must be non-negative integer compile-time constants")
-            }
-            CompileErrorKind::LoopRangeReversed { start, end } => {
-                write!(f, "loop range start {start} exceeds its end {end}")
-            }
+            CompileErrorKind::LoopRange(error) => error.fmt(f),
             CompileErrorKind::IndexOutOfRange { index, array } => {
                 write!(f, "array index '{index}' is out of range for '{array}'")
             }

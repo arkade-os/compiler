@@ -3,11 +3,10 @@
 use std::{error, fmt};
 
 use crate::compiler::constants::ConstantError;
-use crate::compiler::error::CompileErrorKind;
 use crate::compiler::MAX_LOOP_ITERATIONS;
 use crate::diagnostics::{CompileError, Span};
 use crate::errors::ErrorCode;
-use crate::models::{Path, TypeName};
+use crate::models::{LoopRangeError, Path, TypeName};
 use crate::operators::{BinaryOperator, OperatorClass, UnaryOperator};
 
 use super::ValidationIssue;
@@ -360,7 +359,7 @@ pub(crate) enum ValidationError {
         actual: TypeName,
     },
     LoopCountNotConstant,
-    LoopRange(CompileErrorKind),
+    LoopRange(LoopRangeError),
     UndefinedName {
         label: &'static str,
         name: String,
@@ -493,8 +492,8 @@ impl ValidationError {
     }
 }
 
-impl From<CompileErrorKind> for ValidationError {
-    fn from(error: CompileErrorKind) -> Self {
+impl From<LoopRangeError> for ValidationError {
+    fn from(error: LoopRangeError) -> Self {
         ValidationError::LoopRange(error)
     }
 }
